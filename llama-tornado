@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-llama-tornado: GPU-accelerated LLaMA.java runner with TornadoVM
-Run LLaMA models using either OpenCL or PTX backends.
+llama-tornado: GPU-accelerated Java LLM runner with TornadoVM
+Run LLM models using either OpenCL or PTX backends.
 """
 
 import argparse
@@ -19,7 +19,7 @@ class Backend(Enum):
     PTX = "ptx"
 
 class LlamaRunner:
-    """Main class for managing LLaMA model execution with GPU acceleration."""
+    """Main class for managing LLM execution with GPU acceleration."""
 
     def __init__(self):
         self.java_home = os.environ.get('JAVA_HOME')
@@ -266,30 +266,31 @@ def create_parser() -> argparse.ArgumentParser:
     """Create and configure the argument parser."""
     parser = argparse.ArgumentParser(
         prog="llama-tornado",
-        description="GPU-accelerated LLaMA.java model runner using TornadoVM",
+        description="GPU-accelerated LLM runner using TornadoVM",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
     # Required arguments
     parser.add_argument("--model", dest="model_path", required=True,
-                       help="Path to the LLaMA model file (e.g., Llama-3.2-1B-Instruct-Q8_0.gguf)")
+                       help="Path to the LLM gguf file (e.g., Llama-3.2-1B-Instruct-Q8_0.gguf)")
 
-    # LLaMA arguments
-    llama_group = parser.add_argument_group("LLaMA Configuration")
-    llama_group.add_argument("--prompt", help="Input prompt for the model")
-    llama_group.add_argument("-sp", "--system-prompt", help="System prompt for the model")
-    llama_group.add_argument("--temperature", type=float, default=0.1,
+    # LLM arguments
+    llm_group = parser.add_argument_group("LLaMA Configuration")
+    llm_group.add_argument("--prompt", help="Input prompt for the model")
+    llm_group.add_argument("-sp", "--system-prompt", help="System prompt for the model")
+    llm_group.add_argument("--temperature", type=float, default=0.1,
                            help="Sampling temperature (0.0 to 2.0)")
-    llama_group.add_argument("--top-p", type=float, default=0.95,
+    llm_group.add_argument("--top-p", type=float, default=0.95,
                            help="Top-p sampling parameter")
-    llama_group.add_argument("--seed", type=int, default=None,
+    llm_group.add_argument("--seed", type=int, default=None,
                            help="Random seed (default: current timestamp)")
-    llama_group.add_argument("-n", "--max-tokens", type=int, default=512,
+    llm_group.add_argument("-n", "--max-tokens", type=int, default=512,
                            help="Maximum number of tokens to generate")
-    llama_group.add_argument("--stream", type=bool, default=True,
+    llm_group.add_argument("--stream", type=bool, default=True,
                            help="Enable streaming output")
-    llama_group.add_argument("--echo", type=bool, default=False,
+    llm_group.add_argument("--echo", type=bool, default=False,
                            help="Echo the input prompt")
+    llm_group.add_argument("--suffix", help="Suffix for fill-in-the-middle request (Codestral)")
 
     # Mode selection
     mode_group = parser.add_argument_group("Mode Selection")

@@ -1,4 +1,4 @@
-package com.example.inference;
+package com.example.inference.sampler;
 
 import com.example.core.model.tensor.FloatTensor;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
