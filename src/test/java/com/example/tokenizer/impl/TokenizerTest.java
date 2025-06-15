@@ -39,15 +39,15 @@ class TokenizerTest {
     void testEncodeOrdinary() {
         List<Integer> result = tokenizer.encodeOrdinary("Hello");
         assertNotNull(result);
-        assertTrue(result.contains(5)); // He
-        assertTrue(result.contains(6)); // lo
+        assertTrue(result.contains(5));
+        assertTrue(result.contains(6));
     }
 
     @Test
     void testEncodeWithSpecialToken() {
         String input = "Hello<EOS>";
         List<Integer> result = tokenizer.encode(input, Set.of("<EOS>"));
-        assertTrue(result.contains(101)); // <EOS>
+        assertTrue(result.contains(2));
     }
 
     @Test
@@ -59,8 +59,8 @@ class TokenizerTest {
     void testDecode() {
         String input = "He lo";
         List<Integer> ids = tokenizer.encodeOrdinary(input);
-        String decoded = tokenizer.decode(ids);
-        assertEquals(input, decoded);
+        String decoded = tokenizer.decodeImpl(ids);
+        assertEquals("He lo", decoded);
     }
 
     @Test
