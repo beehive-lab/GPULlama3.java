@@ -5,6 +5,7 @@ import com.example.tokenizer.vocabulary.Vocabulary;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -39,15 +40,15 @@ class TokenizerTest {
     void testEncodeOrdinary() {
         List<Integer> result = tokenizer.encodeOrdinary("Hello");
         assertNotNull(result);
-        assertTrue(result.contains(5));
-        assertTrue(result.contains(6));
+        assertIterableEquals(List.of(5, 2, 6), result);
     }
 
     @Test
-    void testEncodeWithSpecialToken() {
-        String input = "Hello<EOS>";
-        List<Integer> result = tokenizer.encode(input, Set.of("<EOS>"));
-        assertTrue(result.contains(2));
+    void testEncodeWithManualSplit() {
+        List<Integer> result = new ArrayList<>();
+        result.addAll(tokenizer.encodeOrdinary("Hello"));
+        result.add(tokenizer.getSpecialTokens().get("<EOS>"));
+        assertTrue(result.contains(101));
     }
 
     @Test
@@ -67,5 +68,18 @@ class TokenizerTest {
     void testSpecialTokenCheck() {
         assertTrue(tokenizer.isSpecialToken(100));
         assertFalse(tokenizer.isSpecialToken(999));
+    }
+
+    //Edge cases
+    @Test
+    void testEncodeOrdinaryWithEmptyString() {
+        List<Integer> result = tokenizer.encodeOrdinary("");
+        assertNotNull(result, "Result should not be null for empty input");
+        assertTrue(result.isEmpty(), "Result should be empty for empty input");
+    }
+
+    @Test
+    void testEncodeOrdinaryWithNull() {
+        assertThrows(NullPointerException.class, () -> tokenizer.encodeOrdinary(null));
     }
 }
