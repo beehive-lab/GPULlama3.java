@@ -20,17 +20,35 @@ import static com.example.LlamaApp.SHOW_PERF_INTERACTIVE;
 import static com.example.LlamaApp.USE_TORNADOVM;
 
 public interface Model {
+
     Configuration configuration();
 
     Tokenizer tokenizer();
 
     Weights weights();
 
+    ChatFormat chatFormat();
+
     ModelType getModelType();
 
     State createNewState();
 
     State createNewState(int batchsize);
+
+    /**
+     * Wrapper for invoking the model-specific forward pass via InferenceCore.
+     *
+     * <p>
+     * Delegates to the appropriate InferenceCore method based on the model type
+     * (e.g., {@code forwardJava}, {@code forwardJavaQwen3}).
+     * </p>
+     */
+    void forward(State state, int token, int position);
+
+    /**
+     * Wrapper for invoking the model-specific {@code InferenceEngine.generateTokens} call.
+     */
+    List<Integer> generateTokens(State state, int startPosition, List<Integer> promptTokens, Set<Integer> stopTokens, int maxTokens, Sampler sampler, boolean echo, IntConsumer onTokenGenerated);
 
     /**
      * Model agnostic default implementation for interactive mode.
@@ -41,8 +59,11 @@ public interface Model {
         State state = null;
         List<Integer> conversationTokens = new ArrayList<>();
 
-        ChatFormat chatFormat = ChatFormat.create(tokenizer());
-        conversationTokens.add(chatFormat.getBeginOfText());
+        ChatFormat chatFormat = chatFormat();
+
+        if (!getModelType().equals(ModelType.QWEN_3)) {
+            conversationTokens.add(chatFormat.getBeginOfText());
+        }
 
         if (options.systemPrompt() != null) {
             conversationTokens.addAll(chatFormat.encodeMessage(new ChatFormat.Message(ChatFormat.Role.SYSTEM, options.systemPrompt())));
@@ -92,7 +113,7 @@ public interface Model {
                             options.maxTokens(), sampler, options.echo(), options.stream() ? tokenConsumer : null, tornadoVMPlan);
                 } else {
                     // CPU path
-                    responseTokens = InferenceEngine.generateTokens(this, state, startPosition, conversationTokens.subList(startPosition, conversationTokens.size()), stopTokens, options.maxTokens(),
+                    responseTokens = generateTokens(state, startPosition, conversationTokens.subList(startPosition, conversationTokens.size()), stopTokens, options.maxTokens(),
                             sampler, options.echo(), tokenConsumer);
                 }
 
@@ -138,11 +159,14 @@ public interface Model {
      */
     default void runInstructOnce(Sampler sampler, Options options) {
         State state = createNewState();
-        ChatFormat chatFormat = ChatFormat.create(tokenizer());
+        ChatFormat chatFormat = chatFormat();
         TornadoVMMasterPlan tornadoVMPlan = null;
 
         List<Integer> promptTokens = new ArrayList<>();
-        promptTokens.add(chatFormat.getBeginOfText());
+
+        if (!getModelType().equals(ModelType.QWEN_3)) {
+            promptTokens.add(chatFormat.getBeginOfText());
+        }
 
         if (options.systemPrompt() != null) {
             promptTokens.addAll(chatFormat.encodeMessage(new ChatFormat.Message(ChatFormat.Role.SYSTEM, options.systemPrompt())));
@@ -168,7 +192,7 @@ public interface Model {
             responseTokens = InferenceEngine.generateTokensGPU(this, state, 0, promptTokens, stopTokens, options.maxTokens(), sampler, options.echo(), options.stream() ? tokenConsumer : null,
                     tornadoVMPlan);
         } else {
-            responseTokens = InferenceEngine.generateTokens(this, state, 0, promptTokens, stopTokens, options.maxTokens(), sampler, options.echo(), tokenConsumer);
+            responseTokens = generateTokens(state, 0, promptTokens, stopTokens, options.maxTokens(), sampler, options.echo(), tokenConsumer);
         }
 
         if (!responseTokens.isEmpty() && stopTokens.contains(responseTokens.getLast())) {

@@ -20,6 +20,16 @@ import java.util.function.IntConsumer;
  * <p>
  * Orchestrates the complete inference process: ingests prompt tokens, then generates
  * new tokens until a stop condition is met. Supports both CPU and GPU execution.
+ * </p>
+ *
+ * <p>
+ * It provides unified logic for the following methods:
+ * <ul>
+ *     <li>{@code generateTokensLlama} – for LLaMA and Mistral models running on CPU</li>
+ *     <li>{@code generateTokensQwen3} – for Qwen3 models running on CPU</li>
+ *     <li>{@code generateTokensGPU} – for models executed on GPU</li>
+ * </ul>
+ * </p>
  */
 public final class InferenceEngine {
 
@@ -46,7 +56,7 @@ public final class InferenceEngine {
      * @param onTokenGenerated callback, if non-null, it's called every time a token is inferred e.g. it's not called when ingesting prompt tokens
      * @return list of generated/inferred tokens, including the stop token, if any e.g. does not include any token from the prompt
      */
-    public static List<Integer> generateTokens(Model model, State state, int startPosition, List<Integer> promptTokens, Set<Integer> stopTokens, int maxTokens, Sampler sampler, boolean echo,
+    public static List<Integer> generateTokensLlama(Model model, State state, int startPosition, List<Integer> promptTokens, Set<Integer> stopTokens, int maxTokens, Sampler sampler, boolean echo,
             IntConsumer onTokenGenerated) {
         // Start timing the whole process
         long startNanos = System.nanoTime();
@@ -110,6 +120,90 @@ public final class InferenceEngine {
             currentToken = nextToken;
             state.latestToken = currentToken;
             pos++;
+        }
+
+        // Calculate and print performance metrics
+        long endNanos = System.nanoTime();
+        double totalTimeSeconds = (endNanos - startNanos) / 1_000_000_000.0;
+        int totalTokens = promptIndex + generatedTokens.size();
+
+        LastRunMetrics.setMetrics(totalTokens, totalTimeSeconds);
+
+        return generatedTokens;
+    }
+
+    public static List<Integer> generateTokensQwen3(Model model, State state, int startPosition, List<Integer> promptTokens, Set<Integer> stopTokens, int maxTokens, Sampler sampler, boolean echo,
+            IntConsumer onTokenGenerated) {
+        // Start timing the whole process
+        long startNanos = System.nanoTime();
+        long startGen = 0;
+        long inferenceStartNanos = 0;
+
+        // Validate and adjust maxTokens if necessary
+        if (maxTokens < 0 || model.configuration().contextLength() < maxTokens) {
+            maxTokens = model.configuration().contextLength();
+        }
+
+        // Storage for generated tokens
+        List<Integer> generatedTokens = new ArrayList<>();
+
+        // Initialize token variables
+        int currentToken = state.latestToken; // BOS?
+        int nextToken = 0;
+        int promptIndex = 0;
+
+        for (int position = startPosition; position < maxTokens; ++position) {
+
+            // Handle token processing
+            if (promptIndex < promptTokens.size()) {
+                // We're still processing the prompt tokens
+                final int token = promptTokens.get(promptIndex);
+
+                model.forward(state, token, position);
+
+                promptIndex++;
+                if (promptIndex < promptTokens.size()) {
+                    continue;
+                }
+                if (echo) {
+                    System.err.print(Tokenizer.replaceControlCharacters(model.tokenizer().decode(List.of(nextToken))));
+                }
+                // We have reached the last prompt token and computed the first response-token.
+                startGen = System.nanoTime();
+                position++; // The current logit belongs to the next position
+            } else {
+                // Mark the start of actual generation (after prompt processing)
+                if (inferenceStartNanos == 0) {
+                    inferenceStartNanos = System.nanoTime();
+                }
+
+                model.forward(state, currentToken, position);
+
+            }
+
+            // Sample the next token
+            nextToken = sampler.sampleToken(state.logits);
+
+            // Output the token if echo is enabled
+            if (echo) {
+                System.err.print(Tokenizer.replaceControlCharacters(model.tokenizer().decode(List.of(nextToken))));
+            }
+
+            // Track the generated token
+            generatedTokens.add(nextToken);
+
+            // Notify via callback if provided
+            if (onTokenGenerated != null) {
+                onTokenGenerated.accept(nextToken);
+            }
+
+            // Check for stop condition
+            if (stopTokens.contains(nextToken)) {
+                break;
+            }
+
+            // Update for next iteration
+            state.latestToken = currentToken = nextToken;
         }
 
         // Calculate and print performance metrics

@@ -2,17 +2,26 @@ package com.example.model.format;
 
 import com.example.tokenizer.impl.LlamaTokenizer;
 import com.example.tokenizer.impl.MistralTokenizer;
+import com.example.tokenizer.impl.Qwen3Tokenizer;
 
 import java.util.List;
 import java.util.Set;
 
 public interface ChatFormat {
 
-    static ChatFormat create(Object tokenizer) {
+    default ChatTokens chatTokens() {
+        throw new UnsupportedOperationException("ChatFormat for Llama and Mistral does not support chatTokens");
+    }
+
+    public record ChatTokens(String tStartHeader, String tEndHeader, String tEndOfTurn, String tEndOfText, String tEndOfTextFim) { }
+
+    static ChatFormat create(Object tokenizer, ChatTokens chatTokens) {
         if (tokenizer instanceof LlamaTokenizer llamaTokenizer) {
             return new LlamaChatFormat(llamaTokenizer);
         } else if (tokenizer instanceof MistralTokenizer mistralTokenizer) {
             return new MistralChatFormat(mistralTokenizer);
+        } else if (tokenizer instanceof Qwen3Tokenizer qwen3Tokenizer) {
+            return new Qwen3ChatFormat(qwen3Tokenizer, chatTokens);
         } else {
             throw new IllegalArgumentException("Unsupported tokenizer type: " + tokenizer.getClass().getName());
         }
@@ -54,6 +63,9 @@ public interface ChatFormat {
         public static Role SYSTEM = new Role("system");
         public static Role USER = new Role("user");
         public static Role ASSISTANT = new Role("assistant");
+        public static Role FIM_PREFIX = new ChatFormat.Role("fim_prefix");
+        public static Role FIM_SUFFIX = new ChatFormat.Role("fim_suffix");
+        public static Role FIM_MIDDLE = new ChatFormat.Role("fim_middle");
 
         @Override
         public String toString() {

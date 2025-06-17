@@ -13,7 +13,7 @@ public final class ArrayFloatTensor extends FloatTensor {
 
     final float[] values;
 
-    ArrayFloatTensor(float[] values) {
+    public ArrayFloatTensor(float[] values) {
         this.values = values;
     }
 

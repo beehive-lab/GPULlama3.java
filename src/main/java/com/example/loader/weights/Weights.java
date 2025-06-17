@@ -21,13 +21,15 @@ public class Weights {
     // token embedding table
     public final FloatTensor token_embedding_table; // (vocab_size, dim)
     // weights for rmsnorms
-    public final FloatBuffer[] rms_att_weight; // (layer, dim) rmsnorm weights
+    public final FloatTensor[] rms_att_weight; // (layer, dim) rmsnorm weights
     // weights for matmuls
     public final FloatTensor[] wq; // (layer, n_heads * head_size)
     public final FloatTensor[] wk; // (layer, n_kv_heads, head_size)
     public final FloatTensor[] wv; // (layer, n_kv_heads * head_size)
     public final FloatTensor[] wo; // (layer, n_heads * head_size, dim)
-    public final FloatBuffer[] rms_ffn_weight; // (layer, dim)
+    public final FloatTensor[] attnKNorm; // qwen3
+    public final FloatTensor[] attnQNorm; // qwen3
+    public final FloatTensor[] rms_ffn_weight; // (layer, dim)
 
     // weights for ffn
     public final FloatTensor[] w1; // (layer, hidden_dim, dim)
@@ -37,10 +39,10 @@ public class Weights {
     public final FloatTensor wcls; // (vocab_size, dim)
     public final HalfFloatArray wclsHalfFloat;
     // public final rmsnorm
-    public final FloatBuffer rms_final_weight; // (dim,)
+    public final FloatTensor rms_final_weight; // (dim,)
     // freq_cis for RoPE relatively positional embeddings
-    public final FloatBuffer freq_cis_real; // (seq_len, head_size/2)
-    public final FloatBuffer freq_cis_imag; // (seq_len, head_size/2)
+    public final FloatTensor freq_cis_real; // (seq_len, head_size/2)
+    public final FloatTensor freq_cis_imag; // (seq_len, head_size/2)
     //    // Layered Data structures
     public FloatArray[] rms_att_weightLayered; // (layer, dim) rmsnorm weights
     public HalfFloatArray[] wqLayered; // (layer, n_heads * head_size)
@@ -94,8 +96,24 @@ public class Weights {
     /**
      * Constructor for standard (non-TornadoVM) mode
      */
-    public Weights(FloatTensor token_embedding_table, FloatBuffer[] rms_att_weight, FloatTensor[] wq, FloatTensor[] wk, FloatTensor[] wv, FloatTensor[] wo, FloatBuffer[] rms_ffn_weight,
-            FloatTensor[] w1, FloatTensor[] w2, FloatTensor[] w3, FloatBuffer rms_final_weight, FloatBuffer freq_cis_real, FloatBuffer freq_cis_imag, FloatTensor wcls, GGMLType weightType) {
+    public Weights(
+            FloatTensor token_embedding_table,
+            FloatTensor[] rms_att_weight,
+            FloatTensor[] wq,
+            FloatTensor[] wk,
+            FloatTensor[] wv,
+            FloatTensor[] wo,
+            FloatTensor[] attnKNorm,
+            FloatTensor[] attnQNorm,
+            FloatTensor[] rms_ffn_weight,
+            FloatTensor[] w1,
+            FloatTensor[] w2,
+            FloatTensor[] w3,
+            FloatTensor rms_final_weight,
+            FloatTensor freq_cis_real,
+            FloatTensor freq_cis_imag,
+            FloatTensor wcls,
+            GGMLType weightType) {
         // Standard format
         this.token_embedding_table = token_embedding_table;
         this.rms_att_weight = rms_att_weight;
@@ -103,6 +121,10 @@ public class Weights {
         this.wk = wk;
         this.wv = wv;
         this.wo = wo;
+
+        this.attnKNorm = attnKNorm;
+        this.attnQNorm = attnQNorm;
+
         this.rms_ffn_weight = rms_ffn_weight;
         this.w1 = w1;
         this.w2 = w2;
@@ -168,6 +190,10 @@ public class Weights {
         this.freq_cis_imagFlat = freq_cis_imagFlat;
         this.wclsHalfFloat = wclsByteArray;
         this.weightType = weightType;
+
+        // unused (only for qwen3), make compiler happy
+        this.attnKNorm = null;
+        this.attnQNorm = null;
     }
 
 }

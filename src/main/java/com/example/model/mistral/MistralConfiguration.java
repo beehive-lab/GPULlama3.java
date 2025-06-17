@@ -13,6 +13,16 @@ public record MistralConfiguration(int dim, int hiddenDim, int numberOfLayers, i
         return numberOfHeads / numberOfKeyValueHeads;
     }
 
+    @Override
+    public int numberOfHeadsKey() {
+        throw new UnsupportedOperationException("Not supported for Mistral.");
+    }
+
+    @Override
+    public int contextLengthModel() {
+        throw new UnsupportedOperationException("Not supported for Mistral.");
+    }
+
     public int headSize() {
         return dim / numberOfHeads;
     }

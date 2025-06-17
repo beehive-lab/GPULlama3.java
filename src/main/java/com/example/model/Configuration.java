@@ -17,11 +17,16 @@ public interface Configuration {
     /** Number of key/value heads (can be fewer than query heads in multi-query attention) */
     int numberOfKeyValueHeads();
 
+    int numberOfHeadsKey();
+
     /** Size of the vocabulary (token set) */
     int vocabularySize();
 
     /** Maximum sequence length the model can process */
     int contextLength();
+
+    /** Max sequence length in model */
+    int contextLengthModel();
 
     /** Epsilon value for RMSNorm layers (stabilizes normalization) */
     float rmsNormEps();

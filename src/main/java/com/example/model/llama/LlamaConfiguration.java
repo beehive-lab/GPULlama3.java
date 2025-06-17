@@ -5,6 +5,16 @@ import com.example.model.Configuration;
 public record LlamaConfiguration(int dim, int hiddenDim, int numberOfLayers, int numberOfHeads, int numberOfKeyValueHeads, int vocabularySize, int contextLength, float rmsNormEps, float ropeTheta)
         implements Configuration {
 
+    @Override
+    public int numberOfHeadsKey() {
+        throw new UnsupportedOperationException("Not supported for Llama.");
+    }
+
+    @Override
+    public int contextLengthModel() {
+        throw new UnsupportedOperationException("Not supported for Llama.");
+    }
+
     public int headSize() {
         return dim / numberOfHeads;
     }
