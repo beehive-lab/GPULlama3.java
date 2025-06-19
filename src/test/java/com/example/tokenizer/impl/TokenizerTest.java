@@ -1,85 +1,56 @@
 package com.example.tokenizer.impl;
 
-import com.example.core.types.Pair;
-import com.example.tokenizer.vocabulary.Vocabulary;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class TokenizerTest {
+class TokenizerInterfaceTest {
 
-    private Tokenizer tokenizer;
+    @Test
+    void testReplaceControlCharactersWithCodePoints() {
+        int[] input = {'H', 'e', '\n', 0x07, 'l', 'o'}; // 0x07 = BEL (control character)
+        String result = Tokenizer.replaceControlCharacters(input);
 
-    @BeforeEach
-    void setup() {
-        String[] tokens = {"H", "e", "l", "o", " ", "He", "lo"};
-        float[] scores = new float[tokens.length];
-
-        // Create token to index mapping
-        Vocabulary vocab = new Vocabulary(tokens, scores);
-
-        List<Pair<Integer, Integer>> merges = List.of(
-                new Pair<>(0, 1), // H + e → He
-                new Pair<>(2, 3)  // l + o → lo
-        );
-
-        String regex = "[A-Za-z ]+";
-
-        Map<String, Integer> specialTokens = Map.of("<PAD>", 100, "<EOS>", 101);
-
-        tokenizer = new Tokenizer(vocab, merges, regex, specialTokens);
+        assertEquals("He\n\\u0007lo", result); // \n allowed, BEL escaped
     }
 
     @Test
-    void testEncodeOrdinary() {
-        List<Integer> result = tokenizer.encodeOrdinary("Hello");
-        assertNotNull(result);
-        assertIterableEquals(List.of(5, 2, 6), result);
+    void testReplaceControlCharactersWithString() {
+        String input = "He\n\u0007lo"; // \u0007 is a bell character (non-printable control char)
+        String result = Tokenizer.replaceControlCharacters(input);
+
+        assertEquals("He\n\\u0007lo", result);
     }
 
     @Test
-    void testEncodeWithManualSplit() {
-        List<Integer> result = new ArrayList<>();
-        result.addAll(tokenizer.encodeOrdinary("Hello"));
-        result.add(tokenizer.getSpecialTokens().get("<EOS>"));
-        assertTrue(result.contains(101));
+    void testReplaceControlCharactersWithOnlyPrintableChars() {
+        String input = "Hello, World!";
+        String result = Tokenizer.replaceControlCharacters(input);
+
+        assertEquals(input, result);
     }
 
     @Test
-    void testRegexPattern() {
-        assertEquals("[A-Za-z ]+", tokenizer.regexPattern());
+    void testReplaceControlCharactersWithMultipleControlChars() {
+        String input = "\u0001\u0002A\nB\u0003"; // \u0001, \u0002, \u0003 are control chars
+        String result = Tokenizer.replaceControlCharacters(input);
+
+        assertEquals("\\u0001\\u0002A\nB\\u0003", result);
     }
 
     @Test
-    void testDecode() {
-        String input = "He lo";
-        List<Integer> ids = tokenizer.encodeOrdinary(input);
-        String decoded = tokenizer.decodeImpl(ids);
-        assertEquals("He lo", decoded);
+    void testReplaceControlCharactersEmptyInput() {
+        String input = "";
+        String result = Tokenizer.replaceControlCharacters(input);
+
+        assertEquals("", result);
     }
 
     @Test
-    void testSpecialTokenCheck() {
-        assertTrue(tokenizer.isSpecialToken(100));
-        assertFalse(tokenizer.isSpecialToken(999));
-    }
-
-    //Edge cases
-    @Test
-    void testEncodeOrdinaryWithEmptyString() {
-        List<Integer> result = tokenizer.encodeOrdinary("");
-        assertNotNull(result, "Result should not be null for empty input");
-        assertTrue(result.isEmpty(), "Result should be empty for empty input");
-    }
-
-    @Test
-    void testEncodeOrdinaryWithNull() {
-        assertThrows(NullPointerException.class, () -> tokenizer.encodeOrdinary(null));
+    void testReplaceControlCharactersNullSafe() {
+        // Add this test if you plan to make it null-safe.
+        assertThrows(NullPointerException.class, () -> {
+            Tokenizer.replaceControlCharacters((String) null);
+        });
     }
 }

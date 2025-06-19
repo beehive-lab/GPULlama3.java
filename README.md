@@ -464,6 +464,34 @@ Click [here](https://github.com/beehive-lab/GPULlama3.java/tree/main/docs/TORNAD
 
 Click [here](https://github.com/beehive-lab/GPULlama3.java/tree/main/docs/GPULlama3_ROADMAP.md) to see the roadmap of the project.
 
+
+## Run All Tests
+
+You can run all unit tests using the following Maven command:
+
+```bash
+  mvn test
+
+Sample Output
+-------------------------------------------------------
+ T E S T S
+-------------------------------------------------------
+Running com.example.tokenizer.impl.MistralTokenizerTest
+Running com.example.tokenizer.impl.TokenizerInterfaceTest
+
+Tests run: 12, Failures: 0, Errors: 0, Skipped: 0
+
+To run tests inside an IDE (e.g., IntelliJ), right-click on the test classes and choose Run.
+
+## Test Coverage
+Here are the tokenizer unit tests included:
+
+| **Test Class**           | **Description**                                                                                                                             |
+|--------------------------|---------------------------------------------------------------------------------------------------------------------------------------------|
+| `MistralTokenizerTest`   | Verifies Mistral tokenizer functionality including byte fallback (`<0xXX>`), special token handling, encoding and decoding logic           |
+| `TokenizerInterfaceTest` | Unit tests for utility methods like `replaceControlCharacters`, ensuring printable and safe token rendering                                |
+
+```
 -----------
 
 ## Acknowledgments
