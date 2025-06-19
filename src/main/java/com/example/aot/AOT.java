@@ -3,8 +3,9 @@ package com.example.aot;
 import com.example.auxiliary.Timer;
 import com.example.core.model.GGUF;
 import com.example.core.model.tensor.GGMLTensorEntry;
-import com.example.inference.engine.impl.Llama;
-import com.example.inference.engine.impl.Options;
+import com.example.model.Model;
+import com.example.Options;
+import com.example.model.llama.Llama;
 import com.example.loader.weights.ModelLoader;
 import com.example.loader.weights.Weights;
 
@@ -45,7 +46,7 @@ public final class AOT {
             try (FileChannel fileChannel = FileChannel.open(path, StandardOpenOption.READ)) {
                 return new PartialModel(
                         path.getFileName().toString(),
-                        ModelLoader.loadModel(fileChannel, gguf, Options.DEFAULT_MAX_TOKENS, false),
+                        Llama.loadModel(fileChannel, gguf, Options.DEFAULT_MAX_TOKENS, false), // TODO: needs proper handling for AOT
                         gguf.getTensorDataOffset(),
                         gguf.getTensorInfos()
                 );
@@ -60,7 +61,7 @@ public final class AOT {
      * The file name (base name) must match with the preloaded file name.
      * No checksum/hash is checked for performance reasons.
      */
-    public static com.example.inference.engine.impl.Llama tryUsePreLoaded(Path modelPath, int contextLength) throws IOException {
+    public static Model tryUsePreLoaded(Path modelPath, int contextLength) throws IOException {
         AOT.PartialModel preLoaded = AOT.PRELOADED_GGUF;
         if (preLoaded == null) {
             return null; // no pre-loaded model stored

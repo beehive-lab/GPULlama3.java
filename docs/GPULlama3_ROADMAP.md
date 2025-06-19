@@ -6,7 +6,7 @@
   - [ ] Q4
   - [ ] INT8 native support for GPUs
 - [ ] **Additional architectures and model format**
-  - [ ] Mistral/Mixtral models
+  - [x] Mistral/Mixtral models
   - [ ] Qwen
   - [ ] Gemma/Gemma2 models
   - [ ] TinyLlamas

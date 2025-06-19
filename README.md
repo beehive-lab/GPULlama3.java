@@ -3,6 +3,8 @@
 ![TornadoVM](https://img.shields.io/badge/TornadoVM-enabled-green?style=for-the-badge&logo=apache)
 ![OpenCL](https://img.shields.io/badge/OpenCL-supported-blue?style=for-the-badge&logo=khronos)
 ![CUDA](https://img.shields.io/badge/CUDA/PTX-supported-76B900?style=for-the-badge&logo=nvidia)
+[![Docker OpenCL](https://img.shields.io/badge/Docker-OpenCL-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://hub.docker.com/r/beehivelab/gpullama3.java-nvidia-openjdk-opencl)
+[![Docker PTX](https://img.shields.io/badge/Docker-PTX-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://hub.docker.com/r/beehivelab/gpullama3.java-nvidia-openjdk-ptx)
 [![GPULlama3.java DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/beehive-lab/GPULlama3.java)
 
 -----------
@@ -164,10 +166,13 @@ Check models below.
 
 ## Download Model Files
 
-Download `FP16` quantized .gguf files from:
+Download `FP16` quantized `Llama-3` .gguf files from:
 - https://huggingface.co/beehive-lab/Llama-3.2-1B-Instruct-GGUF-FP16
 - https://huggingface.co/beehive-lab/Llama-3.2-3B-Instruct-GGUF-FP16
 - https://huggingface.co/beehive-lab/Llama-3.2-8B-Instruct-GGUF-FP16
+
+Download `FP16` quantized `Mistral` .gguf files from:
+- https://huggingface.co/collections/beehive-lab/mistral-gpullama3java-684afabb206136d2e9cd47e0
 
 Please be gentle with [huggingface.co](https://huggingface.co) servers:
 
@@ -181,6 +186,9 @@ wget https://huggingface.co/beehive-lab/Llama-3.2-3B-Instruct-GGUF-FP16/resolve/
 
 # Llama 3 (8B) - FP16 
 wget https://huggingface.co/beehive-lab/Llama-3.2-8B-Instruct-GGUF-FP16/resolve/main/beehive-llama-3.2-8b-instruct-fp16.gguf
+
+# Mistral (7B) - FP16
+wget https://huggingface.co/MaziyarPanahi/Mistral-7B-Instruct-v0.3-GGUF/resolve/main/Mistral-7B-Instruct-v0.3.fp16.gguf
 ```
 
 **[Experimental]** you can download the Q8 and Q4 used in the original implementation of Llama3.java, but for now are going to be dequanted to FP16 for TornadoVM support:
@@ -201,7 +209,7 @@ curl -L -O https://huggingface.co/mukel/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/
 
 ## Running `llama-tornado`
 
-To execute Llama3 models with TornadoVM on GPUs use the `llama-tornado` script with the `--gpu` flag.
+To execute Llama3, or Mistral models with TornadoVM on GPUs use the `llama-tornado` script with the `--gpu` flag.
 
 ### Usage Examples
 
@@ -218,6 +226,32 @@ Enable GPU acceleration with Q8_0 quantization:
 ./llama-tornado --gpu  --verbose-init --model beehive-llama-3.2-1b-instruct-fp16.gguf --prompt "tell me a joke"
 ```
 
+-----------
+
+## 🐳 Docker
+
+You can run `GPULlama3.java` fully containerized with GPU acceleration enabled via **OpenCL** or **PTX** using pre-built Docker images.
+More information as well as examples to run with the containers are available at [docker-gpullama3.java](https://github.com/beehive-lab/docker-gpullama3.java).
+
+### 📦 Available Docker Images
+
+| Backend | Docker Image | Pull Command |
+|--------|---------------|---------------|
+| **OpenCL** | [`beehivelab/gpullama3.java-nvidia-openjdk-opencl`](https://hub.docker.com/r/beehivelab/gpullama3.java-nvidia-openjdk-opencl) | `docker pull beehivelab/gpullama3.java-nvidia-openjdk-opencl` |
+| **PTX (CUDA)** | [`beehivelab/gpullama3.java-nvidia-openjdk-ptx`](https://hub.docker.com/r/beehivelab/gpullama3.java-nvidia-openjdk-ptx) | `docker pull beehivelab/gpullama3.java-nvidia-openjdk-ptx` |
+
+#### Example (OpenCL)
+
+```bash
+docker run --rm -it --gpus all \
+  -v "$PWD":/data \
+  beehivelab/gpullama3.java-nvidia-openjdk-opencl \
+  /gpullama3/GPULlama3.java/llama-tornado \
+  --gpu --verbose-init \
+  --opencl \
+  --model /data/Llama-3.2-1B-Instruct.FP16.gguf \
+  --prompt "Tell me a joke"
+```
 -----------
 
 ## Troubleshooting GPU Memory Issues
@@ -246,11 +280,11 @@ First, check your GPU specifications. If your GPU has high memory capacity, you 
 
 ### GPU Memory Requirements by Model Size
 
-| Model Size | Recommended GPU Memory |
-|------------|------------------------|
-| 1B models  | 7GB (default)          |
-| 3B models  | 15GB                   |
-| 8B models  | 20GB+                  |
+| Model Size  | Recommended GPU Memory |
+|-------------|------------------------|
+| 1B models   | 7GB (default)          |
+| 3-7B models | 15GB                   |
+| 8B models   | 20GB+                  |
 
 **Note**: If you still encounter memory issues, try:
 
@@ -288,6 +322,7 @@ LLaMA Configuration:
                         Maximum number of tokens to generate (default: 512)
   --stream STREAM       Enable streaming output (default: True)
   --echo ECHO           Echo the input prompt (default: False)
+  --suffix SUFFIX       Suffix for fill-in-the-middle request (Codestral) (default: None)
 
 Mode Selection:
   -i, --interactive     Run in interactive/chat mode (default: False)

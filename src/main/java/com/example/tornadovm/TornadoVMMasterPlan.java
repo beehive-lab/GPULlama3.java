@@ -1,9 +1,9 @@
 package com.example.tornadovm;
 
 import com.example.auxiliary.Tuple2;
-import com.example.inference.engine.impl.Configuration;
-import com.example.inference.engine.impl.Llama;
 import com.example.loader.weights.State;
+import com.example.model.Configuration;
+import com.example.model.Model;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TornadoExecutionPlan;
@@ -22,9 +22,11 @@ public class TornadoVMMasterPlan {
     public TornadoExecutionPlan executionPlan;
     List<ImmutableTaskGraph> taskGraphs;
 
-    public TornadoVMMasterPlan(State state, Llama model, boolean isNvidia) {
+    public TornadoVMMasterPlan(State state, Model model, boolean isNvidia) {
         TornadoVMLayerPlanner tornadoVMLayerPlanner = new TornadoVMLayerPlanner(state, model);
-        Tuple2<List<ImmutableTaskGraph>, GridScheduler> tornadoVMPlan = isNvidia ? tornadoVMLayerPlanner.setupTornadoForwardPlanLayered() : tornadoVMLayerPlanner.setupTornadoForwardPlanLayeredNonNvidia();
+        Tuple2<List<ImmutableTaskGraph>, GridScheduler> tornadoVMPlan = isNvidia
+                ? tornadoVMLayerPlanner.setupTornadoForwardPlanLayered()
+                : tornadoVMLayerPlanner.setupTornadoForwardPlanLayeredNonNvidia();
         this.taskGraphs = tornadoVMPlan.getFirst();
         this.scheduler = tornadoVMPlan.getSecond();
         this.state = state;
@@ -43,7 +45,7 @@ public class TornadoVMMasterPlan {
      * @param model The Llama model instance
      * @return The initialized TornadoVMMasterPlan ready for inference
      */
-    public static TornadoVMMasterPlan initializeTornadoVMPlan(State state, Llama model) {
+    public static TornadoVMMasterPlan initializeTornadoVMPlan(State state, Model model) {
         // Initialize timing variables outside conditional blocks to avoid scope issues
         long startTime = System.nanoTime();
         long planCreationTime = 0;
@@ -117,7 +119,7 @@ public class TornadoVMMasterPlan {
 
         // 2. Execute each transformer layer graph sequentially
         // Each graph computes attention and feed-forward transformations for one layer
-        for (int layer = 0; layer < config.numberOfLayers; layer++) {
+        for (int layer = 0; layer < config.numberOfLayers(); layer++) {
             executionPlan.withGraph(getLayerGraphIndex(layer))
                     .withGridScheduler(scheduler)
                     .execute();
@@ -166,12 +168,12 @@ public class TornadoVMMasterPlan {
         executionPlan.withGraph(0).withGridScheduler(scheduler).execute();
 
         // Execute layer processing graphs
-        for (int layer = 0; layer < config.numberOfLayers; layer++) {
+        for (int layer = 0; layer < config.numberOfLayers(); layer++) {
             executionPlan.withGraph(layer + 1).withGridScheduler(scheduler).execute();
         }
 
         // Execute logits graph
-        executionPlan.withGraph(config.numberOfLayers + 1).withGridScheduler(scheduler).execute();
+        executionPlan.withGraph(config.numberOfLayers() + 1).withGridScheduler(scheduler).execute();
     }
 
     /**

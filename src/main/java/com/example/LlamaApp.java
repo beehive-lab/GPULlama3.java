@@ -1,25 +1,16 @@
 package com.example;
 
 import com.example.aot.AOT;
-import com.example.auxiliary.ChatFormat;
 import com.example.core.model.tensor.FloatTensor;
-import com.example.inference.CategoricalSampler;
-import com.example.inference.Sampler;
-import com.example.inference.ToppSampler;
-import com.example.inference.engine.impl.Llama;
-import com.example.inference.engine.impl.Options;
+import com.example.inference.sampler.CategoricalSampler;
+import com.example.inference.sampler.Sampler;
+import com.example.inference.sampler.ToppSampler;
 import com.example.loader.weights.ModelLoader;
-import com.example.loader.weights.State;
+import com.example.model.Model;
 import com.example.tornadovm.FloatArrayUtils;
-import com.example.tornadovm.TornadoVMMasterPlan;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Scanner;
-import java.util.Set;
-import java.util.function.IntConsumer;
 import java.util.random.RandomGenerator;
 import java.util.random.RandomGeneratorFactory;
 
@@ -115,156 +106,52 @@ public class LlamaApp {
         return sampler;
     }
 
-    static void runInteractive(Llama model, Sampler sampler, Options options) {
-        State state = null;
-        List<Integer> conversationTokens = new ArrayList<>();
-        ChatFormat chatFormat = new ChatFormat(model.tokenizer());
-        conversationTokens.add(chatFormat.beginOfText);
-        if (options.systemPrompt() != null) {
-            conversationTokens.addAll(chatFormat.encodeMessage(new ChatFormat.Message(ChatFormat.Role.SYSTEM, options.systemPrompt())));
-        }
-        int startPosition = 0;
-        Scanner in = new Scanner(System.in);
-
-        // Initialize TornadoVM plan once at the beginning if GPU path is enabled
-        TornadoVMMasterPlan tornadoVMPlan = null;
-
-        try {
-            while (true) {
-                System.out.print("> ");
-                System.out.flush();
-                String userText = in.nextLine();
-                if (List.of("quit", "exit").contains(userText)) {
-                    break;
-                }
-                if (state == null) {
-                    state = model.createNewState();
-                }
-
-                if (USE_TORNADOVM && tornadoVMPlan == null) {
-                    tornadoVMPlan = TornadoVMMasterPlan.initializeTornadoVMPlan(state, model);
-                }
-
-                conversationTokens.addAll(chatFormat.encodeMessage(new ChatFormat.Message(ChatFormat.Role.USER, userText)));
-                conversationTokens.addAll(chatFormat.encodeHeader(new ChatFormat.Message(ChatFormat.Role.ASSISTANT, "")));
-                Set<Integer> stopTokens = chatFormat.getStopTokens();
-
-                List<Integer> responseTokens;
-                IntConsumer tokenConsumer = token -> {
-                    if (options.stream()) {
-                        if (!model.tokenizer().isSpecialToken(token)) {
-                            System.out.print(model.tokenizer().decode(List.of(token)));
-                        }
-                    }
-                };
-
-                // Choose between GPU and CPU path based on configuration
-                if (USE_TORNADOVM) {
-                    // GPU path using TornadoVM
-                    responseTokens = Llama.generateTokensGPU(model, state, startPosition, conversationTokens.subList(startPosition, conversationTokens.size()), stopTokens, options.maxTokens(),
-                            sampler, options.echo(), options.stream() ? tokenConsumer : null, tornadoVMPlan);
-                } else {
-                    // CPU path
-                    responseTokens = Llama.generateTokens(model, state, startPosition, conversationTokens.subList(startPosition, conversationTokens.size()), stopTokens, options.maxTokens(), sampler,
-                            options.echo(), tokenConsumer);
-                }
-
-                // Include stop token in the prompt history, but not in the response displayed to the user.
-                conversationTokens.addAll(responseTokens);
-                startPosition = conversationTokens.size();
-                Integer stopToken = null;
-                if (!responseTokens.isEmpty() && stopTokens.contains(responseTokens.getLast())) {
-                    stopToken = responseTokens.getLast();
-                    responseTokens.removeLast();
-                }
-                if (!options.stream()) {
-                    String responseText = model.tokenizer().decode(responseTokens);
-                    System.out.println(responseText);
-                }
-                if (stopToken == null) {
-                    System.err.println("\n Ran out of context length...\n Increase context length with by passing to llama-tornado --max-tokens XXX");
-                    break;
-                }
-                System.out.print("\n");
-
-                // Optionally print performance metrics after each response
-                if (SHOW_PERF_INTERACTIVE) {
-                    Llama.LastRunMetrics.printMetrics();
-                }
+    /**
+     * Loads the language model based on the given options.
+     * <p>
+     * If Ahead-of-Time (AOT) mode is enabled, attempts to use a pre-loaded compiled model.
+     * Otherwise, loads the model from the specified path using the model loader.
+     * </p>
+     *
+     * @param options the parsed CLI options containing model path and max token limit
+     * @return the loaded {@link Model} instance
+     * @throws IOException if the model fails to load
+     * @throws IllegalStateException if AOT loading is enabled but the preloaded model is unavailable
+     */
+    private static Model loadModel(Options options) throws IOException {
+        if (USE_AOT) {
+            Model model = AOT.tryUsePreLoaded(options.modelPath(), options.maxTokens());
+            if (model == null) {
+                throw new IllegalStateException("Failed to load precompiled AOT model.");
             }
-        } finally {
-            // Clean up TornadoVM resources when exiting the chat loop
-            if (USE_TORNADOVM && tornadoVMPlan != null) {
-                try {
-                    tornadoVMPlan.freeTornadoExecutionPlan();
-                } catch (Exception e) {
-                    System.err.println("Error while cleaning up TornadoVM resources: " + e.getMessage());
-                }
-            }
+            return model;
         }
+        return ModelLoader.loadModel(options.modelPath(), options.maxTokens(), true);
     }
 
-    static void runInstructOnce(Llama model, Sampler sampler, Options options) {
-        State state = model.createNewState();
-        ChatFormat chatFormat = new ChatFormat(model.tokenizer());
-        TornadoVMMasterPlan tornadoVMPlan = null;
-
-        List<Integer> promptTokens = new ArrayList<>();
-        promptTokens.add(chatFormat.beginOfText);
-        if (options.systemPrompt() != null) {
-            promptTokens.addAll(chatFormat.encodeMessage(new ChatFormat.Message(ChatFormat.Role.SYSTEM, options.systemPrompt())));
-        }
-        promptTokens.addAll(chatFormat.encodeMessage(new ChatFormat.Message(ChatFormat.Role.USER, options.prompt())));
-        promptTokens.addAll(chatFormat.encodeHeader(new ChatFormat.Message(ChatFormat.Role.ASSISTANT, "")));
-        List<Integer> responseTokens;
-
-        // Define the token consumer
-        IntConsumer tokenConsumer = token -> {
-            if (options.stream()) {
-                if (!model.tokenizer().isSpecialToken(token)) {
-                    System.out.print(model.tokenizer().decode(List.of(token)));
-                }
-            }
-        };
-
-        Set<Integer> stopTokens = chatFormat.getStopTokens();
-        if (USE_TORNADOVM) {
-            tornadoVMPlan = TornadoVMMasterPlan.initializeTornadoVMPlan(state, model);
-            // Call generateTokensGPU without the token consumer parameter
-            responseTokens = Llama.generateTokensGPU(model, state, 0, promptTokens, stopTokens, options.maxTokens(), sampler, options.echo(), options.stream() ? tokenConsumer : null, tornadoVMPlan);
-        } else {
-            // CPU path still uses the token consumer
-            responseTokens = Llama.generateTokens(model, state, 0, promptTokens, stopTokens, options.maxTokens(), sampler, options.echo(), tokenConsumer);
-        }
-
-        if (!responseTokens.isEmpty() && stopTokens.contains(responseTokens.getLast())) {
-            responseTokens.removeLast();
-        }
-        if (!options.stream()) {
-            String responseText = model.tokenizer().decode(responseTokens);
-            System.out.println(responseText);
-        }
-
-        Llama.LastRunMetrics.printMetrics();
-
-        if (tornadoVMPlan != null) {
-            tornadoVMPlan.freeTornadoExecutionPlan();
-        }
+    private static Sampler createSampler(Model model, Options options) {
+        return selectSampler(model.configuration().vocabularySize(), options.temperature(), options.topp(), options.seed());
     }
 
+    /**
+     * Entry point for running the LLaMA-based model with provided command-line arguments.
+     *
+     * <p>Initializes model options, loads the appropriate model (either AOT or on-demand),
+     * configures the sampler, and runs either in interactive or single-instruction mode
+     * based on the input options.</p>
+     *
+     * @param args command-line arguments used to configure model path, temperature, seed, etc.
+     * @throws IOException if model loading or file operations fail.
+     */
     public static void main(String[] args) throws IOException {
         Options options = Options.parseOptions(args);
-        Llama model;
-        if (USE_AOT) {
-            model = AOT.tryUsePreLoaded(options.modelPath(), options.maxTokens());
-        } else {
-            model = ModelLoader.loadModel(options.modelPath(), options.maxTokens(), true);
-        }
-        Sampler sampler = selectSampler(model.configuration().vocabularySize, options.temperature(), options.topp(), options.seed());
+        Model model = loadModel(options);
+        Sampler sampler = createSampler(model, options);
+
         if (options.interactive()) {
-            runInteractive(model, sampler, options);
+            model.runInteractive(sampler, options);
         } else {
-            runInstructOnce(model, sampler, options);
+            model.runInstructOnce(sampler, options);
         }
     }
 }

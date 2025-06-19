@@ -1,17 +1,17 @@
-package com.example.inference.engine.impl;
+package com.example;
 
 import java.io.PrintStream;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
-public record Options(Path modelPath, String prompt, String systemPrompt, boolean interactive,
+public record Options(Path modelPath, String prompt, String systemPrompt, String suffix, boolean interactive,
                       float temperature, float topp, long seed, int maxTokens, boolean stream, boolean echo) {
 
     public static final int DEFAULT_MAX_TOKENS = 1024;
 
     public Options {
         require(modelPath != null, "Missing argument: --model <path> is required");
-        require(interactive || prompt != null, "Missing argument: --prompt is required in --instruct mode e.g. --prompt \"Why is the sky blue?\"" );
+        require(interactive || prompt != null, "Missing argument: --prompt is required in --instruct mode e.g. --prompt \"Why is the sky blue?\"");
         require(0 <= temperature, "Invalid argument: --temperature must be non-negative");
         require(0 <= topp && topp <= 1, "Invalid argument: --top-p must be within [0, 1]");
     }
@@ -33,7 +33,8 @@ public record Options(Path modelPath, String prompt, String systemPrompt, boolea
         out.println("  --interactive, --chat, -i     run in chat mode");
         out.println("  --instruct                    run in instruct (once) mode, default mode");
         out.println("  --prompt, -p <string>         input prompt");
-        out.println("  --system-prompt, -sp <string> (optional) system prompt");
+        out.println("  --system-prompt, -sp <string> (optional) system prompt (Llama models)");
+        out.println("  --suffix <string>             suffix for fill-in-the-middle request (Codestral)");
         out.println("  --temperature, -temp <float>  temperature in [0,inf], default 0.1");
         out.println("  --top-p <float>               p value in top-p (nucleus) sampling in [0,1] default 0.95");
         out.println("  --seed <long>                 random seed, default System.nanoTime()");
@@ -46,6 +47,7 @@ public record Options(Path modelPath, String prompt, String systemPrompt, boolea
     public static Options parseOptions(String[] args) {
         String prompt = "Tell me a story with Java"; // Hardcoded for testing
         String systemPrompt = null;
+        String suffix = null;
         float temperature = 0.1f;
         float topp = 0.95f;
         Path modelPath = null;
@@ -80,6 +82,7 @@ public record Options(Path modelPath, String prompt, String systemPrompt, boolea
                     switch (optionName) {
                         case "--prompt", "-p" -> prompt = nextArg;
                         case "--system-prompt", "-sp" -> systemPrompt = nextArg;
+                        case "--suffix" -> suffix = nextArg;
                         case "--temperature", "--temp" -> temperature = Float.parseFloat(nextArg);
                         case "--top-p" -> topp = Float.parseFloat(nextArg);
                         case "--model", "-m" -> modelPath = Paths.get(nextArg);
@@ -92,6 +95,6 @@ public record Options(Path modelPath, String prompt, String systemPrompt, boolea
                 }
             }
         }
-        return new Options(modelPath, prompt, systemPrompt, interactive, temperature, topp, seed, maxTokens, stream, echo);
+        return new Options(modelPath, prompt, systemPrompt, suffix, interactive, temperature, topp, seed, maxTokens, stream, echo);
     }
 }

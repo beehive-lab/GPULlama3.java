@@ -2,7 +2,7 @@ package com.example.loader.weights;
 
 import com.example.core.model.tensor.ArrayFloatTensor;
 import com.example.core.model.tensor.FloatTensor;
-import com.example.inference.engine.impl.Configuration;
+import com.example.model.Configuration;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
 
@@ -58,46 +58,46 @@ public final class State {
     public State(Configuration config, int batchsize) {
         this.batchsize = -1;
 
-        this.x = ArrayFloatTensor.allocate(config.dim);
-        this.xb = ArrayFloatTensor.allocate(config.dim);
-        this.xb2 = ArrayFloatTensor.allocate(config.dim); 
-        this.hb = ArrayFloatTensor.allocate(config.hiddenDim);
-        this.hb2 = ArrayFloatTensor.allocate(config.hiddenDim);
-        this.q = ArrayFloatTensor.allocate(config.dim);
-        this.k = ArrayFloatTensor.allocate(config.dim);
-        this.v = ArrayFloatTensor.allocate(config.dim);
-        this.att = ArrayFloatTensor.allocate(config.numberOfHeads, config.contextLength);
-        this.logits = ArrayFloatTensor.allocate(config.vocabularySize);
-        int kvDim = (config.dim * config.numberOfKeyValueHeads) / config.numberOfHeads;
-        this.keyCache = Stream.generate(() -> ArrayFloatTensor.allocate(config.contextLength, kvDim)).limit(config.numberOfLayers).toArray(FloatTensor[]::new);
-        this.valueCache = Stream.generate(() -> ArrayFloatTensor.allocate(config.contextLength, kvDim)).limit(config.numberOfLayers).toArray(FloatTensor[]::new);
+        this.x = ArrayFloatTensor.allocate(config.dim());
+        this.xb = ArrayFloatTensor.allocate(config.dim());
+        this.xb2 = ArrayFloatTensor.allocate(config.dim());
+        this.hb = ArrayFloatTensor.allocate(config.hiddenDim());
+        this.hb2 = ArrayFloatTensor.allocate(config.hiddenDim());
+        this.q = ArrayFloatTensor.allocate(config.dim());
+        this.k = ArrayFloatTensor.allocate(config.dim());
+        this.v = ArrayFloatTensor.allocate(config.dim());
+        this.att = ArrayFloatTensor.allocate(config.numberOfHeads(), config.contextLength());
+        this.logits = ArrayFloatTensor.allocate(config.vocabularySize());
+        int kvDim = (config.dim() * config.numberOfKeyValueHeads()) / config.numberOfHeads();
+        this.keyCache = Stream.generate(() -> ArrayFloatTensor.allocate(config.contextLength(), kvDim)).limit(config.numberOfLayers()).toArray(FloatTensor[]::new);
+        this.valueCache = Stream.generate(() -> ArrayFloatTensor.allocate(config.contextLength(), kvDim)).limit(config.numberOfLayers()).toArray(FloatTensor[]::new);
 
-        this.wrapX = new FloatArray(config.dim);
-        this.wrapXb = new FloatArray(config.dim);
-        this.wrapXb2 = new FloatArray(config.dim);
-        this.wrapHb = new FloatArray(config.hiddenDim);
-        this.wrapHb2 = new FloatArray(config.hiddenDim);
+        this.wrapX = new FloatArray(config.dim());
+        this.wrapXb = new FloatArray(config.dim());
+        this.wrapXb2 = new FloatArray(config.dim());
+        this.wrapHb = new FloatArray(config.hiddenDim());
+        this.wrapHb2 = new FloatArray(config.hiddenDim());
 
-        this.wrapLogits = new FloatArray(config.vocabularySize);
-        this.wrapQ = new FloatArray(config.dim);
-        this.wrapK = new FloatArray(config.dim);
-        this.wrapV = new FloatArray(config.dim);
+        this.wrapLogits = new FloatArray(config.vocabularySize());
+        this.wrapQ = new FloatArray(config.dim());
+        this.wrapK = new FloatArray(config.dim());
+        this.wrapV = new FloatArray(config.dim());
 
         // dim vs kvdim
-        this.wrapKeyCache = new FloatArray(config.contextLength * kvDim * config.numberOfLayers);
-        this.wrapValueCache = new FloatArray(config.contextLength * kvDim * config.numberOfLayers);
+        this.wrapKeyCache = new FloatArray(config.contextLength() * kvDim * config.numberOfLayers());
+        this.wrapValueCache = new FloatArray(config.contextLength() * kvDim * config.numberOfLayers());
         this.wrapValueCache.init(0.f);
         this.wrapKeyCache.init(0.f);
-        this.wrapAtt = new FloatArray(config.numberOfHeads * config.contextLength);
+        this.wrapAtt = new FloatArray(config.numberOfHeads() * config.contextLength());
         this.positionHolder = new IntArray(1);
         this.latestToken = -1;
 
         //
         this.localSize = 256;
         // You need at least 9 elements: 1 for the final result + 8 for the workgroup partial sums
-        this.temp = new FloatArray(1 + ((config.dim + localSize-1) / localSize));
-        this.tempFFN = new FloatArray(1 + ((config.dim + localSize-1) / localSize));
-        this.tempLogits = new FloatArray(1 + ((config.dim + localSize-1) / localSize));
+        this.temp = new FloatArray(1 + ((config.dim() + localSize-1) / localSize));
+        this.tempFFN = new FloatArray(1 + ((config.dim() + localSize-1) / localSize));
+        this.tempLogits = new FloatArray(1 + ((config.dim() + localSize-1) / localSize));
     }
 
     @Override
