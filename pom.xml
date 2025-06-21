@@ -32,6 +32,12 @@
             <artifactId>tornado-runtime</artifactId>
             <version>1.1.1-dev</version>
         </dependency>
+
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-controls</artifactId>
+            <version>21</version>
+        </dependency>
     </dependencies>
 
     <build>
@@ -67,6 +73,15 @@
                         </configuration>
                     </execution>
                 </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.openjfx</groupId>
+                <artifactId>javafx-maven-plugin</artifactId>
+                <version>0.0.8</version>
+                <configuration>
+                    <mainClass>com.example.gui.LlamaChatbox</mainClass>
+                </configuration>
             </plugin>
         </plugins>
     </build>
