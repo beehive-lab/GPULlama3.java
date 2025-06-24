@@ -15,8 +15,10 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
+import javafx.stage.DirectoryChooser;
 import javafx.util.Builder;
 
+import java.io.File;
 import java.util.function.Consumer;
 
 public class ChatboxViewBuilder implements Builder<Region> {
@@ -76,9 +78,13 @@ public class ChatboxViewBuilder implements Builder<Region> {
 
     private Node createLlama3PathBox() {
         Button browseButton = new Button("Browse");
-        // TODO: Browse directory
         browseButton.setOnAction(e -> {
-            System.out.println("Browse pressed!");
+            DirectoryChooser dirChooser = new DirectoryChooser();
+            dirChooser.setTitle("Select GPULlama3.java Directory");
+            File selectedDir = dirChooser.showDialog(browseButton.getScene().getWindow());
+            if (selectedDir != null) {
+                model.setLlama3Path(selectedDir.getAbsolutePath());
+            }
         });
 
         TextField pathField = boundTextField(model.llama3PathProperty());
