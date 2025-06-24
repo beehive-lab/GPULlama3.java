@@ -159,7 +159,11 @@ public class ChatboxViewBuilder implements Builder<Region> {
         outputArea.setEditable(false);
         outputArea.setWrapText(true);
         VBox.setVgrow(outputArea, Priority.ALWAYS);
-        outputArea.textProperty().bind(model.outputTextProperty());
+        model.outputTextProperty().subscribe((newValue) -> {
+            outputArea.setText(newValue);
+            // Autoscroll the text area to the bottom.
+            outputArea.positionCaret(newValue.length());
+        });
         return outputArea;
     }
 
