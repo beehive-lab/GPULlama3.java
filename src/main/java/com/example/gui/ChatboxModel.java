@@ -23,7 +23,7 @@ public class ChatboxModel {
         return selectedEngine;
     }
 
-    public void setSelectedEngine(Engine engine){
+    public void setSelectedEngine(Engine engine) {
         this.selectedEngine.set(engine);
     }
 

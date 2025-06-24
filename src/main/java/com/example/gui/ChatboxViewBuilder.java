@@ -30,7 +30,7 @@ public class ChatboxViewBuilder implements Builder<Region> {
     }
 
     @Override
-    public Region build(){
+    public Region build() {
         VBox results = new VBox();
         results.setPrefWidth(800);
         results.setPrefHeight(600);
@@ -120,9 +120,8 @@ public class ChatboxViewBuilder implements Builder<Region> {
         Button runButton = new Button("Run");
         runButton.setMaxWidth(Double.MAX_VALUE);
         runButton.setOnAction(e -> {
-            // TODO: Run inference
-            System.out.println("Run pressed!");
-            actionHandler.accept(() -> System.out.println("Finished running inference."));
+            runButton.setDisable(true);
+            actionHandler.accept(() -> runButton.setDisable(false));
         });
         return runButton;
     }

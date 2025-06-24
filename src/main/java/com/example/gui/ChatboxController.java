@@ -1,5 +1,6 @@
 package com.example.gui;
 
+import javafx.concurrent.Task;
 import javafx.scene.layout.Region;
 
 public class ChatboxController {
@@ -14,10 +15,18 @@ public class ChatboxController {
     }
 
     private void runInference(Runnable postRunAction) {
-        // TODO: Run llama tornado
-        System.out.println("Starting LLM inference.");
-        interactor.runLlamaTornado();
-        postRunAction.run();
+        Task<Void> inferenceTask = new Task<>() {
+            @Override
+            protected Void call() {
+                interactor.runLlamaTornado();
+                return null;
+            }
+        };
+        inferenceTask.setOnSucceeded(evt -> {
+            postRunAction.run();
+        });
+        Thread inferenceThread = new Thread(inferenceTask);
+        inferenceThread.start();
     }
 
     public Region getView() {
