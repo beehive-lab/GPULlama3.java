@@ -99,15 +99,37 @@ public class ChatboxViewBuilder implements Builder<Region> {
     private Node createModelSelectBox() {
         ComboBox<String> modelDropdown = new ComboBox<>();
         modelDropdown.valueProperty().bindBidirectional(model.selectedModelProperty());
-        // TODO: Update dropdown menu options when Llama3 path changes
-        modelDropdown.getItems().addAll("Llama-3.2-1B-Instruct-Q8_0.gguf", "Qwen3-0.6B-Q8_0.gguf"); // Hard-coded example strings for now
         HBox.setHgrow(modelDropdown, Priority.ALWAYS);
         modelDropdown.setMaxWidth(Double.MAX_VALUE);
 
         Button reloadButton = new Button("Reload");
         reloadButton.setOnAction(e -> {
-            // TODO: Scan Llama3 path for models
-            System.out.println("Reload pressed!");
+            // Search the Llama3 path for a /models folder containing model files.
+            modelDropdown.getItems().clear();
+            File llama3ModelsDir = new File(String.format("%s/models", model.getLlama3Path()));
+            if (llama3ModelsDir.exists() && llama3ModelsDir.isDirectory()) {
+                File[] files = llama3ModelsDir.listFiles((dir, name) -> name.endsWith(".gguf"));
+                if (files != null) {
+                    for (File file : files) {
+                        modelDropdown.getItems().add(file.getName());
+                    }
+
+                    int numModels = modelDropdown.getItems().size();
+                    String message = String.format("Found %d %s in %s", numModels, (numModels == 1 ? "model" : "models"), llama3ModelsDir);
+                    String currentOutput = model.getOutputText();
+                    if (currentOutput.isEmpty()) {
+                        model.setOutputText(message);
+                    } else {
+                        model.setOutputText(String.format("%s\n%s", model.getOutputText(), message));
+                    }
+
+                    if (numModels == 0) {
+                        modelDropdown.getSelectionModel().clearSelection();
+                    } else {
+                        modelDropdown.getSelectionModel().select(0);
+                    }
+                }
+            }
         });
 
         HBox box = new HBox(8, new Label("Model:"), modelDropdown, reloadButton);
