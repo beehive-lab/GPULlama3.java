@@ -1,5 +1,7 @@
 package com.example.gui;
 
+import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.property.StringProperty;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -24,6 +26,7 @@ import java.util.function.Consumer;
 public class ChatboxViewBuilder implements Builder<Region> {
 
     private final ChatboxModel model;
+    private final BooleanProperty inferenceRunning = new SimpleBooleanProperty(false);
     private final Consumer<Runnable> actionHandler;
 
     public ChatboxViewBuilder(ChatboxModel model, Consumer<Runnable> actionHandler) {
@@ -78,6 +81,7 @@ public class ChatboxViewBuilder implements Builder<Region> {
 
     private Node createLlama3PathBox() {
         Button browseButton = new Button("Browse");
+        browseButton.disableProperty().bind(inferenceRunning);
         browseButton.setOnAction(e -> {
             DirectoryChooser dirChooser = new DirectoryChooser();
             dirChooser.setTitle("Select GPULlama3.java Directory");
@@ -103,6 +107,7 @@ public class ChatboxViewBuilder implements Builder<Region> {
         modelDropdown.setMaxWidth(Double.MAX_VALUE);
 
         Button reloadButton = new Button("Reload");
+        reloadButton.disableProperty().bind(inferenceRunning);
         reloadButton.setOnAction(e -> {
             // Search the Llama3 path for a /models folder containing model files.
             modelDropdown.getItems().clear();
@@ -147,9 +152,10 @@ public class ChatboxViewBuilder implements Builder<Region> {
     private Node createRunButton() {
         Button runButton = new Button("Run");
         runButton.setMaxWidth(Double.MAX_VALUE);
+        runButton.disableProperty().bind(inferenceRunning);
         runButton.setOnAction(e -> {
-            runButton.setDisable(true);
-            actionHandler.accept(() -> runButton.setDisable(false));
+            inferenceRunning.set(true);
+            actionHandler.accept(() -> inferenceRunning.set(false));
         });
         return runButton;
     }
