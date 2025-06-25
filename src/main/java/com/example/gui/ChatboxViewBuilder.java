@@ -51,7 +51,7 @@ public class ChatboxViewBuilder implements Builder<Region> {
     private Node createLeftPanel() {
         VBox panel = new VBox(12);
         panel.setPrefWidth(PANEL_WIDTH);
-        panel.setPadding(new Insets(24));
+        panel.setPadding(new Insets(24, 12, 24, 24));
         HBox.setHgrow(panel, Priority.ALWAYS);
         panel.getChildren().addAll(
                 createHeaderLabel("TornadoVM Chat"),
@@ -179,7 +179,7 @@ public class ChatboxViewBuilder implements Builder<Region> {
     private Node createRightPanel() {
         VBox panel = new VBox(8);
         panel.setPrefWidth(PANEL_WIDTH);
-        panel.setPadding(new Insets(24));
+        panel.setPadding(new Insets(24, 24, 24, 12));
         HBox.setHgrow(panel, Priority.ALWAYS);
         panel.getChildren().addAll(
                 createMonitorOutputArea(),
