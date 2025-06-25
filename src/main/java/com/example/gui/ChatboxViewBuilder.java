@@ -1,5 +1,6 @@
 package com.example.gui;
 
+import atlantafx.base.theme.Styles;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.property.StringProperty;
@@ -78,6 +79,7 @@ public class ChatboxViewBuilder implements Builder<Region> {
 
     private Node createLlama3PathBox() {
         Button browseButton = new Button("Browse");
+        browseButton.getStyleClass().add(Styles.ACCENT);
         browseButton.setMinWidth(80);
         browseButton.disableProperty().bind(inferenceRunning);
         browseButton.setOnAction(e -> {
@@ -105,6 +107,7 @@ public class ChatboxViewBuilder implements Builder<Region> {
         modelDropdown.setMaxWidth(Double.MAX_VALUE);
 
         Button reloadButton = new Button("Reload");
+        reloadButton.getStyleClass().add(Styles.ACCENT);
         reloadButton.setMinWidth(80);
         reloadButton.disableProperty().bind(inferenceRunning);
         reloadButton.setOnAction(e -> {
@@ -150,6 +153,7 @@ public class ChatboxViewBuilder implements Builder<Region> {
 
     private Node createRunButton() {
         Button runButton = new Button("Run");
+        runButton.getStyleClass().add(Styles.ACCENT);
         runButton.setMaxWidth(Double.MAX_VALUE);
         runButton.disableProperty().bind(inferenceRunning);
         runButton.setOnAction(e -> {
