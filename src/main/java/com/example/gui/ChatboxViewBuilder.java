@@ -9,8 +9,8 @@ import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.Control;
 import javafx.scene.control.Label;
-import javafx.scene.control.SplitPane;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.HBox;
@@ -25,6 +25,8 @@ import java.util.function.Consumer;
 
 public class ChatboxViewBuilder implements Builder<Region> {
 
+    private static final int PANEL_WIDTH = 640;
+
     private final ChatboxModel model;
     private final BooleanProperty inferenceRunning = new SimpleBooleanProperty(false);
     private final Consumer<Runnable> actionHandler;
@@ -37,33 +39,28 @@ public class ChatboxViewBuilder implements Builder<Region> {
     @Override
     public Region build() {
         VBox results = new VBox();
-        results.setPrefWidth(800);
-        results.setPrefHeight(600);
 
-        SplitPane panels = new SplitPane();
+        HBox panels = new HBox(createLeftPanel(), createRightPanel());
         VBox.setVgrow(panels, Priority.ALWAYS);
         results.getChildren().add(panels);
-
-        panels.getItems().addAll(
-                createLeftPanel(),
-                createRightPanel()
-        );
 
         return results;
     }
 
     private Node createLeftPanel() {
         VBox panel = new VBox(12);
+        panel.setPrefWidth(PANEL_WIDTH);
         panel.setPadding(new Insets(24));
+        HBox.setHgrow(panel, Priority.ALWAYS);
         panel.getChildren().addAll(
                 createHeaderLabel("TornadoVM Chat"),
                 createEngineBox(),
                 createLlama3PathBox(),
                 createModelSelectBox(),
-                new Label("Prompt:"),
+                createLabel("Prompt:"),
                 createPromptBox(),
                 createRunButton(),
-                new Label("Output:"),
+                createLabel("Output:"),
                 createOutputArea()
         );
         return panel;
@@ -74,13 +71,14 @@ public class ChatboxViewBuilder implements Builder<Region> {
         engineDropdown.valueProperty().bindBidirectional(model.selectedEngineProperty());
         engineDropdown.getItems().addAll(ChatboxModel.Engine.values());
         engineDropdown.setMaxWidth(Double.MAX_VALUE);
-        HBox box = new HBox(8, new Label("Engine:"), engineDropdown);
+        HBox box = new HBox(8, createLabel("Engine:"), engineDropdown);
         box.setAlignment(Pos.CENTER_LEFT);
         return box;
     }
 
     private Node createLlama3PathBox() {
         Button browseButton = new Button("Browse");
+        browseButton.setMinWidth(80);
         browseButton.disableProperty().bind(inferenceRunning);
         browseButton.setOnAction(e -> {
             DirectoryChooser dirChooser = new DirectoryChooser();
@@ -92,7 +90,7 @@ public class ChatboxViewBuilder implements Builder<Region> {
         });
 
         TextField pathField = boundTextField(model.llama3PathProperty());
-        HBox box = new HBox(8, new Label("Llama3 Path:"), pathField, browseButton);
+        HBox box = new HBox(8, createLabel("Llama3 Path:"), pathField, browseButton);
         box.setAlignment(Pos.CENTER_LEFT);
         HBox.setHgrow(pathField, Priority.ALWAYS);
         pathField.setMaxWidth(Double.MAX_VALUE);
@@ -107,6 +105,7 @@ public class ChatboxViewBuilder implements Builder<Region> {
         modelDropdown.setMaxWidth(Double.MAX_VALUE);
 
         Button reloadButton = new Button("Reload");
+        reloadButton.setMinWidth(80);
         reloadButton.disableProperty().bind(inferenceRunning);
         reloadButton.setOnAction(e -> {
             // Search the Llama3 path for a /models folder containing model files.
@@ -137,7 +136,7 @@ public class ChatboxViewBuilder implements Builder<Region> {
             }
         });
 
-        HBox box = new HBox(8, new Label("Model:"), modelDropdown, reloadButton);
+        HBox box = new HBox(8, createLabel("Model:"), modelDropdown, reloadButton);
         box.setAlignment(Pos.CENTER_LEFT);
         return box;
     }
@@ -175,7 +174,9 @@ public class ChatboxViewBuilder implements Builder<Region> {
 
     private Node createRightPanel() {
         VBox panel = new VBox(8);
+        panel.setPrefWidth(PANEL_WIDTH);
         panel.setPadding(new Insets(24));
+        HBox.setHgrow(panel, Priority.ALWAYS);
         panel.getChildren().addAll(
                 createMonitorOutputArea(),
                 createMonitorOptionsPanel()
@@ -219,14 +220,21 @@ public class ChatboxViewBuilder implements Builder<Region> {
         return textField;
     }
 
-    private Label createHeaderLabel(String text) {
+    // Helper method to create Label objects with a minimum width
+    private Label createLabel(String text) {
         Label label = new Label(text);
+        label.setMinWidth(Control.USE_PREF_SIZE);
+        return label;
+    }
+
+    private Label createHeaderLabel(String text) {
+        Label label = createLabel(text);
         label.setStyle("-fx-font-size: 16pt; -fx-font-weight: bold;");
         return label;
     }
 
     private Label createSubHeaderLabel(String text) {
-        Label label = new Label(text);
+        Label label = createLabel(text);
         label.setStyle("-fx-font-size: 12pt; -fx-font-weight: bold;");
         return label;
     }
