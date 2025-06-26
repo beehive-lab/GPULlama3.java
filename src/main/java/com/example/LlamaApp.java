@@ -2,12 +2,14 @@ package com.example;
 
 import com.example.aot.AOT;
 import com.example.core.model.tensor.FloatTensor;
+import com.example.gui.LlamaChatbox;
 import com.example.inference.sampler.CategoricalSampler;
 import com.example.inference.sampler.Sampler;
 import com.example.inference.sampler.ToppSampler;
 import com.example.loader.weights.ModelLoader;
 import com.example.model.Model;
 import com.example.tornadovm.FloatArrayUtils;
+import javafx.application.Application;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
 import java.io.IOException;
@@ -145,13 +147,20 @@ public class LlamaApp {
      */
     public static void main(String[] args) throws IOException {
         Options options = Options.parseOptions(args);
-        Model model = loadModel(options);
-        Sampler sampler = createSampler(model, options);
 
-        if (options.interactive()) {
-            model.runInteractive(sampler, options);
+        if (options.guiMode()) {
+            // Launch the JavaFX application
+            Application.launch(LlamaChatbox.class, args);
         } else {
-            model.runInstructOnce(sampler, options);
+            // Run the CLI logic
+            Model model = loadModel(options);
+            Sampler sampler = createSampler(model, options);
+
+            if (options.interactive()) {
+                model.runInteractive(sampler, options);
+            } else {
+                model.runInstructOnce(sampler, options);
+            }
         }
     }
 }
