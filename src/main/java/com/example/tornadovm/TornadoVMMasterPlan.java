@@ -1,7 +1,7 @@
 package com.example.tornadovm;
 
 import com.example.auxiliary.Tuple2;
-import com.example.loader.weights.State;
+import com.example.inference.state.State;
 import com.example.model.Configuration;
 import com.example.model.Model;
 import com.example.model.ModelType;

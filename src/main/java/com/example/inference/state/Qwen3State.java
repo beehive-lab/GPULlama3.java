@@ -1,4 +1,4 @@
-package com.example.loader.weights;
+package com.example.inference.state;
 
 import com.example.core.model.tensor.ArrayFloatTensor;
 import com.example.core.model.tensor.FloatTensor;

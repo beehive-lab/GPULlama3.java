@@ -4,7 +4,7 @@ import com.example.Options;
 import com.example.auxiliary.LastRunMetrics;
 import com.example.inference.InferenceEngine;
 import com.example.inference.sampler.Sampler;
-import com.example.loader.weights.State;
+import com.example.inference.state.State;
 import com.example.loader.weights.Weights;
 import com.example.model.format.ChatFormat;
 import com.example.tokenizer.impl.Tokenizer;

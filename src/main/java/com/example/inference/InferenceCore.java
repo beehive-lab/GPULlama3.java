@@ -2,7 +2,7 @@ package com.example.inference;
 
 import com.example.auxiliary.Parallel;
 import com.example.core.model.tensor.FloatTensor;
-import com.example.loader.weights.State;
+import com.example.inference.state.State;
 import com.example.loader.weights.Weights;
 import com.example.model.Configuration;
 import com.example.model.Model;
@@ -11,7 +11,6 @@ import com.example.tornadovm.TornadoVMMasterPlan;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
 import java.lang.foreign.MemorySegment;
-import java.nio.FloatBuffer;
 
 /**
  * Low-level operations for model inference.

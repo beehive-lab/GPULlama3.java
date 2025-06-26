@@ -2,7 +2,7 @@ package com.example.inference;
 
 import com.example.auxiliary.LastRunMetrics;
 import com.example.inference.sampler.Sampler;
-import com.example.loader.weights.State;
+import com.example.inference.state.State;
 import com.example.model.Configuration;
 import com.example.model.Model;
 import com.example.tokenizer.impl.Tokenizer;
