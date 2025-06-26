@@ -11,7 +11,7 @@ import com.example.core.model.tensor.GGMLTensorEntry;
 import com.example.core.model.tensor.Q4_0FloatTensor;
 import com.example.core.model.tensor.Q8_0FloatTensor;
 import com.example.core.types.Pair;
-import com.example.loader.weights.Weights;
+import com.example.inference.weights.Weights;
 import com.example.model.Configuration;
 import com.example.model.Model;
 import com.example.model.ModelType;

@@ -1,21 +1,9 @@
-package com.example.loader.weights;
+package com.example.inference.weights;
 
 import com.example.core.model.GGMLType;
 import com.example.core.model.tensor.FloatTensor;
-import com.example.core.model.tensor.GGMLTensorEntry;
-import com.example.core.types.Float16;
-import uk.ac.manchester.tornado.api.types.HalfFloat;
-import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
-
-import java.lang.foreign.MemorySegment;
-import java.nio.ByteOrder;
-import java.nio.FloatBuffer;
-import java.util.function.IntFunction;
-
-import static com.example.core.model.tensor.FloatTensor.readByte;
-import static com.example.core.model.tensor.FloatTensor.readShort;
 
 public class Weights {
     // token embedding table

@@ -8,7 +8,7 @@ import com.example.model.Model;
 import com.example.Options;
 import com.example.model.format.LlamaChatFormat;
 import com.example.model.llama.Llama;
-import com.example.loader.weights.Weights;
+import com.example.inference.weights.Weights;
 import com.example.tokenizer.impl.LlamaTokenizer;
 
 import java.io.IOException;

@@ -4,7 +4,7 @@ import com.example.auxiliary.Tuple2;
 import com.example.model.Configuration;
 import com.example.model.Model;
 import com.example.inference.state.State;
-import com.example.loader.weights.Weights;
+import com.example.inference.weights.Weights;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.KernelContext;

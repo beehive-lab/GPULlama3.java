@@ -5,7 +5,7 @@ import com.example.inference.InferenceEngine;
 import com.example.inference.sampler.Sampler;
 import com.example.inference.state.Qwen3State;
 import com.example.inference.state.State;
-import com.example.loader.weights.Weights;
+import com.example.inference.weights.Weights;
 import com.example.model.Model;
 import com.example.model.ModelType;
 import com.example.model.format.ChatFormat;

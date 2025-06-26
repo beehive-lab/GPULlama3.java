@@ -3,7 +3,7 @@ package com.example.inference;
 import com.example.auxiliary.Parallel;
 import com.example.core.model.tensor.FloatTensor;
 import com.example.inference.state.State;
-import com.example.loader.weights.Weights;
+import com.example.inference.weights.Weights;
 import com.example.model.Configuration;
 import com.example.model.Model;
 import com.example.model.qwen3.Qwen3Configuration;
