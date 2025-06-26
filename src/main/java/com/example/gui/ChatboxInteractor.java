@@ -19,18 +19,12 @@ public class ChatboxInteractor {
     public void runLlamaTornado() {
         List<String> commands = new ArrayList<>();
 
-        String llama3Path = model.getLlama3Path();
-        if (llama3Path == null || llama3Path.isEmpty()) {
-            model.setOutputText("Please set the Llama3 path:");
-            return;
-        }
-
         // Format for running 'llama-tornado' depends on the operating system.
         if (System.getProperty("os.name").startsWith("Windows")) {
-            commands.add(String.format("%s\\external\\tornadovm\\.venv\\Scripts\\python", llama3Path));
+            commands.add("external\\tornadovm\\.venv\\Scripts\\python");
             commands.add("llama-tornado");
         } else {
-            commands.add(String.format("%s/.llama-tornado", llama3Path));
+            commands.add("llama-tornado");
         }
 
         ChatboxModel.Engine engine = model.getSelectedEngine();
@@ -44,7 +38,7 @@ public class ChatboxInteractor {
             model.setOutputText("Please select a model.");
             return;
         }
-        String modelPath = String.format("%s/models/%s", llama3Path, selectedModel);
+        String modelPath = String.format("./models/%s", selectedModel);
         String prompt = String.format("\"%s\"", model.getPromptText());
 
         commands.addAll(Arrays.asList(

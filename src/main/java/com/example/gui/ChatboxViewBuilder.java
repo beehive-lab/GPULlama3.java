@@ -18,10 +18,10 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
-import javafx.stage.DirectoryChooser;
 import javafx.util.Builder;
 
 import java.io.File;
+import java.nio.file.Paths;
 import java.util.function.Consumer;
 
 public class ChatboxViewBuilder implements Builder<Region> {
@@ -56,7 +56,6 @@ public class ChatboxViewBuilder implements Builder<Region> {
         panel.getChildren().addAll(
                 createHeaderLabel("TornadoVM Chat"),
                 createEngineBox(),
-                createLlama3PathBox(),
                 createModelSelectBox(),
                 createLabel("Prompt:"),
                 createPromptBox(),
@@ -77,29 +76,6 @@ public class ChatboxViewBuilder implements Builder<Region> {
         return box;
     }
 
-    private Node createLlama3PathBox() {
-        Button browseButton = new Button("Browse");
-        browseButton.getStyleClass().add(Styles.ACCENT);
-        browseButton.setMinWidth(80);
-        browseButton.disableProperty().bind(inferenceRunning);
-        browseButton.setOnAction(e -> {
-            DirectoryChooser dirChooser = new DirectoryChooser();
-            dirChooser.setTitle("Select GPULlama3.java Directory");
-            File selectedDir = dirChooser.showDialog(browseButton.getScene().getWindow());
-            if (selectedDir != null) {
-                model.setLlama3Path(selectedDir.getAbsolutePath());
-            }
-        });
-
-        TextField pathField = boundTextField(model.llama3PathProperty());
-        HBox box = new HBox(8, createLabel("Llama3 Path:"), pathField, browseButton);
-        box.setAlignment(Pos.CENTER_LEFT);
-        HBox.setHgrow(pathField, Priority.ALWAYS);
-        pathField.setMaxWidth(Double.MAX_VALUE);
-
-        return box;
-    }
-
     private Node createModelSelectBox() {
         ComboBox<String> modelDropdown = new ComboBox<>();
         modelDropdown.valueProperty().bindBidirectional(model.selectedModelProperty());
@@ -111,9 +87,9 @@ public class ChatboxViewBuilder implements Builder<Region> {
         reloadButton.setMinWidth(80);
         reloadButton.disableProperty().bind(inferenceRunning);
         reloadButton.setOnAction(e -> {
-            // Search the Llama3 path for a /models folder containing model files.
+            // Search for a /models folder containing model files.
             modelDropdown.getItems().clear();
-            File llama3ModelsDir = new File(String.format("%s/models", model.getLlama3Path()));
+            File llama3ModelsDir = new File("./models");
             if (llama3ModelsDir.exists() && llama3ModelsDir.isDirectory()) {
                 File[] files = llama3ModelsDir.listFiles((dir, name) -> name.endsWith(".gguf"));
                 if (files != null) {
@@ -122,7 +98,7 @@ public class ChatboxViewBuilder implements Builder<Region> {
                     }
 
                     int numModels = modelDropdown.getItems().size();
-                    String message = String.format("Found %d %s in %s", numModels, (numModels == 1 ? "model" : "models"), llama3ModelsDir);
+                    String message = String.format("Found %d %s in %s", numModels, (numModels == 1 ? "model" : "models"), llama3ModelsDir.toPath().normalize().toAbsolutePath());
                     String currentOutput = model.getOutputText();
                     if (currentOutput.isEmpty()) {
                         model.setOutputText(message);
@@ -138,6 +114,8 @@ public class ChatboxViewBuilder implements Builder<Region> {
                 }
             }
         });
+
+        reloadButton.fire(); // Trigger the reload once at the start.
 
         HBox box = new HBox(8, createLabel("Model:"), modelDropdown, reloadButton);
         box.setAlignment(Pos.CENTER_LEFT);
