@@ -1,4 +1,4 @@
-package com.example.loader.weights;
+package com.example.model.loader;
 
 import com.example.LlamaApp;
 import com.example.core.model.GGMLType;
@@ -11,6 +11,7 @@ import com.example.core.model.tensor.GGMLTensorEntry;
 import com.example.core.model.tensor.Q4_0FloatTensor;
 import com.example.core.model.tensor.Q8_0FloatTensor;
 import com.example.core.types.Pair;
+import com.example.loader.weights.Weights;
 import com.example.model.Configuration;
 import com.example.model.Model;
 import com.example.model.ModelType;

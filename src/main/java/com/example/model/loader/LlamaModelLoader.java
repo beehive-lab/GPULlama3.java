@@ -1,8 +1,9 @@
-package com.example.loader.weights;
+package com.example.model.loader;
 
 import com.example.auxiliary.Timer;
 import com.example.core.model.GGUF;
 import com.example.core.model.tensor.GGMLTensorEntry;
+import com.example.loader.weights.Weights;
 import com.example.model.format.ChatFormat;
 import com.example.model.llama.Llama;
 import com.example.model.llama.LlamaConfiguration;

@@ -1,9 +1,9 @@
 package com.example.model;
 
 import com.example.core.model.GGUF;
-import com.example.loader.weights.LlamaModelLoader;
-import com.example.loader.weights.MistralModelLoader;
-import com.example.loader.weights.Qwen3ModelLoader;
+import com.example.model.loader.LlamaModelLoader;
+import com.example.model.loader.MistralModelLoader;
+import com.example.model.loader.Qwen3ModelLoader;
 
 import java.nio.channels.FileChannel;
 

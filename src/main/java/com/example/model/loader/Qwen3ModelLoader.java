@@ -1,4 +1,4 @@
-package com.example.loader.weights;
+package com.example.model.loader;
 
 import com.example.LlamaApp;
 import com.example.auxiliary.Timer;
@@ -8,6 +8,7 @@ import com.example.core.model.tensor.ArrayFloatTensor;
 import com.example.core.model.tensor.GGMLTensorEntry;
 import com.example.core.types.Pair;
 import com.example.inference.operation.RoPE;
+import com.example.loader.weights.Weights;
 import com.example.model.Configuration;
 import com.example.model.format.ChatFormat;
 import com.example.model.format.ChatFormat.ChatTokens;

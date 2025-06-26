@@ -5,7 +5,7 @@ import com.example.core.model.tensor.FloatTensor;
 import com.example.inference.sampler.CategoricalSampler;
 import com.example.inference.sampler.Sampler;
 import com.example.inference.sampler.ToppSampler;
-import com.example.loader.weights.ModelLoader;
+import com.example.model.loader.ModelLoader;
 import com.example.model.Model;
 import com.example.tornadovm.FloatArrayUtils;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
