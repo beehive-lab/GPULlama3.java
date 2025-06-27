@@ -120,7 +120,7 @@ public class LlamaApp {
      * @throws IOException if the model fails to load
      * @throws IllegalStateException if AOT loading is enabled but the preloaded model is unavailable
      */
-    private static Model loadModel(Options options) throws IOException {
+    public static Model loadModel(Options options) throws IOException {
         if (USE_AOT) {
             Model model = AOT.tryUsePreLoaded(options.modelPath(), options.maxTokens());
             if (model == null) {
@@ -131,7 +131,7 @@ public class LlamaApp {
         return ModelLoader.loadModel(options.modelPath(), options.maxTokens(), true);
     }
 
-    private static Sampler createSampler(Model model, Options options) {
+    public static Sampler createSampler(Model model, Options options) {
         return selectSampler(model.configuration().vocabularySize(), options.temperature(), options.topp(), options.seed());
     }
 

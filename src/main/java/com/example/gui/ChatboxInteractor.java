@@ -1,8 +1,12 @@
 package com.example.gui;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
+import com.example.LlamaApp;
+import com.example.Options;
+import com.example.inference.sampler.Sampler;
+import com.example.model.Model;
+
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -15,28 +19,20 @@ public class ChatboxInteractor {
         this.model = viewModel;
     }
 
-    // Run the 'llama-tornado' script in the given Llama3 path, and stream its output to the GUI's output area.
-    public void runLlamaTornado() {
+    private String[] buildCommands() {
         List<String> commands = new ArrayList<>();
-
-        // Format for running 'llama-tornado' depends on the operating system.
-        if (System.getProperty("os.name").startsWith("Windows")) {
-            commands.add("external\\tornadovm\\.venv\\Scripts\\python");
-            commands.add("llama-tornado");
-        } else {
-            commands.add("llama-tornado");
-        }
 
         ChatboxModel.Engine engine = model.getSelectedEngine();
         if (engine == ChatboxModel.Engine.TORNADO_VM) {
-            commands.add("--gpu");
+            // TODO: LlamaApp.USE_TORNADOVM is a final constant, but the GUI needs to be able to set this value
+            //commands.add("--gpu");
         }
 
         // Assume that models are found in a /models directory.
         String selectedModel = model.getSelectedModel();
         if (selectedModel == null || selectedModel.isEmpty()) {
             model.setOutputText("Please select a model.");
-            return;
+            return null;
         }
         String modelPath = String.format("./models/%s", selectedModel);
         String prompt = String.format("\"%s\"", model.getPromptText());
@@ -46,37 +42,65 @@ public class ChatboxInteractor {
                 "--prompt", prompt
         ));
 
-        ProcessBuilder processBuilder = new ProcessBuilder(commands);
-        processBuilder.redirectErrorStream(true);
-        BufferedReader bufferedReader = null;
-        Process process;
+        return commands.toArray(new String[commands.size()]);
+    }
+
+    // Load and run a model while capturing its output text to a custom stream.
+    public void runLlamaTornado() {
+        // Save the original System.out stream
+        PrintStream originalOut = System.out;
         try {
-            process = processBuilder.start();
-            bufferedReader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            String[] commands = buildCommands();
+            if (commands == null) {
+                // commands is null if no model was found, so exit this process
+                return;
+            }
+
             StringBuilder builder = new StringBuilder();
 
-            // Make sure to output the raw command.
-            builder.append("Running command: ");
-            builder.append(String.join(" ", processBuilder.command().toArray(new String[0])));
+            builder.append("Processing... please wait");
             builder.append(System.getProperty("line.separator"));
 
-            String line;
-            while ((line = bufferedReader.readLine()) != null) {
-                builder.append(line);
-                builder.append(System.getProperty("line.separator"));
-                final String currentOutput = builder.toString();
-                javafx.application.Platform.runLater(() -> model.setOutputText(currentOutput));
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        } finally {
-            if (bufferedReader != null) {
-                try {
-                    bufferedReader.close();
-                } catch (IOException e) {
-                    e.printStackTrace();
+            // Create a custom PrintStream to capture output from loading the model and running it.
+            PrintStream customStream = new PrintStream(new ByteArrayOutputStream()) {
+                @Override
+                public void println(String str) {
+                    process(str + "\n");
                 }
+
+                @Override
+                public void print(String str) {
+                    process(str);
+                }
+
+                private void process(String str) {
+                    // Capture the output stream into the GUI output area.
+                    builder.append(str);
+                    final String currentOutput = builder.toString();
+                    javafx.application.Platform.runLater(() -> model.setOutputText(currentOutput));
+                }
+            };
+
+            // Redirect System.out to the custom print stream.
+            System.setOut(customStream);
+            System.setErr(customStream);
+
+            Options options = Options.parseOptions(commands);
+
+            // Load the model and run.
+            Model llm = LlamaApp.loadModel(options);
+            Sampler sampler = LlamaApp.createSampler(llm, options);
+            if (options.interactive()) {
+                llm.runInteractive(sampler, options);
+            } else {
+                llm.runInstructOnce(sampler, options);
             }
+        } catch (Exception e) {
+            // Catch all exceptions so that they're logged in the output area.
+            e.printStackTrace();
+            e.printStackTrace(originalOut);
+        } finally {
+            System.setOut(originalOut);
         }
     }
 
