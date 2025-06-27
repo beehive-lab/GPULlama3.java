@@ -1,10 +1,10 @@
 package com.example.tornadovm;
 
 import com.example.auxiliary.Tuple2;
+import com.example.inference.weights.tornado.TornadoWeights;
 import com.example.model.Configuration;
 import com.example.model.Model;
 import com.example.inference.state.State;
-import com.example.inference.weights.Weights;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.KernelContext;
@@ -49,7 +49,7 @@ import java.util.List;
 
         private final State state;
         private final Configuration config;
-        private final Weights weights;
+        private final TornadoWeights weights;
         private final KernelContext context;
 
         /**
@@ -63,7 +63,7 @@ import java.util.List;
         public TornadoVMLayerPlanner(State state, Model model) {
             this.state = state;
             this.config = model.configuration();
-            this.weights = model.weights();
+            this.weights = (TornadoWeights) model.weights();
             this.context = new KernelContext();
         }
 
@@ -182,7 +182,7 @@ import java.util.List;
          */
         // @formatter:on
         private TaskGraph configureQuantizedMatrixVectorFinalWeight(TaskGraph logits) {
-            switch (weights.weightType) {
+            switch (weights.getWeightType()) {
                 case F16:
                 case Q8_0:
                 case Q4_0:
@@ -191,7 +191,7 @@ import java.util.List;
                             config.dim(), config.vocabularySize(), LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS); //
                     break;
                 default:
-                    throw new UnsupportedOperationException("Unsupported weight quantization type: " + weights.weightType + ". Only Q8_0 and Q4_0 are supported.");
+                    throw new UnsupportedOperationException("Unsupported weight quantization type: " + weights.getWeightType() + ". Only Q8_0 and Q4_0 are supported.");
             }
             return logits;
         }

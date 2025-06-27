@@ -8,6 +8,7 @@ import com.example.core.model.tensor.ArrayFloatTensor;
 import com.example.core.model.tensor.GGMLTensorEntry;
 import com.example.core.types.Pair;
 import com.example.inference.operation.RoPE;
+import com.example.inference.weights.standard.Qwen3StandardWeights;
 import com.example.inference.weights.Weights;
 import com.example.model.Configuration;
 import com.example.model.format.ChatFormat;
@@ -118,7 +119,7 @@ public class Qwen3ModelLoader extends ModelLoader {
                                          GGMLTensorEntry outputWeight) {
         float[] ropeFreqsReal = ropeFreqs.first();
         float[] ropeFreqsImag = ropeFreqs.second();
-        return new Weights(
+        return new Qwen3StandardWeights(
                 loadQuantized(tokenEmbeddings),
                 loadArrayOfQuantized(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".attn_norm.weight")),    // rms_att_weight
                 loadArrayOfQuantized(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".attn_q.weight")),       // wq

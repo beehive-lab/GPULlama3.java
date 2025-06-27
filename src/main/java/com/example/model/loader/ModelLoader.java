@@ -11,6 +11,9 @@ import com.example.core.model.tensor.GGMLTensorEntry;
 import com.example.core.model.tensor.Q4_0FloatTensor;
 import com.example.core.model.tensor.Q8_0FloatTensor;
 import com.example.core.types.Pair;
+import com.example.inference.weights.standard.LlamaStandardWeights;
+import com.example.inference.weights.tornado.LlamaTornadoWeights;
+import com.example.inference.weights.tornado.TornadoWeights;
 import com.example.inference.weights.Weights;
 import com.example.model.Configuration;
 import com.example.model.Model;
@@ -126,7 +129,7 @@ public abstract class ModelLoader {
 
     public Weights createTornadoVMWeights(Map<String, GGMLTensorEntry> tensorEntries, Configuration config, Pair<float[], float[]> ropeFreqs, GGMLTensorEntry tokenEmbeddings,
             GGMLTensorEntry outputWeight) {
-        return new Weights(
+        return new LlamaTornadoWeights(
                 // Load directly to TornadoVM format
                 loadTensorAsFloatArray(tokenEmbeddings), loadArrayAsFloatArrayFromBuffer(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".attn_norm.weight")),
                 loadArrayAsHalfFloatArray(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".attn_q.weight")),
@@ -137,7 +140,8 @@ public abstract class ModelLoader {
                 loadArrayAsHalfFloatArray(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".ffn_gate.weight")),
                 loadArrayAsHalfFloatArray(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".ffn_down.weight")),
                 loadArrayAsHalfFloatArray(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".ffn_up.weight")), floatBufferToFloatArray(tensorEntries.get("output_norm.weight")),
-                FloatArray.fromArray(ropeFreqs.first()), FloatArray.fromArray(ropeFreqs.second()), loadTensorAsHalfFloatArray(outputWeight), outputWeight.ggmlType());
+                FloatArray.fromArray(ropeFreqs.first()), FloatArray.fromArray(ropeFreqs.second()), loadTensorAsHalfFloatArray(outputWeight), outputWeight.ggmlType()) {
+        };
     }
 
     /**
@@ -145,15 +149,13 @@ public abstract class ModelLoader {
      */
     public Weights createStandardWeights(Map<String, GGMLTensorEntry> tensorEntries, Configuration config, Pair<float[], float[]> ropeFreqs, GGMLTensorEntry tokenEmbeddings,
             GGMLTensorEntry outputWeight) {
-        return new Weights(
+        return new LlamaStandardWeights(
                 loadQuantized(tokenEmbeddings),
                 loadArrayOfQuantized(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".attn_norm.weight")),
                 loadArrayOfQuantized(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".attn_q.weight")),
                 loadArrayOfQuantized(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".attn_k.weight")),
                 loadArrayOfQuantized(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".attn_v.weight")),
                 loadArrayOfQuantized(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".attn_output.weight")),
-                null,
-                null,
                 loadArrayOfQuantized(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".ffn_norm.weight")),
                 loadArrayOfQuantized(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".ffn_gate.weight")),
                 loadArrayOfQuantized(config.numberOfLayers(), i -> tensorEntries.get("blk." + i + ".ffn_down.weight")),

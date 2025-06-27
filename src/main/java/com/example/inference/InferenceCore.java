@@ -3,7 +3,9 @@ package com.example.inference;
 import com.example.auxiliary.Parallel;
 import com.example.core.model.tensor.FloatTensor;
 import com.example.inference.state.State;
-import com.example.inference.weights.Weights;
+import com.example.inference.weights.standard.Qwen3StandardWeights;
+import com.example.inference.weights.standard.StandardWeights;
+import com.example.inference.weights.tornado.TornadoWeights;
 import com.example.model.Configuration;
 import com.example.model.Model;
 import com.example.model.qwen3.Qwen3Configuration;
@@ -51,7 +53,7 @@ public final class InferenceCore {
     public static FloatTensor forwardJava(Model model, State state, int token, int position) {
         // a few convenience variables
         final Configuration config = model.configuration();
-        final Weights weights = model.weights();
+        final StandardWeights weights = (StandardWeights) model.weights();
         int dim = config.dim();
         int headSize = config.headSize();
         int kvDim = (config.dim() * config.numberOfKeyValueHeads()) / config.numberOfHeads();
@@ -175,7 +177,7 @@ public final class InferenceCore {
     public static FloatTensor forwardJavaQwen3(Model model, State state, int token, int position) {
         // a few convenience variables
         final Qwen3Configuration config = (Qwen3Configuration) model.configuration();         // same
-        final Weights weights = model.weights();                                              // same
+        final Qwen3StandardWeights weights = (Qwen3StandardWeights) model.weights();                                              // same
         int dim = config.dim();                                                               // same
         int nHeadKv = config.numberOfKeyValueHeads(); // n_head_kv = numberOfKeyValueHeads
         int nEmbdHeadK = config.numberOfHeadsKey(); // n_embd_head_k = n_embd / n_head; %s.attention.key_length
@@ -338,7 +340,7 @@ public final class InferenceCore {
      */
     public static FloatArray forwardTornadoVM(Model model, State state, int token, int position, TornadoVMMasterPlan tornadoVMMasterPlan) {
         final Configuration configuration = model.configuration();
-        final Weights weights = model.weights();
+        final TornadoWeights weights = (TornadoWeights) model.weights();
 
         MemorySegment.copy(weights.tokenEmbeddingTable.getSegment(), token * configuration.dim() * Float.BYTES, state.wrapX.getSegment(), 0, configuration.dim() * Float.BYTES);
 
