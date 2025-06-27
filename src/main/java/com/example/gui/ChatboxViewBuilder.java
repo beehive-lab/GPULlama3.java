@@ -21,7 +21,6 @@ import javafx.scene.layout.VBox;
 import javafx.util.Builder;
 
 import java.io.File;
-import java.nio.file.Paths;
 import java.util.function.Consumer;
 
 public class ChatboxViewBuilder implements Builder<Region> {
@@ -71,6 +70,7 @@ public class ChatboxViewBuilder implements Builder<Region> {
         engineDropdown.valueProperty().bindBidirectional(model.selectedEngineProperty());
         engineDropdown.getItems().addAll(ChatboxModel.Engine.values());
         engineDropdown.setMaxWidth(Double.MAX_VALUE);
+        engineDropdown.setPrefWidth(152);
         HBox box = new HBox(8, createLabel("Engine:"), engineDropdown);
         box.setAlignment(Pos.CENTER_LEFT);
         return box;
