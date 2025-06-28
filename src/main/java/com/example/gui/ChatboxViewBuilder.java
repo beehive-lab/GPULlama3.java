@@ -55,6 +55,7 @@ public class ChatboxViewBuilder implements Builder<Region> {
         panel.getChildren().addAll(
                 createHeaderLabel("TornadoVM Chat"),
                 createEngineBox(),
+                createChatModeBox(),
                 createModelSelectBox(),
                 createLabel("Prompt:"),
                 createPromptBox(),
@@ -72,6 +73,17 @@ public class ChatboxViewBuilder implements Builder<Region> {
         engineDropdown.setMaxWidth(Double.MAX_VALUE);
         engineDropdown.setPrefWidth(152);
         HBox box = new HBox(8, createLabel("Engine:"), engineDropdown);
+        box.setAlignment(Pos.CENTER_LEFT);
+        return box;
+    }
+
+    private Node createChatModeBox() {
+        ComboBox<ChatboxModel.Mode> modeDropdown = new ComboBox<>();
+        modeDropdown.valueProperty().bindBidirectional(model.selectedModeProperty());
+        modeDropdown.getItems().addAll(ChatboxModel.Mode.values());
+        modeDropdown.setMaxWidth(Double.MAX_VALUE);
+        modeDropdown.setPrefWidth(152);
+        HBox box = new HBox(8, createLabel("Chat:"), modeDropdown);
         box.setAlignment(Pos.CENTER_LEFT);
         return box;
     }

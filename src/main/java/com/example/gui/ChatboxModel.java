@@ -8,8 +8,10 @@ import javafx.beans.property.StringProperty;
 public class ChatboxModel {
 
     public enum Engine { TORNADO_VM, JVM }
+    public enum Mode { INSTRUCT, INTERACTIVE }
 
     private final ObjectProperty<Engine> selectedEngine = new SimpleObjectProperty<>(Engine.TORNADO_VM);
+    private final ObjectProperty<Mode> selectedMode = new SimpleObjectProperty<>(Mode.INSTRUCT);
     private final StringProperty selectedModel = new SimpleStringProperty("");
     private final StringProperty promptText = new SimpleStringProperty("");
     private final StringProperty outputText = new SimpleStringProperty("");
@@ -24,6 +26,18 @@ public class ChatboxModel {
 
     public void setSelectedEngine(Engine engine) {
         this.selectedEngine.set(engine);
+    }
+
+    public Mode getSelectedMode() {
+        return selectedMode.get();
+    }
+
+    public ObjectProperty<Mode> selectedModeProperty() {
+        return selectedMode;
+    }
+
+    public void setSelectedMode(Mode mode) {
+        this.selectedMode.set(mode);
     }
 
     public String getSelectedModel() {

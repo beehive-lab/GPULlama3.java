@@ -28,6 +28,11 @@ public class ChatboxInteractor {
             //commands.add("--gpu");
         }
 
+        ChatboxModel.Mode mode = model.getSelectedMode();
+        if (mode == ChatboxModel.Mode.INTERACTIVE) {
+            commands.add("--interactive");
+        }
+
         // Assume that models are found in a /models directory.
         String selectedModel = model.getSelectedModel();
         if (selectedModel == null || selectedModel.isEmpty()) {
@@ -91,6 +96,7 @@ public class ChatboxInteractor {
             Model llm = LlamaApp.loadModel(options);
             Sampler sampler = LlamaApp.createSampler(llm, options);
             if (options.interactive()) {
+                // TODO: how to read input from GUI text field?
                 llm.runInteractive(sampler, options);
             } else {
                 llm.runInstructOnce(sampler, options);
