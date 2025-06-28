@@ -2,12 +2,14 @@ package com.example;
 
 import com.example.aot.AOT;
 import com.example.core.model.tensor.FloatTensor;
+import com.example.gui.LlamaChatbox;
 import com.example.inference.sampler.CategoricalSampler;
 import com.example.inference.sampler.Sampler;
 import com.example.inference.sampler.ToppSampler;
 import com.example.loader.weights.ModelLoader;
 import com.example.model.Model;
 import com.example.tornadovm.FloatArrayUtils;
+import javafx.application.Application;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
 import java.io.IOException;
@@ -118,7 +120,7 @@ public class LlamaApp {
      * @throws IOException if the model fails to load
      * @throws IllegalStateException if AOT loading is enabled but the preloaded model is unavailable
      */
-    private static Model loadModel(Options options) throws IOException {
+    public static Model loadModel(Options options) throws IOException {
         if (USE_AOT) {
             Model model = AOT.tryUsePreLoaded(options.modelPath(), options.maxTokens());
             if (model == null) {
@@ -129,7 +131,7 @@ public class LlamaApp {
         return ModelLoader.loadModel(options.modelPath(), options.maxTokens(), true);
     }
 
-    private static Sampler createSampler(Model model, Options options) {
+    public static Sampler createSampler(Model model, Options options) {
         return selectSampler(model.configuration().vocabularySize(), options.temperature(), options.topp(), options.seed());
     }
 
@@ -145,13 +147,20 @@ public class LlamaApp {
      */
     public static void main(String[] args) throws IOException {
         Options options = Options.parseOptions(args);
-        Model model = loadModel(options);
-        Sampler sampler = createSampler(model, options);
 
-        if (options.interactive()) {
-            model.runInteractive(sampler, options);
+        if (options.guiMode()) {
+            // Launch the JavaFX application
+            Application.launch(LlamaChatbox.class, args);
         } else {
-            model.runInstructOnce(sampler, options);
+            // Run the CLI logic
+            Model model = loadModel(options);
+            Sampler sampler = createSampler(model, options);
+
+            if (options.interactive()) {
+                model.runInteractive(sampler, options);
+            } else {
+                model.runInstructOnce(sampler, options);
+            }
         }
     }
 }

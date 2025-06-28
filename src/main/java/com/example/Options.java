@@ -5,7 +5,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 
 public record Options(Path modelPath, String prompt, String systemPrompt, String suffix, boolean interactive,
-                      float temperature, float topp, long seed, int maxTokens, boolean stream, boolean echo) {
+                      float temperature, float topp, long seed, int maxTokens, boolean stream, boolean echo, boolean guiMode) {
 
     public static final int DEFAULT_MAX_TOKENS = 1024;
 
@@ -41,6 +41,7 @@ public record Options(Path modelPath, String prompt, String systemPrompt, String
         out.println("  --max-tokens, -n <int>        number of steps to run for < 0 = limited by context length, default " + DEFAULT_MAX_TOKENS);
         out.println("  --stream <boolean>            print tokens during generation; may cause encoding artifacts for non ASCII text, default true");
         out.println("  --echo <boolean>              print ALL tokens to stderr, if true, recommended to set --stream=false, default false");
+        out.println("  --gui <boolean>               run the GUI chatbox");
         out.println();
     }
 
@@ -57,6 +58,7 @@ public record Options(Path modelPath, String prompt, String systemPrompt, String
         boolean interactive = false;
         boolean stream = true;
         boolean echo = false;
+        boolean guiMode = false;
 
         for (int i = 0; i < args.length; i++) {
             String optionName = args[i];
@@ -64,6 +66,7 @@ public record Options(Path modelPath, String prompt, String systemPrompt, String
             switch (optionName) {
                 case "--interactive", "--chat", "-i" -> interactive = true;
                 case "--instruct" -> interactive = false;
+                case "--gui" -> guiMode = true;
                 case "--help", "-h" -> {
                     printUsage(System.out);
                     System.exit(0);
@@ -95,6 +98,6 @@ public record Options(Path modelPath, String prompt, String systemPrompt, String
                 }
             }
         }
-        return new Options(modelPath, prompt, systemPrompt, suffix, interactive, temperature, topp, seed, maxTokens, stream, echo);
+        return new Options(modelPath, prompt, systemPrompt, suffix, interactive, temperature, topp, seed, maxTokens, stream, echo, guiMode);
     }
 }

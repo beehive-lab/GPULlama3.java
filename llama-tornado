@@ -251,6 +251,9 @@ class LlamaRunner:
                 print(f"  {arg}")
             print()
 
+        if args.gui:
+            cmd.append("--gui")
+
         # Execute the command
         try:
             result = subprocess.run(cmd, check=True)
@@ -316,7 +319,8 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model",
         dest="model_path",
-        required=True,
+        required="--gui" not in sys.argv,
+        default="",
         help="Path to the LLM gguf file (e.g., Llama-3.2-1B-Instruct-Q8_0.gguf)",
     )
 
@@ -464,6 +468,12 @@ def create_parser() -> argparse.ArgumentParser:
     )
     advanced_group.add_argument(
         "--verbose", "-v", action="store_true", help="Verbose output"
+    )
+
+    # GUI options
+    gui_group = parser.add_argument_group("GUI Options")
+    gui_group.add_argument(
+        "--gui", action="store_true", help="Launch the GUI chatbox"
     )
 
     return parser
