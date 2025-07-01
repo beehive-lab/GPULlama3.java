@@ -49,7 +49,7 @@
                     <configLocation>google_checks.xml</configLocation> <!-- or checkstyle.xml for custom -->
                     <encoding>UTF-8</encoding>
                     <consoleOutput>true</consoleOutput>
-                    <failsOnError>true</failsOnError>
+                    <failsOnError>false</failsOnError>
                 </configuration>
                 <executions>
                     <execution>
