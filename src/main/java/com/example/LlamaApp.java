@@ -20,8 +20,28 @@ public class LlamaApp {
     // Configuration flags for hardware acceleration and optimizations
     public static final boolean USE_VECTOR_API = Boolean.parseBoolean(System.getProperty("llama.VectorAPI", "true"));   // Enable Java Vector API for CPU acceleration
     public static final boolean USE_AOT = Boolean.parseBoolean(System.getProperty("llama.AOT", "false"));               // Use Ahead-of-Time compilation
-    public static final boolean USE_TORNADOVM = Boolean.parseBoolean(System.getProperty("use.tornadovm", "false"));     // Use TornadoVM for GPU acceleration
+    private boolean useTornadoVM = Boolean.parseBoolean(System.getProperty("use.tornadovm", "false"));                  // Use TornadoVM for GPU acceleration
     public static final boolean SHOW_PERF_INTERACTIVE = Boolean.parseBoolean(System.getProperty("llama.ShowPerfInteractive", "true")); // Show performance metrics in interactive mode
+
+    private static LlamaApp instance;
+
+    private LlamaApp() {
+    }
+
+    public static LlamaApp getInstance() {
+        if (instance == null) {
+            instance = new LlamaApp();
+        }
+        return instance;
+    }
+
+    public void setUseTornadoVM(boolean value) {
+        useTornadoVM = value;
+    }
+
+    public boolean getUseTornadoVM() {
+        return useTornadoVM;
+    }
 
     /**
      * Creates and configures a sampler for token generation based on specified parameters.

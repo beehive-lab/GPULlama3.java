@@ -1,5 +1,6 @@
 package com.example.model;
 
+import com.example.LlamaApp;
 import com.example.Options;
 import com.example.auxiliary.LastRunMetrics;
 import com.example.inference.InferenceEngine;
@@ -17,7 +18,6 @@ import java.util.Set;
 import java.util.function.IntConsumer;
 
 import static com.example.LlamaApp.SHOW_PERF_INTERACTIVE;
-import static com.example.LlamaApp.USE_TORNADOVM;
 
 public interface Model {
     Configuration configuration();
@@ -54,6 +54,9 @@ public interface Model {
         // Initialize TornadoVM plan once at the beginning if GPU path is enabled
         TornadoVMMasterPlan tornadoVMPlan = null;
 
+        // Get the LlamaApp singleton to read configuration values
+        LlamaApp llamaApp = LlamaApp.getInstance();
+
         try {
             while (true) {
                 System.out.print("> ");
@@ -68,7 +71,7 @@ public interface Model {
                     state = createNewState();
                 }
 
-                if (USE_TORNADOVM && tornadoVMPlan == null) {
+                if (llamaApp.getUseTornadoVM() && tornadoVMPlan == null) {
                     tornadoVMPlan = TornadoVMMasterPlan.initializeTornadoVMPlan(state, this);
                 }
 
@@ -86,7 +89,7 @@ public interface Model {
                 };
 
                 // Choose between GPU and CPU path based on configuration
-                if (USE_TORNADOVM) {
+                if (llamaApp.getUseTornadoVM()) {
                     // GPU path using TornadoVM
                     responseTokens = InferenceEngine.generateTokensGPU(this, state, startPosition, conversationTokens.subList(startPosition, conversationTokens.size()), stopTokens,
                             options.maxTokens(), sampler, options.echo(), options.stream() ? tokenConsumer : null, tornadoVMPlan);
@@ -121,7 +124,7 @@ public interface Model {
             }
         } finally {
             // Clean up TornadoVM resources when exiting the chat loop
-            if (USE_TORNADOVM && tornadoVMPlan != null) {
+            if (llamaApp.getUseTornadoVM() && tornadoVMPlan != null) {
                 try {
                     tornadoVMPlan.freeTornadoExecutionPlan();
                 } catch (Exception e) {
@@ -140,6 +143,7 @@ public interface Model {
         State state = createNewState();
         ChatFormat chatFormat = ChatFormat.create(tokenizer());
         TornadoVMMasterPlan tornadoVMPlan = null;
+        LlamaApp llamaApp = LlamaApp.getInstance();
 
         List<Integer> promptTokens = new ArrayList<>();
         promptTokens.add(chatFormat.getBeginOfText());
@@ -162,7 +166,7 @@ public interface Model {
 
         Set<Integer> stopTokens = chatFormat.getStopTokens();
 
-        if (USE_TORNADOVM) {
+        if (llamaApp.getUseTornadoVM()) {
             tornadoVMPlan = TornadoVMMasterPlan.initializeTornadoVMPlan(state, this);
             // Call generateTokensGPU without the token consumer parameter
             responseTokens = InferenceEngine.generateTokensGPU(this, state, 0, promptTokens, stopTokens, options.maxTokens(), sampler, options.echo(), options.stream() ? tokenConsumer : null,

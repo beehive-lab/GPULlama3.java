@@ -23,9 +23,11 @@ public class ChatboxInteractor {
         List<String> commands = new ArrayList<>();
 
         ChatboxModel.Engine engine = model.getSelectedEngine();
+        LlamaApp llamaApp = LlamaApp.getInstance();
         if (engine == ChatboxModel.Engine.TORNADO_VM) {
-            // TODO: LlamaApp.USE_TORNADOVM is a final constant, but the GUI needs to be able to set this value
-            //commands.add("--gpu");
+            llamaApp.setUseTornadoVM(true);
+        } else {
+            llamaApp.setUseTornadoVM(false);
         }
 
         ChatboxModel.Mode mode = model.getSelectedMode();
