@@ -15,14 +15,12 @@
 </td>
 <td style="vertical-align: middle; padding-left: 20px; border: none;">  
 <strong>Llama3</strong> models written in <strong>native Java</strong> automatically accelerated on GPUs with <a href="https://github.com/beehive-lab/TornadoVM" target="_blank"><strong>TornadoVM</strong></a>.
-This project allows you to run Llama3 inference efficiently, leveraging TornadoVM's parallel computing features for enhanced performance.
-
+Runs Llama3 inference efficiently using TornadoVM's GPU acceleration.
 <br><br>
-Builds on <a href="https://github.com/mukel/llama3.java">Llama3.java</a>, based on the original <a href="https://github.com/meta-llama/llama3">Llama 3</a>, <a href="https://llama.meta.com/docs/model-cards-and-prompt-formats/llama3_1">3.1</a>, and <a href="https://ai.meta.com/blog/llama-3-2-connect-2024-vision-edge-mobile-devices/">3.2</a> models, with TornadoVM support for parallelism and hardware acceleration.
+Currently, supports <strong>Llama3</strong> and <strong>Mistral</strong> models in the GGUF format.
 <br><br>
-Thanks to <a href="https://github.com/mukel">Alfonso² Peterssen</a> for the original implementation of Llama3.java.
-<br><br>
-Previous intergration of TornadoVM and Llama2 it can be found in <a href="https://github.com/mikepapadim/llama2.tornadovm.java">llama2.tornadovm</a>.
+Builds on <a href="https://github.com/mukel/llama3.java">Llama3.java</a> by <a href="https://github.com/mukel">Alfonso² Peterssen</a>.
+Previous integration of TornadoVM and Llama2 it can be found in <a href="https://github.com/mikepapadim/llama2.tornadovm.java">llama2.tornadovm</a>.
 </td>
 </tr>
 </table>
@@ -159,6 +157,71 @@ make
 # Run the model (make sure you have downloaded the model file first -  see below)
 python llama-tornado --gpu  --verbose-init --opencl --model beehive-llama-3.2-1b-instruct-fp16.gguf --prompt "tell me a joke"
 ```
+-----------
+
+## ☕ Integration with Your Java Codebase or Tools
+
+To integrate it into your codebase or IDE (e.g., IntelliJ) or custom build system (like IntelliJ, Maven, or Gradle), use the `--show-command` flag.
+This flag shows the exact Java command with all JVM flags that are being invoked under the hood to enable seamless execution on GPUs with TornadoVM.
+Hence, it makes it simple to replicate or embed the invoked flags in any external tool or codebase.
+
+```bash
+llama-tornado --gpu --model beehive-llama-3.2-1b-instruct-fp16.gguf --prompt "tell me a joke" --show-command
+```
+
+<details>
+<summary>📋 Click to see the JVM configuration </summary>
+
+```java
+/home/mikepapadim/.sdkman/candidates/java/current/bin/java \
+    -server \
+    -XX:+UnlockExperimentalVMOptions \
+    -XX:+EnableJVMCI \
+    -Xms20g -Xmx20g \
+    --enable-preview \
+    -Djava.library.path=/home/mikepapadim/manchester/TornadoVM/bin/sdk/lib \
+    -Djdk.module.showModuleResolution=false \
+    --module-path .:/home/mikepapadim/manchester/TornadoVM/bin/sdk/share/java/tornado \
+    -Dtornado.load.api.implementation=uk.ac.manchester.tornado.runtime.tasks.TornadoTaskGraph \
+    -Dtornado.load.runtime.implementation=uk.ac.manchester.tornado.runtime.TornadoCoreRuntime \
+    -Dtornado.load.tornado.implementation=uk.ac.manchester.tornado.runtime.common.Tornado \
+    -Dtornado.load.annotation.implementation=uk.ac.manchester.tornado.annotation.ASMClassVisitor \
+    -Dtornado.load.annotation.parallel=uk.ac.manchester.tornado.api.annotations.Parallel \
+    -Duse.tornadovm=true \
+    -Dtornado.threadInfo=false \
+    -Dtornado.debug=false \
+    -Dtornado.fullDebug=false \
+    -Dtornado.printKernel=false \
+    -Dtornado.print.bytecodes=false \
+    -Dtornado.device.memory=7GB \
+    -Dtornado.profiler=false \
+    -Dtornado.log.profiler=false \
+    -Dtornado.profiler.dump.dir=/home/mikepapadim/repos/gpu-llama3.java/prof.json \
+    -Dtornado.enable.fastMathOptimizations=true \
+    -Dtornado.enable.mathOptimizations=false \
+    -Dtornado.enable.nativeFunctions=fast \
+    -Dtornado.loop.interchange=true \
+    -Dtornado.eventpool.maxwaitevents=32000 \
+    "-Dtornado.opencl.compiler.flags=-cl-denorms-are-zero -cl-no-signed-zeros -cl-finite-math-only" \
+    --upgrade-module-path /home/mikepapadim/manchester/TornadoVM/bin/sdk/share/java/graalJars \
+    @/home/mikepapadim/manchester/TornadoVM/bin/sdk/etc/exportLists/common-exports \
+    @/home/mikepapadim/manchester/TornadoVM/bin/sdk/etc/exportLists/opencl-exports \
+    --add-modules ALL-SYSTEM,tornado.runtime,tornado.annotation,tornado.drivers.common,tornado.drivers.opencl \
+    -cp /home/mikepapadim/repos/gpu-llama3.java/target/gpu-llama3-1.0-SNAPSHOT.jar \
+    com.example.LlamaApp \
+    -m beehive-llama-3.2-1b-instruct-fp16.gguf \
+    --temperature 0.1 \
+    --top-p 0.95 \
+    --seed 1746903566 \
+    --max-tokens 512 \
+    --stream true \
+    --echo false \
+    -p "tell me a joke" \
+    --instruct
+```
+
+</details>
+
 -----------
 
 The above model can we swapped with one of the other models, such as `beehive-llama-3.2-3b-instruct-fp16.gguf` or `beehive-llama-3.2-8b-instruct-fp16.gguf`, depending on your needs.
@@ -381,73 +444,6 @@ View TornadoVM's internal behavior:
 # Combine debug options
 ./llama-tornado --gpu --model model.gguf --prompt "..." --print-threads --print-bytecodes --print-kernel
 ```
-
------------
-
-## Easy Integration with Your Codebase or Tools
-
-To integrate `llama-tornado` into your codebase or IDE (e.g., IntelliJ) or custom build system (like IntelliJ, Maven, or Gradle), use the `--show-command` flag. 
-This flag shows the exact Java command with all JVM flags that are being invoked under the hood in order to enable seamless execution on GPUs with TornadoVM.
-Hence, it makes it simple to replicate or embed the invoked flags in any external tool or codebase.
-
-```bash
-llama-tornado --gpu --model beehive-llama-3.2-1b-instruct-fp16.gguf --prompt "tell me a joke" --show-command
-```
-
-<details>
-<summary>📋 Click to see the full Java command</summary>
-
-```java
-/home/mikepapadim/.sdkman/candidates/java/current/bin/java \
-    -server \
-    -XX:+UnlockExperimentalVMOptions \
-    -XX:+EnableJVMCI \
-    -Xms20g -Xmx20g \
-    --enable-preview \
-    -Djava.library.path=/home/mikepapadim/manchester/TornadoVM/bin/sdk/lib \
-    -Djdk.module.showModuleResolution=false \
-    --module-path .:/home/mikepapadim/manchester/TornadoVM/bin/sdk/share/java/tornado \
-    -Dtornado.load.api.implementation=uk.ac.manchester.tornado.runtime.tasks.TornadoTaskGraph \
-    -Dtornado.load.runtime.implementation=uk.ac.manchester.tornado.runtime.TornadoCoreRuntime \
-    -Dtornado.load.tornado.implementation=uk.ac.manchester.tornado.runtime.common.Tornado \
-    -Dtornado.load.annotation.implementation=uk.ac.manchester.tornado.annotation.ASMClassVisitor \
-    -Dtornado.load.annotation.parallel=uk.ac.manchester.tornado.api.annotations.Parallel \
-    -Duse.tornadovm=true \
-    -Dtornado.threadInfo=false \
-    -Dtornado.debug=false \
-    -Dtornado.fullDebug=false \
-    -Dtornado.printKernel=false \
-    -Dtornado.print.bytecodes=false \
-    -Dtornado.device.memory=7GB \
-    -Dtornado.profiler=false \
-    -Dtornado.log.profiler=false \
-    -Dtornado.profiler.dump.dir=/home/mikepapadim/repos/gpu-llama3.java/prof.json \
-    -Dtornado.enable.fastMathOptimizations=true \
-    -Dtornado.enable.mathOptimizations=false \
-    -Dtornado.enable.nativeFunctions=fast \
-    -Dtornado.loop.interchange=true \
-    -Dtornado.eventpool.maxwaitevents=32000 \
-    "-Dtornado.opencl.compiler.flags=-cl-denorms-are-zero -cl-no-signed-zeros -cl-finite-math-only" \
-    --upgrade-module-path /home/mikepapadim/manchester/TornadoVM/bin/sdk/share/java/graalJars \
-    @/home/mikepapadim/manchester/TornadoVM/bin/sdk/etc/exportLists/common-exports \
-    @/home/mikepapadim/manchester/TornadoVM/bin/sdk/etc/exportLists/opencl-exports \
-    --add-modules ALL-SYSTEM,tornado.runtime,tornado.annotation,tornado.drivers.common,tornado.drivers.opencl \
-    -cp /home/mikepapadim/repos/gpu-llama3.java/target/gpu-llama3-1.0-SNAPSHOT.jar \
-    com.example.LlamaApp \
-    -m beehive-llama-3.2-1b-instruct-fp16.gguf \
-    --temperature 0.1 \
-    --top-p 0.95 \
-    --seed 1746903566 \
-    --max-tokens 512 \
-    --stream true \
-    --echo false \
-    -p "tell me a joke" \
-    --instruct
-```
-
-</details>
-
------------
 
 ## Current Features & Roadmap
 
