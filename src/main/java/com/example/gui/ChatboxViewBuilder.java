@@ -1,6 +1,7 @@
 package com.example.gui;
 
 import atlantafx.base.theme.Styles;
+import javafx.beans.binding.Bindings;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.property.StringProperty;
@@ -68,6 +69,9 @@ public class ChatboxViewBuilder implements Builder<Region> {
 
     private Node createEngineBox() {
         ComboBox<ChatboxModel.Engine> engineDropdown = new ComboBox<>();
+        engineDropdown.disableProperty().bind(Bindings.createBooleanBinding(() -> (inferenceRunning.get() || model.getInteractiveSessionActive()),
+                inferenceRunning,
+                model.interactiveSessionActiveProperty()));
         engineDropdown.valueProperty().bindBidirectional(model.selectedEngineProperty());
         engineDropdown.getItems().addAll(ChatboxModel.Engine.values());
         engineDropdown.setMaxWidth(Double.MAX_VALUE);
@@ -79,6 +83,9 @@ public class ChatboxViewBuilder implements Builder<Region> {
 
     private Node createChatModeBox() {
         ComboBox<ChatboxModel.Mode> modeDropdown = new ComboBox<>();
+        modeDropdown.disableProperty().bind(Bindings.createBooleanBinding(() -> (inferenceRunning.get() || model.getInteractiveSessionActive()),
+                inferenceRunning,
+                model.interactiveSessionActiveProperty()));
         modeDropdown.valueProperty().bindBidirectional(model.selectedModeProperty());
         modeDropdown.getItems().addAll(ChatboxModel.Mode.values());
         modeDropdown.setMaxWidth(Double.MAX_VALUE);
@@ -90,6 +97,9 @@ public class ChatboxViewBuilder implements Builder<Region> {
 
     private Node createModelSelectBox() {
         ComboBox<String> modelDropdown = new ComboBox<>();
+        modelDropdown.disableProperty().bind(Bindings.createBooleanBinding(() -> (inferenceRunning.get() || model.getInteractiveSessionActive()),
+                inferenceRunning,
+                model.interactiveSessionActiveProperty()));
         modelDropdown.valueProperty().bindBidirectional(model.selectedModelProperty());
         HBox.setHgrow(modelDropdown, Priority.ALWAYS);
         modelDropdown.setMaxWidth(Double.MAX_VALUE);
@@ -97,7 +107,9 @@ public class ChatboxViewBuilder implements Builder<Region> {
         Button reloadButton = new Button("Reload");
         reloadButton.getStyleClass().add(Styles.ACCENT);
         reloadButton.setMinWidth(80);
-        reloadButton.disableProperty().bind(inferenceRunning);
+        reloadButton.disableProperty().bind(Bindings.createBooleanBinding(() -> (inferenceRunning.get() || model.getInteractiveSessionActive()),
+                inferenceRunning,
+                model.interactiveSessionActiveProperty()));
         reloadButton.setOnAction(e -> {
             // Search for a /models folder containing model files.
             modelDropdown.getItems().clear();

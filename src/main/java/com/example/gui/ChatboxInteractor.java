@@ -17,7 +17,6 @@ public class ChatboxInteractor {
     private Model llm;
     private Sampler sampler;
     private Model.Response currentResponse;
-    private boolean interactiveSessionActive = false;
 
     public ChatboxInteractor(ChatboxModel viewModel) {
         this.model = viewModel;
@@ -49,7 +48,7 @@ public class ChatboxInteractor {
         String prompt = String.format("\"%s\"", model.getPromptText());
 
         commands.addAll(Arrays.asList("--model", modelPath));
-        if (!interactiveSessionActive) {
+        if (!model.getInteractiveSessionActive()) {
             commands.addAll(Arrays.asList("--prompt", prompt));
         }
 
@@ -70,7 +69,7 @@ public class ChatboxInteractor {
         cleanTornadoVMResources();
         llm = null;
         currentResponse = null;
-        interactiveSessionActive = false;
+        model.setInteractiveSessionActive(false);
         System.out.println("Interactive session ended");
     }
 
@@ -113,7 +112,7 @@ public class ChatboxInteractor {
 
             Options options = Options.parseOptions(commands);
 
-            if (interactiveSessionActive) {
+            if (model.getInteractiveSessionActive()) {
                 builder.append(model.getOutputText()); // Include the current output to avoid clearing the entire text.
                 String userText = model.getPromptText();
                 // Display the user message with a '>' prefix
@@ -134,7 +133,6 @@ public class ChatboxInteractor {
                 sampler = LlamaApp.createSampler(llm, options);
                 if (options.interactive()) {
                     // Start a new interactive session.
-                    // TODO: disable the rest of the GUI while a session is active
                     builder.append("Interactive session started (write 'exit' or 'quit' to stop)");
                     builder.append(System.getProperty("line.separator"));
                     // Display the user message with a '>' prefix
@@ -142,7 +140,7 @@ public class ChatboxInteractor {
                     builder.append(model.getPromptText());
                     builder.append(System.getProperty("line.separator"));
                     currentResponse = llm.runInteractiveStep(sampler, options, model.getPromptText(), new Model.Response());
-                    interactiveSessionActive = true;
+                    model.setInteractiveSessionActive(true);
                 } else {
                     llm.runInstructOnce(sampler, options);
                     llm = null;
@@ -155,7 +153,7 @@ public class ChatboxInteractor {
             e.printStackTrace();
             e.printStackTrace(originalOut);
             // Make sure to end the interactive session if an exception occurs.
-            if (interactiveSessionActive) {
+            if (model.getInteractiveSessionActive()) {
                 endInteractiveSession();
             }
         } finally {

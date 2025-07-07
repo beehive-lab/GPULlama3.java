@@ -1,6 +1,8 @@
 package com.example.gui;
 
+import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.ObjectProperty;
+import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
@@ -15,6 +17,7 @@ public class ChatboxModel {
     private final StringProperty selectedModel = new SimpleStringProperty("");
     private final StringProperty promptText = new SimpleStringProperty("");
     private final StringProperty outputText = new SimpleStringProperty("");
+    private final BooleanProperty interactiveSessionActive = new SimpleBooleanProperty(false);
 
     public Engine getSelectedEngine() {
         return selectedEngine.get();
@@ -74,6 +77,18 @@ public class ChatboxModel {
 
     public void setOutputText(String text) {
         this.outputText.set(text);
+    }
+
+    public boolean getInteractiveSessionActive() {
+        return interactiveSessionActive.get();
+    }
+
+    public BooleanProperty interactiveSessionActiveProperty() {
+        return interactiveSessionActive;
+    }
+
+    public void setInteractiveSessionActive(boolean value) {
+        this.interactiveSessionActive.set(value);
     }
 
 }
