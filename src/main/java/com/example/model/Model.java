@@ -135,6 +135,104 @@ public interface Model {
     }
 
     /**
+     * Model agnostic implementation for interactive GUI mode.
+     * Takes a single user input and returns the model's response, allowing the GUI to manage the chat loop.
+     *
+     * @param sampler The sampler for token generation
+     * @param options The inference options
+     * @param userText The user's input text
+     * @param previousResponse A Response object referencing an ongoing chat
+     * @return A Response object containing the model's output and updated state
+     */
+    default Response runInteractiveStep(Sampler sampler, Options options, String userText, Response previousResponse) {
+        ChatFormat chatFormat = ChatFormat.create(tokenizer());
+        List<Integer> conversationTokens = previousResponse.conversationTokens();
+        State state = previousResponse.state();
+        TornadoVMMasterPlan tornadoVMPlan = previousResponse.tornadoVMPlan();
+        String responseText = "";
+
+        int startPosition = conversationTokens.size();
+
+        // For the first message, set up the conversation tokens if empty
+        if (conversationTokens.isEmpty()) {
+            conversationTokens.add(chatFormat.getBeginOfText());
+            if (options.systemPrompt() != null) {
+                conversationTokens.addAll(chatFormat.encodeMessage(new ChatFormat.Message(ChatFormat.Role.SYSTEM, options.systemPrompt())));
+            }
+        }
+
+        // Get the LlamaApp singleton to read configuration values
+        LlamaApp llamaApp = LlamaApp.getInstance();
+
+        if (state == null) {
+            // State allocation can take some time for large context sizes
+            state = createNewState();
+        }
+
+        // Initialize TornadoVM plan once at the beginning if GPU path is enabled
+        if (llamaApp.getUseTornadoVM() && tornadoVMPlan == null) {
+            tornadoVMPlan = TornadoVMMasterPlan.initializeTornadoVMPlan(state, this);
+        }
+
+        conversationTokens.addAll(chatFormat.encodeMessage(new ChatFormat.Message(ChatFormat.Role.USER, userText)));
+        conversationTokens.addAll(chatFormat.encodeHeader(new ChatFormat.Message(ChatFormat.Role.ASSISTANT, "")));
+        Set<Integer> stopTokens = chatFormat.getStopTokens();
+
+        List<Integer> responseTokens;
+        IntConsumer tokenConsumer = token -> {
+            if (options.stream()) {
+                if (tokenizer().shouldDisplayToken(token)) {
+                    System.out.print(tokenizer().decode(List.of(token)));
+                }
+            }
+        };
+
+        // Choose between GPU and CPU path based on configuration
+        if (llamaApp.getUseTornadoVM()) {
+            // GPU path using TornadoVM
+            responseTokens = InferenceEngine.generateTokensGPU(this, state, startPosition, conversationTokens.subList(startPosition, conversationTokens.size()), stopTokens,
+                    options.maxTokens(), sampler, options.echo(), options.stream() ? tokenConsumer : null, tornadoVMPlan);
+        } else {
+            // CPU path
+            responseTokens = InferenceEngine.generateTokens(this, state, startPosition, conversationTokens.subList(startPosition, conversationTokens.size()), stopTokens, options.maxTokens(),
+                    sampler, options.echo(), tokenConsumer);
+        }
+
+        // Include stop token in the prompt history, but not in the response displayed to the user.
+        conversationTokens.addAll(responseTokens);
+        Integer stopToken = null;
+        if (!responseTokens.isEmpty() && stopTokens.contains(responseTokens.getLast())) {
+            stopToken = responseTokens.getLast();
+            responseTokens.removeLast();
+        }
+        if (!options.stream()) {
+            responseText = tokenizer().decode(responseTokens);
+            System.out.println(responseText);
+        }
+        if (stopToken == null) {
+            System.err.println("\n Ran out of context length...\n Increase context length by passing to llama-tornado --max-tokens XXX");
+            return new Response(responseText, state, conversationTokens, tornadoVMPlan);
+        }
+        System.out.print("\n");
+
+        // Optionally print performance metrics after each response
+        if (SHOW_PERF_INTERACTIVE) {
+            LastRunMetrics.printMetrics();
+        }
+
+        return new Response(responseText, state, conversationTokens, tornadoVMPlan);
+    }
+
+    /**
+     * Simple data model for Model responses, used to keep track of conversation history and state.
+     */
+    record Response(String responseText, State state, List<Integer> conversationTokens, TornadoVMMasterPlan tornadoVMPlan)  {
+        public Response() {
+            this("", null, new ArrayList<>(), null);
+        }
+    }
+
+    /**
      * Model agnostic default implementation for instruct mode.
      * @param sampler
      * @param options

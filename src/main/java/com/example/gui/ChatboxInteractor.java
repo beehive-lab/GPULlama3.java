@@ -14,6 +14,10 @@ import java.util.List;
 public class ChatboxInteractor {
 
     private final ChatboxModel model;
+    private Model llm;
+    private Sampler sampler;
+    private Model.Response currentResponse;
+    private boolean interactiveSessionActive = false;
 
     public ChatboxInteractor(ChatboxModel viewModel) {
         this.model = viewModel;
@@ -44,12 +48,30 @@ public class ChatboxInteractor {
         String modelPath = String.format("./models/%s", selectedModel);
         String prompt = String.format("\"%s\"", model.getPromptText());
 
-        commands.addAll(Arrays.asList(
-                "--model", modelPath,
-                "--prompt", prompt
-        ));
+        commands.addAll(Arrays.asList("--model", modelPath));
+        if (!interactiveSessionActive) {
+            commands.addAll(Arrays.asList("--prompt", prompt));
+        }
 
         return commands.toArray(new String[commands.size()]);
+    }
+
+    private void cleanTornadoVMResources() {
+        if (currentResponse != null && currentResponse.tornadoVMPlan() != null) {
+            try {
+                currentResponse.tornadoVMPlan().freeTornadoExecutionPlan();
+            } catch (Exception e) {
+                System.err.println("Error while cleaning up TornadoVM resources: " + e.getMessage());
+            }
+        }
+    }
+
+    private void endInteractiveSession() {
+        cleanTornadoVMResources();
+        llm = null;
+        currentResponse = null;
+        interactiveSessionActive = false;
+        System.out.println("Interactive session ended");
     }
 
     // Load and run a model while capturing its output text to a custom stream.
@@ -64,9 +86,6 @@ public class ChatboxInteractor {
             }
 
             StringBuilder builder = new StringBuilder();
-
-            builder.append("Processing... please wait");
-            builder.append(System.getProperty("line.separator"));
 
             // Create a custom PrintStream to capture output from loading the model and running it.
             PrintStream customStream = new PrintStream(new ByteArrayOutputStream()) {
@@ -94,19 +113,51 @@ public class ChatboxInteractor {
 
             Options options = Options.parseOptions(commands);
 
-            // Load the model and run.
-            Model llm = LlamaApp.loadModel(options);
-            Sampler sampler = LlamaApp.createSampler(llm, options);
-            if (options.interactive()) {
-                // TODO: how to read input from GUI text field?
-                llm.runInteractive(sampler, options);
+            if (interactiveSessionActive) {
+                builder.append(model.getOutputText()); // Include the current output to avoid clearing the entire text.
+                String userText = model.getPromptText();
+                // Display the user message with a '>' prefix
+                builder.append("> ");
+                builder.append(userText);
+                builder.append(System.getProperty("line.separator"));
+                if (List.of("quit", "exit").contains(userText)) {
+                    endInteractiveSession();
+                } else {
+                    currentResponse = llm.runInteractiveStep(sampler, options, userText, currentResponse);
+                }
             } else {
-                llm.runInstructOnce(sampler, options);
+                builder.append("Processing... please wait");
+                builder.append(System.getProperty("line.separator"));
+
+                // Load the model and run.
+                llm = LlamaApp.loadModel(options);
+                sampler = LlamaApp.createSampler(llm, options);
+                if (options.interactive()) {
+                    // Start a new interactive session.
+                    // TODO: disable the rest of the GUI while a session is active
+                    builder.append("Interactive session started (write 'exit' or 'quit' to stop)");
+                    builder.append(System.getProperty("line.separator"));
+                    // Display the user message with a '>' prefix
+                    builder.append("> ");
+                    builder.append(model.getPromptText());
+                    builder.append(System.getProperty("line.separator"));
+                    currentResponse = llm.runInteractiveStep(sampler, options, model.getPromptText(), new Model.Response());
+                    interactiveSessionActive = true;
+                } else {
+                    llm.runInstructOnce(sampler, options);
+                    llm = null;
+                    sampler = null;
+                }
             }
+
         } catch (Exception e) {
             // Catch all exceptions so that they're logged in the output area.
             e.printStackTrace();
             e.printStackTrace(originalOut);
+            // Make sure to end the interactive session if an exception occurs.
+            if (interactiveSessionActive) {
+                endInteractiveSession();
+            }
         } finally {
             System.setOut(originalOut);
         }
