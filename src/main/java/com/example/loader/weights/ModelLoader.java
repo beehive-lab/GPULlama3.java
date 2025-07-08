@@ -96,7 +96,8 @@ public final class ModelLoader {
         GGMLTensorEntry tokenEmbeddings = tensorEntries.get("token_embd.weight");
         GGMLTensorEntry outputWeight = tensorEntries.getOrDefault("output.weight", tokenEmbeddings);
 
-        if (LlamaApp.USE_TORNADOVM) {
+        LlamaApp llamaApp = LlamaApp.getInstance();
+        if (llamaApp.getUseTornadoVM()) {
             System.out.println("Loading model weights in TornadoVM format (loading " + outputWeight.ggmlType() + " -> " + GGMLType.F16 + ")");
             return createTornadoVMWeights(tensorEntries, config, ropeFreqs, tokenEmbeddings, outputWeight);
         } else {
