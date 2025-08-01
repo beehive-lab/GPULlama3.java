@@ -98,6 +98,7 @@ public class TornadoVMMasterPlan {
     TornadoVMLayerPlanner createPlanner(State state, Model model) {
         return switch (model.getModelType()) {
             case LLAMA_3, MISTRAL -> new TornadoVMLayerPlanner(state, model);
+            case QWEN_2 -> throw new UnsupportedOperationException("TornadoVM QWEN 2 not supported");
             case QWEN_3 -> new Qwen3TornadoVMLayerPlanner((Qwen3State) state, model);
             case UNKNOWN -> throw new UnsupportedOperationException("Unknown model type");
         };

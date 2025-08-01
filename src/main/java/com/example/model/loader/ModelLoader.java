@@ -61,6 +61,8 @@ public abstract class ModelLoader {
                 return ModelType.MISTRAL;
             } else if (lowerName.contains("llama")) {
                 return ModelType.LLAMA_3;
+            } else if (lowerName.contains("qwen2") || lowerName.contains("deepseek r1 distill")) {
+                return ModelType.QWEN_2;
             } else if (lowerName.contains("qwen3")) {
                 return ModelType.QWEN_3;
             }
