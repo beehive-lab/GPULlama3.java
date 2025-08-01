@@ -1,6 +1,7 @@
 package com.example.tornadovm;
 
 import com.example.auxiliary.Tuple2;
+import com.example.inference.state.Phi3State;
 import com.example.inference.state.Qwen3State;
 import com.example.inference.state.State;
 import com.example.model.Configuration;
@@ -99,6 +100,7 @@ public class TornadoVMMasterPlan {
         return switch (model.getModelType()) {
             case LLAMA_3, MISTRAL -> new TornadoVMLayerPlanner(state, model);
             case QWEN_3 -> new Qwen3TornadoVMLayerPlanner((Qwen3State) state, model);
+            case PHI_3 -> new Phi3TornadoVMLayerPlanner((Phi3State) state, model);
             case UNKNOWN -> throw new UnsupportedOperationException("Unknown model type");
         };
     }

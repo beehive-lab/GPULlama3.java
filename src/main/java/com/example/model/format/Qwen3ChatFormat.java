@@ -106,6 +106,8 @@ public class Qwen3ChatFormat implements ChatFormat {
         return beginOfText;
     }
 
+
+
     @Override
     public Set<Integer> getStopTokens() {
         if (imEnd == -1 && endOfText == -1) {

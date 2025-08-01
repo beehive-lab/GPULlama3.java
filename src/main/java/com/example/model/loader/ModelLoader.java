@@ -63,23 +63,24 @@ public abstract class ModelLoader {
                 return ModelType.LLAMA_3;
             } else if (lowerName.contains("qwen3")) {
                 return ModelType.QWEN_3;
-            }
+            }else if (lowerName.contains("phi3")) {
+                return ModelType.PHI_3;
         }
 
-        // Check by tokenizer model
-        if (TOKENIZER_MISTRAL_MODEL.equals(tokenizerModel)) {
-            return ModelType.MISTRAL;
-        } else if (TOKENIZER_LLAMA_3_MODEL.equals(tokenizerModel)) {
-            return ModelType.LLAMA_3;
-        }
+//        // Check by tokenizer model
+//        if (TOKENIZER_MISTRAL_MODEL.equals(tokenizerModel)) {
+//            return ModelType.MISTRAL;
+//        } else if (TOKENIZER_LLAMA_3_MODEL.equals(tokenizerModel)) {
+//            return ModelType.LLAMA_3;
+//        }
 
-        // Check by vocabulary size as fallback
-        if (vocabSize != null) {
-            if (vocabSize == 32768) {
-                return ModelType.MISTRAL;
-            } else if (vocabSize == 128256) {
-                return ModelType.LLAMA_3;
-            }
+//        // Check by vocabulary size as fallback
+//        if (vocabSize != null) {
+//            if (vocabSize == 32768) {
+//                return ModelType.MISTRAL;
+//            } else if (vocabSize == 128256) {
+//                return ModelType.LLAMA_3;
+//            }
         }
 
         return ModelType.UNKNOWN;

@@ -7,7 +7,6 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 public record Vocabulary(String[] tokens, float[] scores, Map<String, Integer> tokenToIndex) {
-    private static final String TOKENIZER_LLAMA_3_MODEL = "gpt2";
 
     // @formatter:off
     public Vocabulary(String[] vocabulary, float[] scores) {
@@ -41,6 +40,12 @@ public record Vocabulary(String[] tokens, float[] scores, Map<String, Integer> t
     }
 
     public static Vocabulary loadQwen3Vocabulary(Map<String, Object> metadata) {
+        String[] tokens = (String[]) metadata.get("tokenizer.ggml.tokens");
+        float[] scores = (float[]) metadata.get("tokenizer.ggml.scores");
+        return new Vocabulary(tokens, scores);
+    }
+
+    public static Vocabulary loadPhi3Vocabulary(Map<String, Object> metadata) {
         String[] tokens = (String[]) metadata.get("tokenizer.ggml.tokens");
         float[] scores = (float[]) metadata.get("tokenizer.ggml.scores");
         return new Vocabulary(tokens, scores);

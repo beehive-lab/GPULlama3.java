@@ -68,7 +68,7 @@ public interface Model {
         ChatFormat chatFormat = chatFormat();
         TornadoVMMasterPlan tornadoVMPlan = null;
 
-        if (!getModelType().equals(ModelType.QWEN_3)) {
+        if (!getModelType().equals(ModelType.QWEN_3) && !getModelType().equals(ModelType.PHI_3)) {
             conversationTokens.add(chatFormat.getBeginOfText());
         }
 
@@ -164,7 +164,7 @@ public interface Model {
 
         List<Integer> promptTokens = new ArrayList<>();
 
-        if (!getModelType().equals(ModelType.QWEN_3)) {
+        if (!getModelType().equals(ModelType.QWEN_3) && !getModelType().equals(ModelType.PHI_3)) {
             promptTokens.add(chatFormat.getBeginOfText());
         }
 

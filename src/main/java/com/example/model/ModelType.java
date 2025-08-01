@@ -3,6 +3,7 @@ package com.example.model;
 import com.example.core.model.GGUF;
 import com.example.model.loader.LlamaModelLoader;
 import com.example.model.loader.MistralModelLoader;
+import com.example.model.loader.Phi3ModelLoader;
 import com.example.model.loader.Qwen3ModelLoader;
 
 import java.nio.channels.FileChannel;
@@ -39,6 +40,13 @@ public enum ModelType {
         @Override
         public Model loadModel(FileChannel fileChannel, GGUF gguf, int contextLength, boolean loadWeights) {
             return new Qwen3ModelLoader(fileChannel, gguf, contextLength, loadWeights).loadModel();
+        }
+    },
+
+    PHI_3 {
+        @Override
+        public Model loadModel(FileChannel fileChannel, GGUF gguf, int contextLength, boolean loadWeights) {
+            return new Phi3ModelLoader(fileChannel, gguf, contextLength, loadWeights).loadModel();
         }
     },
 

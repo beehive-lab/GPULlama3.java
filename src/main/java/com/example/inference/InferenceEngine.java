@@ -9,6 +9,7 @@ import com.example.tokenizer.impl.Tokenizer;
 import com.example.tornadovm.TornadoVMMasterPlan;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
+import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -214,6 +215,61 @@ public final class InferenceEngine {
         return generatedTokens;
     }
 
+    public static List<Integer> generateTokensPhi3(Model model, State state, int startPosition, List<Integer> promptTokens, Set<Integer> stopTokens, int maxTokens, Sampler sampler, boolean echo,
+            IntConsumer onTokenGenerated) {
+
+        long startNanos = System.nanoTime();
+        if (maxTokens < 0 || model.configuration().contextLength() < maxTokens) {
+            maxTokens = model.configuration().contextLength();
+        }
+        List<Integer> generatedTokens = new ArrayList<>(maxTokens);
+        int token = state.latestToken; // BOS?
+        int nextToken;
+        int promptIndex = 0;
+        ByteArrayOutputStream baos = new ByteArrayOutputStream(5);
+        for (int position = startPosition; position < maxTokens; ++position) {
+
+            model.forward(state, token, position);
+            if (promptIndex < promptTokens.size()) {
+                // Force-pick token from prompt.
+                nextToken = promptTokens.get(promptIndex++);
+                if (echo) {
+                    // log prompt token (different color?)
+                    System.out.println("NextToken: " + nextToken);
+                    //System.err.print(Tokenizer.replaceControlCharacters(model.tokenizer().decode(List.of(nextToken))));
+                    String decoded = model.tokenizer().decode(List.of(nextToken));
+                    System.err.print(Tokenizer.replaceControlCharacters(model.tokenizer().decode(List.of(nextToken))));
+
+                    //                    System.err.print(de(decoded, baos));
+                }
+            } else {
+                nextToken = sampler.sampleToken(state.logits);
+                if (echo) {
+                    // log inferred token
+                    System.err.print(Tokenizer.replaceControlCharacters(model.tokenizer().decode(List.of(nextToken))));
+                }
+                generatedTokens.add(nextToken);
+                if (onTokenGenerated != null) {
+                    onTokenGenerated.accept(nextToken);
+                }
+                if (stopTokens.contains(nextToken)) {
+                    break;
+                }
+            }
+            state.latestToken = token = nextToken;
+            if (position == 2000) {
+                break;
+            }
+        }
+
+        long elapsedNanos = System.nanoTime() - startNanos;
+        int totalTokens = promptIndex + generatedTokens.size();
+        System.err.printf("%n%.2f tokens/s (%d)%n", totalTokens / (elapsedNanos / 1_000_000_000.0), totalTokens);
+
+        return generatedTokens;
+
+    }
+
     public static List<Integer> generateTokensGPULlama(Model model, State state, int startPosition, List<Integer> promptTokens, Set<Integer> stopTokens, int maxTokens, Sampler sampler, boolean echo,
             IntConsumer onTokenGenerated, TornadoVMMasterPlan tornadoVMPlan) {
         // === Setup and Initialization ===
@@ -384,6 +440,170 @@ public final class InferenceEngine {
 
             // Update for next iteration
             state.latestToken = currentToken = nextToken;
+        }
+
+        // Calculate and print performance metrics
+        long endNanos = System.nanoTime();
+        double totalTimeSeconds = (endNanos - startNanos) / 1_000_000_000.0;
+        int totalTokens = promptIndex + generatedTokens.size();
+
+        LastRunMetrics.setMetrics(totalTokens, totalTimeSeconds);
+
+        return generatedTokens;
+    }
+
+//    public static List<Integer> generateTokensGPUPhi3(Model model, State state, int startPosition, List<Integer> promptTokens, Set<Integer> stopTokens, int maxTokens, Sampler sampler, boolean echo,
+//            IntConsumer onTokenGenerated, TornadoVMMasterPlan tornadoVMPlan) {
+//        // === Setup and Initialization ===
+//        long startNanos = System.nanoTime();
+//        long inferenceStartNanos = 0;
+//
+//        // Pre-validate the max tokens to avoid checking in the loop
+//        int actualMaxTokens = Math.min(maxTokens > 0 ? maxTokens : model.configuration().contextLength(), model.configuration().contextLength());
+//
+//        // Preallocate with expected capacity to avoid resizing
+//        List<Integer> generatedTokens = new ArrayList<>(Math.min(256, actualMaxTokens - promptTokens.size())); // Conservative estimate
+//
+//        // === Token Generation Loop ===
+//        int currentToken = state.latestToken;
+//        int nextToken;
+//        int promptIndex = 0;
+//        int pos = startPosition;
+//
+//        // Use more efficient direct array access for prompt tokens if possible
+//        int[] promptTokenArray = null;
+//        if (promptTokens instanceof ArrayList) {
+//            // Try to extract the underlying array for faster access
+//            try {
+//                // This is a performance optimization that may not work on all JVMs
+//                promptTokenArray = promptTokens.stream().mapToInt(Integer::intValue).toArray();
+//            } catch (Exception e) {
+//                // Fall back to list access
+//            }
+//        }
+//
+//        // Main generation loop
+//        while (pos < actualMaxTokens) {
+//            // GPU Forward Pass - No conditional check since we know we're using GPU
+//            //System.out.println("currentToken: " + currentToken);
+//            FloatArray logits = InferenceCore.forwardTornadoVM(model, state, currentToken, pos, tornadoVMPlan);
+//
+//            // Process prompt tokens if still remaining
+//            if (promptIndex < promptTokens.size()) {
+//                // Get next prompt token (using array access if available)
+//                nextToken = promptTokenArray != null ? promptTokenArray[promptIndex++] : promptTokens.get(promptIndex++);
+//
+//                if (echo) {
+//                    // Decode and output token
+//                    System.err.print(Tokenizer.replaceControlCharacters(model.tokenizer().decode(List.of(nextToken))));
+//                }
+//            } else {
+//                // Mark first inference token
+//                if (inferenceStartNanos == 0) {
+//                    inferenceStartNanos = System.nanoTime();
+//                }
+//
+//                // Sample next token - use GPU sampling if available
+//                nextToken = sampler.sampleToken(logits);
+//
+//                // Add token consumer support
+//                if (onTokenGenerated != null) {
+//                    onTokenGenerated.accept(nextToken);
+//                }
+//
+//                // Output if needed
+//                if (echo && onTokenGenerated == null) {
+//                    System.err.print(Tokenizer.replaceControlCharacters(model.tokenizer().decode(List.of(nextToken))));
+//                }
+//
+//                // Store token
+//                generatedTokens.add(nextToken);
+//
+//                // Check stop condition
+//                if (stopTokens.contains(nextToken)) {
+//                    break;
+//                }
+//            }
+//
+//            // Update for next iteration
+//            currentToken = nextToken;
+//            state.latestToken = currentToken;
+//            pos++;
+//        }
+//
+//        // === Performance Metrics ===
+//        long endNanos = System.nanoTime();
+//        double totalSeconds = (endNanos - startNanos) / 1_000_000_000.0;
+//        int totalTokens = promptIndex + generatedTokens.size();
+//
+//        // Set metrics for tokens achieved
+//        LastRunMetrics.setMetrics(totalTokens, totalSeconds);
+//
+//        return generatedTokens;    }
+
+    public static List<Integer> generateTokensGPUPhi3(Model model, State state, int startPosition, List<Integer> promptTokens, Set<Integer> stopTokens, int maxTokens, Sampler sampler, boolean echo,
+            IntConsumer onTokenGenerated, TornadoVMMasterPlan tornadoVMPlan) {
+        // Start timing the whole process
+        long startNanos = System.nanoTime();
+        long inferenceStartNanos = 0;
+
+        // Validate and adjust maxTokens if necessary
+        if (maxTokens < 0 || model.configuration().contextLength() < maxTokens) {
+            maxTokens = model.configuration().contextLength();
+        }
+
+        // Storage for generated tokens
+        List<Integer> generatedTokens = new ArrayList<>();
+
+        // Initialize token variables
+        int currentToken = state.latestToken;
+        int nextToken;
+        int promptIndex = 0;
+        int pos = startPosition;
+
+        while (pos < maxTokens) {
+            // GPU Forward Pass
+            FloatArray logits = InferenceCore.forwardTornadoVM(model, state, currentToken, pos, tornadoVMPlan);
+
+            // Handle token processing
+            if (promptIndex < promptTokens.size()) {
+                // We're still processing the prompt tokens
+                nextToken = promptTokens.get(promptIndex++);
+                if (echo) {
+                    System.err.print(Tokenizer.replaceControlCharacters(model.tokenizer().decode(List.of(nextToken))));
+                }
+            } else {
+                // Mark the start of actual generation (after prompt processing)
+                if (inferenceStartNanos == 0) {
+                    inferenceStartNanos = System.nanoTime();
+                }
+
+                // Sample the next token
+                nextToken = sampler.sampleToken(logits);
+
+                // Output the token if echo is enabled
+                if (echo) {
+                    System.err.print(Tokenizer.replaceControlCharacters(model.tokenizer().decode(List.of(nextToken))));
+                }
+
+                // Track the generated token
+                generatedTokens.add(nextToken);
+
+                // Notify via callback if provided
+                if (onTokenGenerated != null) {
+                    onTokenGenerated.accept(nextToken);
+                }
+
+                // Check for stop condition
+                if (stopTokens.contains(nextToken)) {
+                    break;
+                }
+            }
+
+            // Update for next iteration
+            currentToken = nextToken;
+            state.latestToken = currentToken;
+            pos++;
         }
 
         // Calculate and print performance metrics
