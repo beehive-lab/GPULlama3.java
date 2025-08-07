@@ -2,6 +2,7 @@ package org.beehive.gpullama3.tornadovm;
 
 import org.beehive.gpullama3.auxiliary.Tuple2;
 import org.beehive.gpullama3.inference.state.Phi3State;
+import org.beehive.gpullama3.inference.state.Qwen2State;
 import org.beehive.gpullama3.inference.state.Qwen3State;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.model.Configuration;
@@ -93,7 +94,21 @@ public class TornadoVMMasterPlan {
     }
 
     /**
-     * Determines whether the NVIDIA-specific scheduler should be used based on the current hardware backend and the model type.
+     * Dispatcher method to select the TornadoVMLayerPlanner for the model.
+     */
+    TornadoVMLayerPlanner createPlanner(State state, Model model) {
+        return switch (model.getModelType()) {
+            case LLAMA_3, MISTRAL -> new TornadoVMLayerPlanner(state, model);
+            case PHI_3 -> new Phi3TornadoVMLayerPlanner((Phi3State) state, model);
+            case QWEN_2, DEEPSEEK_R1_DISTILL_QWEN -> new Qwen2TornadoVMLayerPlanner((Qwen2State) state, model);
+            case QWEN_3 -> new Qwen3TornadoVMLayerPlanner((Qwen3State) state, model);
+            case UNKNOWN -> throw new UnsupportedOperationException("Unknown model type");
+        };
+    }
+
+    /**
+     * Determines whether the NVIDIA-specific scheduler should be used based on the current
+     * hardware backend and the model type.
      * <p>
      * The scheduler is used only if the runtime is targeting an NVIDIA backend and the model is not of type {@code MISTRAL}. If either the hardware is not NVIDIA or the model is {@code MISTRAL}, the
      * NVIDIA-specific scheduler should not be used.
@@ -115,19 +130,8 @@ public class TornadoVMMasterPlan {
     }
 
     /**
-     * Dispatcher method to select the TornadoVMLayerPlanner for the model.
-     */
-    TornadoVMLayerPlanner createPlanner(State state, Model model) {
-        return switch (model.getModelType()) {
-            case LLAMA_3, MISTRAL -> new TornadoVMLayerPlanner(state, model);
-            case QWEN_3 -> new Qwen3TornadoVMLayerPlanner((Qwen3State) state, model);
-            case PHI_3 -> new Phi3TornadoVMLayerPlanner((Phi3State) state, model);
-            case UNKNOWN -> throw new UnsupportedOperationException("Unknown model type");
-        };
-    }
-
-    /**
-     * Executes the forward pass of a LLaMA transformer model using TornadoVM acceleration. This method processes the transformer layers in sequence for a particular token position in the context
+     * Executes the forward pass of a LLaMA transformer model using TornadoVM acceleration.
+     *This method processes the transformer layers in sequence for a particular token position in the context
      * window.
      *
      * <p>The execution happens in three phases:

@@ -4,6 +4,7 @@ import org.beehive.gpullama3.core.model.GGUF;
 import org.beehive.gpullama3.model.loader.LlamaModelLoader;
 import org.beehive.gpullama3.model.loader.MistralModelLoader;
 import org.beehive.gpullama3.model.loader.Phi3ModelLoader;
+import org.beehive.gpullama3.model.loader.Qwen2ModelLoader;
 import org.beehive.gpullama3.model.loader.Qwen3ModelLoader;
 
 import java.nio.channels.FileChannel;
@@ -35,10 +36,24 @@ public enum ModelType {
         }
     },
 
+    QWEN_2 {
+        @Override
+        public Model loadModel(FileChannel fileChannel, GGUF gguf, int contextLength, boolean loadWeights) {
+            return new Qwen2ModelLoader(fileChannel, gguf, contextLength, loadWeights).loadModel();
+        }
+    },
+
     QWEN_3 {
         @Override
         public Model loadModel(FileChannel fileChannel, GGUF gguf, int contextLength, boolean loadWeights) {
             return new Qwen3ModelLoader(fileChannel, gguf, contextLength, loadWeights).loadModel();
+        }
+    },
+
+    DEEPSEEK_R1_DISTILL_QWEN {
+        @Override
+        public Model loadModel(FileChannel fileChannel, GGUF gguf, int contextLength, boolean loadWeights) {
+            return new Qwen2ModelLoader(fileChannel, gguf, contextLength, loadWeights).loadModel();
         }
     },
 
@@ -58,4 +73,8 @@ public enum ModelType {
 
     // Abstract method that each enum constant must implement
     public abstract Model loadModel(FileChannel fileChannel, GGUF gguf, int contextLength, boolean loadWeights);
+
+    public boolean isDeepSeekR1() {
+        return this == DEEPSEEK_R1_DISTILL_QWEN;
+    }
 }

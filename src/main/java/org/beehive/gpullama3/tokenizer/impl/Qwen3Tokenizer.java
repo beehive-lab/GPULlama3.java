@@ -53,8 +53,8 @@ public class Qwen3Tokenizer implements Tokenizer {
     @Override
     public boolean shouldDisplayToken(int token) {
         int tokenType = getTokenType(token);
-
-        return tokenType == 1 || tokenType == 6;
+        // tokenType 4 allows the display of reasoning ( <think> ... <\think> )
+        return tokenType == 1 || tokenType == 4 || tokenType == 6;
     }
 
     public int getTokenType(int tokenIndex) {
