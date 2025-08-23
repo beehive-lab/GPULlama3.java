@@ -38,6 +38,18 @@ public interface Model {
 
     State createNewState(int batchsize);
 
+    default boolean shouldAddBeginOfText() {
+        return true;
+    }
+
+    default boolean shouldAddSystemPrompt() {
+        return true;
+    }
+
+    default boolean shouldIncludeReasoning() {
+        return false;
+    }
+
     /**
      * Wrapper for invoking the model-specific forward pass via InferenceCore.
      *
@@ -68,11 +80,11 @@ public interface Model {
         ChatFormat chatFormat = chatFormat();
         TornadoVMMasterPlan tornadoVMPlan = null;
 
-        if (!getModelType().equals(ModelType.QWEN_3) && !getModelType().equals(ModelType.PHI_3)) {
+        if (shouldAddBeginOfText()) {
             conversationTokens.add(chatFormat.getBeginOfText());
         }
 
-        if (options.systemPrompt() != null) {
+        if (shouldAddSystemPrompt() && options.systemPrompt() != null) {
             conversationTokens.addAll(chatFormat.encodeMessage(new ChatFormat.Message(ChatFormat.Role.SYSTEM, options.systemPrompt())));
         }
 
@@ -95,6 +107,18 @@ public interface Model {
 
                 conversationTokens.addAll(chatFormat.encodeMessage(new ChatFormat.Message(ChatFormat.Role.USER, userText)));
                 conversationTokens.addAll(chatFormat.encodeHeader(new ChatFormat.Message(ChatFormat.Role.ASSISTANT, "")));
+
+                // Include reasoning for Deepseek-R1-Distill-Qwen
+                if (shouldIncludeReasoning()) {
+                    List<Integer> thinkStartTokens = tokenizer().encode("<think>\n", tokenizer().getSpecialTokens().keySet());
+                    conversationTokens.addAll(thinkStartTokens);
+
+                    // If streaming, immediately output the think start
+                    if (options.stream()) {
+                        System.out.print("<think>\n");
+                    }
+                }
+
                 Set<Integer> stopTokens = chatFormat.getStopTokens();
 
                 List<Integer> responseTokens;
@@ -127,6 +151,10 @@ public interface Model {
                 }
                 if (!options.stream()) {
                     String responseText = tokenizer().decode(responseTokens);
+                    // Add the forced <think>\n prefix for non-streaming output
+                    if (shouldIncludeReasoning()) {
+                        responseText = "<think>\n" + responseText;
+                    }
                     System.out.println(responseText);
                 }
                 if (stopToken == null) {
@@ -164,11 +192,11 @@ public interface Model {
 
         List<Integer> promptTokens = new ArrayList<>();
 
-        if (!getModelType().equals(ModelType.QWEN_3) && !getModelType().equals(ModelType.PHI_3)) {
+        if (shouldAddBeginOfText()) {
             promptTokens.add(chatFormat.getBeginOfText());
         }
 
-        if (options.systemPrompt() != null) {
+        if (shouldAddSystemPrompt() && options.systemPrompt() != null) {
             promptTokens.addAll(chatFormat.encodeMessage(new ChatFormat.Message(ChatFormat.Role.SYSTEM, options.systemPrompt())));
         }
 
@@ -179,6 +207,17 @@ public interface Model {
 
         promptTokens.addAll(chatFormat.encodeMessage(new ChatFormat.Message(ChatFormat.Role.USER, options.prompt())));
         promptTokens.addAll(chatFormat.encodeHeader(new ChatFormat.Message(ChatFormat.Role.ASSISTANT, "")));
+
+        // Include reasoning for Deepseek-R1-Distill-Qwen
+        if (shouldIncludeReasoning()) {
+            List<Integer> thinkStartTokens = tokenizer().encode("<think>\n", tokenizer().getSpecialTokens().keySet());
+            promptTokens.addAll(thinkStartTokens);
+
+            // If streaming, immediately output the think start
+            if (options.stream()) {
+                System.out.print("<think>\n");
+            }
+        }
 
         List<Integer> responseTokens;
 
@@ -206,6 +245,10 @@ public interface Model {
         }
         if (!options.stream()) {
             String responseText = tokenizer().decode(responseTokens);
+            // Add the forced <think>\n prefix for non-streaming output
+            if (shouldIncludeReasoning()) {
+                responseText = "<think>\n" + responseText;
+            }
             System.out.println(responseText);
         }
 

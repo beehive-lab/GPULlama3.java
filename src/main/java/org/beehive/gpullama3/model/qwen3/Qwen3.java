@@ -53,6 +53,14 @@ public class Qwen3 extends AbstractModel {
         return state;
     }
 
+    /**
+     * No begin of text needed for Qwen models.
+     */
+    @Override
+    public boolean shouldAddBeginOfText() {
+        return false;
+    }
+
     @Override
     public void forward(State state, int token, int position) {
         if (plan == null) {
