@@ -5,12 +5,15 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 
 public record Options(Path modelPath, String prompt, String systemPrompt, String suffix, boolean interactive, float temperature, float topp, long seed, int maxTokens, boolean stream, boolean echo,
-                      boolean useTornadovm) {
+                      boolean useTornadovm, boolean serviceMode) {
 
     public static final int DEFAULT_MAX_TOKENS = 1024;
 
     public Options {
-        require(interactive || prompt != null, "Missing argument: --prompt is required in --instruct mode e.g. --prompt \"Why is the sky blue?\"");
+        // Skip prompt validation in service mode
+        if (!serviceMode) {
+            require(interactive || prompt != null, "Missing argument: --prompt is required in --instruct mode e.g. --prompt \"Why is the sky blue?\"");
+        }
         require(0 <= temperature, "Invalid argument: --temperature must be non-negative");
         require(0 <= topp && topp <= 1, "Invalid argument: --top-p must be within [0, 1]");
     }
@@ -61,7 +64,7 @@ public record Options(Path modelPath, String prompt, String systemPrompt, String
         boolean echo = false;
         boolean useTornadoVM = getDefaultTornadoVM();
 
-        return new Options(modelPath, prompt, systemPrompt, suffix, interactive, temperature, topp, seed, maxTokens, stream, echo, useTornadoVM);
+        return new Options(modelPath, prompt, systemPrompt, suffix, interactive, temperature, topp, seed, maxTokens, stream, echo, useTornadoVM, false);
     }
 
     public static Options parseOptions(String[] args) {
@@ -123,6 +126,59 @@ public record Options(Path modelPath, String prompt, String systemPrompt, String
             useTornadovm = getDefaultTornadoVM();
         }
 
-        return new Options(modelPath, prompt, systemPrompt, suffix, interactive, temperature, topp, seed, maxTokens, stream, echo, useTornadovm);
+        return new Options(modelPath, prompt, systemPrompt, suffix, interactive, temperature, topp, seed, maxTokens, stream, echo, useTornadovm, false);
+    }
+
+    public static Options parseServiceOptions(String[] args) {
+        Path modelPath = null;
+        int maxTokens = 512; // Default context length
+        Boolean useTornadovm = null;
+
+        for (int i = 0; i < args.length; i++) {
+            String optionName = args[i];
+            require(optionName.startsWith("-"), "Invalid option %s", optionName);
+
+            String nextArg;
+            if (optionName.contains("=")) {
+                String[] parts = optionName.split("=", 2);
+                optionName = parts[0];
+                nextArg = parts[1];
+            } else {
+                if (i + 1 >= args.length) continue; // Skip if no next arg
+                nextArg = args[i + 1];
+                i += 1; // skip arg
+            }
+
+            // Only parse these options in service mode
+            switch (optionName) {
+                case "--model", "-m" -> modelPath = Paths.get(nextArg);
+                case "--max-tokens", "-n" -> maxTokens = Integer.parseInt(nextArg);
+                case "--use-tornadovm" -> useTornadovm = Boolean.parseBoolean(nextArg);
+            }
+        }
+
+        require(modelPath != null, "Missing argument: --model <path> is required");
+
+        // Do not use tornado by default
+        if (useTornadovm == null) {
+            useTornadovm = false;
+        }
+
+        // Create service-mode Options object
+        return new Options(
+                modelPath,
+                null,           // prompt - not used in service
+                null,                   // systemPrompt - handled per request
+                null,                   // suffix - not used
+                false,                  // interactive - not used in service
+                0.7f,                   // temperature - default, overridden per request
+                0.9f,                   // topp - default, overridden per request
+                System.nanoTime(),      // seed - default
+                maxTokens,
+                false,          // stream - handled per request
+                false,                  // echo - not used in service
+                useTornadovm,
+                true
+        );
     }
 }

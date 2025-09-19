@@ -169,11 +169,14 @@ class LlamaRunner:
                 ]
             )
 
+        # Choose main class based on mode
+        main_class = "org.beehive.gpullama3.api.LLMApiApplication" if args.service else "org.beehive.gpullama3.LlamaApp"
+
         module_config.extend(
             [
                 "-cp",
                 self._find_llama_jar(),
-                "org.beehive.gpullama3.LlamaApp",
+                main_class,
             ]
         )
         cmd.extend(module_config)
@@ -200,33 +203,36 @@ class LlamaRunner:
 
     def _add_llama_args(self, cmd: List[str], args: argparse.Namespace) -> List[str]:
         """Add LLaMA-specific arguments to the command."""
+
+        # For service mode, only pass the model path and max-tokens
+        if hasattr(args, 'service') and args.service:
+            llama_args = [
+                "--model", args.model_path,
+                "--max-tokens", str(args.max_tokens),
+            ]
+            return cmd + llama_args
+
         llama_args = [
-            "-m",
-            args.model_path,
-            "--temperature",
-            str(args.temperature),
-            "--top-p",
-            str(args.top_p),
-            "--seed",
-            str(args.seed),
-            "--max-tokens",
-            str(args.max_tokens),
-            "--stream",
-            str(args.stream).lower(),
-            "--echo",
-            str(args.echo).lower(),
+            "--model", args.model_path,
+            "--temperature", str(args.temperature),
+            "--top-p", str(args.top_p),
+            "--seed", str(args.seed),
+            "--max-tokens", str(args.max_tokens),
+            "--stream", str(args.stream).lower(),
+            "--echo", str(args.echo).lower(),
+            "--instruct"  # Both modes use instruct
         ]
 
-        if args.prompt:
-            llama_args.extend(["-p", args.prompt])
+        # Only add prompt-related args for standalone mode
+        if not hasattr(args, 'service') or not args.service:
+            if hasattr(args, 'prompt') and args.prompt:
+                llama_args.extend(["-p", args.prompt])
 
-        if args.system_prompt:
-            llama_args.extend(["-sp", args.system_prompt])
+            if hasattr(args, 'system_prompt') and args.system_prompt:
+                llama_args.extend(["-sp", args.system_prompt])
 
-        if args.interactive:
-            llama_args.append("--interactive")
-        elif args.instruct:
-            llama_args.append("--instruct")
+            if hasattr(args, 'interactive') and args.interactive:
+                llama_args[-1] = "--interactive"  # Replace --instruct
 
         return cmd + llama_args
 
@@ -237,6 +243,30 @@ class LlamaRunner:
         # Build the complete command
         cmd = self._build_base_command(args)
         cmd = self._add_llama_args(cmd, args)
+
+        # Show service-specific information
+        if args.service:
+            print("Starting GPULlama3.java REST API Service...")
+            print(f"Model: {args.model_path}")
+            # Display GPU/backend configuration
+            if args.use_gpu:
+                print(f"GPU Acceleration: Enabled ({args.backend.value.upper()} backend)")
+                print(f"GPU Memory: {args.gpu_memory}")
+            else:
+                print("GPU Acceleration: Disabled (CPU mode)")
+            print("API endpoints available at:")
+            print("  - http://localhost:8080/chat")
+            print("  - http://localhost:8080/chat/stream")
+            print("  - http://localhost:8080/health")
+            print("")
+            print("Example usage:")
+            print('  curl -X POST http://localhost:8080/chat \\')
+            print('    -H "Content-Type: application/json" \\')
+            print('    -d \'{"message": "Hello!"}\'')
+            print("")
+            print("Press Ctrl+C to stop the service")
+            print("-" * 60)
+
 
         # Print command if requested (before verbose output)
         if args.show_command:
@@ -389,6 +419,11 @@ def create_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=True,
         help="Run in instruction mode (default)",
+    )
+    mode_group.add_argument(
+        "--service",
+        action="store_true",
+        help="Run as REST API service instead of standalone application"
     )
 
     # Hardware configuration

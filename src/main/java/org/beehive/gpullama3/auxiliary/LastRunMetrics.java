@@ -21,6 +21,15 @@ public record LastRunMetrics(int totalTokens, double totalSeconds) {
         latestMetrics = new LastRunMetrics(tokens, seconds);
     }
 
+    public static LastRunMetrics getMetrics() {
+        return latestMetrics;
+    }
+
+    public static String getMetricsString() {
+        double tokensPerSecond = latestMetrics.totalTokens() / latestMetrics.totalSeconds();
+        return String.format("\n\nachieved tok/s: %.2f. Tokens: %d, seconds: %.2f\n", tokensPerSecond, latestMetrics.totalTokens(), latestMetrics.totalSeconds());
+    }
+
     /**
      * Prints the metrics from the latest run to stderr
      */
