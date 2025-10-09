@@ -24,7 +24,7 @@ public class MistralModelLoader extends ModelLoader {
     // @formatter:off
     @Override
     public Mistral loadModel() {
-        try (var ignored = Timer.log("Load Mistral model")) {
+        try {
             Map<String, Object> metadata = gguf.getMetadata();
 
             Vocabulary vocabulary = Vocabulary.loadMistralVocabulary(metadata);

@@ -135,7 +135,7 @@ class LlamaRunner:
             "-Dtornado.enable.fastMathOptimizations=true",
             "-Dtornado.enable.mathOptimizations=false",
             "-Dtornado.enable.nativeFunctions=true",
-            "-Dtornado.loop.interchange=true",
+            "-Dtornado.loop.interchange=true -Dtornado.dump.bytecodes.dir=/home/devoxx2025-demo/java-ai-demos/GPULlama3.java",
             f"-Dtornado.eventpool.maxwaitevents={args.max_wait_events}",
         ]
         cmd.extend(tornado_runtime_config)
@@ -410,7 +410,7 @@ def create_parser() -> argparse.ArgumentParser:
         const=Backend.PTX,
         help="Use PTX/CUDA backend",
     )
-    hw_group.add_argument("--gpu-memory", default="7GB", help="GPU memory allocation")
+    hw_group.add_argument("--gpu-memory", default="20GB", help="GPU memory allocation")
     hw_group.add_argument("--heap-min", default="20g", help="Minimum JVM heap size")
     hw_group.add_argument("--heap-max", default="20g", help="Maximum JVM heap size")
 

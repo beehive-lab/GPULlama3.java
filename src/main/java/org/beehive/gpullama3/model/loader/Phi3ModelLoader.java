@@ -34,14 +34,16 @@ public class Phi3ModelLoader extends ModelLoader {
     // @formatter:off
     @Override
     public Phi3 loadModel() {
-        try (var ignored = Timer.log("Load Phi3 model")) {
+        try  {
             Map<String, Object> metadata = gguf.getMetadata();
             final String modelPrefix = "phi3.";
 
             Vocabulary vocabulary = Vocabulary.loadPhi3Vocabulary(metadata);
             Tokenizer tokenizer = new Phi3Tokenizer(metadata, vocabulary);
 
-            System.out.println("Tokenizer: " + tokenizer.getClass().getSimpleName());
+            if (TornadoVMMasterPlan.ENABLE_TORNADOVM_INIT_TIME) {
+              System.out.println("Tokenizer: " + tokenizer.getClass().getSimpleName());
+            }
 
             int modelContextLength = (int) metadata.get(modelPrefix + "context_length");
             if (contextLength < 0 || modelContextLength < contextLength) {

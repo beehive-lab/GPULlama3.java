@@ -37,7 +37,7 @@ public class Qwen3ModelLoader extends ModelLoader {
     // @formatter:off
     @Override
     public Qwen3 loadModel() {
-        try (var ignored = Timer.log("Load Qwen3 model")) {
+        try  {
             Map<String, Object> metadata = gguf.getMetadata();
 
             Vocabulary vocabulary = loadQwen3Vocabulary(metadata);
