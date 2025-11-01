@@ -6,6 +6,7 @@ import org.beehive.gpullama3.inference.state.Phi3State;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.standard.Phi3StandardWeights;
 import org.beehive.gpullama3.inference.weights.standard.Qwen2StandardWeights;
+import org.beehive.gpullama3.inference.weights.standard.Gemma3StandardWeights;
 import org.beehive.gpullama3.inference.weights.standard.Qwen3StandardWeights;
 import org.beehive.gpullama3.inference.weights.standard.StandardWeights;
 import org.beehive.gpullama3.inference.weights.tornado.TornadoWeights;
@@ -13,6 +14,7 @@ import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.model.phi3.Phi3Configuration;
 import org.beehive.gpullama3.model.qwen2.Qwen2Configuration;
+import org.beehive.gpullama3.model.gemma3.Gemma3Configuration;
 import org.beehive.gpullama3.model.qwen3.Qwen3Configuration;
 import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlan;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
@@ -32,6 +34,7 @@ import java.lang.foreign.MemorySegment;
  *   <li>{@code rmsnorm} – applies Root Mean Square Layer Normalization to input vectors</li>
  *   <li>{@code forwardJava} – executes a Forward pass for LLaMA and Mistral models on CPU</li>
  *   <li>{@code forwardJavaQwen3} – executes a Forward pass for Qwen3 models on CPU</li>
+ *   <li>{@code forwardJavaGemma3} – executes a Forward pass for Gemma3 models on CPU</li>
  *   <li>{@code forwardTornadoVM} – executes a Forward pass using TornadoVM for GPU acceleration</li>
  * </ul>
  * </p>
@@ -432,6 +435,183 @@ public final class InferenceCore {
 
             // residual connection
             state.x.addInPlace(state.xb);
+        }
+
+        // final rmsnorm
+        rmsnorm(state.x, state.x, weights.rms_final_weight, 0, dim, config.rmsNormEps());
+
+        // classifier into logits
+        weights.wcls.matmul(state.x, state.logits, config.vocabularySize(), dim);
+
+        return state.logits;
+    }
+
+    /**
+     * Forward pass for Gemma3 models on CPU.
+     *
+     * <p>Gemma3 uses:</p>
+     * <ul>
+     *   <li>Sandwich normalization (4 norm layers per block)</li>
+     *   <li>Q/K normalization (per-head)</li>
+     *   <li>Embedding scaling by √dim</li>
+     * </ul>
+     */
+    public static FloatTensor forwardJavaGemma3(Model model, State state, int token, int position) {
+        // a few convenience variables
+        final Gemma3Configuration config = (Gemma3Configuration) model.configuration();
+        final Gemma3StandardWeights weights = (Gemma3StandardWeights) model.weights();
+        int dim = config.dim();
+        int nHeadKv = config.numberOfKeyValueHeads();
+
+        // For Gemma3, use actual head dimension from dim/nHeads for queries
+        int nHeads = config.numberOfHeads();
+        int actualHeadDim = dim / nHeads;
+
+        // K/V use the metadata dimensions
+        int nEmbdHeadK = config.numberOfHeadsKey();
+        int nEmbdHeadV = config.numberOfHeadsValue();
+        int nEmbdKGqa = nEmbdHeadK * nHeadKv;
+        int nEmbdVGqa = nEmbdHeadV * nHeadKv;
+        int nEmbdGqa = nEmbdVGqa;
+        int gqa = config.numberOfHeads() / config.numberOfKeyValueHeads();
+
+        // Use actualHeadDim for attention score scaling
+        float sqrtHeadSize = (float) Math.sqrt(actualHeadDim);
+
+        // copy the token embedding into x
+        weights.token_embedding_table.copyTo(token * dim, state.x, 0, dim);
+
+        // Gemma3-specific: scale embeddings by √dim
+        float embeddingScale = (float) Math.sqrt(dim);
+        for (int i = 0; i < dim; i++) {
+            state.x.setFloat(i, state.x.getFloat(i) * embeddingScale);
+        }
+
+        // forward all the layers
+        for (int l = 0; l < config.numberOfLayers(); l++) {
+            final int curLayer = l;
+
+            // ===== ATTENTION BLOCK with sandwich normalization =====
+
+            // Save residual for later
+            state.x.copyTo(0, state.xb2, 0, dim);
+
+            // Pre-attention normalization
+            rmsnorm(state.xb, state.x, weights.rms_att_weight[curLayer], 0, dim, config.rmsNormEps());
+
+            // QKV matmuls for this position
+            // Note: wq projects from dim to nEmbdHeadK * nHeads
+            weights.wq[curLayer].matmul(state.xb, state.q, nEmbdHeadK * nHeads, dim);
+            weights.wk[curLayer].matmul(state.xb, state.k, nEmbdGqa, dim);
+            weights.wv[curLayer].matmul(state.xb, state.v, nEmbdGqa, dim);
+
+            // Q/K normalization (per-head)
+            // Both Q and K use nEmbdHeadK (256) for per-head size
+            for (int i = 0; i < nHeads; i++) {
+                rmsnorm(state.q, state.q, weights.attnQNorm[curLayer], i * nEmbdHeadK, nEmbdHeadK, config.rmsNormEps());
+            }
+            for (int i = 0; i < config.numberOfKeyValueHeads(); i++) {
+                rmsnorm(state.k, state.k, weights.attnKNorm[curLayer], i * nEmbdHeadK, nEmbdHeadK, config.rmsNormEps());
+            }
+
+            // RoPE relative positional encoding
+            // Both Q and K use nEmbdHeadK dimension
+            for (int h = 0; h < nHeads; ++h) {
+                int rotn = h < config.numberOfKeyValueHeads() ? 2 : 1;
+                int poffset = h * nEmbdHeadK;
+                int nComplEmbdHead = nEmbdHeadK / 2;
+                for (int ic = 0; ic < nComplEmbdHead; ic++) {
+                    float fcr = weights.freq_cis_real.getFloat(position * nComplEmbdHead + ic);
+                    float fci = weights.freq_cis_imag.getFloat(position * nComplEmbdHead + ic);
+                    for (int vi = 0; vi < rotn; vi++) {
+                        FloatTensor vec = (vi == 0) ? state.q : state.k;
+                        float v0 = vec.getFloat(poffset + ic);
+                        float v1 = vec.getFloat(poffset + ic + nComplEmbdHead);
+                        vec.setFloat(poffset + ic, v0 * fcr - v1 * fci);
+                        vec.setFloat(poffset + ic + nComplEmbdHead, v0 * fci + v1 * fcr);
+                    }
+                }
+            }
+
+            // save key,value at this time step (position) to our kv cache
+            state.k.copyTo(0, state.keyCache[curLayer], position * nEmbdGqa, nEmbdGqa);
+            state.v.copyTo(0, state.valueCache[curLayer], position * nEmbdGqa, nEmbdGqa);
+
+            // multihead attention. iterate over all heads
+            Parallel.parallelFor(0, nHeads, h -> {
+                // get the query vector for this head
+                int qOffset = h * nEmbdHeadK;
+                // attention scores for this head
+                int attOffset = h * config.contextLength();
+
+                // iterate over all timesteps, including the current one
+                for (int t = 0; t <= position; t++) {
+                    // get the key vector for this head and at this timestep
+                    int keyCacheOffset = t * nEmbdGqa + (h / gqa) * nEmbdHeadK;
+                    // calculate the attention score as the dot product of q and k
+                    float score = state.q.dot(qOffset, state.keyCache[curLayer], keyCacheOffset, nEmbdHeadK);
+                    score /= (float) Math.sqrt(nEmbdHeadK);
+                    // save the score to the attention buffer
+                    state.att.setFloat(attOffset + t, score);
+                }
+
+                // softmax the scores to get attention weights
+                state.att.softmaxInPlace(attOffset, position + 1);
+
+                // weighted sum of the values, store back into xb
+                // Output to dim-sized xb, but each head writes actualHeadDim values
+                int xbOffset = h * actualHeadDim;
+                state.xb.fillInPlace(xbOffset, actualHeadDim, 0f);
+
+                for (int t = 0; t <= position; t++) {
+                    // get the value vector for this head and at this timestep
+                    int vOffset = t * nEmbdGqa + (h / gqa) * nEmbdHeadV;
+                    // get the attention weight for this timestep
+                    float a = state.att.getFloat(attOffset + t);
+                    // accumulate the weighted value into xb
+                    // Value vectors are nEmbdHeadV (256), but we write to actualHeadDim (288) slots
+                    state.xb.saxpyInPlace(xbOffset, state.valueCache[curLayer], vOffset, nEmbdHeadV, a);
+                }
+            });
+
+            // final matmul to get the output of the attention
+            // Note: wo is [1024, 1152] in GGUF, but we need to project from 1024-dim attention output to 1152-dim
+            // The attention output is in the first 1024 elements of xb
+            // wo weight appears to be stored transposed, so we use it as [1152, 1024]
+            weights.wo[l].matmul(state.xb, state.x, dim, nEmbdHeadK * nHeads);
+
+            // Post-attention normalization (sandwich norm)
+            rmsnorm(state.x, state.x, weights.postAttentionNorm[curLayer], 0, dim, config.rmsNormEps());
+
+            // Residual connection from saved residual
+            state.x.addInPlace(state.xb2);
+
+            // ===== FFN BLOCK with sandwich normalization =====
+
+            // Save residual for later
+            state.x.copyTo(0, state.xb2, 0, dim);
+
+            // Pre-FFN normalization
+            rmsnorm(state.xb, state.x, weights.rms_ffn_weight[curLayer], 0, dim, config.rmsNormEps());
+
+            // FFN: self.w2(F.silu(self.w1(x)) * self.w3(x))
+            weights.w1[l].matmul(state.xb, state.hb, config.hiddenDim(), dim);
+            weights.w3[l].matmul(state.xb, state.hb2, config.hiddenDim(), dim);
+
+            // SwiGLU non-linearity
+            state.hb.mapInPlace(value -> value / (float) (1.0 + Math.exp(-value)));
+
+            // elementwise multiply with w3(x)
+            state.hb.multiplyInPlace(state.hb2);
+
+            // final matmul to get the output of the ffn
+            weights.w2[l].matmul(state.hb, state.x, dim, config.hiddenDim());
+
+            // Post-FFN normalization (sandwich norm)
+            rmsnorm(state.x, state.x, weights.postFFNNorm[curLayer], 0, dim, config.rmsNormEps());
+
+            // Residual connection from saved residual
+            state.x.addInPlace(state.xb2);
         }
 
         // final rmsnorm
