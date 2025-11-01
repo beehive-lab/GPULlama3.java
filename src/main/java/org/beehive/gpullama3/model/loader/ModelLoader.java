@@ -77,6 +77,8 @@ public abstract class ModelLoader {
                 return ModelType.DEEPSEEK_R1_DISTILL_QWEN;
             } else if (lowerName.contains("phi3")) {
                 return ModelType.PHI_3;
+            } else if (lowerName.contains("gemma")) {
+                return ModelType.GEMMA_3;
             }
 
         }
