@@ -95,6 +95,17 @@ public class Gemma3ModelLoader extends ModelLoader {
                     ? (float) metadata.get(prefix + "rope.freq_base")
                     : 10000.0f;
 
+            // Attention scale: use metadata if available, otherwise compute from head size
+            float attentionScale;
+            if (metadata.containsKey(prefix + "attention.multiplier")) {
+                attentionScale = (float) metadata.get(prefix + "attention.multiplier");
+                System.err.println("  Using attention.multiplier from metadata: " + attentionScale);
+            } else {
+                // Match llama.cpp: f_attention_scale = 1.0f / sqrt(n_embd_head_k)
+                attentionScale = (float) (1.0 / Math.sqrt(nHeadsKey));
+                System.err.println("  Computed attentionScale = 1/sqrt(" + nHeadsKey + ") = " + attentionScale);
+            }
+
             // Determine vocabulary size from token embeddings tensor
             Map<String, GGMLTensorEntry> tensorEntries = GGUF.loadTensors(fileChannel, gguf.getTensorDataOffset(), gguf.getTensorInfos());
             GGMLTensorEntry tokenEmbeddings = tensorEntries.get("token_embd.weight");
@@ -111,6 +122,7 @@ public class Gemma3ModelLoader extends ModelLoader {
             System.err.println("  nHeadsKey=" + nHeadsKey + ", nHeadsValue=" + nHeadsValue);
             System.err.println("  dim / nHeads = " + (dim / nHeads));
             System.err.println("  nHeadsKey * nHeads = " + (nHeadsKey * nHeads));
+            System.err.println("  modelContextLength=" + modelContextLength + ", contextLength (user/adjusted)=" + contextLength);
 
             // Debug: check tensor sizes
             GGMLTensorEntry wqTensor = tensorEntries.get("blk.0.attn_q.weight");
@@ -139,7 +151,8 @@ public class Gemma3ModelLoader extends ModelLoader {
                     contextLength,
                     sharedWeights,
                     rmsNormEps,
-                    ropeTheta
+                    ropeTheta,
+                    attentionScale
             );
 
             Weights weights = null;

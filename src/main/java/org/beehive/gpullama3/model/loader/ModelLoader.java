@@ -102,13 +102,16 @@ public abstract class ModelLoader {
      */
     public static Model loadModel(Options options) throws IOException {
         if (USE_AOT) {
-            Model model = AOT.tryUsePreLoaded(options.modelPath(), options.maxTokens());
+            // FIX: Use -1 for contextLength to use the model's default context length
+            Model model = AOT.tryUsePreLoaded(options.modelPath(), -1);
             if (model == null) {
                 throw new IllegalStateException("Failed to load precompiled AOT model.");
             }
             return model;
         }
-        return ModelLoader.loadModel(options.modelPath(), options.maxTokens(), true, options.useTornadovm());
+        // FIX: Use -1 for contextLength to use the model's default context length
+        // maxTokens is for generation limit, NOT context window size
+        return ModelLoader.loadModel(options.modelPath(), -1, true, options.useTornadovm());
     }
 
     public static Model loadModel(Path ggufPath, int contextLength, boolean loadWeights, boolean useTornadovm) throws IOException {

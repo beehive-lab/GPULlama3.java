@@ -24,7 +24,8 @@ public record Gemma3Configuration(int dim,
                                   int contextLength,
                                   boolean sharedWeights,
                                   float rmsNormEps,
-                                  float ropeTheta) implements Configuration {
+                                  float ropeTheta,
+                                  float attentionScale) implements Configuration {
     @Override
     public int headSize() {
         throw new UnsupportedOperationException("Not supported for Gemma3. Use numberOfHeadsKey for Q/K norm.");

@@ -11,6 +11,8 @@ import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
 import java.util.function.IntConsumer;
@@ -36,6 +38,36 @@ public final class InferenceEngine {
 
     private InferenceEngine() {
         //prevent instantiation
+    }
+
+    /**
+     * Apply repetition penalty to logits of recently generated tokens.
+     * This prevents the model from getting stuck in loops by penalizing tokens that were recently generated.
+     *
+     * @param logits the logits tensor to modify
+     * @param recentTokens set of recently generated token IDs to penalize
+     * @param penaltyFactor factor to divide logits by (> 1.0 to reduce probability)
+     */
+    private static void applyRepetitionPenalty(Object logits, Set<Integer> recentTokens, float penaltyFactor) {
+        if (recentTokens == null || recentTokens.isEmpty() || penaltyFactor <= 1.0f) {
+            return; // No penalty to apply
+        }
+
+        for (int token : recentTokens) {
+            if (logits instanceof org.beehive.gpullama3.core.model.tensor.FloatTensor) {
+                org.beehive.gpullama3.core.model.tensor.FloatTensor floatTensor = (org.beehive.gpullama3.core.model.tensor.FloatTensor) logits;
+                if (token >= 0 && token < floatTensor.size()) {
+                    float currentLogit = floatTensor.getFloat(token);
+                    floatTensor.setFloat(token, currentLogit / penaltyFactor);
+                }
+            } else if (logits instanceof FloatArray) {
+                FloatArray floatArray = (FloatArray) logits;
+                if (token >= 0 && token < floatArray.getSize()) {
+                    float currentLogit = floatArray.get(token);
+                    floatArray.set(token, currentLogit / penaltyFactor);
+                }
+            }
+        }
     }
 
     /**
@@ -85,6 +117,12 @@ public final class InferenceEngine {
         int promptIndex = 0;
         int pos = startPosition;
 
+        // Repetition penalty tracking: keep track of last 5 generated tokens
+        final int REPETITION_PENALTY_WINDOW = 5;
+        final float REPETITION_PENALTY_FACTOR = 3.0f; // Penalize by dividing logits by 3.0 (stronger penalty)
+        LinkedList<Integer> recentTokens = new LinkedList<>();
+        Set<Integer> recentTokensSet = new HashSet<>();
+
         while (pos < maxTokens) {
 
             logits = InferenceCore.forwardJava(model, state, currentToken, pos);
@@ -102,6 +140,9 @@ public final class InferenceEngine {
                     inferenceStartNanos = System.nanoTime();
                 }
 
+                // Apply repetition penalty to prevent token loops
+                applyRepetitionPenalty(logits, recentTokensSet, REPETITION_PENALTY_FACTOR);
+
                 // Sample the next token
                 nextToken = sampler.sampleToken(logits);
 
@@ -112,6 +153,19 @@ public final class InferenceEngine {
 
                 // Track the generated token
                 generatedTokens.add(nextToken);
+
+                // Track token for repetition penalty
+                recentTokens.addLast(nextToken);
+                recentTokensSet.add(nextToken);
+
+                // Keep window size limited
+                if (recentTokens.size() > REPETITION_PENALTY_WINDOW) {
+                    int removedToken = recentTokens.removeFirst();
+                    // Only remove from set if this token isn't elsewhere in the window
+                    if (!recentTokens.contains(removedToken)) {
+                        recentTokensSet.remove(removedToken);
+                    }
+                }
 
                 // Notify via callback if provided
                 if (onTokenGenerated != null) {
@@ -159,7 +213,16 @@ public final class InferenceEngine {
         int nextToken = 0;
         int promptIndex = 0;
 
-        for (int position = startPosition; position < maxTokens; ++position) {
+        // Repetition penalty tracking: keep track of last 5 generated tokens
+        final int REPETITION_PENALTY_WINDOW = 5;
+        final float REPETITION_PENALTY_FACTOR = 3.0f; // Penalize by dividing logits by 3.0 (stronger penalty)
+        LinkedList<Integer> recentTokens = new LinkedList<>();
+        Set<Integer> recentTokensSet = new HashSet<>();
+
+        // FIX: Loop must run for prompt processing + token generation
+        int totalIterations = promptTokens.size() + maxTokens;
+
+        for (int position = startPosition; position < totalIterations; ++position) {
 
             // Handle token processing
             if (promptIndex < promptTokens.size()) {
@@ -176,7 +239,8 @@ public final class InferenceEngine {
                     System.err.print(Tokenizer.replaceControlCharacters(model.tokenizer().decode(List.of(nextToken))));
                 }
                 // We have reached the last prompt token and computed the first response-token.
-                position++; // The current logit belongs to the next position
+                // BUG FIX: Don't manually increment position - the for loop will do it!
+                // The old code did position++ here, causing the loop's ++position to skip a position
             } else {
                 // Mark the start of actual generation (after prompt processing)
                 if (inferenceStartNanos == 0) {
@@ -186,8 +250,26 @@ public final class InferenceEngine {
                 model.forward(state, currentToken, position);
             }
 
+            // Apply repetition penalty to prevent token loops
+            applyRepetitionPenalty(state.logits, recentTokensSet, REPETITION_PENALTY_FACTOR);
+
             // Sample the next token
             nextToken = sampler.sampleToken(state.logits);
+
+            // DEBUG: Log what token was selected at each position
+            System.err.printf(">>> Position %d (promptIndex=%d): Selected token %d\n", position, promptIndex, nextToken);
+
+            if (position < 5) {
+                // Also log top-5 tokens for position 0 to understand if it's selecting the right token
+                if (position == 0 || position == 1) {
+                    // Find top 5 logits - check first few values for debugging
+                    System.err.printf("    Top logits at position %d (first 10): ", position);
+                    for (int t = 0; t < 10; t++) {
+                        System.err.printf("[%d]=%.2f ", t, state.logits.getFloat(t));
+                    }
+                    System.err.println();
+                }
+            }
 
             // Output the token if echo is enabled
             if (echo) {
@@ -196,6 +278,21 @@ public final class InferenceEngine {
 
             // Track the generated token
             generatedTokens.add(nextToken);
+
+            // Track token for repetition penalty (only after prompt phase)
+            if (promptIndex >= promptTokens.size()) {
+                recentTokens.addLast(nextToken);
+                recentTokensSet.add(nextToken);
+
+                // Keep window size limited
+                if (recentTokens.size() > REPETITION_PENALTY_WINDOW) {
+                    int removedToken = recentTokens.removeFirst();
+                    // Only remove from set if this token isn't elsewhere in the window
+                    if (!recentTokens.contains(removedToken)) {
+                        recentTokensSet.remove(removedToken);
+                    }
+                }
+            }
 
             // Notify via callback if provided
             if (onTokenGenerated != null) {
@@ -412,7 +509,8 @@ public final class InferenceEngine {
                     System.err.print(Tokenizer.replaceControlCharacters(model.tokenizer().decode(List.of(nextToken))));
                 }
                 // We have reached the last prompt token and computed the first response-token.
-                position++; // The current logit belongs to the next position
+                // BUG FIX: Don't manually increment position - the for loop will do it!
+                // The old code did position++ here, causing the loop's ++position to skip a position
             } else {
                 // Mark the start of actual generation (after prompt processing)
                 if (inferenceStartNanos == 0) {
