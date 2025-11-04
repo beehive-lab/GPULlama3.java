@@ -1,6 +1,7 @@
 package org.beehive.gpullama3.model;
 
 import org.beehive.gpullama3.core.model.GGUF;
+import org.beehive.gpullama3.model.loader.Gemma3ModelLoader;
 import org.beehive.gpullama3.model.loader.LlamaModelLoader;
 import org.beehive.gpullama3.model.loader.MistralModelLoader;
 import org.beehive.gpullama3.model.loader.Phi3ModelLoader;
@@ -61,6 +62,13 @@ public enum ModelType {
         @Override
         public Model loadModel(FileChannel fileChannel, GGUF gguf, int contextLength, boolean loadWeights, boolean useTornadovm) {
             return new Phi3ModelLoader(fileChannel, gguf, contextLength, loadWeights, useTornadovm).loadModel();
+        }
+    },
+
+    GEMMA_3 {
+        @Override
+        public Model loadModel(FileChannel fileChannel, GGUF gguf, int contextLength, boolean loadWeights, boolean useTornadovm) {
+            return new Gemma3ModelLoader(fileChannel, gguf, contextLength, loadWeights, useTornadovm).loadModel();
         }
     },
 
