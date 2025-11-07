@@ -46,8 +46,8 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
     // Phi3-specific dimension for combined QKV buffer
     private final int opSize;
 
-    public Phi3Q8_0FFNLayers(String taskGraphName, Phi3State state, Phi3TornadoWeightsQ8_0 weights, Phi3Configuration config) {
-        super(taskGraphName, state, weights, config);
+    public Phi3Q8_0FFNLayers(String taskGraphName, Phi3State state, Phi3TornadoWeightsQ8_0 weights, Phi3Configuration config, org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType schedulerType) {
+        super(taskGraphName, state, weights, config, schedulerType);
         this.phi3State = state;
         this.phi3Config = config;
         this.opSize = config.dim() + 2 * (config.numberOfKeyValueHeads() * config.headSize());

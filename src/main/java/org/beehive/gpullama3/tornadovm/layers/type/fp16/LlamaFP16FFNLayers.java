@@ -12,6 +12,7 @@ import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
+import uk.ac.manchester.tornado.api.common.TornadoFunctions;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
 import java.util.List;
@@ -21,9 +22,10 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
 
     TaskGraph ffnTaskGraphs;
     GridScheduler scheduler;
-   List<ImmutableTaskGraph> ffnLayerTaskGraphs;
-    public LlamaFP16FFNLayers(String taskGraph, State state, Weights weights, Configuration config) {
-        super(taskGraph, state, weights, config);
+    List<ImmutableTaskGraph> ffnLayerTaskGraphs;
+
+    public LlamaFP16FFNLayers(String taskGraph, State state, Weights weights, Configuration config, org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType schedulerType) {
+        super(taskGraph, state, weights, config, schedulerType);
         this.ffnLayerTaskGraphs = setupFFNLayered();
     }
 
@@ -111,9 +113,12 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
                 weights.w2Layered[layerIndex],
                 weights.w3Layered[layerIndex]);
         unifiedLayer = configureLayerDataTransfers(unifiedLayer, layerIndex);
-        unifiedLayer
-                .task("reductionsOneBlock", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.temp, state.wrapX, config.dim(), config.rmsNormEps(), state.localSize)
-                .task("mapContext", TransformerComputeKernelsLayered::reductionOneBlock2WithLayer, context, state.wrapXb, state.wrapX, weights.rms_att_weightLayered[layerIndex], state.temp)
+        unifiedLayer.task("reductionsOneBlock", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.temp, state.wrapX, config.dim(), config.rmsNormEps(), state.localSize);
+        if (shouldUseFinalNormalization()) {
+            unifiedLayer.task("reductionFinalNormalization", TransformerComputeKernelsLayered::reductionFinalNormalization, context, state.temp,
+                    config.dim(), config.rmsNormEps());
+        }
+        unifiedLayer.task("mapContext", TransformerComputeKernelsLayered::reductionOneBlock2WithLayer, context, state.wrapXb, state.wrapX, weights.rms_att_weightLayered[layerIndex], state.temp)
                 .task("qmatmul", TransformerComputeKernelsLayered::matrixVectorGeneric, context, state.wrapXb, state.wrapQ, weights.wqLayered[layerIndex], config.dim(), config.dim(),
                         LOCAL_WORK_GROUP_SIZE_ALLOC)
                 .task("kmatmul", TransformerComputeKernelsLayered::matrixVectorGeneric, context, state.wrapXb, state.wrapK, weights.wkLayered[layerIndex], config.dim(), config.kvDim(),
@@ -122,14 +127,17 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
                         LOCAL_WORK_GROUP_SIZE_ALLOC)
                 .task("rope", TransformerComputeKernelsLayered::ropeRotation, context, state.positionHolder, state.wrapQ, state.wrapK, config.kvDim(), config.headSize())
                 .task("copyToCaches", TransformerComputeKernelsLayered::copyToCache, state.wrapKeyCache, state.wrapK, state.wrapValueCache, state.wrapV, state.positionHolder, config.kvDim(),
-                        layerIndex, config.contextLength())
-                .task("parallel-attention", TransformerComputeKernelsLayered::processHeadsFlashAttention, context, state.wrapQ, state.wrapKeyCache, state.wrapValueCache, state.wrapXb,
-                        config.numberOfHeads(), config.headSize(), config.kvDim(), config.kvMul(), state.positionHolder, layerIndex, config.contextLength())
-                .task("matmul1", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual, context, state.wrapXb, state.wrapX, weights.woLayered[layerIndex], config.dim(), config.dim(),
+                        layerIndex, config.contextLength());
+        configureAttention(unifiedLayer, layerIndex);
+        unifiedLayer.task("matmul1", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual, context, state.wrapXb, state.wrapX, weights.woLayered[layerIndex], config.dim(), config.dim(),
                         LOCAL_WORK_GROUP_SIZE_ALLOC)
                 .task("reductionsOneBlockFFN", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.tempFFN, state.wrapX, config.dim(), config.rmsNormEps(),
-                        state.localSize)
-                .task("mapContextFFN", TransformerComputeKernelsLayered::reductionOneBlock2WithLayer, context, state.wrapXb, state.wrapX, weights.rms_ffn_weightLayered[layerIndex], state.tempFFN)
+                        state.localSize);
+        if (shouldUseFinalNormalization()) {
+            unifiedLayer.task("reductionFinalNormalizationFFN", TransformerComputeKernelsLayered::reductionFinalNormalization, context, state.tempFFN,
+                    config.dim(), config.rmsNormEps());
+        }
+        unifiedLayer.task("mapContextFFN", TransformerComputeKernelsLayered::reductionOneBlock2WithLayer, context, state.wrapXb, state.wrapX, weights.rms_ffn_weightLayered[layerIndex], state.tempFFN)
                 .task("fused_ffn_w1_w3", TransformerComputeKernelsLayered::fusedFeedForwardWithSiLUAndGLUActivation, context, state.wrapXb, state.wrapHb, weights.w1Layered[layerIndex],
                         weights.w3Layered[layerIndex], config.dim(), config.hiddenDim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
                 .task("projectionTwo", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual, context, state.wrapHb, state.wrapX, weights.w2Layered[layerIndex], config.hiddenDim(),
@@ -157,6 +165,20 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
             );
         }
         return unifiedLayer;
+    }
+
+    private TaskGraph configureAttention(TaskGraph unifiedLayer, int layerIndex) {
+        if (schedulerType == org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType.NVIDIA) {
+            return unifiedLayer.task("parallel-attention", TransformerComputeKernelsLayered::processHeadsFlashAttention,
+                    context, state.wrapQ, state.wrapKeyCache, state.wrapValueCache, state.wrapXb,
+                    config.numberOfHeads(), config.headSize(), config.kvDim(), config.kvMul(),
+                    state.positionHolder, layerIndex, config.contextLength());
+        } else {
+            return unifiedLayer.task("parallel-attention", TransformerComputeKernelsLayered::processHeadsParallel,
+                    state.wrapQ, state.wrapKeyCache, state.wrapValueCache, state.wrapXb,
+                    config.numberOfHeads(), config.headSize(), config.kvDim(), config.kvMul(), config.contextLength(),
+                    state.positionHolder, state.wrapAtt, layerIndex, config.contextLength());
+        }
     }
 
 }

@@ -37,8 +37,8 @@ public class Qwen2FP16FFNLayers extends AbstractFFNLayers {
     GridScheduler scheduler;
     List<ImmutableTaskGraph> ffnLayerTaskGraphs;
 
-    public Qwen2FP16FFNLayers(String taskGraphName, Qwen2State state, Qwen2TornadoWeights weights, Qwen2Configuration config) {
-        super(taskGraphName, state, weights, config);
+    public Qwen2FP16FFNLayers(String taskGraphName, Qwen2State state, Qwen2TornadoWeights weights, Qwen2Configuration config, org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType schedulerType) {
+        super(taskGraphName, state, weights, config, schedulerType);
         this.qwen2State = state;
         this.qwen2Config = config;
         ffnLayerTaskGraphs = setupFFNLayered();

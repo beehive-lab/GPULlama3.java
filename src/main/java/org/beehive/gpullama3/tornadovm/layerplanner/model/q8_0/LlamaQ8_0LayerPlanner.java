@@ -20,8 +20,8 @@ public class LlamaQ8_0LayerPlanner extends Q8_0LayerPlanner<LlamaState, LlamaCon
     @Override
     protected void initializeLayerComponents() {
         this.activationLayer = new Activation("activationUpdate", this.state, this.weights, this.config);
-        this.ffnLayers = new LlamaQ8_0FFNLayers("llamaFFN", this.state, this.weights, this.config);
-        this.logitsLayer = new LogitsQ8_0Layer("llamaLogits", this.state, this.weights, this.config, ffnLayers.getLastTaskGraphID());
+        this.ffnLayers = new LlamaQ8_0FFNLayers("llamaFFN", this.state, this.weights, this.config, this.schedulerType);
+        this.logitsLayer = new LogitsQ8_0Layer("llamaLogits", this.state, this.weights, this.config, ffnLayers.getLastTaskGraphID(), this.schedulerType);
     }
 
 }

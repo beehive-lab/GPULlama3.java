@@ -27,8 +27,8 @@ public class Phi3FP16LayerPlanner extends FP16LayerPlanner<Phi3State, Phi3Config
     @Override
     protected void initializeLayerComponents() {
         this.activationLayer = new Activation("activationUpdate", this.state, this.weights, this.config);
-        this.ffnLayers = new Phi3FP16FFNLayers("phi3FFN", this.state, this.weights, this.config);
-        this.logitsLayer = new LogitsFP16Layer("phi3Logits", this.state, this.weights, this.config, ffnLayers.getLastTaskGraphID());
+        this.ffnLayers = new Phi3FP16FFNLayers("phi3FFN", this.state, this.weights, this.config, this.schedulerType);
+        this.logitsLayer = new LogitsFP16Layer("phi3Logits", this.state, this.weights, this.config, ffnLayers.getLastTaskGraphID(), this.schedulerType);
     }
 
 }

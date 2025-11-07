@@ -27,8 +27,8 @@ public class Qwen3FP16LayerPlanner extends FP16LayerPlanner<Qwen3State, Qwen3Con
     @Override
     protected void initializeLayerComponents() {
         this.activationLayer = new Activation("activationUpdate", this.state, this.weights, this.config);
-        this.ffnLayers = new Qwen3FP16FFNLayers("qwen3FFN", this.state, this.weights, this.config);
-        this.logitsLayer = new LogitsFP16Layer("qwen3Logits", this.state, this.weights, this.config, ffnLayers.getLastTaskGraphID());
+        this.ffnLayers = new Qwen3FP16FFNLayers("qwen3FFN", this.state, this.weights, this.config, this.schedulerType);
+        this.logitsLayer = new LogitsFP16Layer("qwen3Logits", this.state, this.weights, this.config, ffnLayers.getLastTaskGraphID(), this.schedulerType);
     }
 
 }

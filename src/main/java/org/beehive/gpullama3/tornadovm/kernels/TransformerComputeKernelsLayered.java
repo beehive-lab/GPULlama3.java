@@ -248,6 +248,52 @@ public class TransformerComputeKernelsLayered {
     }
 
     /**
+     * Orchestrates parallel multi-head attention computation across all heads. Each head processes attention independently in parallel.
+     *
+     * Attention computation: 1. Compute attention scores (Q·K) 2. Apply softmax for attention weights 3. Compute weighted sum of values (attention·V)
+     *
+     * @param q
+     *         Query vectors for all heads
+     * @param key_cache
+     *         Cached key vectors
+     * @param value_cache
+     *         Cached value vectors
+     * @param xb
+     *         Output buffer for attention results
+     * @param nHeads
+     *         Number of attention heads
+     * @param headSize
+     *         Dimension of each head
+     * @param kvDim
+     *         Total key/value dimension
+     * @param kvMul
+     *         Key/value head multiplier for grouped-query attention
+     * @param seqLen
+     *         Current sequence length
+     * @param positionHolder
+     *         Array containing position and layer info
+     * @param wrapAtt
+     *         Buffer for attention weights
+     * @param layer
+     *         Current transformer layer
+     * @param contextLength
+     *         Maximum context length
+     */
+    public static void processHeadsParallel(FloatArray q, FloatArray key_cache, FloatArray value_cache, FloatArray xb, int nHeads, int headSize, int kvDim, int kvMul, int seqLen,
+            IntArray positionHolder, FloatArray wrapAtt, int layer, int contextLength) {
+
+        int pos = positionHolder.get(0);
+        int loff = layer * contextLength * kvDim;
+
+        // Parallelize computation across attention heads
+        for (@Parallel int h = 0; h < nHeads; h++) {
+            // Process each head in parallel
+            processHeadTornado(q, key_cache, value_cache, xb, h, headSize, kvDim, kvMul, loff, pos, wrapAtt);
+        }
+    }
+
+
+    /**
      * Computes attention for a single head. Implements scaled dot-product attention with softmax normalization.
      *
      * Steps: 1. Compute attention scores: Q·K / sqrt(head_size) 2. Apply softmax (with max subtraction for numerical stability) 3. Compute weighted sum of values

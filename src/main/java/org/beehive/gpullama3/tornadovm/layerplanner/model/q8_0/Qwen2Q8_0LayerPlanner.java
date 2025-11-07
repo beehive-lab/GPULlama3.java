@@ -28,8 +28,8 @@ public class Qwen2Q8_0LayerPlanner extends Q8_0LayerPlanner<Qwen2State, Qwen2Con
     @Override
     protected void initializeLayerComponents() {
         this.activationLayer = new Activation("activationUpdate", this.state, this.weights, this.config);
-        this.ffnLayers = new Qwen2Q8_0FFNLayers("qwen2FFN", this.state, this.weights, this.config);
-        this.logitsLayer = new LogitsQ8_0Layer("qwen2Logits", this.state, this.weights, this.config, ffnLayers.getLastTaskGraphID());
+        this.ffnLayers = new Qwen2Q8_0FFNLayers("qwen2FFN", this.state, this.weights, this.config, this.schedulerType);
+        this.logitsLayer = new LogitsQ8_0Layer("qwen2Logits", this.state, this.weights, this.config, ffnLayers.getLastTaskGraphID(), this.schedulerType);
     }
 
 }

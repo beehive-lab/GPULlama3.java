@@ -5,6 +5,8 @@ import org.beehive.gpullama3.inference.weights.Weights;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.tornadovm.GenericLayerPlanner;
+import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerDetectionService;
+import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
 import uk.ac.manchester.tornado.api.KernelContext;
 
 /**
@@ -22,15 +24,19 @@ public abstract class QuantizedLayerPlanner<S extends State, C extends Configura
     protected final C config;
     protected final W weights;
     protected final KernelContext context;
+    protected final Model model;
+    protected final SchedulerType schedulerType;
 
     /**
      * Constructor: validate quantization type, extract model components
      */
     protected QuantizedLayerPlanner(S state, Model model) {
         this.state = state;
+        this.model = model;
         this.config = (C) model.configuration();
         this.weights = (W) model.weights();
         this.context = new KernelContext();
+        this.schedulerType = SchedulerDetectionService.determineSchedulerType(model);
 
         validateQuantizationType();
     }
