@@ -9,17 +9,11 @@ import java.util.Locale;
 
 public class SchedulerDetectionService {
 
-
     public static SchedulerType determineSchedulerType(Model model) {
         TornadoRuntime tornadoRuntime = TornadoRuntimeProvider.getTornadoRuntime();
-        String platformName = tornadoRuntime.getBackend(0)
-                .getDefaultDevice()
-                .getPlatformName()
-                .toLowerCase(Locale.ROOT);
+        String platformName = tornadoRuntime.getBackend(0).getDefaultDevice().getPlatformName().toLowerCase(Locale.ROOT);
 
-        boolean isNvidia = platformName.contains("nvidia") ||
-                platformName.contains("cuda") ||
-                platformName.contains("ptx");
+        boolean isNvidia = platformName.contains("nvidia") || platformName.contains("cuda") || platformName.contains("ptx");
         boolean isNotMistral = model.getModelType() != ModelType.MISTRAL;
 
         return (isNvidia && isNotMistral) ? SchedulerType.NVIDIA : SchedulerType.NON_NVIDIA;
