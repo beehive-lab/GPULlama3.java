@@ -19,6 +19,8 @@ public interface Configuration {
 
     int numberOfHeadsKey();
 
+    int numberOfHeadsValue();
+
     /** Size of the vocabulary (token set) */
     int vocabularySize();
 

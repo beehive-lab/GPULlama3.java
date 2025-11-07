@@ -20,6 +20,12 @@ public record Phi3Configuration(int dim,
     }
 
     @Override
+    public int numberOfHeadsValue() {
+        // For Phi3, value heads are the same as key-value heads
+        return numberOfKeyValueHeads;
+    }
+
+    @Override
     public int headSize() {
         // Calculate head size from dim and numberOfHeads
         return dim / numberOfHeads;

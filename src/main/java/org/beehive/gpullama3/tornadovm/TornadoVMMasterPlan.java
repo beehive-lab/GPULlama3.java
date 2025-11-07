@@ -103,7 +103,7 @@ public class TornadoVMMasterPlan {
             case LLAMA_3, MISTRAL -> createLlama3Planner(state, model);
             case PHI_3 -> createPhi3Planner(state, model);
             case QWEN_2, DEEPSEEK_R1_DISTILL_QWEN -> createQWEN2Planner(state, model);
-            case QWEN_3 -> createQWEN3Planner(state, model);
+            case QWEN_3, GEMMA_3 -> createQWEN3Planner(state, model);  // Gemma uses Qwen3-style with Q/K norm
             case UNKNOWN -> throw new UnsupportedOperationException("Unknown model type");
         };
     }

@@ -4,12 +4,11 @@ import org.beehive.gpullama3.core.model.GGMLType;
 import org.beehive.gpullama3.core.model.tensor.FloatTensor;
 
 /**
- * A model-specific implementation of {@link StandardWeights} for the Qwen-3 model.
+ * A model-specific implementation of {@link StandardWeightsWithQKNorm} for the Qwen-3 model.
  * This class defines the weights required for performing inference
  * using the Qwen-3 model in the standard CPU-based format.
  */
-public class Qwen3StandardWeights extends StandardWeights {
-    public final FloatTensor[] attnKNorm, attnQNorm;
+public class Qwen3StandardWeights extends StandardWeightsWithQKNorm {
 
     // @formatter:off
     /**
@@ -51,13 +50,15 @@ public class Qwen3StandardWeights extends StandardWeights {
             FloatTensor freq_cis_imag,
             FloatTensor wcls,
             GGMLType weightType) {
-        // call to StandardWeights constructor
+        // call to StandardWeightsWithQKNorm constructor
         super(token_embedding_table,
                 rms_att_weight,
                 wq,
                 wk,
                 wv,
                 wo,
+                attnKNorm,
+                attnQNorm,
                 rms_ffn_weight,
                 w1,
                 w2,
@@ -67,9 +68,6 @@ public class Qwen3StandardWeights extends StandardWeights {
                 freq_cis_imag,
                 wcls,
                 weightType);
-        // init Qwen3-specific fields
-        this.attnKNorm = attnKNorm;
-        this.attnQNorm = attnQNorm;
     }
     // @formatter:on
 

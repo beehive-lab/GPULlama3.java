@@ -189,6 +189,11 @@ public final class InferenceEngine {
             // Sample the next token
             nextToken = sampler.sampleToken(state.logits);
 
+            // TEMP DEBUG
+            if (generatedTokens.size() < 5) {
+                System.err.println("[TOKEN DEBUG] Generated token #" + generatedTokens.size() + ": ID=" + nextToken);
+            }
+
             // Output the token if echo is enabled
             if (echo) {
                 System.err.print(Tokenizer.replaceControlCharacters(model.tokenizer().decode(List.of(nextToken))));

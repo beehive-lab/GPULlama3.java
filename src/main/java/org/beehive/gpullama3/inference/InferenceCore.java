@@ -8,6 +8,7 @@ import org.beehive.gpullama3.inference.weights.standard.Phi3StandardWeights;
 import org.beehive.gpullama3.inference.weights.standard.Qwen2StandardWeights;
 import org.beehive.gpullama3.inference.weights.standard.Qwen3StandardWeights;
 import org.beehive.gpullama3.inference.weights.standard.StandardWeights;
+import org.beehive.gpullama3.inference.weights.standard.StandardWeightsWithQKNorm;
 import org.beehive.gpullama3.inference.weights.tornado.TornadoWeights;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.Model;
@@ -310,9 +311,9 @@ public final class InferenceCore {
     }
 
     public static FloatTensor forwardJavaQwen3(Model model, State state, int token, int position) {
-        // a few convenience variables
-        final Qwen3Configuration config = (Qwen3Configuration) model.configuration();
-        final Qwen3StandardWeights weights = (Qwen3StandardWeights) model.weights();
+        // a few convenience variables - works for Qwen3, Gemma3, and other models with Q/K normalization
+        final Configuration config = model.configuration();
+        final StandardWeightsWithQKNorm weights = (StandardWeightsWithQKNorm) model.weights();
         int dim = config.dim();
         int nHeadKv = config.numberOfKeyValueHeads(); // n_head_kv = numberOfKeyValueHeads
         int nEmbdHeadK = config.numberOfHeadsKey(); // n_embd_head_k = n_embd / n_head; %s.attention.key_length
@@ -438,6 +439,154 @@ public final class InferenceCore {
         rmsnorm(state.x, state.x, weights.rms_final_weight, 0, dim, config.rmsNormEps());
 
         // classifier into logits
+        weights.wcls.matmul(state.x, state.logits, config.vocabularySize(), dim);
+
+        return state.logits;
+    }
+
+    /**
+     * Gemma3 inference with "sandwich normalization" architecture.
+     * Each layer has 4 normalization steps:
+     * 1. Pre-attention norm
+     * 2. Post-attention norm (before residual)
+     * 3. Pre-FFN norm
+     * 4. Post-FFN norm (before residual)
+     * Plus Q/K normalization within attention.
+     */
+    public static FloatTensor forwardJavaGemma3(Model model, State state, int token, int position) {
+        final Configuration config = model.configuration();
+        final org.beehive.gpullama3.inference.weights.standard.Gemma3StandardWeights weights =
+            (org.beehive.gpullama3.inference.weights.standard.Gemma3StandardWeights) model.weights();
+
+        int dim = config.dim();
+        int nHeadKv = config.numberOfKeyValueHeads();
+        int nEmbdHeadK = config.numberOfHeadsKey();
+        int nEmbdHeadV = config.numberOfHeadsValue();
+        int nEmbdVGqa = nEmbdHeadV * nHeadKv;
+        int nEmbdHead = nEmbdHeadV;
+        int nEmbdGqa = nEmbdVGqa;
+        int gqa = config.numberOfHeads() / config.numberOfKeyValueHeads();
+        float sqrtHeadSize = (float) Math.sqrt(nEmbdHead);
+
+        // copy the token embedding into x
+        weights.token_embedding_table.copyTo(token * dim, state.x, 0, dim);
+
+        // Gemma-specific: Scale embeddings by sqrt(dim) for numerical stability
+        float embeddingScale = (float) Math.sqrt(dim);
+        for (int i = 0; i < dim; i++) {
+            state.x.setFloat(i, state.x.getFloat(i) * embeddingScale);
+        }
+
+        // forward all the layers
+        for (int l = 0; l < config.numberOfLayers(); l++) {
+            final int curLayer = l;
+
+            // ===== ATTENTION BLOCK =====
+            // Store residual for later
+            state.x.copyTo(0, state.xb2, 0, dim);  // xb2 = residual
+
+            // 1. Pre-attention normalization
+            rmsnorm(state.xb, state.x, weights.rms_att_weight[curLayer], 0, dim, config.rmsNormEps());
+
+            // 2. QKV matmuls
+            weights.wq[curLayer].matmul(state.xb, state.q, nEmbdHeadK * config.numberOfHeads(), dim);
+            weights.wk[curLayer].matmul(state.xb, state.k, nEmbdGqa, dim);
+            weights.wv[curLayer].matmul(state.xb, state.v, nEmbdGqa, dim);
+
+            // 3. Q/K normalization (per head)
+            for (int i = 0; i < config.numberOfHeads(); i++) {
+                rmsnorm(state.q, state.q, weights.attnQNorm[curLayer], i * nEmbdHead, nEmbdHead, config.rmsNormEps());
+            }
+            for (int i = 0; i < config.numberOfKeyValueHeads(); i++) {
+                rmsnorm(state.k, state.k, weights.attnKNorm[curLayer], i * nEmbdHead, nEmbdHead, config.rmsNormEps());
+            }
+
+            // 4. RoPE positional encoding
+            for (int h = 0; h < config.numberOfHeads(); ++h) {
+                int rotn = h < config.numberOfKeyValueHeads() ? 2 : 1;
+                int poffset = h * nEmbdHead;
+                int nComplEmbdHead = nEmbdHead / 2;
+                for (int ic = 0; ic < nComplEmbdHead; ic++) {
+                    float fcr = weights.freq_cis_real.getFloat(position * nComplEmbdHead + ic);
+                    float fci = weights.freq_cis_imag.getFloat(position * nComplEmbdHead + ic);
+                    for (int vi = 0; vi < rotn; vi++) {
+                        FloatTensor vec = (vi == 0) ? state.q : state.k;
+                        float v0 = vec.getFloat(poffset + ic);
+                        float v1 = vec.getFloat(poffset + ic + nComplEmbdHead);
+                        vec.setFloat(poffset + ic, v0 * fcr - v1 * fci);
+                        vec.setFloat(poffset + ic + nComplEmbdHead, v0 * fci + v1 * fcr);
+                    }
+                }
+            }
+
+            // 5. Save to KV cache
+            state.k.copyTo(0, state.keyCache[curLayer], position * nEmbdGqa, nEmbdGqa);
+            state.v.copyTo(0, state.valueCache[curLayer], position * nEmbdGqa, nEmbdGqa);
+
+            // 6. Multi-head attention
+            Parallel.parallelFor(0, config.numberOfHeads(), h -> {
+                int qOffset = h * nEmbdHead;
+                int attOffset = h * config.contextLength();
+
+                // Calculate attention scores
+                for (int t = 0; t <= position; t++) {
+                    int keyCacheOffset = t * nEmbdGqa + (h / gqa) * nEmbdHead;
+                    float score = state.q.dot(qOffset, state.keyCache[curLayer], keyCacheOffset, nEmbdHeadK);
+                    score /= sqrtHeadSize;
+                    state.att.setFloat(attOffset + t, score);
+                }
+
+                // Softmax
+                state.att.softmaxInPlace(attOffset, position + 1);
+
+                // Weighted sum of values
+                int xbOffset = h * nEmbdHeadV;
+                state.xb.fillInPlace(xbOffset, nEmbdHeadV, 0f);
+                for (int t = 0; t <= position; t++) {
+                    int vOffset = t * nEmbdGqa + (h / gqa) * nEmbdHeadV;
+                    float a = state.att.getFloat(attOffset + t);
+                    state.xb.saxpyInPlace(xbOffset, state.valueCache[curLayer], vOffset, nEmbdHeadV, a);
+                }
+            });
+
+            // 7. Attention output projection
+            weights.wo[l].matmul(state.xb, state.x, dim, nEmbdHeadK * config.numberOfHeads());
+
+            // 8. Post-attention normalization (GEMMA3-SPECIFIC)
+            rmsnorm(state.x, state.x, weights.postAttentionNorm[curLayer], 0, dim, config.rmsNormEps());
+
+            // 9. Residual connection
+            state.x.addInPlace(state.xb2);
+
+            // ===== FFN BLOCK =====
+            // Store residual for later
+            state.x.copyTo(0, state.xb2, 0, dim);  // xb2 = residual
+
+            // 10. Pre-FFN normalization
+            rmsnorm(state.xb, state.x, weights.rms_ffn_weight[curLayer], 0, dim, config.rmsNormEps());
+
+            // 11. FFN: self.w2(F.silu(self.w1(x)) * self.w3(x))
+            weights.w1[l].matmul(state.xb, state.hb, config.hiddenDim(), dim);
+            weights.w3[l].matmul(state.xb, state.hb2, config.hiddenDim(), dim);
+
+            // 12. SwiGLU activation
+            state.hb.mapInPlace(value -> value / (float) (1.0 + Math.exp(-value)));
+            state.hb.multiplyInPlace(state.hb2);
+
+            // 13. FFN output projection
+            weights.w2[l].matmul(state.hb, state.x, dim, config.hiddenDim());
+
+            // 14. Post-FFN normalization (GEMMA3-SPECIFIC)
+            rmsnorm(state.x, state.x, weights.postFFNNorm[curLayer], 0, dim, config.rmsNormEps());
+
+            // 15. Residual connection
+            state.x.addInPlace(state.xb2);
+        }
+
+        // Final normalization
+        rmsnorm(state.x, state.x, weights.rms_final_weight, 0, dim, config.rmsNormEps());
+
+        // Classifier into logits
         weights.wcls.matmul(state.x, state.logits, config.vocabularySize(), dim);
 
         return state.logits;

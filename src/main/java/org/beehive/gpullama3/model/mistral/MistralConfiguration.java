@@ -28,6 +28,11 @@ public record MistralConfiguration(int dim,
     }
 
     @Override
+    public int numberOfHeadsValue() {
+        throw new UnsupportedOperationException("Not supported for Mistral.");
+    }
+
+    @Override
     public int contextLengthModel() {
         throw new UnsupportedOperationException("Not supported for Mistral.");
     }

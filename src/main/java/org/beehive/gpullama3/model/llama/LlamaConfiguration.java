@@ -19,6 +19,11 @@ public record LlamaConfiguration(int dim,
     }
 
     @Override
+    public int numberOfHeadsValue() {
+        throw new UnsupportedOperationException("Not supported for Llama.");
+    }
+
+    @Override
     public int contextLengthModel() {
         throw new UnsupportedOperationException("Not supported for Llama.");
     }
