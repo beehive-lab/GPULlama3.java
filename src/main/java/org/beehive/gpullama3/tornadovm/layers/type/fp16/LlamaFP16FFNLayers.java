@@ -7,6 +7,7 @@ import org.beehive.gpullama3.inference.weights.tornado.fp16.LlamaTornadoWeights;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
 import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
+import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
 import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
@@ -168,7 +169,7 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
     }
 
     private TaskGraph configureAttention(TaskGraph unifiedLayer, int layerIndex) {
-        if (schedulerType == org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType.NVIDIA) {
+        if (schedulerType == SchedulerType.NVIDIA) {
             return unifiedLayer.task("parallel-attention", TransformerComputeKernelsLayered::processHeadsFlashAttention,
                     context, state.wrapQ, state.wrapKeyCache, state.wrapValueCache, state.wrapXb,
                     config.numberOfHeads(), config.headSize(), config.kvDim(), config.kvMul(),

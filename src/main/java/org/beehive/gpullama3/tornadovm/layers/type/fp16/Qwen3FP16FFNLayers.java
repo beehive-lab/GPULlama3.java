@@ -6,6 +6,7 @@ import org.beehive.gpullama3.model.qwen3.Qwen3Configuration;
 import org.beehive.gpullama3.tornadovm.kernels.Qwen3Kernels;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
 import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
+import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
 import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
@@ -41,7 +42,7 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
     GridScheduler scheduler;
     List<ImmutableTaskGraph> ffnLayerTaskGraphs;
 
-    public Qwen3FP16FFNLayers(String taskGraphName, Qwen3State state, Qwen3TornadoWeights weights, Qwen3Configuration config, org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType schedulerType) {
+    public Qwen3FP16FFNLayers(String taskGraphName, Qwen3State state, Qwen3TornadoWeights weights, Qwen3Configuration config, SchedulerType schedulerType) {
         super(taskGraphName, state, weights, config, schedulerType);
         this.qwen3State = state;
         this.qwen3Config = config;

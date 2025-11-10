@@ -59,7 +59,7 @@ public abstract class ModelLoader {
                 return ModelType.QWEN_2;
             } else if (lowerName.contains("qwen3")) {
                 return ModelType.QWEN_3;
-            } else if (lowerName.contains("deepseek r1 distill")) {
+            } else if (lowerName.contains("deepseek")) {
                 return ModelType.DEEPSEEK_R1_DISTILL_QWEN;
             } else if (lowerName.contains("phi3") || lowerName.contains("phi-3")) {
                 return ModelType.PHI_3;

@@ -5,6 +5,7 @@ import org.beehive.gpullama3.inference.weights.tornado.q8_0.LlamaTornadoWeightsQ
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
 import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
+import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
 import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
@@ -20,7 +21,7 @@ public class LlamaQ8_0FFNLayers extends AbstractFFNLayers {
     GridScheduler scheduler;
     List<ImmutableTaskGraph> ffnLayerTaskGraphs;
 
-    public LlamaQ8_0FFNLayers(String taskGraphName, LlamaState state, LlamaTornadoWeightsQ8_0 weights, Configuration config, org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType schedulerType) {
+    public LlamaQ8_0FFNLayers(String taskGraphName, LlamaState state, LlamaTornadoWeightsQ8_0 weights, Configuration config, SchedulerType schedulerType) {
         super(taskGraphName, state, weights, config, schedulerType);
         ffnLayerTaskGraphs = setupFFNLayered();
     }
@@ -159,7 +160,7 @@ public class LlamaQ8_0FFNLayers extends AbstractFFNLayers {
     }
 
     private TaskGraph configureAttention(TaskGraph unifiedLayer, int layerIndex) {
-        if (schedulerType == org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType.NVIDIA) {
+        if (schedulerType == SchedulerType.NVIDIA) {
             return unifiedLayer.task("parallel-attention", TransformerComputeKernelsLayered::processHeadsFlashAttention,
                     context, state.wrapQ, state.wrapKeyCache, state.wrapValueCache, state.wrapXb,
                     config.numberOfHeads(), config.headSize(), config.kvDim(), config.kvMul(),
