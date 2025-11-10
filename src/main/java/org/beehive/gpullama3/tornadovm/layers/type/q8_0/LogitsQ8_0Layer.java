@@ -3,7 +3,7 @@ package org.beehive.gpullama3.tornadovm.layers.type.q8_0;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.Weights;
 import org.beehive.gpullama3.inference.weights.tornado.q8_0.LlamaTornadoWeightsQ8_0;
-import org.beehive.gpullama3.inference.weights.tornado.q8_0.Qwen3TornadoWeightsQ8_0;
+import org.beehive.gpullama3.inference.weights.tornado.q8_0.Qwen2TornadoWeightsQ8_0;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernels;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
@@ -37,7 +37,7 @@ public class LogitsQ8_0Layer extends AbstractLayer {
     @Override
     public GridScheduler updateGridScheduler(GridScheduler tornadoForwardScheduler) {
         WorkerGrid logitsRMS;
-        if (weights instanceof Qwen3TornadoWeightsQ8_0) {
+        if (weights instanceof Qwen2TornadoWeightsQ8_0) {
             logitsRMS = WorkerGridFactory.createRmsNormWorker(config.dim(), 32);
         } else {
             logitsRMS = WorkerGridFactory.createRmsNormWorker(config.dim(), 256);

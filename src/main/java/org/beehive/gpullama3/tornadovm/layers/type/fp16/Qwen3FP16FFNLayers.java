@@ -173,7 +173,7 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
      * Setup a single transformer layer for Qwen3 with GQA
      */
     TaskGraph setupSingleQwen3FFNLayer(Qwen3TornadoWeights weights, int layerIndex) {
-        var taskGraphName = "ffn_layer_" + layerIndex;
+        var taskGraphName = "layer_" + layerIndex;
         TaskGraph unifiedLayer = new TaskGraph(taskGraphName);
         unifiedLayer.consumeFromDevice(state.wrapX);
         unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION, //
