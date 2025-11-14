@@ -102,7 +102,7 @@ public class MistralModelLoader extends AbstractModelLoader<Mistral, MistralConf
         }
 
         // Validate supported types
-        if (ggmlType != GGMLType.F16 && ggmlType != GGMLType.Q8_0) {
+        if (ggmlType != GGMLType.F16 && ggmlType != GGMLType.Q8_0 && ggmlType != GGMLType.Q4_0) {
             throw new UnsupportedOperationException("Type: " + ggmlType + " currently not supported for TornadoVM weights.");
         }
 

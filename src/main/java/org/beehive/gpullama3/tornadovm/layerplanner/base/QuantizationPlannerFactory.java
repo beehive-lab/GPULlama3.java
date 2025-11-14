@@ -16,6 +16,10 @@ import org.beehive.gpullama3.tornadovm.layerplanner.model.q8_0.LlamaQ8_0LayerPla
 import org.beehive.gpullama3.tornadovm.layerplanner.model.q8_0.Phi3Q8_0LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.q8_0.Qwen2Q8_0LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.q8_0.Qwen3Q8_0LayerPlanner;
+import org.beehive.gpullama3.tornadovm.layerplanner.model.q4_0.LlamaQ4_0LayerPlanner;
+import org.beehive.gpullama3.tornadovm.layerplanner.model.q4_0.Phi3Q4_0LayerPlanner;
+import org.beehive.gpullama3.tornadovm.layerplanner.model.q4_0.Qwen2Q4_0LayerPlanner;
+import org.beehive.gpullama3.tornadovm.layerplanner.model.q4_0.Qwen3Q4_0LayerPlanner;
 
 /**
  * Factory class responsible for creating appropriate layer planners based on model type and quantization.
@@ -77,8 +81,16 @@ public class QuantizationPlannerFactory {
         throw new UnsupportedOperationException("FP32 planners not yet implemented");
     }
 
+    // ============ Q4_0 Planners ============
     private static GenericLayerPlanner createQ4_0Planner(State state, Model model) {
-        throw new UnsupportedOperationException("Q4 planners not yet implemented");
+        return switch (model.getModelType()) {
+            case LLAMA_3, MISTRAL -> new LlamaQ4_0LayerPlanner((LlamaState) state, model);
+            case QWEN_2 -> new Qwen2Q4_0LayerPlanner((Qwen2State) state, model);
+            case QWEN_3 -> new Qwen3Q4_0LayerPlanner((Qwen3State) state, model);
+            case PHI_3 -> new Phi3Q4_0LayerPlanner((Phi3State) state, model);
+            case DEEPSEEK_R1_DISTILL_QWEN -> new Qwen2Q4_0LayerPlanner((Qwen2State) state, model);
+            default -> throw new UnsupportedOperationException("Q4_0 not supported for model: " + model.getModelType());
+        };
     }
 
 }
