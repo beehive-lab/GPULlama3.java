@@ -583,7 +583,8 @@ public final class InferenceCore {
         final Configuration configuration = model.configuration();
         final TornadoWeights weights = (TornadoWeights) model.weights();
 
-        MemorySegment.copy(weights.getTokenEmbeddingTable().asFloatArray().getSegment(), (long) token * configuration.dim() * Float.BYTES, state.wrapX.getSegment(), 0, configuration.dim() * Float.BYTES);
+        //TODO: Xxxx
+        MemorySegment.copy(weights.getTokenEmbeddingTable().asFloatArray().getSegment(), (long) token * configuration.dim() * Short.BYTES, state.wrapX.getSegment(), 0, configuration.dim() * Short.BYTES);
 
         return tornadoVMMasterPlan.tornadoVMForwardExecuteLayered(position);
     }

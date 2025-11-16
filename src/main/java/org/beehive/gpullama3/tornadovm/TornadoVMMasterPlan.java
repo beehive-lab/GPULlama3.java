@@ -7,6 +7,7 @@ import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.tornadovm.layerplanner.base.QuantizationPlannerFactory;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TornadoExecutionPlan;
+import uk.ac.manchester.tornado.api.types.HalfFloat;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
 public class TornadoVMMasterPlan {
@@ -179,7 +180,7 @@ public class TornadoVMMasterPlan {
     /// Execute the forward pass of the LLaMA transformer model using TornadoVM acceleration just once to copy the data into the read-only data layer.
     public void forceCopyInReadOnlyDataLayered() {
         // Execute all TornadoVM graphs
-        state.wrapX.init(0.0f);
+        state.wrapX.init(new HalfFloat(0));
         state.positionHolder.init(0);
 
         // Execute activation update graph

@@ -5,6 +5,7 @@ import org.beehive.gpullama3.tensor.standard.FloatTensor;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.qwen3.Qwen3Configuration;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
 
 import java.util.stream.Stream;
@@ -65,7 +66,7 @@ public final class Qwen3State extends State {
         fields.valueCache = Stream.generate(() -> ArrayFloatTensor.allocate(config.contextLength(), nEmbdGqa)).limit(config.numberOfLayers()).toArray(FloatTensor[]::new);
 
         // TornadoVM wrappers with Qwen3-specific sizes
-        fields.wrapX = new FloatArray(config.dim());
+        fields.wrapX = new HalfFloatArray(config.dim());
         fields.wrapXb = new FloatArray(nEmbdHeadK * config.numberOfHeads());
         fields.wrapXb2 = new FloatArray(config.dim());
         fields.wrapHb = new FloatArray(config.hiddenDim());
