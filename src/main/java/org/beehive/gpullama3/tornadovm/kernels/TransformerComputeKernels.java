@@ -101,11 +101,6 @@ public class TransformerComputeKernels {
      *
      */
 
-    public static void copyHack(HalfFloatArray x, HalfFloatArray hackX) {
-        for (@Parallel int i = 0; i < x.getSize(); i++) {
-            hackX.set(i, x.get(i));
-        }
-    }
 
     public static void reductionOneBlock2WithLogits(KernelContext context, HalfFloatArray output, FloatArray weights, FloatArray temp) {
 //        int gid = context.globalIdx;

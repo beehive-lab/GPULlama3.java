@@ -15,7 +15,9 @@ import org.beehive.gpullama3.model.phi3.Phi3Configuration;
 import org.beehive.gpullama3.model.qwen2.Qwen2Configuration;
 import org.beehive.gpullama3.model.qwen3.Qwen3Configuration;
 import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlan;
+import uk.ac.manchester.tornado.api.types.HalfFloat;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 
 import java.lang.foreign.MemorySegment;
 
@@ -583,8 +585,10 @@ public final class InferenceCore {
         final Configuration configuration = model.configuration();
         final TornadoWeights weights = (TornadoWeights) model.weights();
 
-        //TODO: Xxxx
-        MemorySegment.copy(weights.getTokenEmbeddingTable().asFloatArray().getSegment(), (long) token * configuration.dim() * Short.BYTES, state.wrapX.getSegment(), 0, configuration.dim() * Short.BYTES);
+//        MemorySegment.copy(weights.getTokenEmbeddingTable().asFloatArray().getSegment(), (long) token * configuration.dim() * Float.BYTES, state.wrapX.getSegment(), 0, configuration.dim() * Float.BYTES);
+
+//        System.out.println("token emdfing table type " + weights.getTokenEmbeddingTable().getClass().getName());
+        MemorySegment.copy(weights.getTokenEmbeddingTable().asHalfFloatArray().getSegment(), (long) token * configuration.dim() * 2, state.wrapX.getSegment(), 0, configuration.dim() * 2);
 
         return tornadoVMMasterPlan.tornadoVMForwardExecuteLayered(position);
     }

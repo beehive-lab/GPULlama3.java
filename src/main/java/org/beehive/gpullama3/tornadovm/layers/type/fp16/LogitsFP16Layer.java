@@ -30,7 +30,6 @@ public class LogitsFP16Layer extends AbstractLayer {
         super(name, state, weights, config);
         this.lastTaskGraphID = lastTaskGraphID;
         state.tempLogits.init(0.0f);
-        state.hackX.init(new HalfFloat(0));
         var tornadoWeights = requireWeightsType(weights, TornadoWeights.class, "LogitsFP16Layer", "TornadoTensor");
         this.logitsTaskGraph = setupLogitsTaskGraph(tornadoWeights, config);
         this.schedulerType = schedulerType;
@@ -47,7 +46,6 @@ public class LogitsFP16Layer extends AbstractLayer {
                 if (schedulerType == SchedulerType.NON_NVIDIA) {
                     logits.task("reductionFinalNormalizationLogits", TransformerComputeKernelsLayered::reductionFinalNormalization, context, state.tempLogits, config.dim(), config.rmsNormEps());
                 }
-//                logits.task("hackCopy", TransformerComputeKernels::copyHack, state.wrapX, state.hackX);
                 logits.task("mapContextLogits", TransformerComputeKernels::reductionOneBlock2WithLogits, context, state.wrapX,  weights.rms_final_weight_as_floatArray.asFloatArray(), state.tempLogits)
                 .task("projection", TransformerComputeKernelsLayered::matrixVectorGeneric, context, state.wrapX, state.wrapLogits, weights.wclsByteArray.asHalfFloatArray(), config.dim(), config.vocabularySize(),
                         LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS);
