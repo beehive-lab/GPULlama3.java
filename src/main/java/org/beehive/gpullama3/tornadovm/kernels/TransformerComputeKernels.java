@@ -108,9 +108,34 @@ public class TransformerComputeKernels {
     }
 
     public static void reductionOneBlock2WithLogits(KernelContext context, HalfFloatArray output, FloatArray weights, FloatArray temp) {
+//        int gid = context.globalIdx;
+//        float ss = temp.get(0);
+//        output.set(gid, new HalfFloat((weights.get(gid) * (ss * output.get(gid).getFloat32()))));
+
+
         int gid = context.globalIdx;
+
+        // Step 1: read normalization scalar
         float ss = temp.get(0);
-        output.set(gid, new HalfFloat((weights.get(gid) * (ss * output.get(gid).getFloat32()))));
+
+        // Step 2: read current output value as float
+        HalfFloat hf = output.get(gid);
+        float out_f = hf.getFloat32();
+
+        // Step 3: read weight
+//        float w = weights.get(gid);
+
+        // Step 4: compute scaled output
+        float scaled = ss * out_f;
+
+        // Step 5: multiply by weight
+        float prod = weights.get(gid) * scaled;
+
+        // Step 6: create HalfFloat result
+        HalfFloat result = new HalfFloat(prod);
+
+        // Step 7: write back
+        output.set(gid, result);
     }
 
 
