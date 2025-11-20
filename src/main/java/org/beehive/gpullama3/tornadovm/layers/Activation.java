@@ -19,7 +19,7 @@ public class Activation extends AbstractLayer {
 
         // formatter:off
         this.activationUpdate = new TaskGraph(taskGraphHandle).transferToDevice(DataTransferMode.EVERY_EXECUTION, state.wrapX)
-                .task("updateX", TransformerComputeKernels::emptyTaskToForceCopyIn, state.wrapX).persistOnDevice(state.wrapX);
+                .task("updateX", TransformerComputeKernels::copyInEmbeddingActivationFP16, state.wrapX).persistOnDevice(state.wrapX);
         // formatter:on
     }
 

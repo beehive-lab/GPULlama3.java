@@ -126,6 +126,8 @@ public abstract class ModelLoader {
     public static TornadoTensor loadTornadoTensor(GGMLTensorEntry entry) {
         GGMLType ggmlType = entry.ggmlType();
         int size = FloatTensor.numberOfElements(entry.shape());
+        System.out.println("Loading tensor of type " + ggmlType + " with shape " + entry.name() + " -> " + entry.shape() + " and memory segment " + entry.memorySegment());
+//
         return switch (ggmlType) {
             case F32 -> new FP32TornadoTensor(size, entry.memorySegment());
             case F16 -> new FP16TornadoTensor(size, entry.memorySegment());

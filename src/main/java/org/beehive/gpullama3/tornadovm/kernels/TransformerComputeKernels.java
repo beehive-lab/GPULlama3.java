@@ -1,8 +1,11 @@
 package org.beehive.gpullama3.tornadovm.kernels;
 
 import uk.ac.manchester.tornado.api.KernelContext;
+import uk.ac.manchester.tornado.api.annotations.Parallel;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
+import uk.ac.manchester.tornado.api.types.HalfFloat;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 
 public class TransformerComputeKernels {
 
@@ -12,10 +15,17 @@ public class TransformerComputeKernels {
     public TransformerComputeKernels() {
     }
 
-    public static void emptyTaskToForceCopyIn(FloatArray buffer) {
+    public static void copyInEmbeddingActivation(FloatArray buffer) {
         float dummy = buffer.get(0);
         if (dummy > Float.MAX_VALUE) {
             buffer.set(0, dummy);
+        }
+    }
+
+    public static void copyInEmbeddingActivationFP16(HalfFloatArray buffer) {
+        float dummy = buffer.get(0).getFloat32();
+        if (dummy > Float.MAX_VALUE) {
+            buffer.set(0, new HalfFloat(dummy));
         }
     }
 
@@ -33,7 +43,7 @@ public class TransformerComputeKernels {
      * @param ermsNorm Epsilon value for numerical stability (epsilon * epsilon)
      * @param localMemSize Size of local memory allocation (work group size)
      */
-    public static void reductionOneBlockWithLayer(KernelContext context, FloatArray output, FloatArray x, int size, float ermsNorm, int localMemSize) {
+    public static void reductionOneBlockWithLayer(KernelContext context, FloatArray output, HalfFloatArray x, int size, float ermsNorm, int localMemSize) {
         int gid = context.globalIdx;
         int lid = context.localIdx;
         int groupId = context.groupIdx;
@@ -44,7 +54,7 @@ public class TransformerComputeKernels {
 
         // Load input value and compute square
         if (gid < size) {
-            localX[lid] = x.get(gid);
+            localX[lid] = x.get(gid).getFloat32();
             localX[lid] = localX[lid] * localX[lid];
         } else {
             localX[lid] = 0.0f;
@@ -87,11 +97,49 @@ public class TransformerComputeKernels {
      * @param output Array for normalized output
      * @param weights Weight values to normalize
      * @param temp Temporary array containing a normalization factor at index 0
+     *
+     *
      */
-    public static void reductionOneBlock2WithLogits(KernelContext context, FloatArray output, FloatArray weights, FloatArray temp) {
+
+
+    public static void reductionOneBlock2WithLogits(KernelContext context, HalfFloatArray output, FloatArray weights, FloatArray temp) {
+//        int gid = context.globalIdx;
+//        float ss = temp.get(0);
+//        output.set(gid, new HalfFloat((weights.get(gid) * (ss * output.get(gid).getFloat32()))));
+
+
+        int gid = context.globalIdx;
+
+        // Step 1: read normalization scalar
+        float ss = temp.get(0);
+
+        // Step 2: read current output value as float
+        HalfFloat hf = output.get(gid);
+        float out_f = hf.getFloat32();
+
+        // Step 3: read weight
+//        float w = weights.get(gid);
+
+        // Step 4: compute scaled output
+        float scaled = ss * out_f;
+
+        // Step 5: multiply by weight
+        float prod = weights.get(gid) * scaled;
+
+        // Step 6: create HalfFloat result
+        HalfFloat result = new HalfFloat(prod);
+
+        // Step 7: write back
+        output.set(gid, result);
+    }
+
+
+    public static void reductionOneBlock2WithLogits2(KernelContext context, HalfFloatArray input, HalfFloatArray output, FloatArray weights, FloatArray temp) {
         int gid = context.globalIdx;
         float ss = temp.get(0);
-        output.set(gid, weights.get(gid) * (ss * output.get(gid)));
+        float inter = ss * input.get(gid).getHalfFloatValue();
+        HalfFloat x = new HalfFloat((weights.get(gid) * inter));
+        output.set(gid, x);
     }
 
 }

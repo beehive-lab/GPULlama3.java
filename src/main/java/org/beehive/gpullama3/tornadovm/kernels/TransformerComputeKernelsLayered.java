@@ -3,6 +3,7 @@ package org.beehive.gpullama3.tornadovm.kernels;
 import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.annotations.Parallel;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
+import uk.ac.manchester.tornado.api.types.HalfFloat;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.Int8Array;
@@ -35,7 +36,7 @@ public class TransformerComputeKernelsLayered {
      * @param localMemSize
      *         Size of local memory allocation (must match work group size)
      */
-    public static void reductionOneBlockWithLayer(KernelContext context, FloatArray output, FloatArray x, int size, float ermsNorm, int localMemSize) {
+    public static void reductionOneBlockWithLayer(KernelContext context, FloatArray output, HalfFloatArray x, int size, float ermsNorm, int localMemSize) {
         int gid = context.globalIdx;
         int lid = context.localIdx;
         int groupId = context.groupIdx;
@@ -46,7 +47,7 @@ public class TransformerComputeKernelsLayered {
 
         // Load input value and compute square
         if (gid < size) {
-            localX[lid] = x.get(gid);
+            localX[lid] = x.get(gid).getFloat32();
             localX[lid] = localX[lid] * localX[lid];
         } else {
             localX[lid] = 0.0f;
@@ -97,11 +98,11 @@ public class TransformerComputeKernelsLayered {
      * @param temp
      *         Temporary array containing normalization factor at index 0
      */
-    public static void reductionOneBlock2WithLayer(KernelContext context, FloatArray output, FloatArray x, FloatArray weights, FloatArray temp) {
+    public static void reductionOneBlock2WithLayer(KernelContext context, FloatArray output, HalfFloatArray x, FloatArray weights, FloatArray temp) {
         int gid = context.globalIdx;
 
         float ss = temp.get(0);
-        output.set(gid, weights.get(gid) * (ss * x.get(gid)));
+        output.set(gid, weights.get(gid) * (ss * x.get(gid).getFloat32()));
     }
 
     /**
@@ -690,6 +691,32 @@ public class TransformerComputeKernelsLayered {
             hb.set(rowId, sum);
         }
     }
+
+    public static void matrixVectorGeneric(
+            KernelContext context,
+            HalfFloatArray x,
+            FloatArray hb,                  // output
+            HalfFloatArray w,
+            int dim1,                       // inner loop
+            int dim0,                       // outer loop
+            int localWorkGroupSize) {
+        // One row per workgroup (not per thread)
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+        int localSize = localWorkGroupSize;
+
+        // Early exit if this workgroup is beyond our output dimension
+        if (rowId >= dim0) {
+            return;
+        }
+        float sum = matrixVectorRowMajorOptimized(context, localSize, x, w, dim1);
+
+        // Thread 0 in each workgroup writes the final result
+        if (localId == 0) {
+            hb.set(rowId, sum);
+        }
+    }
+
     // @formatter:on
 
     /**
@@ -712,7 +739,7 @@ public class TransformerComputeKernelsLayered {
      * @param localWorkGroupSize
      *         Work group size
      */
-    public static void matrixVectorGenericWithResidual(KernelContext context, FloatArray x, FloatArray hb, HalfFloatArray w, int n, int d, int localWorkGroupSize) {
+    public static void matrixVectorGenericWithResidual(KernelContext context, FloatArray x, HalfFloatArray hb, HalfFloatArray w, int n, int d, int localWorkGroupSize) {
         // One row per workgroup (not per thread)
         int rowId = context.groupIdx;
         int localId = context.localIdx;
@@ -727,8 +754,8 @@ public class TransformerComputeKernelsLayered {
 
         // Thread 0 in each workgroup writes the final result
         if (localId == 0) {
-            float result = hb.get(rowId) + sum;
-            hb.set(rowId, result);
+            float result = hb.get(rowId).getFloat32() + sum;
+            hb.set(rowId, new HalfFloat(result));
         }
     }
 
@@ -830,6 +857,38 @@ public class TransformerComputeKernelsLayered {
         for (int j = localId; j < n; j += localSize) {
             int matrixIdx = rowOffset + j;
             partialSum += w.get(matrixIdx) * x.get(j);
+        }
+
+        // Store partial sum in local memory
+        localSum[localId] = partialSum;
+        context.localBarrier();
+
+        // Parallel reduction within workgroup
+        for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSum[localId] += localSum[localId + stride];
+            }
+            context.localBarrier();
+        }
+
+        return localSum[0];
+    }
+
+
+    public static float matrixVectorRowMajorOptimized(KernelContext context, int localSize, HalfFloatArray x, HalfFloatArray w, int n) {
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        // Allocate local memory for reduction
+        float[] localSum = context.allocateFloatLocalArray(localSize);
+
+        int rowOffset = rowId * n;
+
+        // Each thread calculates partial dot product
+        float partialSum = 0.0f;
+        for (int j = localId; j < n; j += localSize) {
+            int matrixIdx = rowOffset + j;
+            partialSum += w.get(matrixIdx).getFloat32() * x.get(j).getFloat32();
         }
 
         // Store partial sum in local memory
@@ -959,6 +1018,25 @@ public class TransformerComputeKernelsLayered {
         }
     }
 
+    public static void matrixVectorGeneric(KernelContext context, HalfFloatArray x, FloatArray output, Int8Array weightsQ, HalfFloatArray weightScales, int dim1, int dim0, int localWorkGroupSize) {
+
+        // One row per workgroup
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        // Early exit if this workgroup is beyond output dimension
+        if (rowId >= dim0) {
+            return;
+        }
+
+        float sum = matrixVectorRowMajorOptimizedQ8_0(context, localWorkGroupSize, x, weightsQ, weightScales, dim1);
+
+        // Thread 0 writes the result
+        if (localId == 0) {
+            output.set(rowId, sum);
+        }
+    }
+
     /**
      * Helper method to compute dot product for a single row with Q8_0 quantized weights. Uses 4-way unrolling for better performance.
      */
@@ -1015,7 +1093,64 @@ public class TransformerComputeKernelsLayered {
         return localSums[0];
     }
 
-    public static void matrixVectorGenericWithResidual(KernelContext context, FloatArray x, FloatArray hb, Int8Array w_quants, HalfFloatArray w_scales, int n, int d, int localWorkGroupSize) {
+
+    /**
+     * Helper method to compute dot product for a single row with Q8_0 quantized weights. Uses 4-way unrolling for better performance.
+     */
+    public static float matrixVectorRowMajorOptimizedQ8_0(KernelContext context, int localSize, HalfFloatArray x, Int8Array weightsQ, HalfFloatArray weightScales, int n) {
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+        int blockSize = 32;
+
+        // Allocate local memory for reduction
+        float[] localSums = context.allocateFloatLocalArray(localSize);
+
+        int rowOffset = rowId * n;
+        int scalesRowOffset = rowId * (n / blockSize);
+
+        // 4-way unrolling
+        float partialSum1 = 0.0f;
+        float partialSum2 = 0.0f;
+        float partialSum3 = 0.0f;
+        float partialSum4 = 0.0f;
+
+        // Main loop - process 4 elements at a time
+        for (int j = localId * 4; j < n - 3; j += localSize * 4) {
+            int blockIdx = j / blockSize;
+            float scale = weightScales.get(scalesRowOffset + blockIdx).getFloat32();
+
+            // Dequantize and multiply
+            partialSum1 += ((float) weightsQ.get(rowOffset + j) * scale) * x.get(j).getHalfFloatValue();
+            partialSum2 += ((float) weightsQ.get(rowOffset + j + 1) * scale) * x.get(j + 1).getHalfFloatValue();
+            partialSum3 += ((float) weightsQ.get(rowOffset + j + 2) * scale) * x.get(j + 2).getHalfFloatValue();
+            partialSum4 += ((float) weightsQ.get(rowOffset + j + 3) * scale) * x.get(j + 3).getHalfFloatValue();
+        }
+
+        float partialSum = partialSum1 + partialSum2 + partialSum3 + partialSum4;
+
+        // Handle remaining elements
+        for (int j = ((n / 4) * 4) + localId; j < n; j += localSize) {
+            int blockIdx = j / blockSize;
+            float scale = weightScales.get(scalesRowOffset + blockIdx).getFloat32();
+            partialSum += ((float) weightsQ.get(rowOffset + j) * scale) * x.get(j).getHalfFloatValue();
+        }
+
+        // Store partial sum
+        localSums[localId] = partialSum;
+        context.localBarrier();
+
+        // Parallel reduction
+        for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSums[localId] += localSums[localId + stride];
+            }
+            context.localBarrier();
+        }
+
+        return localSums[0];
+    }
+
+    public static void matrixVectorGenericWithResidual(KernelContext context, FloatArray x, HalfFloatArray hb, Int8Array w_quants, HalfFloatArray w_scales, int n, int d, int localWorkGroupSize) {
         // One row per workgroup (not per thread)
         int rowId = context.groupIdx;
         int localId = context.localIdx;
@@ -1030,8 +1165,8 @@ public class TransformerComputeKernelsLayered {
 
         // Thread 0 in each workgroup writes the final result
         if (localId == 0) {
-            float result = hb.get(rowId) + sum;
-            hb.set(rowId, result);
+            float result = hb.get(rowId).getFloat32() + sum;
+            hb.set(rowId, new HalfFloat(result));
         }
     }
 

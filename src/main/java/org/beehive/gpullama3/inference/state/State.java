@@ -3,6 +3,7 @@ package org.beehive.gpullama3.inference.state;
 import org.beehive.gpullama3.tensor.standard.FloatTensor;
 import org.beehive.gpullama3.model.Configuration;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
 
 /**
@@ -48,7 +49,7 @@ public abstract class State {
     public final FloatArray wrapXb2;        // FloatArray wrapper for xb2, another residual buffer to aid in computations with TornadoVM.
     public final FloatArray wrapHb;         // FloatArray wrapper for hb (hidden dimension buffer for FFN), optimized for TornadoVM.
     public final FloatArray wrapHb2;        // FloatArray wrapper for hb2, additional hidden buffer for FFN, for compatibility with TornadoVM.
-    public final FloatArray wrapX;          // FloatArray wrapper for the current activation tensor, optimized for TornadoVM.
+    public final HalfFloatArray wrapX;          // FloatArray wrapper for the current activation tensor, optimized for TornadoVM.
     public final FloatArray wrapQ;          // FloatArray wrapper for the query tensor, optimized for TornadoVM.
     public final FloatArray wrapK;          // FloatArray wrapper for the key tensor, optimized for TornadoVM.
     public final FloatArray wrapV;          // FloatArray wrapper for the value tensor, optimized for TornadoVM.
@@ -64,6 +65,7 @@ public abstract class State {
     public FloatArray tempLogits;   // Temporary buffer for logits calculations, size adjusted for local workgroup size.
     public int latestToken;         // Keeps track of the most recent token processed by the model. Useful for stateful or autoregressive models.
 
+    public HalfFloatArray hackX;
     /** last index in previous block */
 
     protected State(Configuration config, int batchsize) {
@@ -108,6 +110,7 @@ public abstract class State {
         this.temp = fields.temp;
         this.tempFFN = fields.tempFFN;
         this.tempLogits = fields.tempLogits;
+        this.hackX = fields.wrapX;
     }
 
     // Abstract method - subclasses implement their specific allocation logic and sizes
@@ -117,10 +120,11 @@ public abstract class State {
     protected static class StateFields {
         public FloatTensor x, xb, xb2, hb, hb2, q, k, v, att, logits;
         public FloatTensor[] keyCache, valueCache;
-        public FloatArray wrapX, wrapXb, wrapXb2, wrapHb, wrapHb2, wrapLogits;
+        public FloatArray wrapXb, wrapXb2, wrapHb, wrapHb2, wrapLogits;
         public FloatArray wrapQ, wrapK, wrapV, wrapAtt, wrapKeyCache, wrapValueCache;
         public IntArray positionHolder;
         public FloatArray temp, tempFFN, tempLogits;
+        public HalfFloatArray wrapX, hackX;
     }
 
     @Override
