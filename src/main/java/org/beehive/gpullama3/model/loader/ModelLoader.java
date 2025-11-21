@@ -9,6 +9,7 @@ import org.beehive.gpullama3.model.ModelType;
 import org.beehive.gpullama3.tensor.standard.*;
 import org.beehive.gpullama3.tensor.tornado.FP16TornadoTensor;
 import org.beehive.gpullama3.tensor.tornado.FP32TornadoTensor;
+import org.beehive.gpullama3.tensor.tornado.Q4_0TornadoTensor;
 import org.beehive.gpullama3.tensor.tornado.Q8_0TornadoTensor;
 import org.beehive.gpullama3.tensor.tornado.TornadoTensor;
 import uk.ac.manchester.tornado.api.types.HalfFloat;
@@ -130,7 +131,7 @@ public abstract class ModelLoader {
             case F32 -> new FP32TornadoTensor(size, entry.memorySegment());
             case F16 -> new FP16TornadoTensor(size, entry.memorySegment());
             case Q8_0 -> Q8_0TornadoTensor.create(entry);
-            case Q4_0 -> throw new UnsupportedOperationException("Q4 format not supported yet");
+            case Q4_0 -> Q4_0TornadoTensor.create(entry);
             default -> throw new UnsupportedOperationException("Quantization format " + ggmlType);
         };
     }
@@ -199,6 +200,14 @@ public abstract class ModelLoader {
         Q8_0TornadoTensor[] array = new Q8_0TornadoTensor[size];
         for (int i = 0; i < size; i++) {
             array[i] = Q8_0TornadoTensor.create(getTensorEntry.apply(i));
+        }
+        return array;
+    }
+
+    public static Q4_0TornadoTensor[] loadArrayAsQ4_0TornadoTensor(int size, IntFunction<GGMLTensorEntry> getTensorEntry) {
+        Q4_0TornadoTensor[] array = new Q4_0TornadoTensor[size];
+        for (int i = 0; i < size; i++) {
+            array[i] = Q4_0TornadoTensor.create(getTensorEntry.apply(i));
         }
         return array;
     }
