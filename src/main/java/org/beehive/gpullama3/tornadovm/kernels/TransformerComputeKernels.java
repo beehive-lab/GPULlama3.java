@@ -1,8 +1,11 @@
 package org.beehive.gpullama3.tornadovm.kernels;
 
 import uk.ac.manchester.tornado.api.KernelContext;
+import uk.ac.manchester.tornado.api.annotations.Parallel;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
+import uk.ac.manchester.tornado.api.types.HalfFloat;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 
 public class TransformerComputeKernels {
 
@@ -18,6 +21,14 @@ public class TransformerComputeKernels {
             buffer.set(0, dummy);
         }
     }
+
+    public static void copyfp15tofp32(KernelContext context, HalfFloatArray x, FloatArray wrapX) {
+        int i = context.globalIdx;
+        if (i < wrapX.getSize()) {
+            wrapX.set(i, x.get(i).getFloat32());
+        }
+    }
+
 
     /**
      * Performs RMS (Root Mean Square) normalization using parallel reduction.
