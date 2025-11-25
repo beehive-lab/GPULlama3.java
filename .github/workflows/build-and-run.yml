@@ -1,72 +1,88 @@
 name: GPULlama3 Build & Run
+
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
   pull_request:
+    branches: [ main ]  
+    types: [opened, synchronize,  reopened]
+  pull_request_review:
+    types: [submitted, edited]
+
+
 jobs:
   build-and-run:
     runs-on: self-hosted
+    
     env:
-      # TornadoVM paths
-      TORNADO_ROOT: ${{ github.workspace }}/GPULlama3.java/external/tornadovm
-      TORNADO_SDK: ${{ github.workspace }}/GPULlama3.java/external/tornadovm/bin/sdk  # Keep this for make
-      # Java
       JAVA_HOME: /opt/jenkins/jdks/graal-23.1.0/jdk-21.0.3
+      TORNADO_ROOT: ${{ github.workspace }}/GPULlama3.java/external/tornadovm
+      LLAMA_ROOT: ${{ github.workspace }} 
+    
     steps:
       - name: Checkout GPULlama3
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Check code formatting (Spotless)
+        run: |
+          cd ${{ github.workspace }}
+          ./mvnw -T12C -Pspotless spotless:check
+          
       - name: Clone TornadoVM explicitly
         run: |
-          git clone --branch master https://github.com/beehive-lab/TornadoVM.git GPULlama3.java/external/tornadovm
-          cd GPULlama3.java/external/tornadovm
-          git pull origin master
-      - name: Verify Java
+          git clone --depth 1 --branch master \
+            https://github.com/beehive-lab/TornadoVM.git \
+            GPULlama3.java/external/tornadovm
+      - name: Set up Python venv for TornadoVM
         run: |
-          java -version
-          echo "JAVA_HOME=$JAVA_HOME"
-      - name: Set up Python 3
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-      - name: Create Python venv
-        run: |
-          cd GPULlama3.java/external/tornadovm
-          python3 -m venv venv
-          source venv/bin/activate
+          python3 -m venv GPULlama3.java/external/tornadovm/venv
+          source GPULlama3.java/external/tornadovm/venv/bin/activate
+          python --version
       - name: Build TornadoVM
         run: |
+          set -x
           cd GPULlama3.java/external/tornadovm
           source venv/bin/activate
-          make  # Uses the initial TORNADO_SDK from env
+          echo "=== Building TornadoVM ==="
+          make
+          echo "=== Searching for TornadoVM SDK directory ==="
+          SDK_DIR=$(find dist -type d -maxdepth 3 -path "*/tornadovm-*-opencl" | head -n 1)
+          if [ -z "$SDK_DIR" ]; then
+            echo "::error::Could not locate TornadoVM SDK directory!"
+            find dist -maxdepth 5 -type d
+            exit 1
+          fi
+          FULL_SDK="${PWD}/${SDK_DIR}"
+          echo "Detected TornadoVM SDK: $FULL_SDK"
           
-          # After build, find and update TORNADO_SDK to the actual SDK location
-          TORNADO_SDK_DIR=$(ls -d dist/tornado-sdk/tornado-sdk-* | head -1)
-          FULL_TORNADO_SDK="${PWD}/${TORNADO_SDK_DIR}"
-          echo "TORNADO_SDK=${FULL_TORNADO_SDK}" >> $GITHUB_ENV
-          echo "Updated TORNADO_SDK to: ${FULL_TORNADO_SDK}"
+          # Export for current shell session
+          export TORNADO_SDK="$FULL_SDK"
+          export PATH="$FULL_SDK/bin:$JAVA_HOME/bin:$PATH"
           
-          # Verify TornadoVM with the updated path
-          export TORNADO_SDK="${FULL_TORNADO_SDK}"
-          export PATH="${TORNADO_SDK}/bin:$JAVA_HOME/bin:$PATH"
+          # Save for subsequent steps
+          echo "TORNADO_SDK=$FULL_SDK" >> $GITHUB_ENV
+          echo "PATH=$PATH" >> $GITHUB_ENV
+          
+          echo "=== Checking tornado CLI ==="
+          which tornado || { echo "::error::tornado not in PATH"; exit 1; }
           tornado --devices
       - name: Build GPULlama3
         run: |
-          export PATH="${TORNADO_SDK}/bin:$JAVA_HOME/bin:$PATH"
-          echo "Using TORNADO_SDK: $TORNADO_SDK"
-          pwd
-          ls -l 
+          set -x
+          cd ${{ github.workspace }}
+          echo "Using TORNADO_SDK=$TORNADO_SDK"
+          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          which tornado || { echo "::error::tornado unavailable during GPULlama3 build"; exit 1; }
+          tornado --version
           make
-      - name: Run llama-tornado test prompt
+      - name: Run Test Inference
         run: |
-          # The TORNADO_SDK variable is available because it was updated via GITHUB_ENV
-          export PATH="${TORNADO_SDK}/bin:$JAVA_HOME/bin:$PATH"
-          echo "Using TORNADO_SDK: $TORNADO_SDK"
-          ./llama-tornado --gpu --opencl --model /home/michalis/models/Llama-3.2-1B-Instruct-F16.gguf --prompt "Say hello"
-      # - name: Run llama-tornado test prompt
-      #   run: |
-      #     # export PATH="${TORNADO_SDK}/bin:$JAVA_HOME/bin:$PATH"
-      #     echo "Using TORNADO_SDK: $TORNADO_SDK"
-      #     ./llama-tornado --gpu --opencl --model /home/michalis/models/Llama-3.2-1B-Instruct-F16.gguf --prompt "Say hello"
+          set -x
+          cd ${{ github.workspace }}
+          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
+          ./llama-tornado --gpu --opencl \
+            --model /home/michalis/models/Llama-3.2-1B-Instruct-F16.gguf \
+            --prompt "Say hello"
