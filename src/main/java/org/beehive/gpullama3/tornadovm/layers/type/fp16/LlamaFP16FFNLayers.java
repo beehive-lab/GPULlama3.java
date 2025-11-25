@@ -21,7 +21,8 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
 
     TaskGraph ffnTaskGraphs;
     GridScheduler scheduler;
-   List<ImmutableTaskGraph> ffnLayerTaskGraphs;
+    List<ImmutableTaskGraph> ffnLayerTaskGraphs;
+
     public LlamaFP16FFNLayers(String taskGraph, State state, Weights weights, Configuration config, SchedulerType schedulerType) {
         super(taskGraph, state, weights, config, schedulerType);
         this.ffnLayerTaskGraphs = setupFFNLayered();
@@ -29,7 +30,7 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
 
     @Override
     public GridScheduler updateGridScheduler(GridScheduler tornadoForwardScheduler) {
-        WorkerGrid ropeWorker = WorkerGridFactory.genericWorker(config.dim()/2, 128);
+        WorkerGrid ropeWorker = WorkerGridFactory.genericWorker(config.dim() / 2, 128);
         WorkerGrid rmsNormWorker = WorkerGridFactory.createRmsNormWorker(config.dim(), 256);
 
         int configDimRowMajorGlobal = config.dim() * LOCAL_WORK_GROUP_SIZE_ALLOC;
@@ -64,12 +65,12 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
     }
 
     @Override
-    public  GridScheduler getGridScheduler() {
+    public GridScheduler getGridScheduler() {
         return scheduler;
     }
 
     @Override
-    public  TaskGraph getTaskGraph() {
+    public TaskGraph getTaskGraph() {
         return ffnTaskGraphs;
     }
 
@@ -87,15 +88,16 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
         state.tempFFN.init(0.0f);
         var numLayers = config.numberOfLayers();
 
-        return IntStream.range(0, numLayers)
-            .mapToObj(i -> {
-                var ffnLayer = setupSingleFFNLayer((LlamaTornadoWeights) weights, config, i);
-                if (i == numLayers - 1) setupLastID(ffnLayer.getTaskGraphName());
-                return ffnLayer.snapshot();
-            })
-            .toList();
+        return IntStream.range(0, numLayers).mapToObj(i -> {
+            var ffnLayer = setupSingleFFNLayer((LlamaTornadoWeights) weights, config, i);
+            if (i == numLayers - 1) {
+                setupLastID(ffnLayer.getTaskGraphName());
+            }
+            return ffnLayer.snapshot();
+        }).toList();
     }
 
+    // @formatter:off
     TaskGraph setupSingleFFNLayer(LlamaTornadoWeights weights, Configuration config, int layerIndex) {
         var layerTaskGraphName = "layer_" + layerIndex;
         TaskGraph unifiedLayer = new TaskGraph(layerTaskGraphName);
@@ -113,10 +115,10 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
         unifiedLayer = configureLayerDataTransfers(unifiedLayer, layerIndex);
         unifiedLayer
                 .task("reductionsOneBlock", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.temp, state.wrapX, config.dim(), config.rmsNormEps(), state.localSize);
-                if (shouldUseFinalNormalization()) {
-                    unifiedLayer.task("reductionFinalNormalization", TransformerComputeKernelsLayered::reductionFinalNormalization, context, state.temp,
-                            config.dim(), config.rmsNormEps());
-                }
+//                if (shouldUseFinalNormalization()) {
+//                    unifiedLayer.task("reductionFinalNormalization", TransformerComputeKernelsLayered::reductionFinalNormalization, context, state.temp,
+//                            config.dim(), config.rmsNormEps());
+//                }
                 unifiedLayer.task("mapContext", TransformerComputeKernelsLayered::reductionOneBlock2WithLayer, context, state.wrapXb, state.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), state.temp)
                 .task("qmatmul", TransformerComputeKernelsLayered::matrixVectorGeneric, context, state.wrapXb, state.wrapQ, weights.wqLayered[layerIndex].asHalfFloatArray(), config.dim(), config.dim(),
                         LOCAL_WORK_GROUP_SIZE_ALLOC)
@@ -131,16 +133,18 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
                 unifiedLayer.task("matmul1", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual, context, state.wrapXb, state.wrapX, weights.woLayered[layerIndex].asHalfFloatArray(), config.dim(), config.dim(),
                         LOCAL_WORK_GROUP_SIZE_ALLOC)
                 .task("reductionsOneBlockFFN", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.tempFFN, state.wrapX, config.dim(), config.rmsNormEps(), state.localSize);
-                if (shouldUseFinalNormalization()) {
-                    unifiedLayer.task("reductionFinalNormalizationFFN", TransformerComputeKernelsLayered::reductionFinalNormalization, context, state.tempFFN, config.dim(), config.rmsNormEps());
-                }
+//                if (shouldUseFinalNormalization()) {
+//                    unifiedLayer.task("reductionFinalNormalizationFFN", TransformerComputeKernelsLayered::reductionFinalNormalization, context, state.tempFFN, config.dim(), config.rmsNormEps());
+//                }
                 unifiedLayer.task("mapContextFFN", TransformerComputeKernelsLayered::reductionOneBlock2WithLayer, context, state.wrapXb, state.wrapX, weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), state.tempFFN)
                 .task("fused_ffn_w1_w3", TransformerComputeKernelsLayered::fusedFeedForwardWithSiLUAndGLUActivation, context, state.wrapXb, state.wrapHb, weights.w1Layered[layerIndex].asHalfFloatArray(),
                         weights.w3Layered[layerIndex].asHalfFloatArray(), config.dim(), config.hiddenDim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
                 .task("projectionTwo", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual, context, state.wrapHb, state.wrapX, weights.w2Layered[layerIndex].asHalfFloatArray(), config.hiddenDim(),
-                        config.dim(), LOCAL_WORK_GROUP_SIZE_ALLOC).persistOnDevice(state.wrapX);
+                        config.dim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
+                .persistOnDevice(state.wrapX);
         return unifiedLayer;
     }
+    // @formatter:on
 
     protected TaskGraph configureLayerDataTransfers(TaskGraph unifiedLayer, int layerIndex) {
         // First layer: Transfer initial data to device (one-time transfer)
@@ -164,6 +168,7 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
         return unifiedLayer;
     }
 
+    // @formatter:off
     private TaskGraph configureAttention(TaskGraph unifiedLayer, int layerIndex) {
         if (schedulerType == SchedulerType.NVIDIA) {
             return unifiedLayer.task("parallel-attention", TransformerComputeKernelsLayered::processHeadsFlashAttention,
@@ -175,4 +180,5 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
                     config.numberOfHeads(), config.headSize(), config.kvDim(), config.kvMul(), config.contextLength(), state.positionHolder, state.wrapAtt, layerIndex, config.contextLength());
         }
     }
+    // @formatter:on
 }

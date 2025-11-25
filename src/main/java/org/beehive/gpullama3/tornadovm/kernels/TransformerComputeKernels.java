@@ -29,6 +29,21 @@ public class TransformerComputeKernels {
         }
     }
 
+    public static void copyfp15tofp32Vec4(KernelContext context, HalfFloatArray x, FloatArray wrapX) {
+        int i = context.globalIdx * 4; // Process 4 elements per thread
+        if (i + 3 < wrapX.getSize()) {
+            wrapX.set(i,     x.get(i).getFloat32());
+            wrapX.set(i + 1, x.get(i + 1).getFloat32());
+            wrapX.set(i + 2, x.get(i + 2).getFloat32());
+            wrapX.set(i + 3, x.get(i + 3).getFloat32());
+        } else {
+            // Handle remainder
+            for (int j = i; j < wrapX.getSize(); j++) {
+                wrapX.set(j, x.get(j).getFloat32());
+            }
+        }
+    }
+
 
     /**
      * Performs RMS (Root Mean Square) normalization using parallel reduction.

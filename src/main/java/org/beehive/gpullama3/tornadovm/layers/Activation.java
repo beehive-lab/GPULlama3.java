@@ -24,7 +24,7 @@ public class Activation extends AbstractLayer {
         // @formatter:off
         this.activationUpdate = new TaskGraph(taskGraphHandle)
                 .transferToDevice(DataTransferMode.EVERY_EXECUTION, state.embeddingX)
-//                .task("updateX", TransformerComputeKernels::emptyTaskToForceCopyIn, state.wrapX)
+//                .task("updateX", TransformerComputeKernels::copyfp15tofp32, state.wrapX)
                 .task("updateX", TransformerComputeKernels::copyfp15tofp32, kernelContext, state.embeddingX, state.wrapX)
                 .persistOnDevice(state.wrapX);
         // @formatter:on
@@ -34,8 +34,9 @@ public class Activation extends AbstractLayer {
     public GridScheduler updateGridScheduler(GridScheduler scheduler) {
 //        WorkerGrid singleWorker = WorkerGridFactory.createSingleWorker();
         WorkerGrid worker = new WorkerGrid1D(config.dim());
-        worker.setLocalWork(256, 1, 1);
+        worker.setLocalWork(128, 1, 1);
         scheduler.addWorkerGrid("activationUpdate.updateX", worker);
+
         return scheduler;
     }
 
