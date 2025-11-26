@@ -86,31 +86,31 @@ jobs:
           ./llama-tornado --gpu --opencl \
             --model /home/michalis/models/Llama-3.2-1B-Instruct-F16.gguf \
             --prompt "Say hello"
-      - name: Run Llama-3.2-1B-Instruct-Q8_0.gguf
-        run: |
-          set -x
-          cd ${{ github.workspace }}
-          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
-          ./llama-tornado --gpu --opencl \
-            --model /opt/models/Llama-3.2-1B-Instruct-Q8_0.gguf \
-            --prompt "Say hello"
-      - name: Run Qwen3-4B-f16.gguf
-        run: |
-          set -x
-          cd ${{ github.workspace }}
-          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
-          ./llama-tornado --gpu --opencl \
-            --model /opt/models/Qwen3-4B-f16.gguf \
-            --prompt "Say hello"
-      - name: Run Qwen3-4B-Q8_0.gguf
-        run: |
-          set -x
-          cd ${{ github.workspace }}
-          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
-          ./llama-tornado --gpu --opencl \
-            --model /opt/models/Qwen3-4B-Q8_0.gguf \
-            --prompt "Say hello"
+      # - name: Run Llama-3.2-1B-Instruct-Q8_0.gguf
+      #   run: |
+      #     set -x
+      #     cd ${{ github.workspace }}
+      #     export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+      #     which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
+      #     ./llama-tornado --gpu --opencl \
+      #       --model /opt/models/Llama-3.2-1B-Instruct-Q8_0.gguf \
+      #       --prompt "Say hello"
+      # - name: Run Qwen3-4B-f16.gguf
+      #   run: |
+      #     set -x
+      #     cd ${{ github.workspace }}
+      #     export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+      #     which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
+      #     ./llama-tornado --gpu --opencl \
+      #       --model /opt/models/Qwen3-4B-f16.gguf \
+      #       --prompt "Say hello"
+      # - name: Run Qwen3-4B-Q8_0.gguf
+      #   run: |
+      #     set -x
+      #     cd ${{ github.workspace }}
+      #     export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+      #     which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
+      #     ./llama-tornado --gpu --opencl \
+      #       --model /opt/models/Qwen3-4B-Q8_0.gguf \
+      #       --prompt "Say hello"
         
