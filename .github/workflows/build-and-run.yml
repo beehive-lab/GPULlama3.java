@@ -5,7 +5,7 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]  
-    types: [opened, synchronize,  reopened]
+    types: [opened, synchronize, reopened]
 
 
 jobs:
@@ -17,7 +17,7 @@ jobs:
   
     env:
       JAVA_HOME: /opt/jenkins/jdks/graal-23.1.0/jdk-21.0.3
-      TORNADO_ROOT: ${{ github.workspace }}/GPULlama3.java/external/tornadovm
+      TORNADO_ROOT: ${{ github.workspace }}/external/tornadovm
       LLAMA_ROOT: ${{ github.workspace }} 
     
     steps:
@@ -35,17 +35,19 @@ jobs:
         run: |
           git clone --depth 1 --branch develop \
             https://github.com/beehive-lab/TornadoVM.git \
-            GPULlama3.java/external/tornadovm
+            external/tornadovm
+
       - name: Set up Python venv for TornadoVM
         run: |
-          python3 -m venv GPULlama3.java/external/tornadovm/venv
-          source GPULlama3.java/external/tornadovm/venv/bin/activate
+          python3 -m venv external/tornadovm/venv
+          source external/tornadovm/venv/bin/activate
           python --version
+
       - name: Build TornadoVM
         id: export_sdk
         run: |
           set -x
-          cd ${{ github.workspace }}/GPULlama3.java/external/tornadovm
+          cd ${{ github.workspace }}/external/tornadovm
           source venv/bin/activate
           echo "=== Building TornadoVM ==="
           make
@@ -59,7 +61,7 @@ jobs:
           fi
       
           # Use workspace-relative path to avoid duplication in next job
-          FULL_SDK="${GITHUB_WORKSPACE}/GPULlama3.java/external/tornadovm/${SDK_DIR}"
+          FULL_SDK="${GITHUB_WORKSPACE}/external/tornadovm/${SDK_DIR}"
           echo "Detected TornadoVM SDK: $FULL_SDK"
       
           export TORNADO_SDK="$FULL_SDK"
@@ -116,7 +118,7 @@ jobs:
     env:
       JAVA_HOME: /opt/jenkins/jdks/graal-23.1.0/jdk-21.0.3
       TORNADO_SDK: ${{ needs.build-and-run.outputs.tornado_sdk }}
-      TORNADO_ROOT: ${{ github.workspace }}/GPULlama3.java/external/tornadovm
+      TORNADO_ROOT: ${{ github.workspace }}/external/tornadovm
       LLAMA_ROOT: ${{ github.workspace }}
       
     steps:
@@ -141,5 +143,3 @@ jobs:
           ./llama-tornado --gpu --opencl \
             --model "${{ matrix.model }}" \
             --prompt "Say hello"
-      
-
