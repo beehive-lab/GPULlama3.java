@@ -82,9 +82,7 @@ jobs:
   test-models:
     runs-on: self-hosted
     needs: build-and-run
-    env:
-      TORNADO_SDK: ${{ needs.build-and-run.outputs.tornado_sdk }}
-    
+
     strategy:
       fail-fast: true
       matrix:
