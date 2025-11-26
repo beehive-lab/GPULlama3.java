@@ -32,7 +32,7 @@ jobs:
           
       - name: Clone TornadoVM explicitly
         run: |
-          git clone --depth 1 --branch develop \
+          git clone --depth 1 --branch master \
             https://github.com/beehive-lab/TornadoVM.git \
             GPULlama3.java/external/tornadovm
       - name: Set up Python venv for TornadoVM
