@@ -31,6 +31,10 @@ jobs:
           cd ${{ github.workspace }}
           #./mvnw -T12C -Pspotless spotless:check
           
+      - name: Clean previous TornadoVM build
+        run: |
+          rm -rf external/tornadovm target
+
       - name: Clone TornadoVM explicitly
         run: |
           git clone --depth 1 --branch develop \
