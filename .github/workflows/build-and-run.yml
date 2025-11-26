@@ -45,11 +45,12 @@ jobs:
         id: export_sdk
         run: |
           set -x
-          cd GPULlama3.java/external/tornadovm
+          cd ${{ github.workspace }}/GPULlama3.java/external/tornadovm
           source venv/bin/activate
           echo "=== Building TornadoVM ==="
           make
           echo "=== Searching for TornadoVM SDK directory ==="
+          
           SDK_DIR=$(find dist -type d -maxdepth 3 -path "*/tornadovm-*-opencl" | head -n 1)
           if [ -z "$SDK_DIR" ]; then
             echo "::error::Could not locate TornadoVM SDK directory!"
@@ -57,7 +58,8 @@ jobs:
             exit 1
           fi
       
-          FULL_SDK="${PWD}/${SDK_DIR}"
+          # Use workspace-relative path to avoid duplication in next job
+          FULL_SDK="${GITHUB_WORKSPACE}/GPULlama3.java/external/tornadovm/${SDK_DIR}"
           echo "Detected TornadoVM SDK: $FULL_SDK"
       
           export TORNADO_SDK="$FULL_SDK"
@@ -66,11 +68,12 @@ jobs:
           echo "TORNADO_SDK=$FULL_SDK" >> $GITHUB_ENV
           echo "PATH=$PATH" >> $GITHUB_ENV
       
-          # 👇 THIS IS WHAT YOU WERE MISSING
+          # Export for downstream jobs
           echo "tornado_sdk=$FULL_SDK" >> $GITHUB_OUTPUT
       
           which tornado || { echo "::error::tornado not in PATH"; exit 1; }
           tornado --devices
+
                   
       - name: Build GPULlama3
         run: |
@@ -126,7 +129,17 @@ jobs:
           cd ${{ github.workspace }}
           echo "Using Tornado SDK: $TORNADO_SDK"
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-
+      
+          # Verify SDK exists
+          if [ ! -d "$TORNADO_SDK" ]; then
+            echo "::error::TORNADO_SDK does not exist: $TORNADO_SDK"
+            exit 1
+          fi
+      
+          which tornado || { echo "::error::tornado unavailable"; exit 1; }
+          tornado --version
+      
           ./llama-tornado --gpu --opencl \
             --model "${{ matrix.model }}" \
-            --prompt "Say hello"
+          --prompt "Say hello"
+
