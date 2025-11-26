@@ -70,8 +70,8 @@ jobs:
           echo "TORNADO_SDK=$FULL_SDK" >> $GITHUB_ENV
           echo "PATH=$PATH" >> $GITHUB_ENV
       
-          # Export for downstream jobs
-          echo "tornado_sdk=$FULL_SDK" >> $GITHUB_OUTPUT
+          # Export relative SDK path for downstream jobs (relative to external/tornadovm)
+          echo "tornado_sdk_relative=${SDK_DIR}" >> $GITHUB_OUTPUT
       
           which tornado || { echo "::error::tornado not in PATH"; exit 1; }
           tornado --devices
@@ -87,6 +87,20 @@ jobs:
           tornado --version
           make
           ./llama-tornado --help
+
+      - name: Upload GPULlama3 JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpullama3-jar
+          path: target/*.jar
+          retention-days: 1
+
+      - name: Upload TornadoVM SDK
+        uses: actions/upload-artifact@v4
+        with:
+          name: tornadovm-sdk
+          path: external/tornadovm/dist/
+          retention-days: 1
   
   test-models:
     runs-on: self-hosted
@@ -117,18 +131,38 @@ jobs:
 
     env:
       JAVA_HOME: /opt/jenkins/jdks/graal-23.1.0/jdk-21.0.3
-      TORNADO_SDK: ${{ needs.build-and-run.outputs.tornado_sdk }}
-      TORNADO_ROOT: ${{ github.workspace }}/external/tornadovm
       LLAMA_ROOT: ${{ github.workspace }}
       
     steps:
       - name: Checkout GPULlama3
         uses: actions/checkout@v4
 
+      - name: Download GPULlama3 JAR
+        uses: actions/download-artifact@v4
+        with:
+          name: gpullama3-jar
+          path: target/
+
+      - name: Download TornadoVM SDK
+        uses: actions/download-artifact@v4
+        with:
+          name: tornadovm-sdk
+          path: external/tornadovm/dist/
+
       - name: Run inference for ${{ matrix.model }}
         run: |
           set -x
           cd ${{ github.workspace }}
+          
+          # Find the TornadoVM SDK directory
+          SDK_DIR=$(find external/tornadovm/dist -type d -path "*/tornadovm-*-opencl" | head -n 1)
+          if [ -z "$SDK_DIR" ]; then
+            echo "::error::Could not locate TornadoVM SDK directory!"
+            find external/tornadovm/dist -maxdepth 5 -type d
+            exit 1
+          fi
+          
+          TORNADO_SDK="${GITHUB_WORKSPACE}/${SDK_DIR}"
           echo "Using Tornado SDK: $TORNADO_SDK"
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
       
