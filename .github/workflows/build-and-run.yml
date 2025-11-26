@@ -113,7 +113,9 @@ jobs:
     env:
       JAVA_HOME: /opt/jenkins/jdks/graal-23.1.0/jdk-21.0.3
       TORNADO_SDK: ${{ needs.build-and-run.outputs.tornado_sdk }}
-
+      TORNADO_ROOT: ${{ github.workspace }}/GPULlama3.java/external/tornadovm
+      LLAMA_ROOT: ${{ github.workspace }}
+      
     steps:
       - name: Checkout GPULlama3
         uses: actions/checkout@v4
