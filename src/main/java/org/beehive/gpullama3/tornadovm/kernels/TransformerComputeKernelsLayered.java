@@ -3,6 +3,7 @@ package org.beehive.gpullama3.tornadovm.kernels;
 import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.annotations.Parallel;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
+import uk.ac.manchester.tornado.api.types.HalfFloat;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.Int8Array;
@@ -690,6 +691,32 @@ public class TransformerComputeKernelsLayered {
             hb.set(rowId, sum);
         }
     }
+
+
+    public static void matrixVectorGeneric(
+            KernelContext context,
+            HalfFloatArray x,
+            FloatArray hb,                  // output
+            HalfFloatArray w,
+            int dim1,                       // inner loop
+            int dim0,                       // outer loop
+            int localWorkGroupSize) {
+        // One row per workgroup (not per thread)
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+        int localSize = localWorkGroupSize;
+
+        // Early exit if this workgroup is beyond our output dimension
+        if (rowId >= dim0) {
+            return;
+        }
+        float sum = matrixVectorRowMajorOptimized(context, localSize, x, w, dim1);
+
+        // Thread 0 in each workgroup writes the final result
+        if (localId == 0) {
+            hb.set(rowId, sum);
+        }
+    }
     // @formatter:on
 
     /**
@@ -870,6 +897,41 @@ public class TransformerComputeKernelsLayered {
         // Parallel reduction within workgroup
         for (int stride = localSize / 2; stride > 0; stride >>= 1) {
             if (localId < stride) {
+                localSum[localId] += localSum[localId + stride];
+            }
+            context.localBarrier();
+        }
+
+        return localSum[0];
+    }
+
+    public static float matrixVectorRowMajorOptimized(KernelContext context, int localSize, HalfFloatArray x, HalfFloatArray w, int n) {
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        // Allocate local memory for reduction
+        float[] localSum = context.allocateFloatLocalArray(localSize);
+
+        int rowOffset = rowId * n;
+
+        // Each thread calculates partial dot product
+        float partialSum = 0.0f;
+        for (int j = localId; j < n; j += localSize) {
+            int matrixIdx = rowOffset + j;
+//            HalfFloat inter = HalfFloat.mult(w.get(matrixIdx), x.get(j));
+//           partialSum = HalfFloat.add(partialSum, inter);
+            partialSum += w.get(matrixIdx).getFloat32() * x.get(j).getFloat32();
+//            partialSum += inter;
+        }
+
+        // Store partial sum in local memory
+        localSum[localId] = partialSum;
+        context.localBarrier();
+
+        // Parallel reduction within workgroup
+        for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+//                localSum[localId] = HalfFloat.add(localSum[localId], localSum[localId + stride]);
                 localSum[localId] += localSum[localId + stride];
             }
             context.localBarrier();

@@ -29,6 +29,7 @@ public class LogitsFP16Layer extends AbstractLayer {
         super(name, state, weights, config);
         this.lastTaskGraphID = lastTaskGraphID;
         state.tempLogits.init(0.0f);
+        state.embeddingXlogits.clear();
         var tornadoWeights = requireWeightsType(weights, TornadoWeights.class, "LogitsFP16Layer", "TornadoTensor");
         this.logitsTaskGraph = setupLogitsTaskGraph(tornadoWeights, config);
         this.schedulerType = schedulerType;
@@ -39,14 +40,15 @@ public class LogitsFP16Layer extends AbstractLayer {
      */
     private TaskGraph setupLogitsTaskGraph(TornadoWeights weights, Configuration config) {
         TaskGraph logits = new TaskGraph("logits");
-        logits.consumeFromDevice(lastTaskGraphID, state.wrapX).transferToDevice(DataTransferMode.EVERY_EXECUTION, state.tempLogits)
+        logits.consumeFromDevice(lastTaskGraphID, state.wrapX).transferToDevice(DataTransferMode.EVERY_EXECUTION, state.tempLogits, state.embeddingXlogits)
                 .transferToDevice(DataTransferMode.FIRST_EXECUTION, context, state.wrapLogits, weights.wclsByteArray.asHalfFloatArray(), weights.rms_final_weight_as_floatArray.asFloatArray())
                 .task("reductionsOneBlockLogits", TransformerComputeKernels::reductionOneBlockWithLayer, context, state.tempLogits, state.wrapX, config.dim(), config.rmsNormEps(), state.localSize);
                 if (schedulerType == SchedulerType.NON_NVIDIA) {
                     logits.task("reductionFinalNormalizationLogits", TransformerComputeKernelsLayered::reductionFinalNormalization, context, state.tempLogits, config.dim(), config.rmsNormEps());
                 }
                 logits.task("mapContextLogits", TransformerComputeKernels::reductionOneBlock2WithLogits, context, state.wrapX, weights.rms_final_weight_as_floatArray.asFloatArray(), state.tempLogits)
-                .task("projection", TransformerComputeKernelsLayered::matrixVectorGeneric, context, state.wrapX, state.wrapLogits, weights.wclsByteArray.asHalfFloatArray(), config.dim(), config.vocabularySize(),
+                .task("convert", TransformerComputeKernels::convertFP32toFP16, context,  state.wrapX, state.embeddingXlogits)
+                .task("projection", TransformerComputeKernelsLayered::matrixVectorGeneric, context, state.embeddingX, state.wrapLogits, weights.wclsByteArray.asHalfFloatArray(), config.dim(), config.vocabularySize(),
                         LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS);
         logits.transferToHost(DataTransferMode.EVERY_EXECUTION, state.wrapLogits);
         return logits;
@@ -68,6 +70,7 @@ public class LogitsFP16Layer extends AbstractLayer {
         tornadoForwardScheduler.addWorkerGrid("logits.projection", vocabWorker);
         tornadoForwardScheduler.addWorkerGrid("logits.reductionsOneBlockLogits", logitsRMS);
         tornadoForwardScheduler.addWorkerGrid("logits.mapContextLogits", logitsRMS);
+        tornadoForwardScheduler.addWorkerGrid("logits.convert", logitsRMS);
         return tornadoForwardScheduler;
     }
 

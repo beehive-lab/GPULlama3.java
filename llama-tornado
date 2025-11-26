@@ -67,6 +67,9 @@ class LlamaRunner:
             "-Djdk.module.showModuleResolution=false",
             "--module-path",
             self.module_path_colon_sep([".", f"{self.tornado_sdk}/share/java/tornado"]),
+            # "-Dgraal.Dump=*:5",
+            # "-Dgraal.PrintGraph=Network",
+            # "-Dgraal.PrintBackendCFG=true",
         ]
 
         # TornadoVM configuration

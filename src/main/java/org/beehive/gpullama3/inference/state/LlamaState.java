@@ -54,6 +54,7 @@ public final class LlamaState extends State {
         fields.wrapHb2 = new FloatArray(config.hiddenDim());
 
         fields.embeddingX = new HalfFloatArray(config.dim());
+        fields.embeddingXlogits = new HalfFloatArray(config.dim());
 
         fields.wrapLogits = new FloatArray(config.vocabularySize());
         fields.wrapQ = new FloatArray(config.dim());

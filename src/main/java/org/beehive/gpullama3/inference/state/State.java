@@ -59,6 +59,7 @@ public abstract class State {
     public final IntArray positionHolder;
 
     public final HalfFloatArray embeddingX;
+    public final HalfFloatArray embeddingXlogits;
 
     // store inter
     public int localSize;
@@ -113,6 +114,7 @@ public abstract class State {
         this.tempLogits = fields.tempLogits;
 
         this.embeddingX = fields.embeddingX;
+        this.embeddingXlogits = fields.embeddingXlogits;
     }
 
     // Abstract method - subclasses implement their specific allocation logic and sizes
@@ -126,7 +128,7 @@ public abstract class State {
         public FloatArray wrapQ, wrapK, wrapV, wrapAtt, wrapKeyCache, wrapValueCache;
         public IntArray positionHolder;
         public FloatArray temp, tempFFN, tempLogits;
-        public HalfFloatArray embeddingX;
+        public HalfFloatArray embeddingX, embeddingXlogits;
     }
 
     @Override

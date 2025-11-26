@@ -23,9 +23,9 @@ public class Activation extends AbstractLayer {
         // @formatter:off
         this.activationUpdate = new TaskGraph(taskGraphHandle)
                 .transferToDevice(DataTransferMode.EVERY_EXECUTION, state.embeddingX)
-                .task("updateX", TransformerComputeKernels::emptyTaskToForceCopyIn, state.embeddingX)
-//                .task("updateX", TransformerComputeKernels::convertFP16toFP32, kernelContext, state.embeddingX, state.wrapX)
-                .persistOnDevice(state.embeddingX);
+//                .task("updateX", TransformerComputeKernels::emptyTaskToForceCopyIn, state.embeddingX)
+                .task("updateX", TransformerComputeKernels::convertFP16toFP32, kernelContext, state.embeddingX, state.wrapX)
+                .persistOnDevice(state.wrapX);
         // @formatter:on
     }
 
