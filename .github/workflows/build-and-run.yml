@@ -81,6 +81,7 @@ jobs:
           which tornado || { echo "::error::tornado unavailable during GPULlama3 build"; exit 1; }
           tornado --version
           make
+          ./llama-tornado --help
   
   test-models:
     runs-on: self-hosted
@@ -121,9 +122,8 @@ jobs:
         run: |
           set -x
           cd ${{ github.workspace }}
-
-          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
           echo "Using Tornado SDK: $TORNADO_SDK"
+          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
 
           ./llama-tornado --gpu --opencl \
             --model "${{ matrix.model }}" \
