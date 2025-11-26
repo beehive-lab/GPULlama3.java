@@ -130,16 +130,16 @@ jobs:
           echo "Using Tornado SDK: $TORNADO_SDK"
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
       
-          # Verify SDK exists
-          if [ ! -d "$TORNADO_SDK" ]; then
-            echo "::error::TORNADO_SDK does not exist: $TORNADO_SDK"
+          # Verify tornado is in PATH
+          if ! command -v tornado >/dev/null 2>&1; then
+            echo "::error::tornado not found in PATH"
             exit 1
           fi
       
-          which tornado || { echo "::error::tornado unavailable"; exit 1; }
           tornado --version
       
           ./llama-tornado --gpu --opencl \
             --model "${{ matrix.model }}" \
-          --prompt "Say hello"
+            --prompt "Say hello"
+      
 
