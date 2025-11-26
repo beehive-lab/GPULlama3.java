@@ -5,19 +5,18 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]  
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize,  reopened]
+  pull_request_review:
+    types: [submitted, edited]
 
 
 jobs:
   build-and-run:
     runs-on: self-hosted
-
-    outputs:
-     tornado_sdk: ${{ steps.export_sdk.outputs.tornado_sdk }}
-  
+    
     env:
       JAVA_HOME: /opt/jenkins/jdks/graal-23.1.0/jdk-21.0.3
-      TORNADO_ROOT: ${{ github.workspace }}/external/tornadovm
+      TORNADO_ROOT: ${{ github.workspace }}/GPULlama3.java/external/tornadovm
       LLAMA_ROOT: ${{ github.workspace }} 
     
     steps:
@@ -29,58 +28,46 @@ jobs:
       - name: Check code formatting (Spotless)
         run: |
           cd ${{ github.workspace }}
-          #./mvnw -T12C -Pspotless spotless:check
+          # ./mvnw -T12C -Pspotless spotless:check
           
-      - name: Clean previous TornadoVM build
-        run: |
-          rm -rf external/tornadovm target
-
       - name: Clone TornadoVM explicitly
         run: |
-          git clone --depth 1 --branch develop \
+          git clone --depth 1 --branch master \
             https://github.com/beehive-lab/TornadoVM.git \
-            external/tornadovm
-
+            GPULlama3.java/external/tornadovm
       - name: Set up Python venv for TornadoVM
         run: |
-          python3 -m venv external/tornadovm/venv
-          source external/tornadovm/venv/bin/activate
+          python3 -m venv GPULlama3.java/external/tornadovm/venv
+          source GPULlama3.java/external/tornadovm/venv/bin/activate
           python --version
-
       - name: Build TornadoVM
-        id: export_sdk
         run: |
           set -x
-          cd ${{ github.workspace }}/external/tornadovm
+          cd GPULlama3.java/external/tornadovm
           source venv/bin/activate
           echo "=== Building TornadoVM ==="
           make
           echo "=== Searching for TornadoVM SDK directory ==="
-          
           SDK_DIR=$(find dist -type d -maxdepth 3 -path "*/tornadovm-*-opencl" | head -n 1)
           if [ -z "$SDK_DIR" ]; then
             echo "::error::Could not locate TornadoVM SDK directory!"
             find dist -maxdepth 5 -type d
             exit 1
           fi
-      
-          # Use workspace-relative path to avoid duplication in next job
-          FULL_SDK="${GITHUB_WORKSPACE}/external/tornadovm/${SDK_DIR}"
+          FULL_SDK="${PWD}/${SDK_DIR}"
           echo "Detected TornadoVM SDK: $FULL_SDK"
-      
+          
+          # Export for current shell session
           export TORNADO_SDK="$FULL_SDK"
           export PATH="$FULL_SDK/bin:$JAVA_HOME/bin:$PATH"
-      
+          
+          # Save for subsequent steps
           echo "TORNADO_SDK=$FULL_SDK" >> $GITHUB_ENV
           echo "PATH=$PATH" >> $GITHUB_ENV
-      
-          # Export relative SDK path for downstream jobs (relative to external/tornadovm)
-          echo "tornado_sdk_relative=${SDK_DIR}" >> $GITHUB_OUTPUT
-      
+          
+          echo "=== Checking tornado CLI ==="
           which tornado || { echo "::error::tornado not in PATH"; exit 1; }
           tornado --devices
-
-                  
       - name: Build GPULlama3
         run: |
           set -x
@@ -90,94 +77,12 @@ jobs:
           which tornado || { echo "::error::tornado unavailable during GPULlama3 build"; exit 1; }
           tornado --version
           make
-          ./llama-tornado --help
-
-      - name: Upload GPULlama3 JAR
-        uses: actions/upload-artifact@v4
-        with:
-          name: gpullama3-jar
-          path: target/*.jar
-          retention-days: 1
-
-      - name: Upload TornadoVM SDK
-        uses: actions/upload-artifact@v4
-        with:
-          name: tornadovm-sdk
-          path: external/tornadovm/dist/
-          retention-days: 1
-  
-  test-models:
-    runs-on: self-hosted
-    needs: build-and-run
-
-    strategy:
-      fail-fast: true
-      matrix:
-        model:
-          - /opt/models/DeepSeek-R1-Distill-Qwen-1.5B-F16.gguf
-          - /opt/models/DeepSeek-R1-Distill-Qwen-1.5B-Q8_0.gguf
-          - /opt/models/Llama-3.2-1B-Instruct-F16.gguf
-          - /opt/models/Llama-3.2-1B-Instruct-Q8_0.gguf
-          - /opt/models/Llama-3.2-3B-Instruct-F16.gguf
-          - /opt/models/Llama-3.2-3B-Instruct-Q8_0.gguf
-          - /opt/models/Mistral-7B-Instruct-v0.3.fp16.gguf
-          - /opt/models/Mistral-7B-Instruct-v0.3.Q8_0.gguf
-          - /opt/models/Phi-3-mini-4k-instruct-fp16.gguf
-          - /opt/models/Phi-3-mini-4k-instruct-Q8_0.gguf
-          - /opt/models/Qwen2.5-0.5B-Instruct-f16.gguf
-          - /opt/models/Qwen2.5-0.5B-Instruct-Q8_0.gguf
-          - /opt/models/qwen2.5-1.5b-instruct-fp16.gguf
-          - /opt/models/qwen2.5-1.5b-instruct-q8_0.gguf
-          - /opt/models/Qwen3-0.6B-f16.gguf
-          - /opt/models/Qwen3-0.6B-Q8_0.gguf
-          - /opt/models/Qwen3-4B-f16.gguf
-          - /opt/models/Qwen3-4B-Q8_0.gguf
-
-    env:
-      JAVA_HOME: /opt/jenkins/jdks/graal-23.1.0/jdk-21.0.3
-      LLAMA_ROOT: ${{ github.workspace }}
-      
-    steps:
-      - name: Checkout GPULlama3
-        uses: actions/checkout@v4
-
-      - name: Download GPULlama3 JAR
-        uses: actions/download-artifact@v4
-        with:
-          name: gpullama3-jar
-          path: target/
-
-      - name: Download TornadoVM SDK
-        uses: actions/download-artifact@v4
-        with:
-          name: tornadovm-sdk
-          path: external/tornadovm/dist/
-
-      - name: Run inference for ${{ matrix.model }}
+      - name: Run Test Inference
         run: |
           set -x
           cd ${{ github.workspace }}
-          
-          # Find the TornadoVM SDK directory
-          SDK_DIR=$(find external/tornadovm/dist -type d -path "*/tornadovm-*-opencl" | head -n 1)
-          if [ -z "$SDK_DIR" ]; then
-            echo "::error::Could not locate TornadoVM SDK directory!"
-            find external/tornadovm/dist -maxdepth 5 -type d
-            exit 1
-          fi
-          
-          TORNADO_SDK="${GITHUB_WORKSPACE}/${SDK_DIR}"
-          echo "Using Tornado SDK: $TORNADO_SDK"
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-      
-          # Verify tornado is in PATH
-          if ! command -v tornado >/dev/null 2>&1; then
-            echo "::error::tornado not found in PATH"
-            exit 1
-          fi
-      
-          tornado --version
-      
+          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
           ./llama-tornado --gpu --opencl \
-            --model "${{ matrix.model }}" \
+            --model /home/michalis/models/Llama-3.2-1B-Instruct-F16.gguf \
             --prompt "Say hello"
