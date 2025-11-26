@@ -11,7 +11,10 @@ on:
 jobs:
   build-and-run:
     runs-on: self-hosted
-    
+
+    outputs:
+     tornado_sdk: ${{ steps.export_sdk.outputs.tornado_sdk }}
+  
     env:
       JAVA_HOME: /opt/jenkins/jdks/graal-23.1.0/jdk-21.0.3
       TORNADO_ROOT: ${{ github.workspace }}/GPULlama3.java/external/tornadovm
@@ -79,9 +82,11 @@ jobs:
   test-models:
     runs-on: self-hosted
     needs: build-and-run
-
+    env:
+      TORNADO_SDK: ${{ needs.build-and-run.outputs.tornado_sdk }}
+    
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         model:
           - /opt/models/DeepSeek-R1-Distill-Qwen-1.5B-F16.gguf
