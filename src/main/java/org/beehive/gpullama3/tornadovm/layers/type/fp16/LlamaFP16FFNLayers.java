@@ -119,6 +119,7 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
 //                    unifiedLayer.task("reductionFinalNormalization", TransformerComputeKernelsLayered::reductionFinalNormalization, context, state.temp,
 //                            config.dim(), config.rmsNormEps());
 //                }
+
                 unifiedLayer.task("mapContext", TransformerComputeKernelsLayered::reductionOneBlock2WithLayer, context, state.wrapXb, state.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), state.temp)
                 .task("qmatmul", TransformerComputeKernelsLayered::matrixVectorGeneric, context, state.wrapXb, state.wrapQ, weights.wqLayered[layerIndex].asHalfFloatArray(), config.dim(), config.dim(),
                         LOCAL_WORK_GROUP_SIZE_ALLOC)

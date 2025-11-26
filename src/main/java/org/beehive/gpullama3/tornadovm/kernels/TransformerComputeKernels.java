@@ -1,7 +1,6 @@
 package org.beehive.gpullama3.tornadovm.kernels;
 
 import uk.ac.manchester.tornado.api.KernelContext;
-import uk.ac.manchester.tornado.api.annotations.Parallel;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
 import uk.ac.manchester.tornado.api.types.HalfFloat;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
@@ -22,26 +21,16 @@ public class TransformerComputeKernels {
         }
     }
 
-    public static void copyfp15tofp32(KernelContext context, HalfFloatArray x, FloatArray wrapX) {
-        int i = context.globalIdx;
-        if (i < wrapX.getSize()) {
-            wrapX.set(i, x.get(i).getFloat32());
+    public static void emptyTaskToForceCopyIn(HalfFloatArray buffer) {
+        float dummy = buffer.get(0).getFloat32();
+        if (dummy > Float.MAX_VALUE) {
+            buffer.set(0, new HalfFloat(dummy));
         }
     }
 
-    public static void copyfp15tofp32Vec4(KernelContext context, HalfFloatArray x, FloatArray wrapX) {
-        int i = context.globalIdx * 4; // Process 4 elements per thread
-        if (i + 3 < wrapX.getSize()) {
-            wrapX.set(i,     x.get(i).getFloat32());
-            wrapX.set(i + 1, x.get(i + 1).getFloat32());
-            wrapX.set(i + 2, x.get(i + 2).getFloat32());
-            wrapX.set(i + 3, x.get(i + 3).getFloat32());
-        } else {
-            // Handle remainder
-            for (int j = i; j < wrapX.getSize(); j++) {
-                wrapX.set(j, x.get(j).getFloat32());
-            }
-        }
+    public static void convertFP16toFP32(KernelContext context, HalfFloatArray x, FloatArray wrapX) {
+        int i = context.globalIdx;
+        wrapX.set(i, x.get(i).getFloat32());
     }
 
 

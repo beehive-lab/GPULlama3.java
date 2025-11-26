@@ -4,7 +4,6 @@ import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.Weights;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernels;
-import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.KernelContext;
@@ -24,9 +23,9 @@ public class Activation extends AbstractLayer {
         // @formatter:off
         this.activationUpdate = new TaskGraph(taskGraphHandle)
                 .transferToDevice(DataTransferMode.EVERY_EXECUTION, state.embeddingX)
-//                .task("updateX", TransformerComputeKernels::copyfp15tofp32, state.wrapX)
-                .task("updateX", TransformerComputeKernels::copyfp15tofp32, kernelContext, state.embeddingX, state.wrapX)
-                .persistOnDevice(state.wrapX);
+                .task("updateX", TransformerComputeKernels::emptyTaskToForceCopyIn, state.embeddingX)
+//                .task("updateX", TransformerComputeKernels::convertFP16toFP32, kernelContext, state.embeddingX, state.wrapX)
+                .persistOnDevice(state.embeddingX);
         // @formatter:on
     }
 
