@@ -99,7 +99,6 @@ Ensure you have the following installed and configured:
 
 - **Java 21**: Required for Vector API support & TornadoVM.
 - [TornadoVM](https://github.com/beehive-lab/TornadoVM) with OpenCL or PTX backends.
-- [Maven](https://maven.apache.org/): For building the Java project.
 
 ### Install, Build, and Run
 
