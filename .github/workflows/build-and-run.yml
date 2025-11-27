@@ -124,7 +124,7 @@ jobs:
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
           ./llama-tornado --gpu --opencl \
-            --model$MODELS_DIR/Llama-3.2-1B-Instruct-Q8_0.gguf \
+            --model $MODELS_DIR/Llama-3.2-1B-Instruct-Q8_0.gguf \
             --prompt "Say hello"
       - name: Q8 - Run Qwen3-0.6B-Q8_0.gguf
         run: |
