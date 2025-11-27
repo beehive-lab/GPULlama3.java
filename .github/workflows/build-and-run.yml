@@ -5,46 +5,56 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]  
-    types: [opened, synchronize,  reopened]
+    types: [opened, synchronize, reopened]
+
+env:
+  JAVA_HOME: /opt/jenkins/jdks/graal-23.1.0/jdk-21.0.3
+  TORNADO_ROOT: ${{ github.workspace }}/GPULlama3.java/external/tornadovm
+  LLAMA_ROOT: ${{ github.workspace }}
+  GRAAL_JARS: /opt/graalJars
 
 jobs:
-  build-and-run:
+  code-quality:
     runs-on: self-hosted
-    
-    env:
-      JAVA_HOME: /opt/jenkins/jdks/graal-23.1.0/jdk-21.0.3
-      TORNADO_ROOT: ${{ github.workspace }}/GPULlama3.java/external/tornadovm
-      LLAMA_ROOT: ${{ github.workspace }}
-      GRAAL_JARS: /opt/graalJars
-    
+    timeout-minutes: 30
+
     steps:
       - name: Checkout GPULlama3
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Check code formatting (Spotless)
         run: |
           cd ${{ github.workspace }}
           # ./mvnw -T12C -Pspotless spotless:check
-          
-      - name: Clone Latest TornadoVM
+
+  build-and-run:
+    runs-on: [self-hosted]
+    needs: code-quality
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout GPULlama3
+        uses: actions/checkout@v4
+
+      - name: Clone TornadoVM master
         run: |
           git clone --depth 1 --branch master \
             https://github.com/beehive-lab/TornadoVM.git \
-            GPULlama3.java/external/tornadovm
+            $TORNADO_ROOT
       - name: Set up Python venv for TornadoVM
         run: |
-          python3 -m venv GPULlama3.java/external/tornadovm/venv
-          source GPULlama3.java/external/tornadovm/venv/bin/activate
+          python3 -m venv $TORNADO_ROOT/venv
+          source $TORNADO_ROOT/venv/bin/activate
           python --version
       - name: Build TornadoVM
         run: |
-          cd GPULlama3.java/external/tornadovm
+          cd $TORNADO_ROOT
           mkdir -p graalJars && cp $GRAAL_JARS/* graalJars/
           source venv/bin/activate
           echo "=== Building TornadoVM ==="
-          make
+          
+          ./mvnw -Pjdk21,opencl-backend -Dtornado.backend=opencl install
+          
           echo "=== Searching for TornadoVM SDK directory ==="
           SDK_DIR=$(find dist -type d -maxdepth 3 -path "*/tornadovm-*-opencl" | head -n 1)
           if [ -z "$SDK_DIR" ]; then
