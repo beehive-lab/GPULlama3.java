@@ -156,12 +156,12 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
         unifiedLayer.consumeFromDevice(phi3State.wrapX);
         unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
                 // Copy-in weights per layer for batched-layered layout
-                weights.rms_att_weightLayered[layerIndex],
-                weights.wqkvLayered[layerIndex],
-                weights.woLayered[layerIndex],
-                weights.rms_ffn_weightLayered[layerIndex],
-                weights.wUpLayered[layerIndex],
-                weights.wDownLayered[layerIndex]
+                weights.rms_att_weightLayered[layerIndex].asFloatArray(),
+                weights.wqkvLayered[layerIndex].asHalfFloatArray(),
+                weights.woLayered[layerIndex].asHalfFloatArray(),
+                weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),
+                weights.wUpLayered[layerIndex].asHalfFloatArray(),
+                weights.wDownLayered[layerIndex].asHalfFloatArray()
         );
         unifiedLayer = configureLayerDataTransfers(unifiedLayer, layerIndex);
 
