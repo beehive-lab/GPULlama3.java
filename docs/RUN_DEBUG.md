@@ -1,4 +1,28 @@
-## GPU Memory Requirements by Model Size
+## Troubleshooting GPU Memory Issues
+
+### Out of Memory Error
+
+You may encounter an out-of-memory error like:
+```
+Exception in thread "main" uk.ac.manchester.tornado.api.exceptions.TornadoOutOfMemoryException: Unable to allocate 100663320 bytes of memory.
+To increase the maximum device memory, use -Dtornado.device.memory=<X>GB
+```
+
+This indicates that the default GPU memory allocation (7GB) is insufficient for your model.
+
+### Solution
+
+First, check your GPU specifications. If your GPU has high memory capacity, you can increase the GPU memory allocation using the `--gpu-memory` flag:
+
+```bash
+# For 3B models, try increasing to 15GB
+./llama-tornado --gpu --model beehive-llama-3.2-3b-instruct-fp16.gguf --prompt "Tell me a joke" --gpu-memory 15GB
+
+# For 8B models, you may need even more (20GB or higher)
+./llama-tornado --gpu --model beehive-llama-3.2-8b-instruct-fp16.gguf --prompt "Tell me a joke" --gpu-memory 20GB
+```
+
+### GPU Memory Requirements by Model Size
 
 | Model Size  | Recommended GPU Memory |
 |-------------|------------------------|
