@@ -187,7 +187,7 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
         );
         unifiedLayer = configureLayerDataTransfers(unifiedLayer, layerIndex);
 
-        unifiedLayer.task("reductionsOneBlock" , TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.temp,
+        /*unifiedLayer.task("reductionsOneBlock" , TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.temp,
                         state.wrapX, config.dim(), config.rmsNormEps(), state.localSize)
                 .task("mapContext", TransformerComputeKernelsLayered::reductionOneBlock2WithLayer, context, state.wrapXb,
                         state.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), state.temp)
@@ -214,6 +214,36 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
                         state.wrapX, config.dim(), config.rmsNormEps(), state.localSize)
                 .task("mapContextFFN", TransformerComputeKernelsLayered::reductionOneBlock2WithLayer, context, state.wrapXb,
                         state.wrapX, weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), state.tempFFN)
+                .task("fused_ffn_w1_w3", TransformerComputeKernelsLayered::fusedFeedForwardWithSiLUAndGLUActivation, context,
+                        state.wrapXb,   state.wrapHb, weights.w1Layered[layerIndex].getQuants(), weights.w1Layered[layerIndex].getScales(), weights.w3Layered[layerIndex].getQuants(), weights.w3Layered[layerIndex].getScales(), config.dim(), config.hiddenDim(),  LOCAL_WORK_GROUP_SIZE_ALLOC)
+                .task("projectionTwo", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual, context,
+                        state.wrapHb, state.wrapX, weights.w2Layered[layerIndex].getQuants(), weights.w2Layered[layerIndex].getScales(), config.hiddenDim(), config.dim(),  LOCAL_WORK_GROUP_SIZE_ALLOC)
+                .persistOnDevice(
+                        state.wrapX
+                );*/
+        unifiedLayer.task("reductionsOneBlock" , TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.wrapXb,
+                        state.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), state.temp, config.dim(), config.rmsNormEps(), state.localSize)
+                .task("qmatmul", TransformerComputeKernelsLayered::matrixVectorGeneric, context,
+                        state.wrapXb,  state.wrapQ, weights.wqLayered[layerIndex].getQuants(), weights.wqLayered[layerIndex].getScales(), config.dim(), config.dim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
+                .task("kmatmul", TransformerComputeKernelsLayered::matrixVectorGeneric, context,
+                        state.wrapXb,  state.wrapK, weights.wkLayered[layerIndex].getQuants(), weights.wkLayered[layerIndex].getScales(), config.dim(), config.kvDim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
+                .task("vmatmul", TransformerComputeKernelsLayered::matrixVectorGeneric, context,
+                        state.wrapXb,   state.wrapV, weights.wvLayered[layerIndex].getQuants(), weights.wvLayered[layerIndex].getScales(), config.dim(), config.kvDim(),  LOCAL_WORK_GROUP_SIZE_ALLOC)
+                .task("qbias", TransformerComputeKernelsLayered::addInPlace, state.wrapQ, weights.q_biasLayered[layerIndex].asFloatArray(), config.dim())
+                .task("kbias", TransformerComputeKernelsLayered::addInPlace, state.wrapK, weights.k_biasLayered[layerIndex].asFloatArray(), config.kvDim())
+                .task("vbias", TransformerComputeKernelsLayered::addInPlace, state.wrapV, weights.v_biasLayered[layerIndex].asFloatArray(), config.kvDim())
+                .task("rope", Qwen3Kernels::ropeRotation,context, state.positionHolder, state.wrapQ, state.wrapK, config.numberOfKeyValueHeads(),
+                        config.headSize())
+                .task("copyToCaches", TransformerComputeKernelsLayered::copyToCache,
+                        state.wrapKeyCache, state.wrapK,  state.wrapValueCache, state.wrapV, state.positionHolder, config.kvDim(), layerIndex, config.contextLength())
+                .task("parallel-attention", Qwen2Kernels::processHeadsFlashAttention, context,
+                        state.wrapQ, state.wrapKeyCache, state.wrapValueCache, state.wrapXb,
+                        config.numberOfHeads(), config.headSize(), config.kvDim(), config.kvMul(),
+                        state.positionHolder, layerIndex, config.contextLength())
+                .task("matmul1", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual, context,
+                        state.wrapXb,  state.wrapX, weights.woLayered[layerIndex].getQuants(), weights.woLayered[layerIndex].getScales(), config.dim(), config.dim(),  LOCAL_WORK_GROUP_SIZE_ALLOC)
+                .task("reductionsOneBlockFFN", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.wrapXb,
+                        state.wrapX, weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), state.tempFFN, config.dim(), config.rmsNormEps(), state.localSize)
                 .task("fused_ffn_w1_w3", TransformerComputeKernelsLayered::fusedFeedForwardWithSiLUAndGLUActivation, context,
                         state.wrapXb,   state.wrapHb, weights.w1Layered[layerIndex].getQuants(), weights.w1Layered[layerIndex].getScales(), weights.w3Layered[layerIndex].getQuants(), weights.w3Layered[layerIndex].getScales(), config.dim(), config.hiddenDim(),  LOCAL_WORK_GROUP_SIZE_ALLOC)
                 .task("projectionTwo", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual, context,

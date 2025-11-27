@@ -35,7 +35,7 @@ public class TransformerComputeKernelsLayered {
      * @param localMemSize
      *         Size of local memory allocation (must match work group size)
      */
-    public static void reductionOneBlockWithLayer(KernelContext context, FloatArray output, FloatArray x, int size, float ermsNorm, int localMemSize) {
+    public static void reductionOneBlockWithLayer(KernelContext context, FloatArray output, FloatArray x, FloatArray weights, FloatArray temp, int size, float ermsNorm, int localMemSize) {
         int gid = context.globalIdx;
         int lid = context.localIdx;
         int groupId = context.groupIdx;
@@ -43,6 +43,7 @@ public class TransformerComputeKernelsLayered {
 
         // Allocate local memory with the provided size
         float[] localX = context.allocateFloatLocalArray(localMemSize);
+        //float[] localPartSum = context.allocateFloatLocalArray(size / localMemSize);
 
         // Load input value and compute square
         if (gid < size) {
@@ -63,22 +64,46 @@ public class TransformerComputeKernelsLayered {
         // Each workgroup stores its partial sum in a different location
         if (lid == 0) {
             // Store the partial sum from each workgroup
-            output.set(groupId + 1, localX[0]);
+            //output.set(groupId, localX[0]);
+            temp.set(groupId, localX[0]);
+            //localPartSum[groupId] = localX[0];
+            /*for (int i = 0;i < (size / localMemSize); i++){
+                localPartSum[i] = localX[0];
+            }*/
         }
 
         // Only the first thread in the first workgroup computes the final normalization factor
-        if (gid == 0) {
+        /*if (gid == 0) {
             // Combine partial sums from all workgroups
             float ss = 0.0f;
-            for (int i = 1; i <= (size / localMemSize); i++) {  // Assuming 8 workgroups
-                ss += output.get(i);
+            for (int i = 0; i < (size / localMemSize); i++) {  // Assuming 8 workgroups
+                //ss += localPartSum[i];
+                //ss += output.get(i);
+                ss += temp.get(i);
             }
 
             ss /= size;
             ss += ermsNorm;
             ss = 1.0f / TornadoMath.sqrt(ss);
             output.set(0, ss);  // Store the final scale factor
+        }*/
+        //output.set(gid, 0.0f);
+        //System.out.println(output.get(0));
+        //float[] ss = context.allocateFloatLocalArray(size);
+        //ss[gid] = 0.0f;
+        for (int i = 0; i < (size / localMemSize); i++) {  // Assuming 8 workgroups
+            //ss[gid] += temp.get(i);
+            output.set(gid, output.get(gid) + temp.get(i));
         }
+        /*ss[gid] /= size;
+        ss[gid] += ermsNorm;
+        ss[gid] = 1.0f / TornadoMath.sqrt(ss[gid]);
+        output.set(gid, weights.get(gid) * (ss[gid] * x.get(gid)));*/
+        output.set(gid, output.get(gid) / size);
+        output.set(gid, output.get(gid) + ermsNorm);
+        output.set(gid, 1.0f / TornadoMath.sqrt(output.get(gid)));
+        output.set(gid, weights.get(gid) * (output.get(gid) * x.get(gid)));
+        //output.set(gid, ss[gid]);  // Store the final scale factor
     }
 
     /**

@@ -186,12 +186,15 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
 
 
         // RMS norm for attention input
-        unifiedLayer.task("reductionsOneBlock",
+        /*unifiedLayer.task("reductionsOneBlock",
                 TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
                 context, qwen3State.temp, qwen3State.wrapX, config.dim(), config.rmsNormEps(), qwen3State.localSize)
                 .task("mapContext",
                         TransformerComputeKernelsLayered::reductionOneBlock2WithLayer,
-                        context, qwen3State.wrapXb, qwen3State.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), qwen3State.temp);
+                        context, qwen3State.wrapXb, qwen3State.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), qwen3State.temp);*/
+        unifiedLayer.task("reductionsOneBlock",
+                        TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                        context, qwen3State.wrapXb, qwen3State.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), qwen3State.temp, config.dim(), config.rmsNormEps(), qwen3State.localSize);
 
         // QKV projections with Qwen3 GQA dimensions
         // Q8_0 weights pass both quants and scales
@@ -260,12 +263,15 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
         // ========== FEED-FORWARD BLOCK ==========
 
         // RMS norm for FFN input
-        unifiedLayer.task("reductionsOneBlockFFN",
+        /*unifiedLayer.task("reductionsOneBlockFFN",
                 TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
                 context, qwen3State.tempFFN, qwen3State.wrapX, config.dim(), config.rmsNormEps(), qwen3State.localSize)
                 .task("mapContextFFN",
                         TransformerComputeKernelsLayered::reductionOneBlock2WithLayer,
-                        context, qwen3State.wrapXb, qwen3State.wrapX, weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), qwen3State.tempFFN);
+                        context, qwen3State.wrapXb, qwen3State.wrapX, weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), qwen3State.tempFFN);*/
+        unifiedLayer.task("reductionsOneBlockFFN",
+                        TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                        context, qwen3State.wrapXb, qwen3State.wrapX, weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), qwen3State.tempFFN, config.dim(), config.rmsNormEps(), qwen3State.localSize);
 
         // Fused FFN: w1(x) ⊗ w3(x) with SiLU activation (Q8_0 weights)
         unifiedLayer.task("fused_ffn_w1_w3",

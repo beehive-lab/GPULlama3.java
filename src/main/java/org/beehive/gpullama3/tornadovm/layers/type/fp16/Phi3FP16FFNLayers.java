@@ -166,7 +166,7 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
         unifiedLayer = configureLayerDataTransfers(unifiedLayer, layerIndex);
 
         // RMSNorm for attention input
-        unifiedLayer.task("reductionsOneBlock",
+        /*unifiedLayer.task("reductionsOneBlock",
                         TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
                         context,
                         phi3State.temp,
@@ -180,7 +180,17 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
                         phi3State.wrapXb,
                         phi3State.wrapX,
                         weights.rms_att_weightLayered[layerIndex].asFloatArray(),
-                        phi3State.temp);
+                        phi3State.temp);*/
+        unifiedLayer.task("reductionsOneBlock",
+                        TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                        context,
+                        phi3State.wrapXb,
+                        phi3State.wrapX,
+                        weights.rms_att_weightLayered[layerIndex].asFloatArray(),
+                        phi3State.temp,
+                        phi3Config.dim(),
+                        phi3Config.rmsNormEps(),
+                        phi3State.localSize);
 
         // Combined QKV projection
         unifiedLayer.task("qkvmatmul",
@@ -251,7 +261,7 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
 
         // FFN section: RMSNorm
-        unifiedLayer.task("reductionsOneBlockFFN",
+        /*unifiedLayer.task("reductionsOneBlockFFN",
                         TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
                         context,
                         phi3State.tempFFN,
@@ -265,7 +275,17 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
                         phi3State.wrapXb,
                         phi3State.wrapX,
                         weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),
-                        phi3State.tempFFN);
+                        phi3State.tempFFN);*/
+        unifiedLayer.task("reductionsOneBlockFFN",
+                        TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                        context,
+                        phi3State.wrapXb,
+                        phi3State.wrapX,
+                        weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),
+                        phi3State.tempFFN,
+                        phi3Config.dim(),
+                        phi3Config.rmsNormEps(),
+                        phi3State.localSize);
 
         // FFN: combined Up and Gate projection (outputs 2 * hiddenDim)
         unifiedLayer.task("wGateUp",
