@@ -64,7 +64,7 @@ jobs:
           make BACKEND=${{ matrix.backend.name }}
           
           echo "=== Searching for TornadoVM SDK directory ==="
-          SDK_DIR=$(find dist -type d -maxdepth 3 -path "*/tornadovm-*-opencl" | head -n 1)
+          SDK_DIR=$(find dist -type d -maxdepth 3 -path "*/tornadovm-*-${{ matrix.backend.name }}" | head -n 1)
           if [ -z "$SDK_DIR" ]; then
             echo "::error::Could not locate TornadoVM SDK directory!"
             find dist -maxdepth 5 -type d
