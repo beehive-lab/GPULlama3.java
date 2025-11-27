@@ -12,6 +12,7 @@ env:
   TORNADO_ROOT: ${{ github.workspace }}/GPULlama3.java/external/tornadovm
   LLAMA_ROOT: ${{ github.workspace }}
   GRAAL_JARS: /opt/graalJars
+  MODELS_DIR: /opt/models
 
 jobs:
   code-quality:
@@ -88,68 +89,68 @@ jobs:
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
           ./llama-tornado --gpu --opencl \
-            --model /home/michalis/models/Llama-3.2-1B-Instruct-F16.gguf \
+            --model $MODELS_DIR/Llama-3.2-1B-Instruct-F16.gguf \
             --prompt "Say hello"
       - name: FP16 - Run Qwen3-4B-f16.gguf
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
           ./llama-tornado --gpu --opencl \
-            --model /opt/models/Qwen3-4B-f16.gguf \
+            --model $MODELS_DIR/Qwen3-4B-f16.gguf \
             --prompt "Say hello"
       - name: FP16 - Run Mistral-7B-Instruct-v0.3.fp16.gguf
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
           ./llama-tornado --gpu --opencl \
-            --model /opt/models/Mistral-7B-Instruct-v0.3.fp16.gguf \
+            --model $MODELS_DIR/Mistral-7B-Instruct-v0.3.fp16.gguf \
             --prompt "Say hello"
       - name: FP16 - Run Qwen2.5-1.5b-instruct-fp16.gguf
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
           ./llama-tornado --gpu --opencl \
-            --model /opt/models/qwen2.5-1.5b-instruct-fp16.gguf \
+            --model $MODELS_DIR/qwen2.5-1.5b-instruct-fp16.gguf \
             --prompt "Say hello"
       - name: FP16 - Run Phi-3-mini-4k-instruct-fp16.gguf
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
           ./llama-tornado --gpu --opencl \
-            --model /opt/models/Phi-3-mini-4k-instruct-fp16.gguf \
+            --model /$MODELS_DIR/Phi-3-mini-4k-instruct-fp16.gguf \
             --prompt "Say hello"
       - name: Q8 - Run Llama-3.2-1B-Instruct-Q8_0.gguf
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
           ./llama-tornado --gpu --opencl \
-            --model /opt/models/Llama-3.2-1B-Instruct-Q8_0.gguf \
+            --model$MODELS_DIR/Llama-3.2-1B-Instruct-Q8_0.gguf \
             --prompt "Say hello"
       - name: Q8 - Run Qwen3-0.6B-Q8_0.gguf
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
           ./llama-tornado --gpu --opencl \
-            --model /opt/models/Qwen3-0.6B-Q8_0.gguf \
+            --model $MODELS_DIR/Qwen3-0.6B-Q8_0.gguf \
             --prompt "Say hello"
       - name: Q8 - Run Phi-3-mini-4k-instruct-Q8_0.gguf
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
           ./llama-tornado --gpu --opencl \
-            --model /opt/models/Phi-3-mini-4k-instruct-Q8_0.gguf \
+            --model $MODELS_DIR/Phi-3-mini-4k-instruct-Q8_0.gguf \
             --prompt "Say hello"
       - name: Q8 - Run Qwen2.5-1.5b-instruct-q8_0.gguf
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
           ./llama-tornado --gpu --opencl \
-            --model /opt/models/qwen2.5-1.5b-instruct-q8_0.gguf \
+            --model $MODELS_DIR/qwen2.5-1.5b-instruct-q8_0.gguf \
             --prompt "Say hello"
       - name: Q8 - Mistral-7B-Instruct-v0.3.Q8_0.gguf
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
           ./llama-tornado --gpu --opencl \
-            --model /opt/models/Mistral-7B-Instruct-v0.3.Q8_0.gguf \
+            --model $MODELS_DIR/Mistral-7B-Instruct-v0.3.Q8_0.gguf \
             --prompt "Say hello"
