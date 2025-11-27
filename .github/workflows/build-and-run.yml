@@ -1,72 +1,154 @@
 name: GPULlama3 Build & Run
+
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
   pull_request:
+    branches: [ main ]  
+    types: [opened, synchronize,  reopened]
+
 jobs:
   build-and-run:
     runs-on: self-hosted
+    
     env:
-      # TornadoVM paths
-      TORNADO_ROOT: ${{ github.workspace }}/GPULlama3.java/external/tornadovm
-      TORNADO_SDK: ${{ github.workspace }}/GPULlama3.java/external/tornadovm/bin/sdk  # Keep this for make
-      # Java
       JAVA_HOME: /opt/jenkins/jdks/graal-23.1.0/jdk-21.0.3
+      TORNADO_ROOT: ${{ github.workspace }}/GPULlama3.java/external/tornadovm
+      LLAMA_ROOT: ${{ github.workspace }} 
+    
     steps:
       - name: Checkout GPULlama3
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Clone TornadoVM explicitly
+
+      - name: Check code formatting (Spotless)
         run: |
-          git clone --branch master https://github.com/beehive-lab/TornadoVM.git GPULlama3.java/external/tornadovm
-          cd GPULlama3.java/external/tornadovm
-          git pull origin master
-      - name: Verify Java
+          cd ${{ github.workspace }}
+          # ./mvnw -T12C -Pspotless spotless:check
+          
+      - name: Clone Latest TornadoVM
         run: |
-          java -version
-          echo "JAVA_HOME=$JAVA_HOME"
-      - name: Set up Python 3
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-      - name: Create Python venv
+          git clone --depth 1 --branch master \
+            https://github.com/beehive-lab/TornadoVM.git \
+            GPULlama3.java/external/tornadovm
+      - name: Set up Python venv for TornadoVM
         run: |
-          cd GPULlama3.java/external/tornadovm
-          python3 -m venv venv
-          source venv/bin/activate
+          python3 -m venv GPULlama3.java/external/tornadovm/venv
+          source GPULlama3.java/external/tornadovm/venv/bin/activate
+          python --version
       - name: Build TornadoVM
         run: |
           cd GPULlama3.java/external/tornadovm
           source venv/bin/activate
-          make  # Uses the initial TORNADO_SDK from env
-          
-          # After build, find and update TORNADO_SDK to the actual SDK location
-          TORNADO_SDK_DIR=$(ls -d dist/tornado-sdk/tornado-sdk-* | head -1)
-          FULL_TORNADO_SDK="${PWD}/${TORNADO_SDK_DIR}"
-          echo "TORNADO_SDK=${FULL_TORNADO_SDK}" >> $GITHUB_ENV
-          echo "Updated TORNADO_SDK to: ${FULL_TORNADO_SDK}"
-          
-          # Verify TornadoVM with the updated path
-          export TORNADO_SDK="${FULL_TORNADO_SDK}"
-          export PATH="${TORNADO_SDK}/bin:$JAVA_HOME/bin:$PATH"
-          tornado --devices
-      - name: Build GPULlama3
-        run: |
-          export PATH="${TORNADO_SDK}/bin:$JAVA_HOME/bin:$PATH"
-          echo "Using TORNADO_SDK: $TORNADO_SDK"
-          pwd
-          ls -l 
+          echo "=== Building TornadoVM ==="
           make
-      - name: Run llama-tornado test prompt
+          echo "=== Searching for TornadoVM SDK directory ==="
+          SDK_DIR=$(find dist -type d -maxdepth 3 -path "*/tornadovm-*-opencl" | head -n 1)
+          if [ -z "$SDK_DIR" ]; then
+            echo "::error::Could not locate TornadoVM SDK directory!"
+            find dist -maxdepth 5 -type d
+            exit 1
+          fi
+          FULL_SDK="${PWD}/${SDK_DIR}"
+          echo "Detected TornadoVM SDK: $FULL_SDK"
+          
+          # Export for current shell session
+          export TORNADO_SDK="$FULL_SDK"
+          export PATH="$FULL_SDK/bin:$JAVA_HOME/bin:$PATH"
+          
+          # Save for subsequent steps
+          echo "TORNADO_SDK=$FULL_SDK" >> $GITHUB_ENV
+          echo "PATH=$PATH" >> $GITHUB_ENV
+          
+          echo "=== Checking tornado CLI ==="
+          which tornado || { echo "::error::tornado not in PATH"; exit 1; }
+          tornado --devices
+      - name: Build GPULlama3.java
         run: |
-          # The TORNADO_SDK variable is available because it was updated via GITHUB_ENV
-          export PATH="${TORNADO_SDK}/bin:$JAVA_HOME/bin:$PATH"
-          echo "Using TORNADO_SDK: $TORNADO_SDK"
-          ./llama-tornado --gpu --opencl --model /home/michalis/models/Llama-3.2-1B-Instruct-F16.gguf --prompt "Say hello"
-      # - name: Run llama-tornado test prompt
-      #   run: |
-      #     # export PATH="${TORNADO_SDK}/bin:$JAVA_HOME/bin:$PATH"
-      #     echo "Using TORNADO_SDK: $TORNADO_SDK"
-      #     ./llama-tornado --gpu --opencl --model /home/michalis/models/Llama-3.2-1B-Instruct-F16.gguf --prompt "Say hello"
+          cd ${{ github.workspace }}
+          echo "Using TORNADO_SDK=$TORNADO_SDK"
+          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          which tornado || { echo "::error::tornado unavailable during GPULlama3 build"; exit 1; }
+          tornado --version
+          ./mvnw clean package -DskipTests
+      - name: FP16 - Run Llama-3.2-1B-Instruct-F16.gguf
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
+          ./llama-tornado --gpu --opencl \
+            --model /home/michalis/models/Llama-3.2-1B-Instruct-F16.gguf \
+            --prompt "Say hello"
+      - name: FP16 - Run Qwen3-4B-f16.gguf
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
+          ./llama-tornado --gpu --opencl \
+            --model /opt/models/Qwen3-4B-f16.gguf \
+            --prompt "Say hello"
+      - name: FP16 - Run Mistral-7B-Instruct-v0.3.fp16.gguf
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
+          ./llama-tornado --gpu --opencl \
+            --model /opt/models/Mistral-7B-Instruct-v0.3.fp16.gguf \
+            --prompt "Say hello"
+      - name: FP16 - Run Qwen2.5-1.5b-instruct-fp16.gguf
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
+          ./llama-tornado --gpu --opencl \
+            --model /opt/models/qwen2.5-1.5b-instruct-fp16.gguf \
+            --prompt "Say hello"
+      - name: FP16 - Run Phi-3-mini-4k-instruct-fp16.gguf
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
+          ./llama-tornado --gpu --opencl \
+            --model /opt/models/Phi-3-mini-4k-instruct-fp16.gguf \
+            --prompt "Say hello"
+      - name: Q8 - Run Llama-3.2-1B-Instruct-Q8_0.gguf
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
+          ./llama-tornado --gpu --opencl \
+            --model /opt/models/Llama-3.2-1B-Instruct-Q8_0.gguf \
+            --prompt "Say hello"
+      - name: Q8 - Run Qwen3-0.6B-Q8_0.gguf
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
+          ./llama-tornado --gpu --opencl \
+            --model /opt/models/Qwen3-0.6B-Q8_0.gguf \
+            --prompt "Say hello"
+      - name: Q8 - Run Phi-3-mini-4k-instruct-Q8_0.gguf
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
+          ./llama-tornado --gpu --opencl \
+            --model /opt/models/Phi-3-mini-4k-instruct-Q8_0.gguf \
+            --prompt "Say hello"
+      - name: Q8 - Run Qwen2.5-1.5b-instruct-q8_0.gguf
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
+          ./llama-tornado --gpu --opencl \
+            --model /opt/models/qwen2.5-1.5b-instruct-q8_0.gguf \
+            --prompt "Say hello"
+      - name: Q8 - Mistral-7B-Instruct-v0.3.Q8_0.gguf
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
+          ./llama-tornado --gpu --opencl \
+            --model /opt/models/Mistral-7B-Instruct-v0.3.Q8_0.gguf \
+            --prompt "Say hello"

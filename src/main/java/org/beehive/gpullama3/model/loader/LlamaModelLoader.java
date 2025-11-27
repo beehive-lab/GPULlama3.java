@@ -28,8 +28,8 @@ import static org.beehive.gpullama3.model.loader.ModelLoader.*;
 
 public class LlamaModelLoader extends AbstractModelLoader<Llama, LlamaConfiguration> {
 
-    public LlamaModelLoader(FileChannel fileChannel, GGUF gguf, int contextLength, boolean loadWeights, boolean useTornadovm) {
-        super(fileChannel, gguf, contextLength, loadWeights, useTornadovm);
+    public LlamaModelLoader(FileChannel fileChannel, GGUF gguf, int contextLength, boolean useTornadovm) {
+        super(fileChannel, gguf, contextLength, useTornadovm);
     }
 
     @Override
@@ -42,6 +42,7 @@ public class LlamaModelLoader extends AbstractModelLoader<Llama, LlamaConfigurat
         return new LlamaTokenizer(metadata, vocabulary);
     }
 
+    // @formatter:off
     @Override
     protected LlamaConfiguration createConfiguration(Map<String, Object> metadata) {
         int vocabSize = metadata.containsKey("llama.vocab_size") ? (int) metadata.get("llama.vocab_size") : (int) metadata.get("tokenizer.ggml.tokens.length");
@@ -59,11 +60,11 @@ public class LlamaModelLoader extends AbstractModelLoader<Llama, LlamaConfigurat
                 (float) metadata.getOrDefault("llama.attention.layer_norm_rms_epsilon", 1e-5f),
                 (float) metadata.getOrDefault("llama.rope.freq_base", 10000f)).withContextLength(contextLength);
     }
+    // @formatter:on
 
     @Override
     protected Pair<float[], float[]> precomputeRopeFrequencies(LlamaConfiguration config) {
-        return RoPE.precomputeFreqsCis(config.contextLength(), config.dim() / config.numberOfHeads(), config.ropeTheta(), false, 1.0f, 1.0f, 1.0f, config.contextLength()
-        );
+        return RoPE.precomputeFreqsCis(config.contextLength(), config.dim() / config.numberOfHeads(), config.ropeTheta(), false, 1.0f, 1.0f, 1.0f, config.contextLength());
     }
 
     @Override
@@ -71,9 +72,10 @@ public class LlamaModelLoader extends AbstractModelLoader<Llama, LlamaConfigurat
         return new Llama(config, tokenizer, weights, ChatFormat.create(tokenizer, null));
     }
 
+    // @formatter:off
     @Override
     protected Weights createStandardWeights(Map<String, GGMLTensorEntry> tensorEntries, LlamaConfiguration config, Pair<float[], float[]> ropeFreqs, GGMLTensorEntry tokenEmbeddings,
-            GGMLTensorEntry outputWeight) {
+                                            GGMLTensorEntry outputWeight) {
 
         final int nl = config.numberOfLayers();
 
@@ -94,7 +96,9 @@ public class LlamaModelLoader extends AbstractModelLoader<Llama, LlamaConfigurat
                 loadTensor(outputWeight),
                 outputWeight.ggmlType());
     }
+    // @formatter:on
 
+    // @formatter:off
     @Override
     protected Weights createTornadoVMWeights(Map<String, GGMLTensorEntry> tensorEntries,
                                              LlamaConfiguration config,
@@ -117,20 +121,21 @@ public class LlamaModelLoader extends AbstractModelLoader<Llama, LlamaConfigurat
         // Load all tensors uniformly as TornadoTensor hierarchy
         return new LlamaTornadoWeights(
                 loadTornadoTensorAsFP32(tokenEmbeddings),
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_norm.weight")),
+                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_norm.weight")),    // fp32
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_q.weight")),
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_k.weight")),
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_v.weight")),
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_output.weight")),
-                loadArrayOfTornadoTensorsAsFP32(nl, i -> tensorEntries.get("blk." + i + ".ffn_norm.weight")),
+                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".ffn_norm.weight")),     // fp32
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".ffn_gate.weight")),
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".ffn_down.weight")),
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".ffn_up.weight")),
-                loadTornadoTensorAsFP32(tensorEntries.get("output_norm.weight")),
+                loadTornadoTensor(tensorEntries.get("output_norm.weight")),                                     // fp32
                 new FP32TornadoTensor(FloatArray.fromArray(ropeFreqs.first())),
                 new FP32TornadoTensor(FloatArray.fromArray(ropeFreqs.second())),
                 loadTornadoTensor(outputWeight),
                 ggmlType
         );
     }
+    // @formatter:on
 }

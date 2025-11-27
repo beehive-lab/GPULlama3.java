@@ -15,13 +15,16 @@ import uk.ac.manchester.tornado.api.types.HalfFloat;
 import uk.ac.manchester.tornado.api.types.arrays.*;
 
 import java.io.IOException;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.IntFunction;
+import java.util.stream.Collectors;
 
 public abstract class ModelLoader {
 
@@ -58,7 +61,6 @@ public abstract class ModelLoader {
             } else if (lowerName.contains("phi3") || lowerName.contains("phi-3")) {
                 return ModelType.PHI_3;
             }
-
         }
 
         return ModelType.UNKNOWN;
@@ -66,30 +68,26 @@ public abstract class ModelLoader {
 
     /**
      * Loads the language model based on the given options.
-     * <p>
-     * If Ahead-of-Time (AOT) mode is enabled, attempts to use a pre-loaded compiled model. Otherwise, loads the model from the specified path using the model loader.
-     * </p>
      *
-     * @param options
-     *         the parsed CLI options containing model path and max token limit
+     * <p>If Ahead-of-Time (AOT) mode is enabled, attempts to use a pre-loaded compiled model.
+     * Otherwise, loads the model from the specified path using the model loader.
+     *
+     * @param options the parsed CLI options containing model path and max token limit
      * @return the loaded {@link Model} instance
-     * @throws IOException
-     *         if the model fails to load
-     * @throws IllegalStateException
-     *         if AOT loading is enabled but the preloaded model is unavailable
+     * @throws IOException           if the model fails to load
+     * @throws IllegalStateException if AOT loading is enabled but the preloaded model is unavailable
      */
     public static Model loadModel(Options options) throws IOException {
-        return ModelLoader.loadModel(options.modelPath(), options.maxTokens(), true, options.useTornadovm());
-    }
+        Path ggufPath = options.modelPath();
+        int contextLength = options.maxTokens();
+        boolean useTornadovm = options.useTornadovm();
 
-    public static Model loadModel(Path ggufPath, int contextLength, boolean loadWeights, boolean useTornadovm) throws IOException {
         // initial load of metadata from gguf file
-        GGUF gguf = GGUF.loadModel(ggufPath);
-        FileChannel fileChannel = FileChannel.open(ggufPath, StandardOpenOption.READ);
+        GGUF gguf = GGUF.loadGGUFMetadata(ggufPath);
         // detect model type
         ModelType modelType = detectModelType(gguf.getMetadata());
         // model type-specific load
-        return modelType.loadModel(fileChannel, gguf, contextLength, loadWeights, useTornadovm);
+        return modelType.loadModel(gguf.getFileChannel(), gguf, contextLength, useTornadovm);
     }
 
     /**
@@ -127,8 +125,8 @@ public abstract class ModelLoader {
         GGMLType ggmlType = entry.ggmlType();
         int size = FloatTensor.numberOfElements(entry.shape());
         return switch (ggmlType) {
-            case F32 -> new FP32TornadoTensor(size, entry.memorySegment());
-            case F16 -> new FP16TornadoTensor(size, entry.memorySegment());
+            case F32 -> FP32TornadoTensor.fromTornadoMemorySegment(entry.memorySegment());
+            case F16 -> FP16TornadoTensor.fromTornadoMemorySegment(entry.memorySegment());
             case Q8_0 -> Q8_0TornadoTensor.create(entry);
             case Q4_0 -> throw new UnsupportedOperationException("Q4 format not supported yet");
             default -> throw new UnsupportedOperationException("Quantization format " + ggmlType);
@@ -148,33 +146,37 @@ public abstract class ModelLoader {
     }
 
     /**
-     * Load a tensor and ensure it's FP32 (FloatArray).
-     * Used for embeddings and normalization weights that must always be FP32.
+     * Load a tensor and manually convert to FP32 (FloatArray).
+     * Used for embeddings that currently are treated as FP32.
+     * TODO: it is ultra-slow and should be removed
      */
     public static TornadoTensor loadTornadoTensorAsFP32(GGMLTensorEntry entry) {
-        // If already F32, load directly
-        if (entry.ggmlType() == GGMLType.F32) {
-            return new FP32TornadoTensor(
-                    FloatTensor.numberOfElements(entry.shape()),
-                    entry.memorySegment()
-            );
-        }
+        TornadoTensor tensor = loadTornadoTensor(entry);
+        return switch (tensor.type()) {
+            case F32 -> tensor;
+            case F16 -> {
+                HalfFloatArray tensorHFA = tensor.asHalfFloatArray();
+                int numOfElements = tensorHFA.getSize();
+                FloatArray tensorFA = new FloatArray(numOfElements);
+                for (int i = 0; i < numOfElements; i++) {
+                    tensorFA.set(i, tensorHFA.get(i).getFloat32());
+                }
+                yield new FP32TornadoTensor(tensorFA);
+            }
+            case Q8_0 -> {
+                Q8_0TornadoTensor tensorQ8_0 = Q8_0TornadoTensor.create(entry);
+                int numOfElements = tensorQ8_0.getSize();
+                FloatArray tensorFA = new FloatArray(numOfElements);
+                for (int i = 0; i < numOfElements; i++) {
+                    tensorFA.set(i, tensorQ8_0.getFloat(i));
+                }
+                yield new FP32TornadoTensor(tensorFA);
 
-        // Otherwise, dequantize to F32
-        FloatArray floatArray = loadTensorAsFloatArray(entry);
-        return new FP32TornadoTensor(floatArray);
-    }
-
-    /**
-     * Load array of tensors as FP32.
-     * Used for normalization weight arrays.
-     */
-    public static TornadoTensor[] loadArrayOfTornadoTensorsAsFP32(int size, IntFunction<GGMLTensorEntry> getTensorEntry) {
-        TornadoTensor[] array = new TornadoTensor[size];
-        for (int i = 0; i < size; i++) {
-            array[i] = loadTornadoTensorAsFP32(getTensorEntry.apply(i));
-        }
-        return array;
+            }
+            default -> {
+                throw new UnsupportedOperationException("Unsupported tensor type: " + tensor.type());
+            }
+        };
     }
 
     // Helper methods
@@ -276,5 +278,4 @@ public abstract class ModelLoader {
             default -> throw new UnsupportedOperationException("Conversion to " + ggmlType);
         };
     }
-
 }

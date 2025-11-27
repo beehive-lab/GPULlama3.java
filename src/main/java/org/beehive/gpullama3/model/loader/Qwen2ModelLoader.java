@@ -27,8 +27,8 @@ import static org.beehive.gpullama3.model.loader.ModelLoader.*;
 
 public class Qwen2ModelLoader extends AbstractModelLoader<Qwen2, Qwen2Configuration> {
 
-    public Qwen2ModelLoader(FileChannel fileChannel, GGUF gguf, int contextLength, boolean loadWeights, boolean useTornadovm) {
-        super(fileChannel, gguf, contextLength, loadWeights, useTornadovm);
+    public Qwen2ModelLoader(FileChannel fileChannel, GGUF gguf, int contextLength, boolean useTornadovm) {
+        super(fileChannel, gguf, contextLength, useTornadovm);
     }
 
     @Override
@@ -42,6 +42,7 @@ public class Qwen2ModelLoader extends AbstractModelLoader<Qwen2, Qwen2Configurat
         return new Qwen3Tokenizer(metadata, vocabulary, isDeepSeekR1DistillQwen);
     }
 
+    // @formatter:off
     @Override
     protected Qwen2Configuration createConfiguration(Map<String, Object> metadata) {
         int modelContextLength = (int) metadata.get("qwen2.context_length");
@@ -68,12 +69,14 @@ public class Qwen2ModelLoader extends AbstractModelLoader<Qwen2, Qwen2Configurat
                 (float) metadata.get("qwen2.rope.freq_base")
         );
     }
+    // @formatter:on
 
     @Override
     protected Pair<float[], float[]> precomputeRopeFrequencies(Qwen2Configuration config) {
         return RoPE.precomputeFreqsCis(config.contextLengthModel(), config.headSize(), config.ropeTheta(), false, 8, 1, 3, 8192);
     }
 
+    // @formatter:off
     @Override
     protected Qwen2 createModel(Qwen2Configuration config, Tokenizer tokenizer, Weights weights) {
         Map<String, Object> metadata = gguf.getMetadata();
@@ -83,10 +86,12 @@ public class Qwen2ModelLoader extends AbstractModelLoader<Qwen2, Qwen2Configurat
                 : new ChatTokens("<|im_start|>", "<|im_end|>", "", "<|end_of_text|>", "<|endoftext|>");
         return new Qwen2(config, tokenizer, weights, ChatFormat.create(tokenizer, chatTokens));
     }
+    // @formatter:on
 
+    // @formatter:off
     @Override
     protected Weights createStandardWeights(Map<String, GGMLTensorEntry> tensorEntries, Qwen2Configuration config, Pair<float[], float[]> ropeFreqs, GGMLTensorEntry tokenEmbeddings,
-            GGMLTensorEntry outputWeight) {
+                                            GGMLTensorEntry outputWeight) {
 
         final int nl = config.numberOfLayers();
 
@@ -111,10 +116,12 @@ public class Qwen2ModelLoader extends AbstractModelLoader<Qwen2, Qwen2Configurat
                 outputWeight.ggmlType()
         );
     }
+    // @formatter:on
 
+    // @formatter:off
     @Override
     protected Weights createTornadoVMWeights(Map<String, GGMLTensorEntry> tensorEntries, Qwen2Configuration config, Pair<float[], float[]> ropeFreqs, GGMLTensorEntry tokenEmbeddings,
-            GGMLTensorEntry outputWeight) {
+                                             GGMLTensorEntry outputWeight) {
         GGMLType ggmlType = outputWeight.ggmlType();
 
         if (TornadoVMMasterPlan.ENABLE_TORNADOVM_INIT_TIME) {
@@ -131,20 +138,20 @@ public class Qwen2ModelLoader extends AbstractModelLoader<Qwen2, Qwen2Configurat
         // Load all tensors uniformly as TornadoTensor hierarchy
         return new Qwen2TornadoWeights(
                 loadTornadoTensorAsFP32(tokenEmbeddings),
-                loadArrayOfTornadoTensorsAsFP32(nl, i -> tensorEntries.get("blk." + i + ".attn_norm.weight")),
+                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_norm.weight")),    // fp32
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_q.weight")),
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_k.weight")),
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_v.weight")),
                 // Qwen2-specific: qkv bias (always F32)
-                loadArrayOfTornadoTensorsAsFP32(nl, i -> tensorEntries.get("blk." + i + ".attn_q.bias")),
-                loadArrayOfTornadoTensorsAsFP32(nl, i -> tensorEntries.get("blk." + i + ".attn_k.bias")),
-                loadArrayOfTornadoTensorsAsFP32(nl, i -> tensorEntries.get("blk." + i + ".attn_v.bias")),
+                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_q.bias")),         // fp32
+                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_k.bias")),         // fp32
+                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_v.bias")),         // fp32
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_output.weight")),
-                loadArrayOfTornadoTensorsAsFP32(nl, i -> tensorEntries.get("blk." + i + ".ffn_norm.weight")),
+                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".ffn_norm.weight")),     // fp32
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".ffn_gate.weight")),
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".ffn_down.weight")),
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".ffn_up.weight")),
-                loadTornadoTensorAsFP32(tensorEntries.get("output_norm.weight")),
+                loadTornadoTensor(tensorEntries.get("output_norm.weight")),                                     // fp32
                 new FP32TornadoTensor(FloatArray.fromArray(ropeFreqs.first())),
                 new FP32TornadoTensor(FloatArray.fromArray(ropeFreqs.second())),
                 loadTornadoTensor(outputWeight),
@@ -152,4 +159,5 @@ public class Qwen2ModelLoader extends AbstractModelLoader<Qwen2, Qwen2Configurat
         );
 
     }
+    // @formatter:off
 }

@@ -2,11 +2,13 @@ package org.beehive.gpullama3.tensor;
 
 import org.beehive.gpullama3.tensor.standard.FloatTensor;
 import org.beehive.gpullama3.auxiliary.Pair;
+import uk.ac.manchester.tornado.api.types.arrays.TornadoNativeArray;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
@@ -17,7 +19,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static java.nio.file.StandardOpenOption.READ;
+import static java.nio.file.StandardOpenOption.WRITE;
+
 public final class GGUF {
+    private static FileChannel fileChannel;
     private static final int GGUF_MAGIC = 0x46554747;
     private static final int DEFAULT_ALIGNMENT = 32; // must be a power of 2
     private static final List<Integer> SUPPORTED_GGUF_VERSIONS = List.of(2, 3);
@@ -34,34 +40,155 @@ public final class GGUF {
     private Map<String, GGUFTensorInfo> tensorInfos;
     private long tensorDataOffset;
 
-    public static GGUF loadModel(Path modelPath) throws IOException {
+    public static GGUF loadGGUFMetadata(Path modelPath) throws IOException {
 
         // file existence check
         if (!Files.exists(modelPath)) {
             throw new FileNotFoundException("Model file not found: " + modelPath);
         }
 
-        // second check to make sure that nothing goes wrong during model loading
-        try (FileChannel fileChannel = FileChannel.open(modelPath);
-        ) {
+        // Open file
+        try {
+            fileChannel = FileChannel.open(modelPath, READ, WRITE);
+            // Ensure we start reading from the beginning of the file
+            fileChannel.position(0);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to open file channel for " + modelPath, e);
+        }
+
+        // Read and store the gguf metadata
+        try {
             GGUF gguf = new GGUF();
-            gguf.loadModelImpl(fileChannel);
+            // The header of the file.
+            gguf.readHeader(fileChannel); // gguf_header_t header;
+            // Tensor infos, which can be used to locate the tensor data.
+            // gguf_tensor_info_t tensor_infos[header.tensor_count];
+            gguf.tensorInfos = HashMap.newHashMap(gguf.tensorCount);
+            for (int i = 0; i < gguf.tensorCount; ++i) {
+                GGUF.GGUFTensorInfo ti = gguf.readTensorInfo(fileChannel);
+                assert !gguf.tensorInfos.containsKey(ti.name);
+                gguf.tensorInfos.put(ti.name, ti);
+            }
+            // Padding to the nearest multiple of `ALIGNMENT`.
+            // uint8_t _padding[ALIGNMENT - (sizeof(header + tensor_infos) % ALIGNMENT)];
+            long _padding = (gguf.getAlignment() - (fileChannel.position() % gguf.getAlignment())) % gguf.getAlignment();
+            fileChannel.position(fileChannel.position() + _padding);
+            // Tensor data.
+            //
+            // This is arbitrary binary data corresponding to the weights of the model. This data should be close
+            // or identical to the data in the original model file, but may be different due to quantization or
+            // other optimizations for inference. Any such deviations should be recorded in the metadata or as
+            // part of the architecture definition.
+            //
+            // Each tensor's data must be stored within this array, and located through its `tensor_infos` entry.
+            // The offset of each tensor's data must be a multiple of `ALIGNMENT`, and the space between tensors
+            // should be padded to `ALIGNMENT` bytes.
+            // uint8_t tensor_data[];
+            gguf.tensorDataOffset = fileChannel.position();
             return gguf;
         } catch (Exception e) {
             throw new RuntimeException("Unexpected error while loading GGUF model from " + modelPath, e);
         }
     }
 
-    public static Map<String, GGMLTensorEntry> loadTensors(FileChannel fileChannel, long tensorDataOffset, Map<String, GGUFTensorInfo> tensorInfos) throws IOException {
+    /**
+     * Loads tensor data from a given file channel based on the tensor metadata information.
+     * The mapping is read-only and creates standard memory segments for each tensor.
+     *
+     * @param fileChannel      the channel from which tensor storage is read
+     * @param tensorDataOffset the absolute byte offset of the GGUF tensor-data section
+     * @param tensorInfos      metadata describing all GGUF tensors
+     * @return a map from tensor name to {@link GGMLTensorEntry} containing
+     * standard memory segments for each tensor
+     * @throws IOException if memory mapping fails or the channel cannot be read
+     */
+    public static Map<String, GGMLTensorEntry> loadTensorsStandard(FileChannel fileChannel, long tensorDataOffset, Map<String, GGUFTensorInfo> tensorInfos) throws IOException {
         Arena arena = Arena.ofAuto();
-        MemorySegment tensorData = fileChannel.map(FileChannel.MapMode.READ_ONLY, tensorDataOffset, fileChannel.size() - tensorDataOffset, arena);
+
+        // absolute file offset where the tensor-data section begins
+        long mappingOffset = tensorDataOffset;
+        // size of the entire tensor-data section
+        long mappingSize = fileChannel.size() - tensorDataOffset;
+
+        MemorySegment tensorData = fileChannel.map(FileChannel.MapMode.READ_ONLY, mappingOffset, mappingSize, arena);
+
         Map<String, GGMLTensorEntry> tensorEntries = HashMap.newHashMap(tensorInfos.size());
+
         for (Map.Entry<String, GGUFTensorInfo> entry : tensorInfos.entrySet()) {
             GGUFTensorInfo ti = entry.getValue();
+
+            // skip rope_freqs.weight (not needed for inference)
+            if (ti.name().equals("rope_freqs.weight")) {
+                continue;
+            }
+
             int numberOfElements = FloatTensor.numberOfElements(ti.dimensions());
             int sizeInBytes = Math.toIntExact(ti.ggmlType().byteSizeFor(numberOfElements));
-            MemorySegment memorySegment = tensorData.asSlice(ti.offset(), sizeInBytes);
+
+            // per-tensor slice offset; ti.offset() is relative to tensor-data start
+            long offset = ti.offset();
+
+            // per-tensor slice segment
+            MemorySegment memorySegment = tensorData.asSlice(offset, sizeInBytes);
+
             tensorEntries.put(ti.name(), new GGMLTensorEntry(tensorData, ti.name(), ti.ggmlType(), ti.dimensions(), memorySegment));
+        }
+        return tensorEntries;
+    }
+
+    /**
+     * Loads GGUF tensor data using a TornadoVM-compatible memory layout.
+     *
+     * <p>This method parses the GGUF tensor list and memory-maps each tensor
+     * in {@link TornadoNativeArray} layout directly from the underlying {@link FileChannel}.
+     * For compatibility with {@link TornadoNativeArray} layout, an additional header is required at
+     * the start of each tensor region. To satisfy this requirement, each tensor
+     * is mapped using {@link FileChannel.MapMode#PRIVATE} starting 16 bytes
+     * before the actual tensor position, providing a writable header region
+     * without modifying the underlying GGUF file.</p>
+     *
+     * @param fileChannel      the channel from which tensor storage is read
+     * @param tensorDataOffset the absolute byte offset of the GGUF tensor-data section
+     * @param tensorInfos      metadata describing all GGUF tensors
+     * @return a map from tensor name to {@link GGMLTensorEntry} containing
+     * TornadoVM-compatible memory segments for each tensor
+     * @throws IOException if memory mapping fails or the channel cannot be read
+     */
+    public static Map<String, GGMLTensorEntry> loadTensorsTornado(FileChannel fileChannel, long tensorDataOffset, Map<String, GGUFTensorInfo> tensorInfos) throws IOException {
+
+        Arena arena = Arena.ofAuto();
+        Map<String, GGMLTensorEntry> tensorEntries = HashMap.newHashMap(tensorInfos.size());
+
+        for (Map.Entry<String, GGUFTensorInfo> entry : tensorInfos.entrySet()) {
+            GGUFTensorInfo ti = entry.getValue();
+
+            // skip rope_freqs.weight (not required for inference)
+            if (ti.name().equals("rope_freqs.weight")) {
+                continue;
+            }
+
+            int numberOfElements = FloatTensor.numberOfElements(ti.dimensions());
+            int sizeInBytes = Math.toIntExact(ti.ggmlType().byteSizeFor(numberOfElements));
+
+            // absolute tensor offset - relative to start of the file
+            long mappingOffset = tensorDataOffset + ti.offset();
+
+            // create memory segment in TornadoVM NativeArray layout:
+            // TornadoNativeArray.ARRAY_HEADER (16-byte) + tensor data
+            long headerBytes = TornadoNativeArray.ARRAY_HEADER;
+
+            // start 16 bytes before the tensor position to include header space
+            long offset = mappingOffset - headerBytes;
+            long size = sizeInBytes + headerBytes;
+            MemorySegment memorySegment = fileChannel.map(FileChannel.MapMode.PRIVATE, offset, size, arena);
+
+            // zero out the 16-byte header
+            for (int i = 0; i < headerBytes; i++) {
+                memorySegment.set(ValueLayout.JAVA_BYTE, i, (byte) 0);
+            }
+
+            // store tornado-compatible segment
+            tensorEntries.put(ti.name(), new GGMLTensorEntry(memorySegment, ti.name(), ti.ggmlType(), ti.dimensions(), memorySegment));
         }
         return tensorEntries;
     }
@@ -78,33 +205,8 @@ public final class GGUF {
         return metadata;
     }
 
-    private void loadModelImpl(FileChannel fileChannel) throws IOException {
-        // The header of the file.
-        readHeader(fileChannel); // gguf_header_t header;
-        // Tensor infos, which can be used to locate the tensor data.
-        // gguf_tensor_info_t tensor_infos[header.tensor_count];
-        this.tensorInfos = HashMap.newHashMap(tensorCount);
-        for (int i = 0; i < tensorCount; ++i) {
-            GGUF.GGUFTensorInfo ti = readTensorInfo(fileChannel);
-            assert !tensorInfos.containsKey(ti.name);
-            tensorInfos.put(ti.name, ti);
-        }
-        // Padding to the nearest multiple of `ALIGNMENT`.
-        // uint8_t _padding[ALIGNMENT - (sizeof(header + tensor_infos) % ALIGNMENT)];
-        long _padding = (getAlignment() - (fileChannel.position() % getAlignment())) % getAlignment();
-        fileChannel.position(fileChannel.position() + _padding);
-        // Tensor data.
-        //
-        // This is arbitrary binary data corresponding to the weights of the model. This data should be close
-        // or identical to the data in the original model file, but may be different due to quantization or
-        // other optimizations for inference. Any such deviations should be recorded in the metadata or as
-        // part of the architecture definition.
-        //
-        // Each tensor's data must be stored within this array, and located through its `tensor_infos` entry.
-        // The offset of each tensor's data must be a multiple of `ALIGNMENT`, and the space between tensors
-        // should be padded to `ALIGNMENT` bytes.
-        // uint8_t tensor_data[];
-        this.tensorDataOffset = fileChannel.position();
+    public FileChannel getFileChannel() {
+        return fileChannel;
     }
 
     private GGMLType readGGMLType(FileChannel fileChannel) throws IOException {

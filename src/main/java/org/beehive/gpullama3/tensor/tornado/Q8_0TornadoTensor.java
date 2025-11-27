@@ -6,6 +6,7 @@ import org.beehive.gpullama3.tensor.standard.FloatTensor;
 import uk.ac.manchester.tornado.api.types.HalfFloat;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.Int8Array;
+import uk.ac.manchester.tornado.api.types.arrays.TornadoNativeArray;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -13,15 +14,20 @@ import java.nio.ByteOrder;
 
 public class Q8_0TornadoTensor extends TornadoTensor {
 
+    private final int size;
     private final HalfFloatArray scales;  // One per 32-element block
     private final Int8Array quants;       // Quantized int8 values
     private MemorySegment segment;
 
     public Q8_0TornadoTensor(int size, HalfFloatArray scales, Int8Array quants, MemorySegment segment) {
-        super(size);
+        this.size = size;
         this.scales = scales;
         this.quants = quants;
         this.segment = segment;
+    }
+
+    public int getSize() {
+        return size;
     }
 
     /**
@@ -43,11 +49,6 @@ public class Q8_0TornadoTensor extends TornadoTensor {
     }
 
     @Override
-    public int size() {
-        return size;
-    }
-
-    @Override
     public GGMLType type() {
         return GGMLType.Q8_0;
     }
@@ -63,7 +64,7 @@ public class Q8_0TornadoTensor extends TornadoTensor {
      * @return Dequantized float value
      */
     public float getFloat(int index) {
-        assert 0 <= index && index < size;
+        assert 0 <= index;
         int blockIdx = index / GGMLType.Q8_0.getBlockSize();
         float scale = scales.get(blockIdx).getFloat32();
         byte quant = quants.get(index);
@@ -83,7 +84,10 @@ public class Q8_0TornadoTensor extends TornadoTensor {
             throw new IllegalArgumentException("Q8_0 tensor size must be multiple of " + GGMLType.Q8_0.getBlockSize() + ", got: " + size + " for tensor: " + entry.name());
         }
 
-        MemorySegment q8Segment = entry.memorySegment();
+        // TODO: fix Q8_0 loading in tornado layoyt
+        //  currently we end up to hack it by removing
+        //  tornado header from memory segment
+        MemorySegment q8Segment = entry.memorySegment().asSlice(TornadoNativeArray.ARRAY_HEADER);
 
         // allocate the arrays for quantized data (int8) and scales (fp16)
         HalfFloatArray scales = new HalfFloatArray(numBlocks);

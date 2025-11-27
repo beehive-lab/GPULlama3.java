@@ -410,7 +410,7 @@ def create_parser() -> argparse.ArgumentParser:
         const=Backend.PTX,
         help="Use PTX/CUDA backend",
     )
-    hw_group.add_argument("--gpu-memory", default="7GB", help="GPU memory allocation")
+    hw_group.add_argument("--gpu-memory", default="14GB", help="GPU memory allocation")
     hw_group.add_argument("--heap-min", default="20g", help="Minimum JVM heap size")
     hw_group.add_argument("--heap-max", default="20g", help="Maximum JVM heap size")
 

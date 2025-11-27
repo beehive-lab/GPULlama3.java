@@ -26,8 +26,8 @@ import static org.beehive.gpullama3.model.loader.ModelLoader.*;
 
 public class MistralModelLoader extends AbstractModelLoader<Mistral, MistralConfiguration> {
 
-    public MistralModelLoader(FileChannel fileChannel, GGUF gguf, int contextLength, boolean loadWeights, boolean useTornadovm) {
-        super(fileChannel, gguf, contextLength, loadWeights, useTornadovm);
+    public MistralModelLoader(FileChannel fileChannel, GGUF gguf, int contextLength, boolean useTornadovm) {
+        super(fileChannel, gguf, contextLength, useTornadovm);
     }
 
     @Override
@@ -40,6 +40,7 @@ public class MistralModelLoader extends AbstractModelLoader<Mistral, MistralConf
         return new MistralTokenizer(metadata, vocabulary);
     }
 
+    // @formatter:off
     @Override
     protected MistralConfiguration createConfiguration(Map<String, Object> metadata) {
         int modelContextLength = (int) metadata.get("llama.context_length");
@@ -48,29 +49,47 @@ public class MistralModelLoader extends AbstractModelLoader<Mistral, MistralConf
         // Get vocabulary size from metadata
         int vocabSize = metadata.containsKey("llama.vocab_size") ? (int) metadata.get("llama.vocab_size") : (int) metadata.get("tokenizer.ggml.tokens.length");
 
-        return new MistralConfiguration((int) metadata.get("llama.embedding_length"), (int) metadata.get("llama.feed_forward_length"), (int) metadata.get("llama.block_count"),
+        return new MistralConfiguration(
+                (int) metadata.get("llama.embedding_length"),
+                (int) metadata.get("llama.feed_forward_length"),
+                (int) metadata.get("llama.block_count"),
                 (int) metadata.get("llama.attention.head_count"),
-
-                metadata.containsKey("llama.attention.head_count_kv") ? (int) metadata.get("llama.attention.head_count_kv") : (int) metadata.get("llama.attention.head_count"),
-
-                vocabSize, finalContextLength, false, (float) metadata.getOrDefault("llama.attention.layer_norm_rms_epsilon", 1e-5f),
-                (float) metadata.getOrDefault("llama.rope.freq_base", 10000f));
-    }
-
-    @Override
-    protected Pair<float[], float[]> precomputeRopeFrequencies(MistralConfiguration config) {
-        return RoPE.precomputeFreqsCis(config.contextLength(), config.dim() / config.numberOfHeads(), config.ropeTheta(), false, 1.0f, 1.0f, 1.0f, config.contextLength()
+                metadata.containsKey("llama.attention.head_count_kv") ?
+                        (int) metadata.get("llama.attention.head_count_kv")
+                        : (int) metadata.get("llama.attention.head_count"),
+                vocabSize,
+                finalContextLength,
+                false,
+                (float) metadata.getOrDefault("llama.attention.layer_norm_rms_epsilon", 1e-5f),
+                (float) metadata.getOrDefault("llama.rope.freq_base", 10000f)
         );
     }
+    // @formatter:on
+
+    // @formatter:off
+    @Override
+    protected Pair<float[], float[]> precomputeRopeFrequencies(MistralConfiguration config) {
+        return RoPE.precomputeFreqsCis(
+                config.contextLength(),
+                config.dim() / config.numberOfHeads(),
+                config.ropeTheta(),
+                false,
+                1.0f,
+                1.0f,
+                1.0f,
+                config.contextLength()
+        );
+    }
+    // @formatter:on
 
     @Override
     protected Mistral createModel(MistralConfiguration config, Tokenizer tokenizer, Weights weights) {
         return new Mistral(config, tokenizer, weights, ChatFormat.create(tokenizer, null));
     }
 
+    // @formatter:off
     @Override
-    protected Weights createStandardWeights(Map<String, GGMLTensorEntry> tensorEntries, MistralConfiguration config, Pair<float[], float[]> ropeFreqs, GGMLTensorEntry tokenEmbeddings,
-            GGMLTensorEntry outputWeight) {
+    protected Weights createStandardWeights(Map<String, GGMLTensorEntry> tensorEntries, MistralConfiguration config, Pair<float[], float[]> ropeFreqs, GGMLTensorEntry tokenEmbeddings, GGMLTensorEntry outputWeight) {
 
         final int nl = config.numberOfLayers();
 
@@ -91,10 +110,11 @@ public class MistralModelLoader extends AbstractModelLoader<Mistral, MistralConf
                 loadTensor(outputWeight),
                 outputWeight.ggmlType());
     }
+    // @formatter:off
 
+    // @formatter:off
     @Override
-    protected Weights createTornadoVMWeights(Map<String, GGMLTensorEntry> tensorEntries, MistralConfiguration config, Pair<float[], float[]> ropeFreqs, GGMLTensorEntry tokenEmbeddings,
-                                             GGMLTensorEntry outputWeight) {
+    protected Weights createTornadoVMWeights(Map<String, GGMLTensorEntry> tensorEntries, MistralConfiguration config, Pair<float[], float[]> ropeFreqs, GGMLTensorEntry tokenEmbeddings, GGMLTensorEntry outputWeight) {
         GGMLType ggmlType = outputWeight.ggmlType();
 
         if (TornadoVMMasterPlan.ENABLE_TORNADOVM_INIT_TIME) {
@@ -111,20 +131,21 @@ public class MistralModelLoader extends AbstractModelLoader<Mistral, MistralConf
         // Load all tensors uniformly as TornadoTensor hierarchy
         return new LlamaTornadoWeights(
                 loadTornadoTensorAsFP32(tokenEmbeddings),
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_norm.weight")),
+                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_norm.weight")),    // fp32
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_q.weight")),
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_k.weight")),
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_v.weight")),
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_output.weight")),
-                loadArrayOfTornadoTensorsAsFP32(nl, i -> tensorEntries.get("blk." + i + ".ffn_norm.weight")),
+                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".ffn_norm.weight")),     // fp32
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".ffn_gate.weight")),
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".ffn_down.weight")),
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".ffn_up.weight")),
-                loadTornadoTensorAsFP32(tensorEntries.get("output_norm.weight")),
+                loadTornadoTensor(tensorEntries.get("output_norm.weight")),                                     // fp32
                 new FP32TornadoTensor(FloatArray.fromArray(ropeFreqs.first())),
                 new FP32TornadoTensor(FloatArray.fromArray(ropeFreqs.second())),
                 loadTornadoTensor(outputWeight),
                 ggmlType
         );
     }
+    // @formatter:on
 }

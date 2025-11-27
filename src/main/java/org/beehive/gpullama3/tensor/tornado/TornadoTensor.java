@@ -10,20 +10,12 @@ import uk.ac.manchester.tornado.api.types.arrays.Int8Array;
  * These tensors wrap TornadoVM native arrays for GPU execution.
  */
 public abstract class TornadoTensor {
-    protected final int size;
-
-    protected TornadoTensor(int size) {
-        this.size = size;
-    }
-
-    public int size() {
-        return size;
-    }
 
     public abstract GGMLType type();
 
     /**
      * Get as FloatArray (for F32 tensors).
+     *
      * @throws UnsupportedOperationException if not F32
      */
     public FloatArray asFloatArray() {
@@ -32,6 +24,7 @@ public abstract class TornadoTensor {
 
     /**
      * Get as HalfFloatArray (for F16 tensors).
+     *
      * @throws UnsupportedOperationException if not F16
      */
     public HalfFloatArray asHalfFloatArray() {
@@ -40,6 +33,7 @@ public abstract class TornadoTensor {
 
     /**
      * Get quantized scales (for Q8_0 tensors).
+     *
      * @throws UnsupportedOperationException if not quantized
      */
     public HalfFloatArray getScales() {
@@ -48,6 +42,7 @@ public abstract class TornadoTensor {
 
     /**
      * Get quantized values (for Q8_0 tensors).
+     *
      * @throws UnsupportedOperationException if not quantized
      */
     public Int8Array getQuants() {
