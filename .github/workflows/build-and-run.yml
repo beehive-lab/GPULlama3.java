@@ -104,6 +104,14 @@ jobs:
           ./llama-tornado --gpu --opencl \
             --model /opt/models/qwen2.5-1.5b-instruct-fp16.gguf \
             --prompt "Say hello"
+      - name: Run Phi-3-mini-4k-instruct-fp16.gguf
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
+          ./llama-tornado --gpu --opencl \
+            --model /opt/models/Phi-3-mini-4k-instruct-fp16.gguf \
+            --prompt "Say hello"
       # - name: Run Llama-3.2-1B-Instruct-Q8_0.gguf
       #   run: |
       #     set -x
