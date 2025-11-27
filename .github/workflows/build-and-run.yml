@@ -27,7 +27,7 @@ jobs:
           cd ${{ github.workspace }}
           # ./mvnw -T12C -Pspotless spotless:check
           
-      - name: Clone TornadoVM explicitly
+      - name: Clone Latest TornadoVM
         run: |
           git clone --depth 1 --branch master \
             https://github.com/beehive-lab/TornadoVM.git \
@@ -64,15 +64,15 @@ jobs:
           echo "=== Checking tornado CLI ==="
           which tornado || { echo "::error::tornado not in PATH"; exit 1; }
           tornado --devices
-      - name: Build GPULlama3
+      - name: Build GPULlama3.java
         run: |
           cd ${{ github.workspace }}
           echo "Using TORNADO_SDK=$TORNADO_SDK"
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
           which tornado || { echo "::error::tornado unavailable during GPULlama3 build"; exit 1; }
           tornado --version
-          make
-      - name: Run Llama-3.2-1B-Instruct-F16.gguf 
+          ./mvnw clean package -DskipTests
+      - name: [FP16] Run Llama-3.2-1B-Instruct-F16.gguf
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
@@ -80,7 +80,7 @@ jobs:
           ./llama-tornado --gpu --opencl \
             --model /home/michalis/models/Llama-3.2-1B-Instruct-F16.gguf \
             --prompt "Say hello"
-      - name: Run Qwen3-4B-f16.gguf
+      - name: [FP16] Run Qwen3-4B-f16.gguf
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
@@ -88,7 +88,7 @@ jobs:
           ./llama-tornado --gpu --opencl \
             --model /opt/models/Qwen3-4B-f16.gguf \
             --prompt "Say hello"
-      - name: Run Mistral-7B-Instruct-v0.3.fp16.gguf
+      - name: [FP16] Run Mistral-7B-Instruct-v0.3.fp16.gguf
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
@@ -96,7 +96,7 @@ jobs:
           ./llama-tornado --gpu --opencl \
             --model /opt/models/Mistral-7B-Instruct-v0.3.fp16.gguf \
             --prompt "Say hello"
-      - name: Run Qwen2.5-1.5b-instruct-fp16.gguf
+      - name: [FP16] Run Qwen2.5-1.5b-instruct-fp16.gguf
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
@@ -104,7 +104,7 @@ jobs:
           ./llama-tornado --gpu --opencl \
             --model /opt/models/qwen2.5-1.5b-instruct-fp16.gguf \
             --prompt "Say hello"
-      - name: Run Phi-3-mini-4k-instruct-fp16.gguf
+      - name: [FP16] Run Phi-3-mini-4k-instruct-fp16.gguf
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
