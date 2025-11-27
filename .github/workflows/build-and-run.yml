@@ -54,7 +54,7 @@ jobs:
           source venv/bin/activate
           echo "=== Building TornadoVM ==="
           
-          ./mvnw -Pjdk21,opencl-backend -Dtornado.backend=opencl install
+          make
           
           echo "=== Searching for TornadoVM SDK directory ==="
           SDK_DIR=$(find dist -type d -maxdepth 3 -path "*/tornadovm-*-opencl" | head -n 1)
