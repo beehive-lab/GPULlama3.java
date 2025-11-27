@@ -37,6 +37,11 @@ jobs:
           python3 -m venv GPULlama3.java/external/tornadovm/venv
           source GPULlama3.java/external/tornadovm/venv/bin/activate
           python --version
+      - name: Copy Graal JARs
+        run: |
+          cd GPULlama3.java/external/tornadovm
+          mkdir -p graalJars
+          cp /opt/graalJars/* graalJars/
       - name: Build TornadoVM
         run: |
           cd GPULlama3.java/external/tornadovm
