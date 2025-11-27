@@ -6,9 +6,6 @@ on:
   pull_request:
     branches: [ main ]  
     types: [opened, synchronize,  reopened]
-  pull_request_review:
-    types: [submitted, edited]
-
 
 jobs:
   build-and-run:
@@ -42,7 +39,6 @@ jobs:
           python --version
       - name: Build TornadoVM
         run: |
-          set -x
           cd GPULlama3.java/external/tornadovm
           source venv/bin/activate
           echo "=== Building TornadoVM ==="
@@ -70,7 +66,6 @@ jobs:
           tornado --devices
       - name: Build GPULlama3
         run: |
-          set -x
           cd ${{ github.workspace }}
           echo "Using TORNADO_SDK=$TORNADO_SDK"
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
@@ -79,7 +74,6 @@ jobs:
           make
       - name: Run Llama-3.2-1B-Instruct-F16.gguf 
         run: |
-          set -x
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
           which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
@@ -88,7 +82,6 @@ jobs:
             --prompt "Say hello"
       - name: Run Qwen3-4B-f16.gguf
         run: |
-          set -x
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
           which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
@@ -97,7 +90,6 @@ jobs:
             --prompt "Say hello"
       - name: Run Mistral-7B-Instruct-v0.3.fp16.gguf
         run: |
-          set -x
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
           which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
@@ -106,7 +98,6 @@ jobs:
             --prompt "Say hello"
       - name: Run Qwen2.5-1.5b-instruct-fp16.gguf
         run: |
-          set -x
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
           which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
