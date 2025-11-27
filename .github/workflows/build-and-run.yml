@@ -14,7 +14,8 @@ jobs:
     env:
       JAVA_HOME: /opt/jenkins/jdks/graal-23.1.0/jdk-21.0.3
       TORNADO_ROOT: ${{ github.workspace }}/GPULlama3.java/external/tornadovm
-      LLAMA_ROOT: ${{ github.workspace }} 
+      LLAMA_ROOT: ${{ github.workspace }}
+      GRAAL_JARS: /opt/graalJars
     
     steps:
       - name: Checkout GPULlama3
@@ -37,14 +38,10 @@ jobs:
           python3 -m venv GPULlama3.java/external/tornadovm/venv
           source GPULlama3.java/external/tornadovm/venv/bin/activate
           python --version
-      - name: Copy Graal JARs
-        run: |
-          cd GPULlama3.java/external/tornadovm
-          mkdir -p graalJars
-          cp /opt/graalJars/* graalJars/
       - name: Build TornadoVM
         run: |
           cd GPULlama3.java/external/tornadovm
+          mkdir -p graalJars && cp $GRAAL_JARS/* graalJars/
           source venv/bin/activate
           echo "=== Building TornadoVM ==="
           make
@@ -74,14 +71,12 @@ jobs:
           cd ${{ github.workspace }}
           echo "Using TORNADO_SDK=$TORNADO_SDK"
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-          which tornado || { echo "::error::tornado unavailable during GPULlama3 build"; exit 1; }
           tornado --version
           ./mvnw clean package -DskipTests
       - name: FP16 - Run Llama-3.2-1B-Instruct-F16.gguf
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
           ./llama-tornado --gpu --opencl \
             --model /home/michalis/models/Llama-3.2-1B-Instruct-F16.gguf \
             --prompt "Say hello"
@@ -89,7 +84,6 @@ jobs:
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
           ./llama-tornado --gpu --opencl \
             --model /opt/models/Qwen3-4B-f16.gguf \
             --prompt "Say hello"
@@ -97,7 +91,6 @@ jobs:
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
           ./llama-tornado --gpu --opencl \
             --model /opt/models/Mistral-7B-Instruct-v0.3.fp16.gguf \
             --prompt "Say hello"
@@ -105,7 +98,6 @@ jobs:
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
           ./llama-tornado --gpu --opencl \
             --model /opt/models/qwen2.5-1.5b-instruct-fp16.gguf \
             --prompt "Say hello"
@@ -113,7 +105,6 @@ jobs:
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
           ./llama-tornado --gpu --opencl \
             --model /opt/models/Phi-3-mini-4k-instruct-fp16.gguf \
             --prompt "Say hello"
@@ -121,7 +112,6 @@ jobs:
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
           ./llama-tornado --gpu --opencl \
             --model /opt/models/Llama-3.2-1B-Instruct-Q8_0.gguf \
             --prompt "Say hello"
@@ -129,7 +119,6 @@ jobs:
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
           ./llama-tornado --gpu --opencl \
             --model /opt/models/Qwen3-0.6B-Q8_0.gguf \
             --prompt "Say hello"
@@ -137,7 +126,6 @@ jobs:
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
           ./llama-tornado --gpu --opencl \
             --model /opt/models/Phi-3-mini-4k-instruct-Q8_0.gguf \
             --prompt "Say hello"
@@ -145,7 +133,6 @@ jobs:
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
           ./llama-tornado --gpu --opencl \
             --model /opt/models/qwen2.5-1.5b-instruct-q8_0.gguf \
             --prompt "Say hello"
@@ -153,7 +140,6 @@ jobs:
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
           ./llama-tornado --gpu --opencl \
             --model /opt/models/Mistral-7B-Instruct-v0.3.Q8_0.gguf \
             --prompt "Say hello"
