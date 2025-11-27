@@ -128,3 +128,27 @@ jobs:
           ./llama-tornado --gpu --opencl \
             --model /opt/models/Qwen3-0.6B-Q8_0.gguf \
             --prompt "Say hello"
+      - name: Q8 - Run Phi-3-mini-4k-instruct-Q8_0.gguf
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
+          ./llama-tornado --gpu --opencl \
+            --model /opt/models/Phi-3-mini-4k-instruct-Q8_0.gguf \
+            --prompt "Say hello"
+      - name: Q8 - Run Qwen2.5-1.5b-instruct-q8_0.gguf
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
+          ./llama-tornado --gpu --opencl \
+            --model /opt/models/qwen2.5-1.5b-instruct-q8_0.gguf \
+            --prompt "Say hello"
+      - name: Q8 - Mistral-7B-Instruct-v0.3.Q8_0.gguf
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
+          ./llama-tornado --gpu --opencl \
+            --model /opt/models/Mistral-7B-Instruct-v0.3.Q8_0.gguf \
+            --prompt "Say hello"
