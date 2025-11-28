@@ -70,7 +70,38 @@ public class TransformerComputeKernelsLayered {
             /*for (int i = 0;i < (size / localMemSize); i++){
                 localPartSum[i] = localX[0];
             }*/
+        } //can we remove the if statement here so every thread writes instead of only the first thread (might take up more mem space), and then change the for loop logic index below?
+        context.globalBarrier();
+
+        /*float[] localss = context.allocateFloatLocalArray(localMemSize);
+        localss[lid] = 0.0f;
+        for (int i = 0; i < (size / localMemSize); i++) {  // Assuming 8 workgroups
+            //ss += localPartSum[i];
+            localss[lid] += output.get(i);
+            //ss += temp.get(i);
         }
+        localss[lid] /= size;
+        localss[lid] += ermsNorm;
+        localss[lid] = 1.0f / TornadoMath.sqrt(localss[lid]);
+
+        context.localBarrier();
+
+        output.set(groupId * groupSize + lid, weights.get(groupId * groupSize + lid) * (localss[lid] * x.get(groupId * groupSize + lid)));*/
+        float localss = 0.0f;
+        for (int i = 0; i < (size / localMemSize); i++) {  // Assuming 8 workgroups
+            //ss += localPartSum[i];
+            //localss += output.get(i);
+            localss += temp.get(i);
+        }
+        localss /= size;
+        localss += ermsNorm;
+        localss = 1.0f / TornadoMath.sqrt(localss);
+
+        //context.localBarrier();
+
+        output.set(groupId * groupSize + lid, weights.get(groupId * groupSize + lid) * (localss * x.get(groupId * groupSize + lid)));
+        //output.set(gid, weights.get(gid) * (localss * x.get(gid)));
+
 
         // Only the first thread in the first workgroup computes the final normalization factor
         /*if (gid == 0) {
@@ -78,8 +109,8 @@ public class TransformerComputeKernelsLayered {
             float ss = 0.0f;
             for (int i = 0; i < (size / localMemSize); i++) {  // Assuming 8 workgroups
                 //ss += localPartSum[i];
-                //ss += output.get(i);
-                ss += temp.get(i);
+                ss += output.get(i);
+                //ss += temp.get(i);
             }
 
             ss /= size;
@@ -87,22 +118,24 @@ public class TransformerComputeKernelsLayered {
             ss = 1.0f / TornadoMath.sqrt(ss);
             output.set(0, ss);  // Store the final scale factor
         }*/
+        //context.localBarrier();
+        //output.set(gid, weights.get(gid) * (ss * x.get(gid)));
         //output.set(gid, 0.0f);
         //System.out.println(output.get(0));
         //float[] ss = context.allocateFloatLocalArray(size);
         //ss[gid] = 0.0f;
-        for (int i = 0; i < (size / localMemSize); i++) {  // Assuming 8 workgroups
+        /*for (int i = 0; i < (size / localMemSize); i++) {  // Assuming 8 workgroups
             //ss[gid] += temp.get(i);
             output.set(gid, output.get(gid) + temp.get(i));
-        }
+        }*/
         /*ss[gid] /= size;
         ss[gid] += ermsNorm;
         ss[gid] = 1.0f / TornadoMath.sqrt(ss[gid]);
         output.set(gid, weights.get(gid) * (ss[gid] * x.get(gid)));*/
-        output.set(gid, output.get(gid) / size);
+        /*output.set(gid, output.get(gid) / size);
         output.set(gid, output.get(gid) + ermsNorm);
         output.set(gid, 1.0f / TornadoMath.sqrt(output.get(gid)));
-        output.set(gid, weights.get(gid) * (output.get(gid) * x.get(gid)));
+        output.set(gid, weights.get(gid) * (output.get(gid) * x.get(gid)));*/
         //output.set(gid, ss[gid]);  // Store the final scale factor
     }
 

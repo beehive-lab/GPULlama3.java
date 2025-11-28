@@ -112,17 +112,17 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
                 weights.w3Layered[layerIndex].asHalfFloatArray());
         unifiedLayer = configureLayerDataTransfers(unifiedLayer, layerIndex);
         /*unifiedLayer
-                .task("reductionsOneBlock", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.temp, state.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), config.dim(), config.rmsNormEps(), state.localSize);
-        System.out.println("temp 0 value: " + state.temp.get(0));
-        System.out.println("temp size: " + state.temp.getSize());*/
+                .task("reductionsOneBlock", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.temp, state.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), config.dim(), config.rmsNormEps(), state.localSize);*/
+        //System.out.println("temp 0 value: " + state.temp.get(0));
+        //System.out.println("temp size: " + state.temp.getSize());
         //System.out.printf("%.2f", state.temp.get(0));
         unifiedLayer
                 .task("reductionsOneBlock", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.wrapXb, state.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), state.temp, config.dim(), config.rmsNormEps(), state.localSize);
-        for (int i = 0; i < state.wrapXb.getSize();i++){
+        /*for (int i = 0; i < state.wrapXb.getSize();i++){
             System.out.println("wrapXb i value: " + state.wrapXb.get(i));
         }
         //System.out.println(state.wrapXb);
-        System.out.println("wrapXb size: " + state.wrapXb.getSize());
+        System.out.println("wrapXb size: " + state.wrapXb.getSize());*/
                 if (shouldUseFinalNormalization()) {
                     System.out.println("reductionFinalNormalization run!");
                     unifiedLayer.task("reductionFinalNormalization", TransformerComputeKernelsLayered::reductionFinalNormalization, context, state.temp,
@@ -133,16 +133,7 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
                     System.out.println("wrapXb i value: " + state.wrapXb.get(i));
                 }*/
                 //System.out.println(state.wrapXb);
-                /*System.out.println("wrapXb size: " + state.wrapXb.getSize());
-                unifiedLayer.task("qmatmul", TransformerComputeKernelsLayered::matrixVectorGeneric, context, state.wrapXb, state.wrapQ, weights.wqLayered[layerIndex].asHalfFloatArray(), config.dim(), config.dim(),
-                        LOCAL_WORK_GROUP_SIZE_ALLOC)
-                .task("kmatmul", TransformerComputeKernelsLayered::matrixVectorGeneric, context, state.wrapXb, state.wrapK, weights.wkLayered[layerIndex].asHalfFloatArray(), config.dim(), config.kvDim(),
-                        LOCAL_WORK_GROUP_SIZE_ALLOC)
-                .task("vmatmul", TransformerComputeKernelsLayered::matrixVectorGeneric, context, state.wrapXb, state.wrapV, weights.wvLayered[layerIndex].asHalfFloatArray(), config.dim(), config.kvDim(),
-                        LOCAL_WORK_GROUP_SIZE_ALLOC)
-                .task("rope", TransformerComputeKernelsLayered::ropeRotation, context, state.positionHolder, state.wrapQ, state.wrapK, config.kvDim(), config.headSize())
-                .task("copyToCaches", TransformerComputeKernelsLayered::copyToCache, state.wrapKeyCache, state.wrapK, state.wrapValueCache, state.wrapV, state.positionHolder, config.kvDim(),
-                        layerIndex, config.contextLength());*/
+                //System.out.println("wrapXb size: " + state.wrapXb.getSize());
                 unifiedLayer.task("qmatmul", TransformerComputeKernelsLayered::matrixVectorGeneric, context, state.wrapXb, state.wrapQ, weights.wqLayered[layerIndex].asHalfFloatArray(), config.dim(), config.dim(),
                         LOCAL_WORK_GROUP_SIZE_ALLOC)
                 .task("kmatmul", TransformerComputeKernelsLayered::matrixVectorGeneric, context, state.wrapXb, state.wrapK, weights.wkLayered[layerIndex].asHalfFloatArray(), config.dim(), config.kvDim(),
@@ -155,17 +146,17 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
                 configureAttention(unifiedLayer, layerIndex);
                 /*unifiedLayer.task("matmul1", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual, context, state.wrapXb, state.wrapX, weights.woLayered[layerIndex].asHalfFloatArray(), config.dim(), config.dim(),
                         LOCAL_WORK_GROUP_SIZE_ALLOC)
-                .task("reductionsOneBlockFFN", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.tempFFN, state.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), config.dim(), config.rmsNormEps(), state.localSize);
-                System.out.println("tempFFN 0 size: " + state.tempFFN.get(0));
-                System.out.println("tempFFN size: " + state.tempFFN.getSize());*/
+                .task("reductionsOneBlockFFN", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.tempFFN, state.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), config.dim(), config.rmsNormEps(), state.localSize);*/
+                //System.out.println("tempFFN 0 size: " + state.tempFFN.get(0));
+                //System.out.println("tempFFN size: " + state.tempFFN.getSize());
                 unifiedLayer.task("matmul1", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual, context, state.wrapXb, state.wrapX, weights.woLayered[layerIndex].asHalfFloatArray(), config.dim(), config.dim(),
                         LOCAL_WORK_GROUP_SIZE_ALLOC)
-                .task("reductionsOneBlockFFN", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.wrapXb, state.wrapX, weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), state.tempFFN, config.dim(), config.rmsNormEps(), state.localSize);
-        for (int i = 0; i < state.wrapXb.getSize();i++){
+                .task("reductionsOneBlockFFN", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.wrapXb, state.wrapX, weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), state.temp, config.dim(), config.rmsNormEps(), state.localSize);
+        /*for (int i = 0; i < state.wrapXb.getSize();i++){
             System.out.println("wrapXb i value: " + state.wrapXb.get(i));
         }
         //System.out.println(state.wrapXb);
-        System.out.println("wrapXb size: " + state.wrapXb.getSize());
+        System.out.println("wrapXb size: " + state.wrapXb.getSize());*/
                 if (shouldUseFinalNormalization()) {
                     System.out.println("reductionFinalNormalization run!");
                     unifiedLayer.task("reductionFinalNormalizationFFN", TransformerComputeKernelsLayered::reductionFinalNormalization, context, state.tempFFN, config.dim(), config.rmsNormEps());
@@ -175,11 +166,7 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
                 /*for (int i = 0; i < state.wrapXb.getSize();i++){
                     System.out.println("wrapXb i value: " + state.wrapXb.get(i));
                 }*/
-                /*System.out.println("wrapXb size: " + state.wrapXb.getSize());
-                unifiedLayer.task("fused_ffn_w1_w3", TransformerComputeKernelsLayered::fusedFeedForwardWithSiLUAndGLUActivation, context, state.wrapXb, state.wrapHb, weights.w1Layered[layerIndex].asHalfFloatArray(),
-                        weights.w3Layered[layerIndex].asHalfFloatArray(), config.dim(), config.hiddenDim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
-                .task("projectionTwo", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual, context, state.wrapHb, state.wrapX, weights.w2Layered[layerIndex].asHalfFloatArray(), config.hiddenDim(),
-                        config.dim(), LOCAL_WORK_GROUP_SIZE_ALLOC).persistOnDevice(state.wrapX);*/
+                //System.out.println("wrapXb size: " + state.wrapXb.getSize());
                 unifiedLayer.task("fused_ffn_w1_w3", TransformerComputeKernelsLayered::fusedFeedForwardWithSiLUAndGLUActivation, context, state.wrapXb, state.wrapHb, weights.w1Layered[layerIndex].asHalfFloatArray(),
                         weights.w3Layered[layerIndex].asHalfFloatArray(), config.dim(), config.hiddenDim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
                 .task("projectionTwo", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual, context, state.wrapHb, state.wrapX, weights.w2Layered[layerIndex].asHalfFloatArray(), config.hiddenDim(),
