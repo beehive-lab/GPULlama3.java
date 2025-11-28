@@ -2,7 +2,9 @@ package org.beehive.gpullama3.tornadovm.kernels;
 
 import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
+import uk.ac.manchester.tornado.api.types.HalfFloat;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 
 public class TransformerComputeKernels {
 
@@ -17,6 +19,18 @@ public class TransformerComputeKernels {
         if (dummy > Float.MAX_VALUE) {
             buffer.set(0, dummy);
         }
+    }
+
+    public static void convertFP16toFP32(KernelContext context, HalfFloatArray x, FloatArray wrapX) {
+        int i = context.globalIdx;
+        wrapX.set(i, x.get(i).getFloat32());
+    }
+
+    public static void convertFP32toFP16(KernelContext context,  FloatArray wrapX, HalfFloatArray x) {
+        int i = context.globalIdx;
+        float valInput = wrapX.get(i);
+        HalfFloat val = new HalfFloat(valInput);
+        x.set(i,val);
     }
 
     /**

@@ -4,6 +4,7 @@ import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
 import org.beehive.gpullama3.tensor.standard.FloatTensor;
 import org.beehive.gpullama3.model.Configuration;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
 
 import java.util.stream.Stream;
@@ -51,6 +52,8 @@ public final class LlamaState extends State {
         fields.wrapXb2 = new FloatArray(config.dim());
         fields.wrapHb = new FloatArray(config.hiddenDim());
         fields.wrapHb2 = new FloatArray(config.hiddenDim());
+
+        fields.embeddingX = new HalfFloatArray(config.dim());
 
         fields.wrapLogits = new FloatArray(config.vocabularySize());
         fields.wrapQ = new FloatArray(config.dim());

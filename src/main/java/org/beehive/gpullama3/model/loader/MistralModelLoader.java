@@ -130,7 +130,7 @@ public class MistralModelLoader extends AbstractModelLoader<Mistral, MistralConf
 
         // Load all tensors uniformly as TornadoTensor hierarchy
         return new LlamaTornadoWeights(
-                loadTornadoTensorAsFP32(tokenEmbeddings),
+                loadTornadoTensor(tokenEmbeddings),
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_norm.weight")),    // fp32
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_q.weight")),
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_k.weight")),

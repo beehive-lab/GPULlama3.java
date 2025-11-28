@@ -5,6 +5,7 @@ import org.beehive.gpullama3.tensor.standard.FloatTensor;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.phi3.Phi3Configuration;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
 
 import java.util.stream.Stream;
@@ -79,6 +80,7 @@ public class Phi3State extends State {
         fields.valueCache = Stream.generate(() -> ArrayFloatTensor.allocate(contextLength, kvDim)).limit(nLayers).toArray(FloatTensor[]::new);
 
         // TornadoVM wrapper arrays for GPU acceleration
+        fields.embeddingX = new HalfFloatArray(config.dim());
         fields.wrapX = new FloatArray(dim);
         fields.wrapXb = new FloatArray(dim);
         fields.wrapXb2 = new FloatArray(dim);

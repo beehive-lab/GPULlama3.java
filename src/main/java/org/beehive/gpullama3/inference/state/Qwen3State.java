@@ -5,6 +5,7 @@ import org.beehive.gpullama3.tensor.standard.FloatTensor;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.qwen3.Qwen3Configuration;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
 
 import java.util.stream.Stream;
@@ -65,6 +66,8 @@ public final class Qwen3State extends State {
         fields.valueCache = Stream.generate(() -> ArrayFloatTensor.allocate(config.contextLength(), nEmbdGqa)).limit(config.numberOfLayers()).toArray(FloatTensor[]::new);
 
         // TornadoVM wrappers with Qwen3-specific sizes
+
+        fields.embeddingX = new HalfFloatArray(config.dim());
         fields.wrapX = new FloatArray(config.dim());
         fields.wrapXb = new FloatArray(nEmbdHeadK * config.numberOfHeads());
         fields.wrapXb2 = new FloatArray(config.dim());
@@ -74,7 +77,7 @@ public final class Qwen3State extends State {
         fields.wrapQ = new FloatArray(nEmbdHeadK * config.numberOfHeads());
         fields.wrapK = new FloatArray(nEmbdKGqa);
         fields.wrapV = new FloatArray(nEmbdKGqa);
-
+        fields.embeddingX = new HalfFloatArray(config.dim());
         fields.wrapKeyCache = new FloatArray(config.contextLength() * nEmbdGqa * config.numberOfLayers());
         fields.wrapValueCache = new FloatArray(config.contextLength() * nEmbdGqa * config.numberOfLayers());
         fields.wrapValueCache.init(0.f);

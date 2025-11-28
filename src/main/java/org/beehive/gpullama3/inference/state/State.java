@@ -2,7 +2,9 @@ package org.beehive.gpullama3.inference.state;
 
 import org.beehive.gpullama3.tensor.standard.FloatTensor;
 import org.beehive.gpullama3.model.Configuration;
+import uk.ac.manchester.tornado.api.types.HalfFloat;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
 
 /**
@@ -57,6 +59,7 @@ public abstract class State {
     public final FloatArray wrapValueCache; // FloatArray wrapper for the value cache, optimized for TornadoVM.
     public final IntArray positionHolder;
 
+    public HalfFloatArray embeddingX;
     // store inter
     public int localSize;
     public FloatArray temp;         // Temporary buffer for intermediate calculations, size adjusted for local workgroup size.
@@ -88,6 +91,7 @@ public abstract class State {
         this.keyCache = fields.keyCache;
         this.valueCache = fields.valueCache;
 
+        this.embeddingX = fields.embeddingX;
         this.wrapX = fields.wrapX;
         this.wrapXb = fields.wrapXb;
         this.wrapXb2 = fields.wrapXb2;
@@ -121,6 +125,7 @@ public abstract class State {
         public FloatArray wrapQ, wrapK, wrapV, wrapAtt, wrapKeyCache, wrapValueCache;
         public IntArray positionHolder;
         public FloatArray temp, tempFFN, tempLogits;
+        public HalfFloatArray embeddingX;
     }
 
     @Override

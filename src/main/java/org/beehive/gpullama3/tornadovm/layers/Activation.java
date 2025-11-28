@@ -7,8 +7,10 @@ import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernels;
 import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
+import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
+import uk.ac.manchester.tornado.api.WorkerGrid1D;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
 public class Activation extends AbstractLayer {
@@ -17,16 +19,20 @@ public class Activation extends AbstractLayer {
     public Activation(String taskGraphHandle, State state, Weights weights, Configuration config) {
         super(taskGraphHandle, state, weights, config);
 
-        // formatter:off
-        this.activationUpdate = new TaskGraph(taskGraphHandle).transferToDevice(DataTransferMode.EVERY_EXECUTION, state.wrapX)
-                .task("updateX", TransformerComputeKernels::emptyTaskToForceCopyIn, state.wrapX).persistOnDevice(state.wrapX);
-        // formatter:on
+        KernelContext kernelContext = new KernelContext();
+        // @formatter:off
+        this.activationUpdate = new TaskGraph(taskGraphHandle)
+            .transferToDevice(DataTransferMode.EVERY_EXECUTION, state.embeddingX)
+            .task("updateX", TransformerComputeKernels::convertFP16toFP32, kernelContext, state.embeddingX, state.wrapX)
+            .persistOnDevice(state.wrapX);
+        // @formatter:on
     }
 
     @Override
     public GridScheduler updateGridScheduler(GridScheduler scheduler) {
-        WorkerGrid singleWorker = WorkerGridFactory.createSingleWorker();
-        scheduler.addWorkerGrid("activationUpdate.updateX", singleWorker);
+        WorkerGrid worker = new WorkerGrid1D(config.dim());
+        worker.setLocalWork(128, 1, 1);
+        scheduler.addWorkerGrid("activationUpdate.updateX", worker);
         return scheduler;
     }
 
