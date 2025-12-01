@@ -193,9 +193,6 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
                 weights.w3Layered[layerIndex].asHalfFloatArray() //
         );
         unifiedLayer = configureLayerDataTransfers(unifiedLayer, layerIndex);
-        /*unifiedLayer.task("reductionsOneBlock", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, qwen3State.temp, qwen3State.wrapX, // in
-                qwen3Config.dim(), qwen3Config.rmsNormEps(), qwen3State.localSize).task("mapContext", TransformerComputeKernelsLayered::reductionOneBlock2WithLayer, context, qwen3State.wrapXb, // out
-                qwen3State.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), qwen3State.temp);*/
         unifiedLayer.task("reductionsOneBlock", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, qwen3State.wrapXb, qwen3State.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), qwen3State.temp,// in
                 qwen3Config.dim(), qwen3Config.rmsNormEps(), qwen3State.localSize);
 
@@ -249,11 +246,6 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
                 qwen3Config.dim(),                           // dim0 = 1024
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
 
-        /*unifiedLayer.task("reductionsOneBlockFFN", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, qwen3State.tempFFN, qwen3State.wrapX, qwen3Config.dim(),
-                        qwen3Config.rmsNormEps(), qwen3State.localSize)
-                .task("reductionFinalNormalizationFFN", TransformerComputeKernelsLayered::reductionFinalNormalization, context, qwen3State.tempFFN, qwen3Config.dim(), qwen3Config.rmsNormEps())
-                .task("mapContextFFN", TransformerComputeKernelsLayered::reductionOneBlock2WithLayer, context, qwen3State.wrapXb, qwen3State.wrapX, weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),
-                        qwen3State.tempFFN);*/
         //FIXME: restore the reductionFinalNormalizationFFN module later
         unifiedLayer.task("reductionsOneBlockFFN", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, qwen3State.wrapXb, qwen3State.wrapX, weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), qwen3State.tempFFN, qwen3Config.dim(),
                         qwen3Config.rmsNormEps(), qwen3State.localSize);

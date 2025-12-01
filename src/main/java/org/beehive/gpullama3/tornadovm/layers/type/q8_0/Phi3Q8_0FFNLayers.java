@@ -150,21 +150,6 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
         unifiedLayer = configureLayerDataTransfers(unifiedLayer, layerIndex);
 
         // RMSNorm for attention input
-        /*unifiedLayer.task("reductionsOneBlock",
-                        TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
-                        context,
-                        phi3State.temp,
-                        phi3State.wrapX,
-                        phi3Config.dim(),
-                        phi3Config.rmsNormEps(),
-                        phi3State.localSize)
-                .task("mapContext",
-                        TransformerComputeKernelsLayered::reductionOneBlock2WithLayer,
-                        context,
-                        phi3State.wrapXb,
-                        phi3State.wrapX,
-                        weights.rms_att_weightLayered[layerIndex].asFloatArray(),
-                        phi3State.temp);*/
         unifiedLayer.task("reductionsOneBlock",
                         TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
                         context,
@@ -247,21 +232,6 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
 
         // FFN section: RMSNorm
-        /*unifiedLayer.task("reductionsOneBlockFFN",
-                        TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
-                        context,
-                        phi3State.tempFFN,
-                        phi3State.wrapX,
-                        phi3Config.dim(),
-                        phi3Config.rmsNormEps(),
-                        phi3State.localSize)
-                .task("mapContextFFN",
-                        TransformerComputeKernelsLayered::reductionOneBlock2WithLayer,
-                        context,
-                        phi3State.wrapXb,
-                        phi3State.wrapX,
-                        weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),
-                        phi3State.tempFFN);*/
         unifiedLayer.task("reductionsOneBlockFFN",
                         TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
                         context,
