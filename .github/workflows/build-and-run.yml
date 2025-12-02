@@ -5,46 +5,66 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]  
-    types: [opened, synchronize,  reopened]
+    types: [opened, synchronize, reopened]
+
+env:
+  JAVA_HOME: /opt/jenkins/jdks/graal-23.1.0/jdk-21.0.3
+  TORNADO_ROOT: ${{ github.workspace }}/GPULlama3.java/external/tornadovm
+  LLAMA_ROOT: ${{ github.workspace }}
+  GRAAL_JARS: /opt/graalJars
+  MODELS_DIR: /opt/models
 
 jobs:
-  build-and-run:
+  code-quality:
     runs-on: self-hosted
-    
-    env:
-      JAVA_HOME: /opt/jenkins/jdks/graal-23.1.0/jdk-21.0.3
-      TORNADO_ROOT: ${{ github.workspace }}/GPULlama3.java/external/tornadovm
-      LLAMA_ROOT: ${{ github.workspace }} 
-    
+    timeout-minutes: 30
+
     steps:
       - name: Checkout GPULlama3
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Check code formatting (Spotless)
         run: |
           cd ${{ github.workspace }}
           # ./mvnw -T12C -Pspotless spotless:check
-          
-      - name: Clone Latest TornadoVM
+
+  build-and-run:
+    runs-on: [self-hosted]
+    needs: code-quality
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: true
+      matrix:
+        backend:
+          - name: opencl
+          - name: ptx
+
+    steps:
+      - name: Checkout GPULlama3
+        uses: actions/checkout@v4
+
+      - name: Clone TornadoVM master
         run: |
           git clone --depth 1 --branch master \
             https://github.com/beehive-lab/TornadoVM.git \
-            GPULlama3.java/external/tornadovm
+            $TORNADO_ROOT
       - name: Set up Python venv for TornadoVM
         run: |
-          python3 -m venv GPULlama3.java/external/tornadovm/venv
-          source GPULlama3.java/external/tornadovm/venv/bin/activate
+          python3 -m venv $TORNADO_ROOT/venv
+          source $TORNADO_ROOT/venv/bin/activate
           python --version
       - name: Build TornadoVM
         run: |
-          cd GPULlama3.java/external/tornadovm
+          cd $TORNADO_ROOT
+          mkdir -p graalJars && cp $GRAAL_JARS/* graalJars/
           source venv/bin/activate
           echo "=== Building TornadoVM ==="
-          make
+          
+          make BACKEND=${{ matrix.backend.name }}
+          
           echo "=== Searching for TornadoVM SDK directory ==="
-          SDK_DIR=$(find dist -type d -maxdepth 3 -path "*/tornadovm-*-opencl" | head -n 1)
+          SDK_DIR=$(find dist -type d -maxdepth 3 -path "*/tornadovm-*-${{ matrix.backend.name }}" | head -n 1)
           if [ -z "$SDK_DIR" ]; then
             echo "::error::Could not locate TornadoVM SDK directory!"
             find dist -maxdepth 5 -type d
@@ -69,86 +89,75 @@ jobs:
           cd ${{ github.workspace }}
           echo "Using TORNADO_SDK=$TORNADO_SDK"
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-          which tornado || { echo "::error::tornado unavailable during GPULlama3 build"; exit 1; }
           tornado --version
           ./mvnw clean package -DskipTests
       - name: FP16 - Run Llama-3.2-1B-Instruct-F16.gguf
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
-          ./llama-tornado --gpu --opencl \
-            --model /home/michalis/models/Llama-3.2-1B-Instruct-F16.gguf \
+          ./llama-tornado --gpu --${{ matrix.backend.name }} \
+            --model $MODELS_DIR/Llama-3.2-1B-Instruct-F16.gguf \
             --prompt "Say hello"
       - name: FP16 - Run Qwen3-4B-f16.gguf
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
-          ./llama-tornado --gpu --opencl \
-            --model /opt/models/Qwen3-4B-f16.gguf \
+          ./llama-tornado --gpu --${{ matrix.backend.name }} \
+            --model $MODELS_DIR/Qwen3-4B-f16.gguf \
             --prompt "Say hello"
       - name: FP16 - Run Mistral-7B-Instruct-v0.3.fp16.gguf
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
-          ./llama-tornado --gpu --opencl \
-            --model /opt/models/Mistral-7B-Instruct-v0.3.fp16.gguf \
+          ./llama-tornado --gpu --${{ matrix.backend.name }} \
+            --model $MODELS_DIR/Mistral-7B-Instruct-v0.3.fp16.gguf \
             --prompt "Say hello"
       - name: FP16 - Run Qwen2.5-1.5b-instruct-fp16.gguf
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
-          ./llama-tornado --gpu --opencl \
-            --model /opt/models/qwen2.5-1.5b-instruct-fp16.gguf \
+          ./llama-tornado --gpu --${{ matrix.backend.name }} \
+            --model $MODELS_DIR/qwen2.5-1.5b-instruct-fp16.gguf \
             --prompt "Say hello"
       - name: FP16 - Run Phi-3-mini-4k-instruct-fp16.gguf
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
-          ./llama-tornado --gpu --opencl \
-            --model /opt/models/Phi-3-mini-4k-instruct-fp16.gguf \
+          ./llama-tornado --gpu --${{ matrix.backend.name }} \
+            --model /$MODELS_DIR/Phi-3-mini-4k-instruct-fp16.gguf \
             --prompt "Say hello"
       - name: Q8 - Run Llama-3.2-1B-Instruct-Q8_0.gguf
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
-          ./llama-tornado --gpu --opencl \
-            --model /opt/models/Llama-3.2-1B-Instruct-Q8_0.gguf \
+          ./llama-tornado --gpu --${{ matrix.backend.name }} \
+            --model $MODELS_DIR/Llama-3.2-1B-Instruct-Q8_0.gguf \
             --prompt "Say hello"
       - name: Q8 - Run Qwen3-0.6B-Q8_0.gguf
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
-          ./llama-tornado --gpu --opencl \
-            --model /opt/models/Qwen3-0.6B-Q8_0.gguf \
+          ./llama-tornado --gpu --${{ matrix.backend.name }} \
+            --model $MODELS_DIR/Qwen3-0.6B-Q8_0.gguf \
             --prompt "Say hello"
       - name: Q8 - Run Phi-3-mini-4k-instruct-Q8_0.gguf
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
-          ./llama-tornado --gpu --opencl \
-            --model /opt/models/Phi-3-mini-4k-instruct-Q8_0.gguf \
+          ./llama-tornado --gpu --${{ matrix.backend.name }} \
+            --model $MODELS_DIR/Phi-3-mini-4k-instruct-Q8_0.gguf \
             --prompt "Say hello"
       - name: Q8 - Run Qwen2.5-1.5b-instruct-q8_0.gguf
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
-          ./llama-tornado --gpu --opencl \
-            --model /opt/models/qwen2.5-1.5b-instruct-q8_0.gguf \
+          ./llama-tornado --gpu --${{ matrix.backend.name }} \
+            --model $MODELS_DIR/qwen2.5-1.5b-instruct-q8_0.gguf \
             --prompt "Say hello"
       - name: Q8 - Mistral-7B-Instruct-v0.3.Q8_0.gguf
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-          which tornado || { echo "::error::tornado not found at runtime"; exit 1; }
-          ./llama-tornado --gpu --opencl \
-            --model /opt/models/Mistral-7B-Instruct-v0.3.Q8_0.gguf \
+          ./llama-tornado --gpu --${{ matrix.backend.name }} \
+            --model $MODELS_DIR/Mistral-7B-Instruct-v0.3.Q8_0.gguf \
             --prompt "Say hello"

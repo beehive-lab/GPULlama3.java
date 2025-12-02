@@ -127,7 +127,7 @@ public abstract class ModelLoader {
         return switch (ggmlType) {
             case F32 -> FP32TornadoTensor.fromTornadoMemorySegment(entry.memorySegment());
             case F16 -> FP16TornadoTensor.fromTornadoMemorySegment(entry.memorySegment());
-            case Q8_0 -> Q8_0TornadoTensor.create(entry);
+            case Q8_0 -> Q8_0TornadoTensor.createAsQ8_0(entry);
             case Q4_0 -> throw new UnsupportedOperationException("Q4 format not supported yet");
             default -> throw new UnsupportedOperationException("Quantization format " + ggmlType);
         };
@@ -163,16 +163,7 @@ public abstract class ModelLoader {
                 }
                 yield new FP32TornadoTensor(tensorFA);
             }
-            case Q8_0 -> {
-                Q8_0TornadoTensor tensorQ8_0 = Q8_0TornadoTensor.create(entry);
-                int numOfElements = tensorQ8_0.getSize();
-                FloatArray tensorFA = new FloatArray(numOfElements);
-                for (int i = 0; i < numOfElements; i++) {
-                    tensorFA.set(i, tensorQ8_0.getFloat(i));
-                }
-                yield new FP32TornadoTensor(tensorFA);
-
-            }
+            case Q8_0 -> Q8_0TornadoTensor.createAsFP32(entry);
             default -> {
                 throw new UnsupportedOperationException("Unsupported tensor type: " + tensor.type());
             }
@@ -200,7 +191,7 @@ public abstract class ModelLoader {
     public static Q8_0TornadoTensor[] loadArrayAsQ8_0TornadoTensor(int size, IntFunction<GGMLTensorEntry> getTensorEntry) {
         Q8_0TornadoTensor[] array = new Q8_0TornadoTensor[size];
         for (int i = 0; i < size; i++) {
-            array[i] = Q8_0TornadoTensor.create(getTensorEntry.apply(i));
+            array[i] = Q8_0TornadoTensor.createAsQ8_0(getTensorEntry.apply(i));
         }
         return array;
     }
