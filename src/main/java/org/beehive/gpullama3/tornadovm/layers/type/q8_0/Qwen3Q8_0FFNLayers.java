@@ -93,7 +93,6 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
 
         for (int i = 0; i < config.numberOfLayers(); i++) {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlock", rmsNormWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".mapContext", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".qmatmul", matmulQRowMajorWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".kmatmul", matmulKVRowMajorWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".vmatmul", matmulKVRowMajorWorker);
@@ -106,7 +105,6 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".parallel-attention", parallelAttentionWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".matmul1", matmul1Worker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlockFFN", rmsNormWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".mapContextFFN", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".fused_ffn_w1_w3", fusedFFNW1W3Worker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".projectionTwo", projectionTwoWorker);
         }
@@ -187,7 +185,7 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
 
         // RMS norm for attention input
         unifiedLayer.task("reductionsOneBlock",
-                        TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                        TransformerComputeKernelsLayered::reductionOneBlockWithLayerFuse,
                         context, qwen3State.wrapXb, qwen3State.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), qwen3State.temp, config.dim(), config.rmsNormEps(), qwen3State.localSize);
 
         // QKV projections with Qwen3 GQA dimensions
@@ -258,7 +256,7 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
 
         // RMS norm for FFN input
         unifiedLayer.task("reductionsOneBlockFFN",
-                        TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                        TransformerComputeKernelsLayered::reductionOneBlockWithLayerFuse,
                         context, qwen3State.wrapXb, qwen3State.wrapX, weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), qwen3State.tempFFN, config.dim(), config.rmsNormEps(), qwen3State.localSize);
 
         // Fused FFN: w1(x) ⊗ w3(x) with SiLU activation (Q8_0 weights)

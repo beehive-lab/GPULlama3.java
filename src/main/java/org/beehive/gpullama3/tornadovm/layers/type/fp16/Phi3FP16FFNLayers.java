@@ -63,7 +63,6 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
     public GridScheduler updateGridScheduler(GridScheduler gridScheduler) {
         // RMS norm worker
         WorkerGrid rmsNormWorker = WorkerGridFactory.createRmsNormWorker(config.dim(), state.localSize);
-
         // Combined QKV matmul worker
         int matmulQkvGlobal = opSize * LOCAL_WORK_GROUP_SIZE_ALLOC;
         WorkerGrid matmulQkvRowMajorWorker = WorkerGridFactory.genericWorker(matmulQkvGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC);
@@ -169,13 +168,18 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
         unifiedLayer.task("reductionsOneBlock",
                         TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
                         context,
+                        phi3State.temp,
+                        phi3State.wrapX,
+                        phi3Config.dim(),
+                        phi3Config.rmsNormEps(),
+                        phi3State.localSize)
+                .task("mapContext",
+                        TransformerComputeKernelsLayered::reductionOneBlock2WithLayer,
+                        context,
                         phi3State.wrapXb,
                         phi3State.wrapX,
                         weights.rms_att_weightLayered[layerIndex].asFloatArray(),
-                        phi3State.temp,
-                        phi3Config.dim(),
-                        phi3Config.rmsNormEps(),
-                        phi3State.localSize);
+                        phi3State.temp);
 
         // Combined QKV projection
         unifiedLayer.task("qkvmatmul",
@@ -249,13 +253,18 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
         unifiedLayer.task("reductionsOneBlockFFN",
                         TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
                         context,
+                        phi3State.tempFFN,
+                        phi3State.wrapX,
+                        phi3Config.dim(),
+                        phi3Config.rmsNormEps(),
+                        phi3State.localSize)
+                .task("mapContextFFN",
+                        TransformerComputeKernelsLayered::reductionOneBlock2WithLayer,
+                        context,
                         phi3State.wrapXb,
                         phi3State.wrapX,
                         weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),
-                        phi3State.tempFFN,
-                        phi3Config.dim(),
-                        phi3Config.rmsNormEps(),
-                        phi3State.localSize);
+                        phi3State.tempFFN);
 
         // FFN: combined Up and Gate projection (outputs 2 * hiddenDim)
         unifiedLayer.task("wGateUp",

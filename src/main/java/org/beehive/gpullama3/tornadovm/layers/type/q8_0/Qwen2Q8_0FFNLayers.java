@@ -111,9 +111,7 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".projectionTwo", configDimRowMajorGlobalWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".fused_ffn_w1_w3", configHiddenDimRowMajorWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlock", rmsNormWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".mapContext", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlockFFN", rmsNormWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".mapContextFFN", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".parallel-attention", parallelAttentionWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".copyToCaches", copyToCachesWorker);
         }
@@ -187,7 +185,7 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
         );
         unifiedLayer = configureLayerDataTransfers(unifiedLayer, layerIndex);
 
-        unifiedLayer.task("reductionsOneBlock" , TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.wrapXb,
+        unifiedLayer.task("reductionsOneBlock" , TransformerComputeKernelsLayered::reductionOneBlockWithLayerFuse, context, state.wrapXb,
                         state.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), state.temp, config.dim(), config.rmsNormEps(), state.localSize)
                 .task("qmatmul", TransformerComputeKernelsLayered::matrixVectorGeneric, context,
                         state.wrapXb,  state.wrapQ, weights.wqLayered[layerIndex].getQuants(), weights.wqLayered[layerIndex].getScales(), config.dim(), config.dim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
@@ -208,7 +206,7 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
                         state.positionHolder, layerIndex, config.contextLength())
                 .task("matmul1", TransformerComputeKernelsLayered::matrixVectorGenericWithResidual, context,
                         state.wrapXb,  state.wrapX, weights.woLayered[layerIndex].getQuants(), weights.woLayered[layerIndex].getScales(), config.dim(), config.dim(),  LOCAL_WORK_GROUP_SIZE_ALLOC)
-                .task("reductionsOneBlockFFN", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, state.wrapXb,
+                .task("reductionsOneBlockFFN", TransformerComputeKernelsLayered::reductionOneBlockWithLayerFuse, context, state.wrapXb,
                         state.wrapX, weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), state.tempFFN, config.dim(), config.rmsNormEps(), state.localSize)
                 .task("fused_ffn_w1_w3", TransformerComputeKernelsLayered::fusedFeedForwardWithSiLUAndGLUActivation, context,
                         state.wrapXb,   state.wrapHb, weights.w1Layered[layerIndex].getQuants(), weights.w1Layered[layerIndex].getScales(), weights.w3Layered[layerIndex].getQuants(), weights.w3Layered[layerIndex].getScales(), config.dim(), config.hiddenDim(),  LOCAL_WORK_GROUP_SIZE_ALLOC)

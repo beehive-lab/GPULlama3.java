@@ -77,9 +77,7 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".wDown", configDimRowMajorGlobalWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".wGateUp", wgetHiddenDimRowMajorWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlock", rmsNormWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".mapContext", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlockFFN", rmsNormWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".mapContextFFN", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".parallel-attention", parallelAttentionWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".copyToCaches", copyToCachesWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".gateUpSiLU", splitGateUpSiLUWorker);
@@ -151,7 +149,7 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
 
         // RMSNorm for attention input
         unifiedLayer.task("reductionsOneBlock",
-                        TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                        TransformerComputeKernelsLayered::reductionOneBlockWithLayerFuse,
                         context,
                         phi3State.wrapXb,
                         phi3State.wrapX,
@@ -233,7 +231,7 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
 
         // FFN section: RMSNorm
         unifiedLayer.task("reductionsOneBlockFFN",
-                        TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                        TransformerComputeKernelsLayered::reductionOneBlockWithLayerFuse,
                         context,
                         phi3State.wrapXb,
                         phi3State.wrapX,
