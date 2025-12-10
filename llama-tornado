@@ -422,7 +422,7 @@ def create_parser() -> argparse.ArgumentParser:
     )
     debug_group.add_argument(
         "--profiler-dump-dir",
-        default="/home/mikepapadim/repos/gpu-llama3.java/prof.json",
+        default="/home/ruiqi/GPULlama3.java/prof.json",
         help="Directory for profiler output",
     )
 

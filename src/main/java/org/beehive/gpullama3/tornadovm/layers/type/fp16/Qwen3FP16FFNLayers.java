@@ -103,7 +103,6 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
         // Map workers to tasks for each layer
         for (int i = 0; i < config.numberOfLayers(); i++) {
             gridScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlock", rmsNormWorker);
-            gridScheduler.addWorkerGrid("layer_" + i + ".mapContext", rmsNormWorker);
 
             gridScheduler.addWorkerGrid("layer_" + i + ".qmatmul", matmulQRowMajorWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".kmatmul", matmulKVRowMajorWorker);
@@ -121,7 +120,6 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
             gridScheduler.addWorkerGrid("layer_" + i + ".matmul1", matmul1Worker);
 
             gridScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlockFFN", rmsNormWorker);
-            gridScheduler.addWorkerGrid("layer_" + i + ".mapContextFFN", rmsNormWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".fused_ffn_w1_w3", fusedFFNW1W3Worker);
             gridScheduler.addWorkerGrid("layer_" + i + ".projectionTwo", projectionTwoWorker);
         }
@@ -193,9 +191,8 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
                 weights.w3Layered[layerIndex].asHalfFloatArray() //
         );
         unifiedLayer = configureLayerDataTransfers(unifiedLayer, layerIndex);
-        unifiedLayer.task("reductionsOneBlock", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, qwen3State.temp, qwen3State.wrapX, // in
-                qwen3Config.dim(), qwen3Config.rmsNormEps(), qwen3State.localSize).task("mapContext", TransformerComputeKernelsLayered::reductionOneBlock2WithLayer, context, qwen3State.wrapXb, // out
-                qwen3State.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), qwen3State.temp);
+        unifiedLayer.task("reductionsOneBlock", TransformerComputeKernelsLayered::reductionOneBlockWithLayerFuse, context, qwen3State.wrapXb, qwen3State.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), qwen3State.temp,// in
+                qwen3Config.dim(), qwen3Config.rmsNormEps(), qwen3State.localSize);
 
         int qDim0 = nEmbdHeadK * qwen3Config.numberOfHeads();
         int kvDim0 = nEmbdGqa;
@@ -247,11 +244,8 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
                 qwen3Config.dim(),                           // dim0 = 1024
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
 
-        unifiedLayer.task("reductionsOneBlockFFN", TransformerComputeKernelsLayered::reductionOneBlockWithLayer, context, qwen3State.tempFFN, qwen3State.wrapX, qwen3Config.dim(),
-                        qwen3Config.rmsNormEps(), qwen3State.localSize)
-                .task("reductionFinalNormalizationFFN", TransformerComputeKernelsLayered::reductionFinalNormalization, context, qwen3State.tempFFN, qwen3Config.dim(), qwen3Config.rmsNormEps())
-                .task("mapContextFFN", TransformerComputeKernelsLayered::reductionOneBlock2WithLayer, context, qwen3State.wrapXb, qwen3State.wrapX, weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),
-                        qwen3State.tempFFN);
+        unifiedLayer.task("reductionsOneBlockFFN", TransformerComputeKernelsLayered::reductionOneBlockWithLayerFuse, context, qwen3State.wrapXb, qwen3State.wrapX, weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), qwen3State.tempFFN, qwen3Config.dim(),
+                        qwen3Config.rmsNormEps(), qwen3State.localSize);
 
         unifiedLayer.task("fused_ffn_w1_w3", TransformerComputeKernelsLayered::fusedFeedForwardWithSiLUAndGLUActivation, context, qwen3State.wrapXb, qwen3State.wrapHb, weights.w1Layered[layerIndex].asHalfFloatArray(),
                         weights.w3Layered[layerIndex].asHalfFloatArray(), qwen3Config.dim(), qwen3Config.hiddenDim(), LOCAL_WORK_GROUP_SIZE_ALLOC)

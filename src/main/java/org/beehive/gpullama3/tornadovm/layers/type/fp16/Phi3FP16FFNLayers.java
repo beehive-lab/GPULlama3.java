@@ -63,7 +63,6 @@ public class Phi3FP16FFNLayers extends AbstractFFNLayers {
     public GridScheduler updateGridScheduler(GridScheduler gridScheduler) {
         // RMS norm worker
         WorkerGrid rmsNormWorker = WorkerGridFactory.createRmsNormWorker(config.dim(), state.localSize);
-
         // Combined QKV matmul worker
         int matmulQkvGlobal = opSize * LOCAL_WORK_GROUP_SIZE_ALLOC;
         WorkerGrid matmulQkvRowMajorWorker = WorkerGridFactory.genericWorker(matmulQkvGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC);

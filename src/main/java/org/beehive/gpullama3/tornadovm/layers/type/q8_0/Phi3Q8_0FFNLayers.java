@@ -77,9 +77,7 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".wDown", configDimRowMajorGlobalWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".wGateUp", wgetHiddenDimRowMajorWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlock", rmsNormWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".mapContext", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlockFFN", rmsNormWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".mapContextFFN", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".parallel-attention", parallelAttentionWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".copyToCaches", copyToCachesWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".gateUpSiLU", splitGateUpSiLUWorker);
@@ -147,20 +145,15 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
 
         // RMSNorm for attention input
         unifiedLayer.task("reductionsOneBlock",
-                        TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
-                        context,
-                        phi3State.temp,
-                        phi3State.wrapX,
-                        phi3Config.dim(),
-                        phi3Config.rmsNormEps(),
-                        phi3State.localSize)
-                .task("mapContext",
-                        TransformerComputeKernelsLayered::reductionOneBlock2WithLayer,
+                        TransformerComputeKernelsLayered::reductionOneBlockWithLayerFuse,
                         context,
                         phi3State.wrapXb,
                         phi3State.wrapX,
                         weights.rms_att_weightLayered[layerIndex].asFloatArray(),
-                        phi3State.temp);
+                        phi3State.temp,
+                        phi3Config.dim(),
+                        phi3Config.rmsNormEps(),
+                        phi3State.localSize);
 
         // Combined QKV projection (quantized)
         unifiedLayer.task("qkvmatmul",
@@ -232,20 +225,15 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
 
         // FFN section: RMSNorm
         unifiedLayer.task("reductionsOneBlockFFN",
-                        TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
-                        context,
-                        phi3State.tempFFN,
-                        phi3State.wrapX,
-                        phi3Config.dim(),
-                        phi3Config.rmsNormEps(),
-                        phi3State.localSize)
-                .task("mapContextFFN",
-                        TransformerComputeKernelsLayered::reductionOneBlock2WithLayer,
+                        TransformerComputeKernelsLayered::reductionOneBlockWithLayerFuse,
                         context,
                         phi3State.wrapXb,
                         phi3State.wrapX,
                         weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),
-                        phi3State.tempFFN);
+                        phi3State.tempFFN,
+                        phi3Config.dim(),
+                        phi3Config.rmsNormEps(),
+                        phi3State.localSize);
 
         // FFN: combined Up and Gate projection (outputs 2 * hiddenDim, quantized)
         unifiedLayer.task("wGateUp",
