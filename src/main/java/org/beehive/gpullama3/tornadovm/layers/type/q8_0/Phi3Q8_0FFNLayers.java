@@ -137,15 +137,11 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
         unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
                 // Copy-in quantized weights per layer
                 weights.rms_att_weightLayered[layerIndex].asFloatArray(),
-                weights.wqkvLayered[layerIndex].getQuants(),
-                weights.wqkvLayered[layerIndex].getScales(),
-                weights.woLayered[layerIndex].getQuants(),
-                weights.woLayered[layerIndex].getScales(),
+                weights.wqkvLayered[layerIndex].asByteArray(),
+                weights.woLayered[layerIndex].asByteArray(),
                 weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),
-                weights.wUpLayered[layerIndex].getQuants(),
-                weights.wUpLayered[layerIndex].getScales(),
-                weights.wDownLayered[layerIndex].getQuants(),
-                weights.wDownLayered[layerIndex].getScales()
+                weights.wUpLayered[layerIndex].asByteArray(),
+                weights.wDownLayered[layerIndex].asByteArray()
         );
         unifiedLayer = configureLayerDataTransfers(unifiedLayer, layerIndex);
 
@@ -168,12 +164,11 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
 
         // Combined QKV projection (quantized)
         unifiedLayer.task("qkvmatmul",
-                        TransformerComputeKernelsLayered::matrixVectorGeneric,
+                        TransformerComputeKernelsLayered::matrixVectorGenericQ8Byte,
                         context,
                         phi3State.wrapXb,
                         phi3State.wrapQkv,
-                        weights.wqkvLayered[layerIndex].getQuants(),
-                        weights.wqkvLayered[layerIndex].getScales(),
+                        weights.wqkvLayered[layerIndex].asByteArray(),
                         phi3Config.dim(),
                         opSize,
                         LOCAL_WORK_GROUP_SIZE_ALLOC)
@@ -226,12 +221,11 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
 
         // Output projection (quantized)
         unifiedLayer.task("matmul1",
-                TransformerComputeKernelsLayered::matrixVectorGenericWithResidual,
+                TransformerComputeKernelsLayered::matrixVectorGenericWithResidualQ8_0Byte,
                 context,
                 phi3State.wrapXb,
                 phi3State.wrapX,
-                weights.woLayered[layerIndex].getQuants(),
-                weights.woLayered[layerIndex].getScales(),
+                weights.woLayered[layerIndex].asByteArray(),
                 phi3Config.dim(),
                 phi3Config.dim(),
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
@@ -255,12 +249,11 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
 
         // FFN: combined Up and Gate projection (outputs 2 * hiddenDim, quantized)
         unifiedLayer.task("wGateUp",
-                        TransformerComputeKernelsLayered::matrixVectorGeneric,
+                        TransformerComputeKernelsLayered::matrixVectorGenericQ8Byte,
                         context,
                         phi3State.wrapXb,
                         phi3State.wrapHb,
-                        weights.wUpLayered[layerIndex].getQuants(),
-                        weights.wUpLayered[layerIndex].getScales(),
+                        weights.wUpLayered[layerIndex].asByteArray(),
                         phi3Config.dim(),
                         2 * phi3Config.hiddenDim(),
                         LOCAL_WORK_GROUP_SIZE_ALLOC)
@@ -273,12 +266,11 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
 
         // FFN: Down projection with residual (quantized)
         unifiedLayer.task("wDown",
-                        TransformerComputeKernelsLayered::matrixVectorGenericWithResidual,
+                        TransformerComputeKernelsLayered::matrixVectorGenericWithResidualQ8_0Byte,
                         context,
                         phi3State.wrapHbU,
                         phi3State.wrapX,
-                        weights.wDownLayered[layerIndex].getQuants(),
-                        weights.wDownLayered[layerIndex].getScales(),
+                        weights.wDownLayered[layerIndex].asByteArray(),
                         phi3Config.hiddenDim(),
                         phi3Config.dim(),
                         LOCAL_WORK_GROUP_SIZE_ALLOC)

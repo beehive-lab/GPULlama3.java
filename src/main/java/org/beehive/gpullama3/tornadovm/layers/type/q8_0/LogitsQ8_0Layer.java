@@ -58,15 +58,15 @@ public class LogitsQ8_0Layer extends AbstractLayer {
     private TaskGraph setupLogitsTaskGraph(TornadoWeights weights, Configuration config) {
         TaskGraph logits = new TaskGraph("logits");
         logits.consumeFromDevice(lastTaskGraphID, state.wrapX).transferToDevice(DataTransferMode.EVERY_EXECUTION, state.tempLogits)
-                .transferToDevice(DataTransferMode.FIRST_EXECUTION, context, state.wrapLogits, weights.wclsByteArray.getQuants(), weights.wclsByteArray.getScales(),
+                .transferToDevice(DataTransferMode.FIRST_EXECUTION, context, state.wrapLogits, weights.wclsByteArray.asByteArray(),
                         weights.rms_final_weight_as_floatArray)
                 .task("reductionsOneBlockLogits", TransformerComputeKernels::reductionOneBlockWithLayer, context, state.tempLogits, state.wrapX, config.dim(), config.rmsNormEps(), state.localSize);
                 if (schedulerType == SchedulerType.NON_NVIDIA) {
                     logits.task("reductionFinalNormalizationLogits", TransformerComputeKernelsLayered::reductionFinalNormalization, context, state.tempLogits, config.dim(), config.rmsNormEps());
                 }
                 logits.task("mapContextLogits", TransformerComputeKernels::reductionOneBlock2WithLogits, context, state.wrapX, weights.rms_final_weight_as_floatArray.asFloatArray(), state.tempLogits)
-                .task("projection", TransformerComputeKernelsLayered::matrixVectorGeneric,  //
-                        context, state.wrapX, state.wrapLogits, weights.wclsByteArray.getQuants(), weights.wclsByteArray.getScales(), //
+                .task("projection", TransformerComputeKernelsLayered::matrixVectorGenericQ8Byte,  //
+                        context, state.wrapX, state.wrapLogits, weights.wclsByteArray.asByteArray(), //
                         config.dim(), config.vocabularySize(), LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS) //
                 .transferToHost(DataTransferMode.EVERY_EXECUTION, state.wrapLogits);
         return logits;

@@ -3,10 +3,8 @@ package org.beehive.gpullama3.tornadovm.kernels;
 import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.annotations.Parallel;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
-import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
-import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
-import uk.ac.manchester.tornado.api.types.arrays.Int8Array;
-import uk.ac.manchester.tornado.api.types.arrays.IntArray;
+import uk.ac.manchester.tornado.api.types.HalfFloat;
+import uk.ac.manchester.tornado.api.types.arrays.*;
 
 public class TransformerComputeKernelsLayered {
 
@@ -1015,6 +1013,101 @@ public class TransformerComputeKernelsLayered {
         return localSums[0];
     }
 
+    public static void matrixVectorGenericQ8Byte(KernelContext context, FloatArray x, FloatArray output, ByteArray q, int dim1, int dim0, int localWorkGroupSize) {
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        if (rowId >= dim0) {
+            return;
+        }
+
+        float sum = matrixVectorRowMajorOptimizedQ8_0Byte(context, localWorkGroupSize, x, q, dim1);
+
+        // Thread 0 writes the result
+        if (localId == 0) {
+            output.set(rowId, sum);
+        }
+    }
+
+    public static float matrixVectorRowMajorOptimizedQ8_0Byte(KernelContext context, int localSize, FloatArray x, ByteArray q, int n) {
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+        int blockSize = 32;
+        final int Q8_0_BLOCK_BYTES = 34; // 2 bytes scale + 32 bytes quants
+
+        // Allocate local memory for reduction
+        float[] localSums = context.allocateFloatLocalArray(localSize);
+
+        int blocksPerRow = (n + blockSize - 1) / blockSize;
+        int rowBlockOffset = rowId * blocksPerRow; // Starting block index for this row
+
+        // 4-way unrolling
+        float partialSum1 = 0.0f;
+        float partialSum2 = 0.0f;
+        float partialSum3 = 0.0f;
+        float partialSum4 = 0.0f;
+
+        // Main loop - process 4 elements at a time
+        for (int j = localId * 4; j < n - 3; j += localSize * 4) {
+            int blockIdx = j / blockSize;
+            int withinBlockIdx = j % blockSize;
+
+            // Calculate byte offset for this Q8_0 block
+            int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+
+            // Load scale (first 2 bytes of block as HalfFloat)
+            HalfFloat scale = q.getHalfFloat(blockByteOffset);
+            float scaleFloat = scale.getFloat32();
+
+            // Load 4 consecutive quantized values
+            int quantsOffset = blockByteOffset + 2 + withinBlockIdx; // Skip 2-byte scale
+            byte quant1 = q.get(quantsOffset);
+            byte quant2 = q.get(quantsOffset + 1);
+            byte quant3 = q.get(quantsOffset + 2);
+            byte quant4 = q.get(quantsOffset + 3);
+
+            // Dequantize and multiply
+            partialSum1 += ((float) quant1 * scaleFloat) * x.get(j);
+            partialSum2 += ((float) quant2 * scaleFloat) * x.get(j + 1);
+            partialSum3 += ((float) quant3 * scaleFloat) * x.get(j + 2);
+            partialSum4 += ((float) quant4 * scaleFloat) * x.get(j + 3);
+        }
+
+        float partialSum = partialSum1 + partialSum2 + partialSum3 + partialSum4;
+
+        // Handle remaining elements
+        for (int j = ((n / 4) * 4) + localId; j < n; j += localSize) {
+            int blockIdx = j / blockSize;
+            int withinBlockIdx = j % blockSize;
+
+            // Calculate byte offset for this Q8_0 block
+            int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+
+            // Load scale
+            HalfFloat scale = q.getHalfFloat(blockByteOffset);
+            float scaleFloat = scale.getFloat32();
+
+            // Load quantized value
+            byte quant = q.get(blockByteOffset + 2 + withinBlockIdx);
+
+            partialSum += ((float) quant * scaleFloat) * x.get(j);
+        }
+
+        localSums[localId] = partialSum;
+        context.localBarrier();
+
+        // Parallel reduction
+        for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSums[localId] += localSums[localId + stride];
+            }
+            context.localBarrier();
+        }
+
+        return localSums[0];
+
+    }
+
     public static void matrixVectorGenericWithResidual(KernelContext context, FloatArray x, FloatArray hb, Int8Array w_quants, HalfFloatArray w_scales, int n, int d, int localWorkGroupSize) {
         // One row per workgroup (not per thread)
         int rowId = context.groupIdx;
@@ -1035,6 +1128,26 @@ public class TransformerComputeKernelsLayered {
         }
     }
 
+    public static void matrixVectorGenericWithResidualQ8_0Byte(KernelContext context, FloatArray x, FloatArray hb, ByteArray w, int n, int d, int localWorkGroupSize) {
+        // One row per workgroup (not per thread)
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+        int localSize = localWorkGroupSize;
+
+        // Early exit if this workgroup is beyond our output dimension
+        if (rowId >= d) {
+            return;
+        }
+
+        float sum = matrixVectorRowMajorOptimizedQ8_0Byte(context, localSize, x, w, n);
+
+        // Thread 0 in each workgroup writes the final result
+        if (localId == 0) {
+            float result = hb.get(rowId) + sum;
+            hb.set(rowId, result);
+        }
+    }
+
     public static void fusedFeedForwardWithSiLUAndGLUActivation(KernelContext context, FloatArray x, FloatArray hb, Int8Array w1_quants, HalfFloatArray w1_scales, Int8Array w3_quants,
             HalfFloatArray w3_scales, int n, int d, int localWorkGroupSize) {
         // One row per workgroup (not per thread)
@@ -1047,6 +1160,29 @@ public class TransformerComputeKernelsLayered {
 
         float sum1 = matrixVectorRowMajorOptimizedQ8_0(context, localWorkGroupSize, x, w1_quants, w1_scales, n);
         float sum3 = matrixVectorRowMajorOptimizedQ8_0(context, localWorkGroupSize, x, w3_quants, w3_scales, n);
+
+        // Thread 0 in each workgroup writes the final result
+        if (localId == 0) {
+            float silu = siluActivation(sum1);  // Using the new SiLU method
+            float result = silu * sum3;
+            hb.set(rowId, result);
+        }
+    }
+
+    public static void fusedFeedForwardWithSiLUAndGLUActivationQ8_0Byte(KernelContext context, FloatArray x, FloatArray hb,
+                                                                        ByteArray w1,
+                                                                        ByteArray w3,
+                                                                        int n, int d, int localWorkGroupSize) {
+        // One row per workgroup (not per thread)
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        if (rowId >= d) {
+            return;
+        }
+
+        float sum1 = matrixVectorRowMajorOptimizedQ8_0Byte(context, localWorkGroupSize, x, w1, n);
+        float sum3 = matrixVectorRowMajorOptimizedQ8_0Byte(context, localWorkGroupSize, x, w3, n);
 
         // Thread 0 in each workgroup writes the final result
         if (localId == 0) {

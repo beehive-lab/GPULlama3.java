@@ -1,6 +1,7 @@
 package org.beehive.gpullama3.tensor.tornado;
 
 import org.beehive.gpullama3.tensor.GGMLType;
+import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.Int8Array;
@@ -29,6 +30,15 @@ public abstract class TornadoTensor {
      */
     public HalfFloatArray asHalfFloatArray() {
         throw new UnsupportedOperationException("Not a HalfFloatArray tensor: " + this.getClass().getSimpleName());
+    }
+
+    /**
+     * Get as ByteArray (for Q8_0 tensors).
+     *
+     * @throws UnsupportedOperationException if not Q8_0
+     */
+    public ByteArray asByteArray() {
+        throw new UnsupportedOperationException("Not a Q8_0 ByteArray tensor: " + this.getClass().getSimpleName());
     }
 
     /**

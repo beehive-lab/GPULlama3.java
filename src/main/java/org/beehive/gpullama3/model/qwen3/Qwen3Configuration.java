@@ -3,7 +3,8 @@ package org.beehive.gpullama3.model.qwen3;
 import org.beehive.gpullama3.model.Configuration;
 
 // @formatter:off
-public record Qwen3Configuration(int dim,
+public record Qwen3Configuration(String quantization,
+                                 int dim,
                                  int hiddenDim,
                                  int numberOfLayers,
                                  int numberOfHeads,
@@ -16,6 +17,11 @@ public record Qwen3Configuration(int dim,
                                  boolean sharedWeights,
                                  float rmsNormEps,
                                  float ropeTheta) implements Configuration {
+
+    @Override public String quantization() {
+        return quantization;
+    }
+
     @Override
     public int headSize() {
         throw new UnsupportedOperationException("Not supported for Qwen3.");

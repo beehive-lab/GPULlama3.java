@@ -127,7 +127,7 @@ public abstract class ModelLoader {
         return switch (ggmlType) {
             case F32 -> FP32TornadoTensor.fromTornadoMemorySegment(entry.memorySegment());
             case F16 -> FP16TornadoTensor.fromTornadoMemorySegment(entry.memorySegment());
-            case Q8_0 -> Q8_0TornadoTensor.createAsQ8_0(entry);
+            case Q8_0 -> Q8_0TornadoTensor.fromTornadoMemorySegment(entry.memorySegment());
             case Q4_0 -> throw new UnsupportedOperationException("Q4 format not supported yet");
             default -> throw new UnsupportedOperationException("Quantization format " + ggmlType);
         };
@@ -145,31 +145,6 @@ public abstract class ModelLoader {
         return array;
     }
 
-    /**
-     * Load a tensor and manually convert to FP32 (FloatArray).
-     * Used for embeddings that currently are treated as FP32.
-     * TODO: it is ultra-slow and should be removed
-     */
-    public static TornadoTensor loadTornadoTensorAsFP32(GGMLTensorEntry entry) {
-        TornadoTensor tensor = loadTornadoTensor(entry);
-        return switch (tensor.type()) {
-            case F32 -> tensor;
-            case F16 -> {
-                HalfFloatArray tensorHFA = tensor.asHalfFloatArray();
-                int numOfElements = tensorHFA.getSize();
-                FloatArray tensorFA = new FloatArray(numOfElements);
-                for (int i = 0; i < numOfElements; i++) {
-                    tensorFA.set(i, tensorHFA.get(i).getFloat32());
-                }
-                yield new FP32TornadoTensor(tensorFA);
-            }
-            case Q8_0 -> Q8_0TornadoTensor.createAsFP32(entry);
-            default -> {
-                throw new UnsupportedOperationException("Unsupported tensor type: " + tensor.type());
-            }
-        };
-    }
-
     // Helper methods
 
     public static FloatArray[] loadArrayAsFloatArray(int size, IntFunction<GGMLTensorEntry> getTensorEntry) {
@@ -184,14 +159,6 @@ public abstract class ModelLoader {
         HalfFloatArray[] array = new HalfFloatArray[size];
         for (int i = 0; i < size; i++) {
             array[i] = loadTensorAsHalfFloatArray(getTensorEntry.apply(i));
-        }
-        return array;
-    }
-
-    public static Q8_0TornadoTensor[] loadArrayAsQ8_0TornadoTensor(int size, IntFunction<GGMLTensorEntry> getTensorEntry) {
-        Q8_0TornadoTensor[] array = new Q8_0TornadoTensor[size];
-        for (int i = 0; i < size; i++) {
-            array[i] = Q8_0TornadoTensor.createAsQ8_0(getTensorEntry.apply(i));
         }
         return array;
     }

@@ -163,23 +163,16 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
         // Transfer Q8_0 weights for this layer (quants and scales)
         unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
                 weights.rms_att_weightLayered[layerIndex].asFloatArray(), //
-                weights.wqLayered[layerIndex].getQuants(), //
-                weights.wqLayered[layerIndex].getScales(), //
-                weights.wkLayered[layerIndex].getQuants(), //
-                weights.wkLayered[layerIndex].getScales(), //
-                weights.wvLayered[layerIndex].getQuants(), //
-                weights.wvLayered[layerIndex].getScales(),//
-                weights.woLayered[layerIndex].getQuants(),//
-                weights.woLayered[layerIndex].getScales(),//
+                weights.wqLayered[layerIndex].asByteArray(),
+                weights.wkLayered[layerIndex].asByteArray(),
+                weights.wvLayered[layerIndex].asByteArray(),
+                weights.woLayered[layerIndex].asByteArray(),
                 weights.rms_att_KNormLayered[layerIndex].asFloatArray(), //
                 weights.rms_att_QNormLayered[layerIndex].asFloatArray(),//
                 weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), //
-                weights.w1Layered[layerIndex].getQuants(), //
-                weights.w1Layered[layerIndex].getScales(), //
-                weights.w2Layered[layerIndex].getQuants(), //
-                weights.w2Layered[layerIndex].getScales(), //
-                weights.w3Layered[layerIndex].getQuants(), //
-                weights.w3Layered[layerIndex].getScales()); //
+                weights.w1Layered[layerIndex].asByteArray(),
+                weights.w2Layered[layerIndex].asByteArray(),
+                weights.w3Layered[layerIndex].asByteArray());
 
         // Configure layer data transfers (EVERY_EXECUTION and device persistence)
         unifiedLayer = configureLayerDataTransfers(unifiedLayer, layerIndex);
@@ -200,19 +193,19 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
         int qkvDim1 = config.dim();                        // Input dimension
 
         unifiedLayer.task("qmatmul",
-                TransformerComputeKernelsLayered::matrixVectorGeneric,
+                TransformerComputeKernelsLayered::matrixVectorGenericQ8Byte,
                 context, qwen3State.wrapXb, qwen3State.wrapQ,
-                weights.wqLayered[layerIndex].getQuants(), weights.wqLayered[layerIndex].getScales(),
+                weights.wqLayered[layerIndex].asByteArray(),
                 qkvDim1, qDim0, LOCAL_WORK_GROUP_SIZE_ALLOC)
                 .task("kmatmul",
-                        TransformerComputeKernelsLayered::matrixVectorGeneric,
+                        TransformerComputeKernelsLayered::matrixVectorGenericQ8Byte,
                         context, qwen3State.wrapXb, qwen3State.wrapK,
-                        weights.wkLayered[layerIndex].getQuants(), weights.wkLayered[layerIndex].getScales(),
+                        weights.wkLayered[layerIndex].asByteArray(),
                         qkvDim1, kvDim0, LOCAL_WORK_GROUP_SIZE_ALLOC)
                 .task("vmatmul",
-                        TransformerComputeKernelsLayered::matrixVectorGeneric,
+                        TransformerComputeKernelsLayered::matrixVectorGenericQ8Byte,
                         context, qwen3State.wrapXb, qwen3State.wrapV,
-                        weights.wvLayered[layerIndex].getQuants(), weights.wvLayered[layerIndex].getScales(),
+                        weights.wvLayered[layerIndex].asByteArray(),
                         qkvDim1, kvDim0, LOCAL_WORK_GROUP_SIZE_ALLOC);
 
         // Qcur: RMS norm with parallel offset for Query
@@ -252,9 +245,9 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
 
         // Output projection (Q8_0 weights)
         unifiedLayer.task("matmul1",
-                TransformerComputeKernelsLayered::matrixVectorGenericWithResidual,
+                TransformerComputeKernelsLayered::matrixVectorGenericWithResidualQ8_0Byte,
                 context, qwen3State.wrapXb, qwen3State.wrapX,
-                weights.woLayered[layerIndex].getQuants(), weights.woLayered[layerIndex].getScales(),
+                weights.woLayered[layerIndex].asByteArray(),
                 qDim0, config.dim(), LOCAL_WORK_GROUP_SIZE_ALLOC);
 
         // ========== FEED-FORWARD BLOCK ==========
@@ -269,15 +262,15 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
 
         // Fused FFN: w1(x) ⊗ w3(x) with SiLU activation (Q8_0 weights)
         unifiedLayer.task("fused_ffn_w1_w3",
-                TransformerComputeKernelsLayered::fusedFeedForwardWithSiLUAndGLUActivation,
+                TransformerComputeKernelsLayered::fusedFeedForwardWithSiLUAndGLUActivationQ8_0Byte,
                 context, qwen3State.wrapXb, qwen3State.wrapHb,
-                weights.w1Layered[layerIndex].getQuants(), weights.w1Layered[layerIndex].getScales(),
-                weights.w3Layered[layerIndex].getQuants(), weights.w3Layered[layerIndex].getScales(),
+                weights.w1Layered[layerIndex].asByteArray(),
+                weights.w3Layered[layerIndex].asByteArray(),
                 config.dim(), config.hiddenDim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
                 .task("projectionTwo",
-                        TransformerComputeKernelsLayered::matrixVectorGenericWithResidual,
+                        TransformerComputeKernelsLayered::matrixVectorGenericWithResidualQ8_0Byte,
                         context, qwen3State.wrapHb, qwen3State.wrapX,
-                        weights.w2Layered[layerIndex].getQuants(), weights.w2Layered[layerIndex].getScales(),
+                        weights.w2Layered[layerIndex].asByteArray(),
                         config.hiddenDim(), config.dim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
                 .persistOnDevice(state.wrapX);
 

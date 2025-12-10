@@ -1,0 +1,110 @@
+name: Deploy to Maven Central
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - '[0-9]+.[0-9]+.[0-9]+*'
+  workflow_run:
+    workflows: ["Finalize GPULlama3 Release"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to deploy (e.g., v0.2.3) - leave empty to deploy latest tag'
+        required: false
+        type: string
+      dry_run:
+        description: 'Dry run (skip actual deploy)'
+        required: false
+        default: false
+        type: boolean
+
+
+jobs:
+  deploy:
+    name: Deploy to Maven Central
+    runs-on: [self-hosted, Linux, x64]
+    timeout-minutes: 15
+    env:
+      JAVA_HOME: /opt/jenkins/jdks/graal-23.1.0/jdk-21.0.3
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup environment
+        run: |
+          echo "$JAVA_HOME/bin" >> $GITHUB_PATH
+
+      - name: Configure Maven settings
+        run: |
+          mkdir -p ~/.m2
+          cat > ~/.m2/settings.xml << 'EOF'
+          <settings>
+            <servers>
+              <server>
+                <id>central</id>
+                <username>${env.MAVEN_USERNAME}</username>
+                <password>${env.MAVEN_PASSWORD}</password>
+              </server>
+            </servers>
+            <profiles>
+              <profile>
+                <id>gpg</id>
+                <properties>
+                  <gpg.executable>gpg</gpg.executable>
+                  <gpg.keyname>${env.GPG_KEYNAME}</gpg.keyname>
+                  <gpg.passphrase>${env.GPG_PASSPHRASE}</gpg.passphrase>
+                </properties>
+              </profile>
+            </profiles>
+            <activeProfiles>
+              <activeProfile>gpg</activeProfile>
+            </activeProfiles>
+          </settings>
+          EOF
+
+      - name: Import GPG key
+        run: |
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
+        env:
+          GPG_TTY: $(tty)
+
+      - name: Deploy to Maven Central
+        if: ${{ !inputs.dry_run }}
+        run: |
+          ./mvnw clean deploy \
+            -P release \
+            -DskipTests \
+            --batch-mode
+        env:
+          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
+          GPG_KEYNAME: ${{ secrets.GPG_KEYNAME }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Dry Run - Verify build only
+        if: ${{ inputs.dry_run }}
+        run: |
+          ./mvnw clean verify \
+            -P release \
+            -DskipTests \
+            --batch-mode
+        env:
+          GPG_KEYNAME: ${{ secrets.GPG_KEYNAME }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Deployment Summary
+        if: ${{ !inputs.dry_run }}
+        run: |
+          echo "## 🚀 Maven Central Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Detail | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | ${{ steps.version.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| GroupId | io.github.beehive-lab |" >> $GITHUB_STEP_SUMMARY
+          echo "| ArtifactId | gpu-llama3 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Status | ✅ Deployed |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📍 [View on Maven Central](https://central.sonatype.com/artifact/io.github.beehive-lab/gpu-llama3/${{ steps.version.outputs.version }})" >> $GITHUB_STEP_SUMMARY

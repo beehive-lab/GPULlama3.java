@@ -2,8 +2,8 @@ package org.beehive.gpullama3.inference.state;
 
 import org.beehive.gpullama3.tensor.standard.FloatTensor;
 import org.beehive.gpullama3.model.Configuration;
-import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
-import uk.ac.manchester.tornado.api.types.arrays.IntArray;
+import uk.ac.manchester.tornado.api.types.HalfFloat;
+import uk.ac.manchester.tornado.api.types.arrays.*;
 
 /**
  * Represents the base state structure used during LLM inference.
@@ -57,6 +57,7 @@ public abstract class State {
     public final FloatArray wrapValueCache; // FloatArray wrapper for the value cache, optimized for TornadoVM.
     public final IntArray positionHolder;
 
+    public TornadoNativeArray embeddingX;
     // store inter
     public int localSize;
     public FloatArray temp;         // Temporary buffer for intermediate calculations, size adjusted for local workgroup size.
@@ -88,6 +89,7 @@ public abstract class State {
         this.keyCache = fields.keyCache;
         this.valueCache = fields.valueCache;
 
+        this.embeddingX = fields.embeddingX;
         this.wrapX = fields.wrapX;
         this.wrapXb = fields.wrapXb;
         this.wrapXb2 = fields.wrapXb2;
@@ -121,6 +123,19 @@ public abstract class State {
         public FloatArray wrapQ, wrapK, wrapV, wrapAtt, wrapKeyCache, wrapValueCache;
         public IntArray positionHolder;
         public FloatArray temp, tempFFN, tempLogits;
+        public TornadoNativeArray embeddingX;
+
+        public void createActivationFP16(int size) {
+            this.embeddingX = new HalfFloatArray(size);
+        }
+
+        public void createActivationQ8_0(int size) {
+            int blockSize = 32;
+            int Q8_0_BLOCK_BYTES = 34; // 2 bytes scale + 32 bytes quants
+            int blocksNeeded = (size + blockSize - 1) / blockSize;
+            int q8BytesNeeded = blocksNeeded * Q8_0_BLOCK_BYTES;
+            this.embeddingX = new ByteArray(q8BytesNeeded);
+        }
     }
 
     @Override
