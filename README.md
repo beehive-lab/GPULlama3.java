@@ -1,13 +1,12 @@
-# GPULlama3.java powered by TornadoVM [![GPULlama3 Build & Run Inference](https://github.com/beehive-lab/GPULlama3.java/actions/workflows/build-and-run.yml/badge.svg)](https://github.com/beehive-lab/GPULlama3.java/actions/workflows/build-and-run.yml)
-![Java Version](https://img.shields.io/badge/java-21+-blue?style=for-the-badge&logo=openjdk)
-![OpenCL](https://img.shields.io/badge/OpenCL-supported-blue?style=for-the-badge&logo=khronos)
-![CUDA](https://img.shields.io/badge/CUDA/PTX-supported-76B900?style=for-the-badge&logo=nvidia)
-[![Docker OpenCL](https://img.shields.io/badge/Docker-OpenCL-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://hub.docker.com/r/beehivelab/gpullama3.java-nvidia-openjdk-opencl)
-[![Docker PTX](https://img.shields.io/badge/Docker-PTX-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://hub.docker.com/r/beehivelab/gpullama3.java-nvidia-openjdk-ptx)
+# GPULlama3.java powered by TornadoVM [![build JDK21](https://github.com/beehive-lab/GPULlama3.java/actions/workflows/build-and-run.yml/badge.svg)](https://github.com/beehive-lab/GPULlama3.java/actions/workflows/build-and-run.yml)
 
-
-[![LangChain4j](https://img.shields.io/badge/LangChain4j-1.7.1+-purple?style=for-the-badge&logo=link&logoColor=white)](https://docs.langchain4j.dev/)
-[![Maven Central](https://img.shields.io/maven-central/v/io.github.beehive-lab/gpu-llama3?style=for-the-badge&logo=apache-maven&color=blue)](https://central.sonatype.com/artifact/io.github.beehive-lab/gpu-llama3)
+![Java Version](https://img.shields.io/badge/java-21+-blue?style=&logo=openjdk)
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.beehive-lab/gpu-llama3?&logo=apache-maven&color=blue)](https://central.sonatype.com/artifact/io.github.beehive-lab/gpu-llama3)
+[![LangChain4j](https://img.shields.io/badge/LangChain4j-1.7.1+-purple?&logo=link&logoColor=white)](https://docs.langchain4j.dev/)
+![OpenCL](https://img.shields.io/badge/OpenCL-supported-blue?style=&logo=khronos)
+![CUDA](https://img.shields.io/badge/CUDA/PTX-supported-76B900?style=&logo=nvidia)
+[![Docker OpenCL](https://img.shields.io/badge/Docker-OpenCL-2496ED?&logo=docker&logoColor=white)](https://hub.docker.com/r/beehivelab/gpullama3.java-nvidia-openjdk-opencl)
+[![Docker PTX](https://img.shields.io/badge/Docker-PTX-2496ED?&logo=docker&logoColor=white)](https://hub.docker.com/r/beehivelab/gpullama3.java-nvidia-openjdk-ptx)
 [![GPULlama3.java DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/beehive-lab/GPULlama3.java)
 
 -----------

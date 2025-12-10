@@ -3,7 +3,8 @@ package org.beehive.gpullama3.model.mistral;
 import org.beehive.gpullama3.model.Configuration;
 
 // @formatter:off
-public record MistralConfiguration(int dim,
+public record MistralConfiguration(String quantization,
+                                   int dim,
                                    int hiddenDim,
                                    int numberOfLayers,
                                    int numberOfHeads,
@@ -13,6 +14,10 @@ public record MistralConfiguration(int dim,
                                    boolean sharedWeights,
                                    float rmsNormEps,
                                    float ropeTheta) implements Configuration {
+
+    @Override public String quantization() {
+        return quantization;
+    }
 
     public int kvDim() {
         return dim * numberOfKeyValueHeads / numberOfHeads;

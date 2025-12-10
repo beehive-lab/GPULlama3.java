@@ -52,6 +52,7 @@ public class Phi3ModelLoader extends AbstractModelLoader<Phi3, Phi3Configuration
         final String modelPrefix = "phi3.";
 
         var config = new Phi3Configuration(
+                getModelQuantization(metadata),
                 (int) metadata.get(modelPrefix + "embedding_length"),           // dim
                 (int) metadata.get(modelPrefix + "feed_forward_length"),        // hidden_dim
                 (int) metadata.get(modelPrefix + "block_count"),                // n_layers
@@ -140,7 +141,7 @@ public class Phi3ModelLoader extends AbstractModelLoader<Phi3, Phi3Configuration
 
         // Load all tensors uniformly as TornadoTensor hierarchy
         return new Phi3TornadoWeights(
-                loadTornadoTensorAsFP32(tokenEmbeddings),
+                loadTornadoTensor(tokenEmbeddings),
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_norm.weight")),    // fp32
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_qkv.weight")),
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_output.weight")),

@@ -5,6 +5,7 @@ import org.beehive.gpullama3.tensor.standard.FloatTensor;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.qwen2.Qwen2Configuration;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
 
 import java.util.stream.Stream;
@@ -40,6 +41,11 @@ public class Qwen2State extends State {
         fields.valueCache = Stream.generate(() -> ArrayFloatTensor.allocate(config.contextLength(), nEmbdGqa)).limit(config.numberOfLayers()).toArray(FloatTensor[]::new);
 
         // TornadoVM wrappers with Qwen2 dimensions
+        switch (config.quantization()) {
+            case "FP16" -> fields.createActivationFP16(config.dim());
+            case "Q8_0" -> fields.createActivationQ8_0(config.dim());
+            default -> throw new UnsupportedOperationException("Unsupported quantization format: " + config.quantization());
+        }
         fields.wrapX = new FloatArray(config.dim());
         fields.wrapXb = new FloatArray(config.dim());
         fields.wrapXb2 = new FloatArray(config.dim());

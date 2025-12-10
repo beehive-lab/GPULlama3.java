@@ -52,6 +52,7 @@ public class Qwen3ModelLoader extends AbstractModelLoader<Qwen3, Qwen3Configurat
         int vocabSize = vocabulary.size();
 
         return new Qwen3Configuration(
+                getModelQuantization(metadata),
                 (int) metadata.get("qwen3.embedding_length"),
                 (int) metadata.get("qwen3.feed_forward_length"),
                 (int) metadata.get("qwen3.block_count"),
@@ -137,7 +138,7 @@ public class Qwen3ModelLoader extends AbstractModelLoader<Qwen3, Qwen3Configurat
         final int nl = config.numberOfLayers();
 
         return new Qwen3TornadoWeights(
-                loadTornadoTensorAsFP32(tokenEmbeddings),
+                loadTornadoTensor(tokenEmbeddings),
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_norm.weight")),    // fp32
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_q.weight")),
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_k.weight")),

@@ -1,0 +1,291 @@
+name: Prepare GPULlama3 Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., 0.2.3)'
+        required: true
+        type: string
+      previous_version:
+        description: 'Previous version for changelog (e.g., 0.2.2)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Dry run - show changes without creating PR'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  VERSION: ${{ inputs.version }}
+  PREV_VERSION: ${{ inputs.previous_version }}
+
+jobs:
+  prepare-release:
+    runs-on: [self-hosted, Linux, x64]
+    permissions:
+      contents: write
+      pull-requests: write
+    timeout-minutes: 15
+    env:
+      JAVA_HOME: /opt/jenkins/jdks/graal-23.1.0/jdk-21.0.3
+
+    steps:
+      - name: Validate version format
+        run: |
+          if [[ ! "${{ inputs.version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "❌ Invalid version format. Expected: X.Y.Z (e.g., 0.2.3)"
+            exit 1
+          fi
+          echo "✅ Version format valid: ${{ inputs.version }}"
+
+      - name: Checkout main branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup environment
+        run: |
+          echo "$JAVA_HOME/bin" >> $GITHUB_PATH
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create release branch
+        run: |
+          git checkout -b release/${{ env.VERSION }}
+          echo "✅ Created branch: release/${{ env.VERSION }}"
+
+      # ============================================
+      # VERSION UPDATES
+      # ============================================
+
+      - name: Update Maven version
+        run: |
+          ./mvnw versions:set -DnewVersion=${{ env.VERSION }} -DgenerateBackupPoms=false
+          echo "✅ Maven version updated to ${{ env.VERSION }}"
+
+      - name: Update README.md
+        run: |
+          if [ -f "README.md" ]; then
+            # Update version in Maven dependency example
+            sed -i 's|<version>[0-9]\+\.[0-9]\+\.[0-9]\+</version>|<version>${{ env.VERSION }}</version>|g' README.md
+            echo "✅ Updated README.md"
+          fi
+
+      - name: Update CITATION.cff
+        run: |
+          if [ -f "CITATION.cff" ]; then
+            sed -i "s/^version: .*/version: ${{ env.VERSION }}/" CITATION.cff
+            RELEASE_DATE=$(date +"%Y-%m-%d")
+            sed -i "s/^date-released: .*/date-released: $RELEASE_DATE/" CITATION.cff
+            echo "✅ Updated CITATION.cff"
+          fi
+
+      # ============================================
+      # CHANGELOG GENERATION
+      # ============================================
+
+      - name: Fetch merged PRs for changelog
+        id: fetch_prs
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prevVersion = '${{ env.PREV_VERSION }}';
+            const newVersion = '${{ env.VERSION }}';
+            
+            let sinceDate;
+            try {
+              const { data: releases } = await github.rest.repos.listReleases({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                per_page: 10
+              });
+            
+              const prevRelease = releases.find(r => 
+                r.tag_name === `v${prevVersion}` || r.tag_name === prevVersion
+              );
+              if (prevRelease) {
+                sinceDate = prevRelease.published_at;
+                console.log(`Found previous release ${prevVersion} from ${sinceDate}`);
+              }
+            } catch (e) {
+              console.log('Could not fetch releases:', e.message);
+            }
+            
+            if (!sinceDate) {
+              const date = new Date();
+              date.setDate(date.getDate() - 90);
+              sinceDate = date.toISOString();
+              console.log(`Using fallback date: ${sinceDate}`);
+            }
+            
+            const { data: prs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'closed',
+              sort: 'updated',
+              direction: 'desc',
+              per_page: 100
+            });
+            
+            const mergedPRs = prs.filter(pr => 
+              pr.merged_at && new Date(pr.merged_at) > new Date(sinceDate)
+            );
+            
+            console.log(`Found ${mergedPRs.length} merged PRs since ${sinceDate}`);
+            
+            const features = [];
+            const bugfixes = [];
+            const models = [];
+            const performance = [];
+            const other = [];
+            
+            for (const pr of mergedPRs) {
+              const labels = pr.labels.map(l => l.name.toLowerCase());
+              const title = pr.title;
+              const entry = `- ${title} ([#${pr.number}](${pr.html_url}))`;
+            
+              if (labels.some(l => l.includes('bug') || l.includes('fix'))) {
+                bugfixes.push(entry);
+              } else if (labels.some(l => l.includes('model')) || title.toLowerCase().includes('model')) {
+                models.push(entry);
+              } else if (labels.some(l => l.includes('perf') || l.includes('optim'))) {
+                performance.push(entry);
+              } else if (labels.some(l => l.includes('feature') || l.includes('enhancement'))) {
+                features.push(entry);
+              } else {
+                other.push(entry);
+              }
+            }
+            
+            const today = new Date().toISOString().split('T')[0];
+            let changelog = `## [${newVersion}] - ${today}\n\n`;
+            
+            if (features.length > 0) {
+              changelog += '### Features\n\n' + features.join('\n') + '\n\n';
+            }
+            if (models.length > 0) {
+              changelog += '### Model Support\n\n' + models.join('\n') + '\n\n';
+            }
+            if (performance.length > 0) {
+              changelog += '### Performance\n\n' + performance.join('\n') + '\n\n';
+            }
+            if (bugfixes.length > 0) {
+              changelog += '### Bug Fixes\n\n' + bugfixes.join('\n') + '\n\n';
+            }
+            if (other.length > 0) {
+              changelog += '### Other Changes\n\n' + other.join('\n') + '\n\n';
+            }
+            if (mergedPRs.length === 0) {
+              changelog += '<!-- TODO: Add changes manually -->\n\n';
+            }
+            
+            const fs = require('fs');
+            fs.writeFileSync('${{ runner.temp }}/changelog_entry.txt', changelog);
+            core.setOutput('pr_count', mergedPRs.length);
+
+      - name: Update CHANGELOG.md
+        run: |
+          CHANGELOG_FILE="CHANGELOG.md"
+          CHANGELOG_ENTRY="${{ runner.temp }}/changelog_entry.txt"
+          
+          if [ ! -f "$CHANGELOG_FILE" ]; then
+            echo "# Changelog" > "$CHANGELOG_FILE"
+            echo "" >> "$CHANGELOG_FILE"
+            echo "All notable changes to GPULlama3.java will be documented in this file." >> "$CHANGELOG_FILE"
+            echo "" >> "$CHANGELOG_FILE"
+          fi
+          
+          if grep -q "^## \[" "$CHANGELOG_FILE"; then
+            FIRST_VERSION_LINE=$(grep -n "^## \[" "$CHANGELOG_FILE" | head -1 | cut -d: -f1)
+            {
+              head -n $((FIRST_VERSION_LINE - 1)) "$CHANGELOG_FILE"
+              cat "$CHANGELOG_ENTRY"
+              tail -n +$FIRST_VERSION_LINE "$CHANGELOG_FILE"
+            } > "${{ runner.temp }}/changelog_new.md"
+            mv "${{ runner.temp }}/changelog_new.md" "$CHANGELOG_FILE"
+          else
+            cat "$CHANGELOG_ENTRY" >> "$CHANGELOG_FILE"
+          fi
+          
+          echo "✅ Updated CHANGELOG.md"
+
+      - name: Show changes summary
+        run: |
+          echo "## 📋 Release ${{ env.VERSION }} Preparation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Files Modified:" >> $GITHUB_STEP_SUMMARY
+          git diff --name-only | while read file; do
+            echo "- \`$file\`" >> $GITHUB_STEP_SUMMARY
+          done
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### PRs included: ${{ steps.fetch_prs.outputs.pr_count }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Commit and push
+        if: ${{ inputs.dry_run == false }}
+        run: |
+          git add -A
+          git commit -m "Prepare release ${{ env.VERSION }}"
+          git push origin release/${{ env.VERSION }}
+
+      - name: Create Pull Request
+        if: ${{ inputs.dry_run == false }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const version = process.env.VERSION;
+            const prCount = '${{ steps.fetch_prs.outputs.pr_count }}';
+            
+            const { data: pr } = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Release ${version}`,
+              head: `release/${version}`,
+              base: 'main',
+              body: `## 🚀 Release ${version}
+
+            ### 📝 Changes
+            - ${prCount} PRs included in changelog
+            - Version bumped to ${version}
+
+            ### ✅ Review Checklist
+            - [ ] Version number correct in pom.xml
+            - [ ] CHANGELOG.md reviewed
+            - [ ] CI passes
+
+            ### 🔄 After Merge
+            1. **Finalize Release** → tag \`v${version}\` + GitHub release
+            2. **Deploy to Maven Central** → publish artifacts
+            `
+            });
+            
+            console.log(`✅ Created PR #${pr.number}: ${pr.html_url}`);
+            
+            const reviewers = ['mikepapadim', 'stratika', 'orionpapadakis'];
+            try {
+              await github.rest.pulls.requestReviewers({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+                reviewers: reviewers
+              });
+            } catch (e) {
+              console.log('Could not request reviewers:', e.message);
+            }
+
+      - name: Dry run output
+        if: ${{ inputs.dry_run == true }}
+        run: |
+          echo "🏃 DRY RUN MODE"
+          echo ""
+          echo "=== Files changed ==="
+          git diff --stat
+          echo ""
+          echo "=== Changelog entry ==="
+          cat "${{ runner.temp }}/changelog_entry.txt"

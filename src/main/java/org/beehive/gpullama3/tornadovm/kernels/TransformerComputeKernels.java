@@ -2,7 +2,10 @@ package org.beehive.gpullama3.tornadovm.kernels;
 
 import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
+import uk.ac.manchester.tornado.api.types.HalfFloat;
+import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 
 public class TransformerComputeKernels {
 
@@ -17,6 +20,51 @@ public class TransformerComputeKernels {
         if (dummy > Float.MAX_VALUE) {
             buffer.set(0, dummy);
         }
+    }
+
+    public static void convertFP16toFP32(KernelContext context, HalfFloatArray x, FloatArray wrapX) {
+        int i = context.globalIdx;
+        wrapX.set(i, x.get(i).getFloat32());
+    }
+
+    public static void convertQ8_0toFP32(KernelContext context, ByteArray x, FloatArray wrapX) {
+        int globalId = context.globalIdx;
+        int totalElements = wrapX.getSize();
+
+        if (globalId >= totalElements) {
+            return;
+        }
+
+        // Q8_0 block structure constants
+        int blockSize = 32;
+        int Q8_0_BLOCK_BYTES = 34; // 2 bytes scale + 32 bytes quants
+
+        // Calculate which block and position within block
+        int blockIdx = globalId / blockSize;
+        int withinBlockIdx = globalId % blockSize;
+
+        // Calculate byte offset for this Q8_0 block
+        int blockByteOffset = blockIdx * Q8_0_BLOCK_BYTES;
+
+        // Load scale (first 2 bytes of block as HalfFloat)
+        HalfFloat scale = x.getHalfFloat(blockByteOffset);
+        float scaleFloat = scale.getFloat32();
+
+        // Load quantized value (skip 2-byte scale, then index within block)
+        byte quantValue = x.get(blockByteOffset + 2 + withinBlockIdx);
+
+        // Dequantize: float_value = quantized_value * scale
+        float dequantizedValue = ((float) quantValue) * scaleFloat;
+
+        // Store result in output FloatArray
+        wrapX.set(globalId, dequantizedValue);
+    }
+
+    public static void convertFP32toFP16(KernelContext context,  FloatArray wrapX, HalfFloatArray x) {
+        int i = context.globalIdx;
+        float valInput = wrapX.get(i);
+        HalfFloat val = new HalfFloat(valInput);
+        x.set(i,val);
     }
 
     /**

@@ -2,6 +2,8 @@ package org.beehive.gpullama3.model;
 
 public interface Configuration {
 
+    String quantization();
+
     /** Transformer embedding dimension */
     int dim();
 

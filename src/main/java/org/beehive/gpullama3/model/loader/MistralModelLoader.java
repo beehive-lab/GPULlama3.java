@@ -50,6 +50,7 @@ public class MistralModelLoader extends AbstractModelLoader<Mistral, MistralConf
         int vocabSize = metadata.containsKey("llama.vocab_size") ? (int) metadata.get("llama.vocab_size") : (int) metadata.get("tokenizer.ggml.tokens.length");
 
         return new MistralConfiguration(
+                getModelQuantization(metadata),
                 (int) metadata.get("llama.embedding_length"),
                 (int) metadata.get("llama.feed_forward_length"),
                 (int) metadata.get("llama.block_count"),
@@ -130,7 +131,7 @@ public class MistralModelLoader extends AbstractModelLoader<Mistral, MistralConf
 
         // Load all tensors uniformly as TornadoTensor hierarchy
         return new LlamaTornadoWeights(
-                loadTornadoTensorAsFP32(tokenEmbeddings),
+                loadTornadoTensor(tokenEmbeddings),
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_norm.weight")),    // fp32
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_q.weight")),
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_k.weight")),
