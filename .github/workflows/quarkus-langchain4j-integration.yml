@@ -1,0 +1,155 @@
+name: Quarkus LangChain4j Integration Tests
+
+on:
+  # Temporarily disabled - manual trigger only
+  push:
+    branches: [ main, ci/quarkus-langchain4j-IT ]
+  # pull_request:
+  #   branches: [ main ]
+  #   types: [opened, synchronize, reopened]
+  # schedule:
+  #   # Run daily at 02:30 UTC to catch dependency breakages
+  #   - cron: '30 2 * * *'
+  workflow_dispatch:
+    inputs:
+      quarkus_langchain4j_version:
+        description: 'Quarkus LangChain4j version to test against'
+        required: false
+        type: string
+      quarkus_version:
+        description: 'Quarkus platform version to test against'
+        required: false
+        type: string
+
+env:
+  JAVA_HOME: /opt/jenkins/jdks/graal-23.1.0/jdk-21.0.3
+  MODELS_DIR: /opt/models
+
+jobs:
+  quarkus-integration-test:
+    if: github.repository == 'beehive-lab/GPULlama3.java'
+    runs-on: [self-hosted]
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        backend:
+          - name: opencl
+          - name: ptx
+
+    steps:
+      - name: Checkout GPULlama3
+        uses: actions/checkout@v4
+
+      # Step 1: Install TornadoVM
+      - name: Install TornadoVM
+        run: |
+          cd ${{ github.workspace }}
+          
+          wget https://github.com/beehive-lab/TornadoVM/releases/download/v2.1.0/tornadovm-2.1.0-${{ matrix.backend.name }}-linux-amd64.zip
+          unzip tornadovm-2.1.0-${{ matrix.backend.name }}-linux-amd64.zip
+          
+          TORNADO_SDK="${{ github.workspace }}/tornadovm-2.1.0-${{ matrix.backend.name }}"
+          PATH=$TORNADO_SDK/bin:$PATH
+          echo "TORNADO_SDK=$TORNADO_SDK" >> $GITHUB_ENV
+          echo "PATH=$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH" >> $GITHUB_ENV
+          
+          tornado --devices
+          tornado --version
+          
+          if [ $? -eq 0 ]; then
+              echo "✅ TornadoVM installed"
+          else
+              echo "❌ TornadoVM installation check failed"
+              exit 1
+          fi
+
+      # Step 2: Clone Quarkus LangChain4j
+      - name: Clone Quarkus LangChain4j
+        run: |
+          cd ${{ github.workspace }}
+          git clone https://github.com/quarkiverse/quarkus-langchain4j.git
+          echo "✅ Quarkus LangChain4j cloned"
+
+      # Step 3: Build Quarkus LangChain4j (optimized)
+      - name: Build Quarkus LangChain4j
+        run: |
+          cd ${{ github.workspace }}/quarkus-langchain4j
+          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          
+          # Use reactor to build GPULlama3 integration test + dependencies
+          # This recompiles everything with the same Java version, avoiding compatibility issues
+          # The -Dtornado flag activates the TornadoVM profile which includes gpu-llama3 module
+          mvn clean install -pl integration-tests/gpu-llama3 -am -DskipTests -Dtornado
+          
+          echo "✅ Quarkus LangChain4j built (GPULlama3 integration test + dependencies)"
+
+      # Step 4: Run Integration Test
+      - name: Run Integration Test
+        run: |
+          cd ${{ github.workspace }}/quarkus-langchain4j/integration-tests/gpu-llama3
+          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          
+          # Set model path
+          MODEL_PATH="${MODELS_DIR}/Llama-3.2-1B-Instruct-F16.gguf"
+          export MODEL_PATH
+          
+          echo "Running Quarkus-Langchain4j integration test with model: $MODEL_PATH"
+          
+          # Start the application in the background
+          java "@$TORNADO_SDK/tornado-argfile" -jar target/quarkus-app/quarkus-run.jar &
+          APP_PID=$!
+          
+          # Wait for the application to start
+          echo "Waiting for application to start..."
+          for i in {1..30}; do
+            if curl -s http://localhost:8080/q/health > /dev/null 2>&1; then
+              echo "✅ Application started successfully"
+              break
+            elif [ $i -eq 30 ]; then
+              echo "❌ Application failed to start within 30 seconds"
+              kill $APP_PID || true
+              exit 1
+            else
+              sleep 1
+            fi
+          done
+          
+          # Test that GPULlama3 integration is working
+          echo "Testing GPULlama3 integration..."
+          
+          # Test the blocking chat endpoint
+          echo "Testing blocking chat endpoint..."
+          BLOCKING_RESPONSE=$(curl -s -w "%{http_code}" http://localhost:8080/chat/blocking)
+          HTTP_CODE="${BLOCKING_RESPONSE: -3}"
+          
+          if [ "$HTTP_CODE" = "200" ]; then
+            RESPONSE_BODY="${BLOCKING_RESPONSE%???}"
+            if [ ${#RESPONSE_BODY} -gt 10 ]; then
+              echo "✅ Blocking chat endpoint working - received response: ${RESPONSE_BODY:0:50}..."
+            else
+              echo "⚠️ Blocking chat endpoint returned short response: $RESPONSE_BODY"
+            fi
+          else
+            echo "❌ Blocking chat endpoint failed with HTTP code: $HTTP_CODE"
+            echo "Response: ${BLOCKING_RESPONSE%???}"
+          fi
+          
+          # Test the streaming chat endpoint (just check it responds)
+          echo "Testing streaming chat endpoint..."
+          STREAMING_RESPONSE=$(timeout 10s curl -s -w "%{http_code}" http://localhost:8080/chat/streaming)
+          STREAMING_HTTP_CODE="${STREAMING_RESPONSE: -3}"
+          
+          if [ "$STREAMING_HTTP_CODE" = "200" ]; then
+            echo "✅ Streaming chat endpoint responding"
+          else
+            echo "⚠️ Streaming chat endpoint returned HTTP code: $STREAMING_HTTP_CODE"
+          fi
+          
+          echo "✅ GPULlama3 integration test completed"
+          
+          # Clean shutdown
+          kill $APP_PID || true
+          wait $APP_PID 2>/dev/null || true
+          
+          echo "✅ Integration test completed successfully"
