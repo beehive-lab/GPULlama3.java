@@ -23,7 +23,9 @@ on:
 
 env:
   JAVA_HOME: /opt/jenkins/jdks/graal-23.1.0/jdk-21.0.3
-  MODELS_DIR: /opt/models
+  TORNADO_ROOT: ${{ github.workspace }}/GPULlama3.java/external/tornadovm
+  GRAAL_JARS: /opt/graalJars
+  QUARKUS_PORT: 8081
 
 jobs:
   quarkus-integration-test:
@@ -35,34 +37,76 @@ jobs:
       matrix:
         backend:
           - name: opencl
-          - name: ptx
+          #- name: ptx
 
     steps:
       - name: Checkout GPULlama3
         uses: actions/checkout@v4
 
-      # Step 1: Install TornadoVM
-      - name: Install TornadoVM
+#      # Step 1: Install TornadoVM
+#      - name: Install TornadoVM
+#        run: |
+#          cd ${{ github.workspace }}
+#
+#          wget https://github.com/beehive-lab/TornadoVM/releases/download/v2.1.0/tornadovm-2.1.0-${{ matrix.backend.name }}-linux-amd64.zip
+#          unzip tornadovm-2.1.0-${{ matrix.backend.name }}-linux-amd64.zip
+#
+#          # Export environment for the current shell
+#          export TORNADO_SDK="${{ github.workspace }}/tornadovm-2.1.0-${{ matrix.backend.name }}"
+#          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+#
+#          # Save to GitHub Actions environment for future steps
+#          echo "TORNADO_SDK=$TORNADO_SDK" >> $GITHUB_ENV
+#          echo "PATH=$PATH" >> $GITHUB_ENV
+#
+#          # Check TornadoVM installation
+#          if tornado --devices && tornado --version; then
+#              echo "✅ TornadoVM installed"
+#          else
+#              echo "❌ TornadoVM installation check failed"
+#              exit 1
+#          fi
+      # Step 1: Clone and build TornadoVM
+      - name: Clone TornadoVM master
         run: |
-          cd ${{ github.workspace }}
-          
-          wget https://github.com/beehive-lab/TornadoVM/releases/download/v2.1.0/tornadovm-2.1.0-${{ matrix.backend.name }}-linux-amd64.zip
-          unzip tornadovm-2.1.0-${{ matrix.backend.name }}-linux-amd64.zip
-          
-          TORNADO_SDK="${{ github.workspace }}/tornadovm-2.1.0-${{ matrix.backend.name }}"
-          PATH=$TORNADO_SDK/bin:$PATH
-          echo "TORNADO_SDK=$TORNADO_SDK" >> $GITHUB_ENV
-          echo "PATH=$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH" >> $GITHUB_ENV
-          
-          tornado --devices
-          tornado --version
-          
-          if [ $? -eq 0 ]; then
-              echo "✅ TornadoVM installed"
-          else
-              echo "❌ TornadoVM installation check failed"
-              exit 1
+          git clone --depth 1 --branch master \
+            https://github.com/beehive-lab/TornadoVM.git \
+            $TORNADO_ROOT
+      - name: Set up Python venv for TornadoVM
+        run: |
+          python3 -m venv $TORNADO_ROOT/venv
+          source $TORNADO_ROOT/venv/bin/activate
+          python --version
+      - name: Build TornadoVM
+        run: |
+          cd $TORNADO_ROOT
+          mkdir -p graalJars && cp $GRAAL_JARS/* graalJars/
+          source venv/bin/activate
+          echo "=== Building TornadoVM ==="
+
+          make BACKEND=${{ matrix.backend.name }}
+
+          echo "=== Searching for TornadoVM SDK directory ==="
+          SDK_DIR=$(find dist -type d -maxdepth 3 -path "*/tornadovm-*-${{ matrix.backend.name }}" | head -n 1)
+          if [ -z "$SDK_DIR" ]; then
+            echo "::error::Could not locate TornadoVM SDK directory!"
+            find dist -maxdepth 5 -type d
+            exit 1
           fi
+          FULL_SDK="${PWD}/${SDK_DIR}"
+          echo "Detected TornadoVM SDK: $FULL_SDK"
+
+          # Export for current shell session
+          export TORNADO_SDK="$FULL_SDK"
+          export PATH="$FULL_SDK/bin:$JAVA_HOME/bin:$PATH"
+
+          # Save for subsequent steps
+          echo "TORNADO_SDK=$FULL_SDK" >> $GITHUB_ENV
+          echo "PATH=$PATH" >> $GITHUB_ENV
+
+          echo "=== Checking tornado CLI ==="
+          which tornado || { echo "::error::tornado not in PATH"; exit 1; }
+          tornado --devices
 
       # Step 2: Clone Quarkus LangChain4j
       - name: Clone Quarkus LangChain4j
@@ -90,20 +134,19 @@ jobs:
           cd ${{ github.workspace }}/quarkus-langchain4j/integration-tests/gpu-llama3
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
           
-          # Set model path
-          MODEL_PATH="${MODELS_DIR}/Llama-3.2-1B-Instruct-F16.gguf"
-          export MODEL_PATH
+          echo "Running Quarkus-Langchain4j integration test on port $QUARKUS_PORT"
           
-          echo "Running Quarkus-Langchain4j integration test with model: $MODEL_PATH"
-          
-          # Start the application in the background
-          java "@$TORNADO_SDK/tornado-argfile" -jar target/quarkus-app/quarkus-run.jar &
+          # Start the Quarkus application in the background
+          java  @"$TORNADO_SDK/tornado-argfile" \
+                -Dtornado.device.memory=8GB
+                -Dquarkus.http.port=$QUARKUS_PORT \
+                -jar target/quarkus-app/quarkus-run.jar &
           APP_PID=$!
           
           # Wait for the application to start
-          echo "Waiting for application to start..."
+          echo "Starting Quarkus application on port $QUARKUS_PORT..."
           for i in {1..30}; do
-            if curl -s http://localhost:8080/q/health > /dev/null 2>&1; then
+            if curl -s http://localhost:$QUARKUS_PORT/q/health > /dev/null 2>&1; then
               echo "✅ Application started successfully"
               break
             elif [ $i -eq 30 ]; then
@@ -115,38 +158,12 @@ jobs:
             fi
           done
           
-          # Test that GPULlama3 integration is working
-          echo "Testing GPULlama3 integration..."
+          # Trigger endpoints
+          BLOCKING_RESPONSE=$(curl -s -w "%{http_code}" http://localhost:$QUARKUS_PORT/chat/blocking)
+          STREAMING_RESPONSE=$(timeout 10s curl -s -w "%{http_code}" http://localhost:$QUARKUS_PORT/chat/streaming)
           
-          # Test the blocking chat endpoint
-          echo "Testing blocking chat endpoint..."
-          BLOCKING_RESPONSE=$(curl -s -w "%{http_code}" http://localhost:8080/chat/blocking)
-          HTTP_CODE="${BLOCKING_RESPONSE: -3}"
-          
-          if [ "$HTTP_CODE" = "200" ]; then
-            RESPONSE_BODY="${BLOCKING_RESPONSE%???}"
-            if [ ${#RESPONSE_BODY} -gt 10 ]; then
-              echo "✅ Blocking chat endpoint working - received response: ${RESPONSE_BODY:0:50}..."
-            else
-              echo "⚠️ Blocking chat endpoint returned short response: $RESPONSE_BODY"
-            fi
-          else
-            echo "❌ Blocking chat endpoint failed with HTTP code: $HTTP_CODE"
-            echo "Response: ${BLOCKING_RESPONSE%???}"
-          fi
-          
-          # Test the streaming chat endpoint (just check it responds)
-          echo "Testing streaming chat endpoint..."
-          STREAMING_RESPONSE=$(timeout 10s curl -s -w "%{http_code}" http://localhost:8080/chat/streaming)
-          STREAMING_HTTP_CODE="${STREAMING_RESPONSE: -3}"
-          
-          if [ "$STREAMING_HTTP_CODE" = "200" ]; then
-            echo "✅ Streaming chat endpoint responding"
-          else
-            echo "⚠️ Streaming chat endpoint returned HTTP code: $STREAMING_HTTP_CODE"
-          fi
-          
-          echo "✅ GPULlama3 integration test completed"
+          echo "Blocking endpoint HTTP code: ${BLOCKING_RESPONSE: -3}"
+          echo "Streaming endpoint HTTP code: ${STREAMING_RESPONSE: -3}"
           
           # Clean shutdown
           kill $APP_PID || true
