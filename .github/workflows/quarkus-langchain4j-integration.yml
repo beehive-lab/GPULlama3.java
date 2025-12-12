@@ -138,7 +138,7 @@ jobs:
           
           # Start the Quarkus application in the background
           java  @"$TORNADO_SDK/tornado-argfile" \
-                -Dtornado.device.memory=8GB
+                -Dtornado.device.memory=8GB \
                 -Dquarkus.http.port=$QUARKUS_PORT \
                 -jar target/quarkus-app/quarkus-run.jar &
           APP_PID=$!
