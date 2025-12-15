@@ -6,19 +6,15 @@
 
 # Resolve root of this project (LLaMA3) and TornadoVM
 export LLAMA_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export TORNADO_ROOT="/home/ruiqi/TornadoVM_OCL/TornadoVM"
-
-# Set the path to TornadoVM SDK binaries
-export TORNADO_SDK="/home/ruiqi/TornadoVM_OCL/TornadoVM/bin/sdk"
 
 # Add TornadoVM and LLaMA bin directories to PATH
-export PATH="${PATH}:${TORNADO_SDK}:${LLAMA_ROOT}"
+export PATH="${PATH}:${TORNADO_SDK}/bin:${LLAMA_ROOT}"
 
 # Optional: Set JAVA_HOME if required
 # export JAVA_HOME=/path/to/graalvm
 # export PATH="${JAVA_HOME}/bin:${PATH}"
 
-echo "[INFO] Environment configured for LLaMA3 with TornadoVM at: $TORNADO_ROOT"
+echo "[INFO] Environment configured for LLaMA3 with TornadoVM at: $TORNADO_SDK"
 # ===== Notes =====
 # After sourcing this script:
 # 1. TornadoVM will be available for GPU computation

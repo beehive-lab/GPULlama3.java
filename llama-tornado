@@ -422,7 +422,7 @@ def create_parser() -> argparse.ArgumentParser:
     )
     debug_group.add_argument(
         "--profiler-dump-dir",
-        default="/home/ruiqi/GPULlama3.java/prof.json",
+        default=None,
         help="Directory for profiler output",
     )
 
