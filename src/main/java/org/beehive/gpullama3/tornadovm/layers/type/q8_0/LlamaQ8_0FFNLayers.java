@@ -161,6 +161,10 @@ public class LlamaQ8_0FFNLayers extends AbstractFFNLayers {
         // === Attention Block ===
         // RMS Normalization
         unifiedLayer.task("attn_rms_reduce",
+                TransformerComputeKernelsLayered::reductionOneBlockWithLayerFuse,
+                context, state.wrapXb, state.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), state.temp,
+                config.dim(), config.rmsNormEps(), state.localSize);
+        /*unifiedLayer.task("attn_rms_reduce",
                 TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
                 context, state.temp, state.wrapX,
                 config.dim(), config.rmsNormEps(), state.localSize);
@@ -174,7 +178,7 @@ public class LlamaQ8_0FFNLayers extends AbstractFFNLayers {
         unifiedLayer.task("attn_rms_apply",
                 TransformerComputeKernelsLayered::reductionOneBlock2WithLayer,
                 context, state.wrapXb, state.wrapX,
-                weights.rms_att_weightLayered[layerIndex].asFloatArray(), state.temp);
+                weights.rms_att_weightLayered[layerIndex].asFloatArray(), state.temp);*/
 
         // QKV Projection (fused with Q8 dequantization)
         unifiedLayer.task("qkv_projection",
@@ -306,7 +310,7 @@ public class LlamaQ8_0FFNLayers extends AbstractFFNLayers {
             // --- Attention Block ---
             // RMS Normalization
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_rms_reduce", rmsNormWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_rms_apply", rmsNormWorker);
+            //tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_rms_apply", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".qkv_projection", fusedQkvWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWithCacheWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attention", parallelAttentionWorker);

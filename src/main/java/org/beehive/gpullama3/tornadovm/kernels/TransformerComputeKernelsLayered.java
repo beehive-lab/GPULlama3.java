@@ -409,6 +409,84 @@ public class TransformerComputeKernelsLayered {
     }
 
     /**
+     * Performs RMS (Root Mean Square) normalization using parallel reduction. It first computes the variance and scaling factor across all work groups,
+     * then it applies the computed normalization factor to input and weight elements.
+     *
+     * <p>
+     * Formula: output[i] = weight[i] * (normalizationFactor * x[i])
+     *
+     * Algorithm: 1. Each thread computes square of its input element 2. Work group performs parallel reduction of squares 3. Partial sums stored per work group 4. All thread combines all partial
+     * sums and computes normalization factor 5. Applies the computed normalization factor to input and weight elements.
+     *
+     * @param context
+     *         Kernel execution context
+     * @param outputFP16
+     *         Half float array to store partial sums and final normalization factor
+     * @param x
+     *         Input array to normalize
+     * @param weights
+     *         Weight values for each element
+     * @param temp
+     *         Temporary array containing normalization factor at index 0
+     * @param size
+     *         Number of elements to process
+     * @param ermsNorm
+     *         Epsilon value squared for numerical stability
+     * @param localMemSize
+     *         Size of local memory allocation (must match work group size)
+     */
+
+    public static void reductionOneBlockWithLayerFuseFP16(KernelContext context, HalfFloatArray outputFP16, FloatArray x, FloatArray weights, FloatArray temp, int size, float ermsNorm, int localMemSize) {
+        int gid = context.globalIdx;
+        int lid = context.localIdx;
+        int groupId = context.groupIdx;
+        int groupSize = context.localGroupSizeX;
+
+        // Allocate local memory with the provided size
+        float[] localX = context.allocateFloatLocalArray(localMemSize);
+
+        // Load input value and compute square
+        if (gid < size) {
+            float v = x.get(gid);
+            localX[lid] = v * v;
+        } else {
+            localX[lid] = 0.0f;
+        }
+
+        // Perform parallel reduction within the work group
+        for (int stride = (groupSize / 2); stride > 0; stride /= 2) {
+            context.localBarrier();
+            if (lid < stride) {
+                localX[lid] += localX[lid + stride];
+            }
+        }
+
+        // Each workgroup stores its partial sum in a different location
+        if (lid == 0) {
+            // Store the partial sum from each workgroup
+            temp.set(groupId, localX[0]);
+        }
+
+        context.globalBarrier();
+
+        float localss = 0.0f;
+        int numGroups = (size + groupSize - 1) / groupSize;
+        for (int i = 0; i < numGroups; i++) {  // Assuming 8 workgroups
+            localss += temp.get(i);
+        }
+        localss /= size;
+        localss += ermsNorm;
+        localss = 1.0f / TornadoMath.sqrt(localss);
+
+        if (gid < size) {
+            float in = x.get(gid);
+            float w = weights.get(gid);
+            outputFP16.set(gid, new HalfFloat(w * (localss * in)));
+        }
+    }
+
+
+    /**
      * Applies the computed normalization factor to input and weight elements. This is the second phase of RMS normalization.
      * <p>
      * Formula: output[i] = weight[i] * (normalizationFactor * x[i])
