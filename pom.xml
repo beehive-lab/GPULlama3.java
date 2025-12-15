@@ -7,7 +7,7 @@
         <!-- Use your verified namespace -->
         <groupId>io.github.beehive-lab</groupId>
         <artifactId>gpu-llama3</artifactId>
-        <version>0.2.2</version> <!-- release version (no -SNAPSHOT) -->
+        <version>0.3.1</version> <!-- release version (no -SNAPSHOT) -->
 
         <name>GPU Llama3</name>
         <description>GPU-accelerated LLaMA3 inference using TornadoVM</description>
@@ -54,12 +54,12 @@
             <dependency>
                 <groupId>io.github.beehive-lab</groupId>
                 <artifactId>tornado-api</artifactId>
-                <version>2.0.1-dev</version>
+                <version>2.1.0</version>
             </dependency>
             <dependency>
                 <groupId>io.github.beehive-lab</groupId>
                 <artifactId>tornado-runtime</artifactId>
-                <version>2.0.1-dev</version>
+                <version>2.1.0</version>
             </dependency>
         </dependencies>
 

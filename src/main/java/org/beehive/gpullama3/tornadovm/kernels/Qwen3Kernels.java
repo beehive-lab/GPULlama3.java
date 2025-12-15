@@ -3,7 +3,10 @@ package org.beehive.gpullama3.tornadovm.kernels;
 import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.annotations.Parallel;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
+import uk.ac.manchester.tornado.api.types.HalfFloat;
+import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
 
 // @formatter:off
@@ -292,5 +295,604 @@ public class Qwen3Kernels {
         }
     }
 
+    /**
+     * Fused RoPE rotation with KV cache copy for Qwen3.
+     * Combines ropeRotation + copyToCache into a single kernel.
+     */
+    public static void ropeRotationWithCacheCopy(
+            KernelContext context,
+            IntArray positionHolder,
+            FloatArray q,              // Q vector (in/out)
+            FloatArray k,              // K vector (in/out)
+            FloatArray v,              // V vector (in only)
+            FloatArray keyCache,       // Key cache (out)
+            FloatArray valueCache,     // Value cache (out)
+            int numberOfKeyValueHeads,
+            int nEmbdHead,
+            int nEmbdGqa,
+            int layer,
+            int contextLength) {
+
+        int h = context.globalIdx;
+        int ic = context.globalIdy;
+
+        int pos = positionHolder.get(0);
+        int rotn = h < numberOfKeyValueHeads ? 2 : 1;
+        int poffset = h * nEmbdHead;
+        int nComplEmbdHead = nEmbdHead / 2;
+
+        // Compute RoPE frequencies for Qwen3 (theta = 1000000.0f)
+        float theta = 1000000.0f;
+        int i = ic * 2;
+        float freq = 1.0f / TornadoMath.pow(theta, (float) i / (float) nEmbdHead);
+
+        float val = pos * freq;
+        float fcr = TornadoMath.cos(val);
+        float fci = TornadoMath.sin(val);
+
+        // Rotate Q (all heads)
+        float v0q = q.get(poffset + ic);
+        float v1q = q.get(poffset + ic + nComplEmbdHead);
+        q.set(poffset + ic, v0q * fcr - v1q * fci);
+        q.set(poffset + ic + nComplEmbdHead, v0q * fci + v1q * fcr);
+
+        // Rotate K and copy K/V to cache (only for KV heads)
+        if (rotn > 1 && (poffset + ic + nComplEmbdHead) < k.getSize()) {
+            float v0k = k.get(poffset + ic);
+            float v1k = k.get(poffset + ic + nComplEmbdHead);
+            float rotatedK0 = v0k * fcr - v1k * fci;
+            float rotatedK1 = v0k * fci + v1k * fcr;
+
+            // Write rotated K back
+            k.set(poffset + ic, rotatedK0);
+            k.set(poffset + ic + nComplEmbdHead, rotatedK1);
+
+            // Direct cache write (fused - no separate copy kernel!)
+            int cacheOffset = layer * contextLength * nEmbdGqa + pos * nEmbdGqa;
+            int kvIdx = h * nEmbdHead;
+
+            keyCache.set(cacheOffset + kvIdx + ic, rotatedK0);
+            keyCache.set(cacheOffset + kvIdx + ic + nComplEmbdHead, rotatedK1);
+
+            // Copy V to cache (V doesn't need rotation)
+            valueCache.set(cacheOffset + kvIdx + ic, v.get(poffset + ic));
+            valueCache.set(cacheOffset + kvIdx + ic + nComplEmbdHead, v.get(poffset + ic + nComplEmbdHead));
+        }
+    }
+
+    /**
+     * Fused Q/K/V matrix-vector multiplication for Qwen3 GQA.
+     * Q has full head dimension, K/V have reduced KV head dimension.
+     *
+     * Workgroup assignment:
+     *   - rowId [0, qDim): Q projection
+     *   - rowId [qDim, qDim+kvDim): K projection
+     *   - rowId [qDim+kvDim, qDim+2*kvDim): V projection
+     */
+    public static void fusedQKVMatmul(
+            KernelContext context,
+            FloatArray x,               // input vector
+            FloatArray q,               // output Q
+            FloatArray k,               // output K
+            FloatArray v,               // output V
+            HalfFloatArray wq,          // Q weight matrix
+            HalfFloatArray wk,          // K weight matrix
+            HalfFloatArray wv,          // V weight matrix
+            int inputDim,               // input dimension (config.dim())
+            int qDim,                   // Q output dimension
+            int kvDim,                  // KV output dimension
+            int localWorkGroupSize) {
+
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        // Allocate local memory for reduction
+        float[] localSum = context.allocateFloatLocalArray(localWorkGroupSize);
+
+        if (rowId < qDim) {
+            // ========== Q projection ==========
+            int rowOffset = rowId * inputDim;
+
+            float partialSum = 0.0f;
+            for (int j = localId; j < inputDim; j += localWorkGroupSize) {
+                partialSum += wq.get(rowOffset + j).getFloat32() * x.get(j);
+            }
+
+            localSum[localId] = partialSum;
+            context.localBarrier();
+
+            for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) {
+                    localSum[localId] += localSum[localId + stride];
+                }
+                context.localBarrier();
+            }
+
+            if (localId == 0) {
+                q.set(rowId, localSum[0]);
+            }
+
+        } else if (rowId < qDim + kvDim) {
+            // ========== K projection ==========
+            int kRow = rowId - qDim;
+            int rowOffset = kRow * inputDim;
+
+            float partialSum = 0.0f;
+            for (int j = localId; j < inputDim; j += localWorkGroupSize) {
+                partialSum += wk.get(rowOffset + j).getFloat32() * x.get(j);
+            }
+
+            localSum[localId] = partialSum;
+            context.localBarrier();
+
+            for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) {
+                    localSum[localId] += localSum[localId + stride];
+                }
+                context.localBarrier();
+            }
+
+            if (localId == 0) {
+                k.set(kRow, localSum[0]);
+            }
+
+        } else if (rowId < qDim + 2 * kvDim) {
+            // ========== V projection ==========
+            int vRow = rowId - qDim - kvDim;
+            int rowOffset = vRow * inputDim;
+
+            float partialSum = 0.0f;
+            for (int j = localId; j < inputDim; j += localWorkGroupSize) {
+                partialSum += wv.get(rowOffset + j).getFloat32() * x.get(j);
+            }
+
+            localSum[localId] = partialSum;
+            context.localBarrier();
+
+            for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) {
+                    localSum[localId] += localSum[localId + stride];
+                }
+                context.localBarrier();
+            }
+
+            if (localId == 0) {
+                v.set(vRow, localSum[0]);
+            }
+        }
+    }
+
+    /**
+     * Fused RMSNorm apply + Q/K/V projection for Qwen3 GQA.
+     * Eliminates intermediate wrapXb buffer write/read.
+     */
+    public static void fusedRmsNormQKVMatmul(
+            KernelContext context,
+            FloatArray x,               // raw input (FP32)
+            FloatArray q,               // output Q
+            FloatArray k,               // output K
+            FloatArray v,               // output V
+            FloatArray rmsWeights,      // RMS norm weights
+            FloatArray rmsScale,        // temp[0] = scale factor
+            HalfFloatArray wq,          // Q weight matrix
+            HalfFloatArray wk,          // K weight matrix
+            HalfFloatArray wv,          // V weight matrix
+            int inputDim,               // input dimension (config.dim())
+            int qDim,                   // Q output dimension
+            int kvDim,                  // KV output dimension
+            int localWorkGroupSize) {
+
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        float scale = rmsScale.get(0);
+
+        // Allocate local memory for reduction
+        float[] localSum = context.allocateFloatLocalArray(localWorkGroupSize);
+
+        if (rowId < qDim) {
+            // ========== Q projection with inline normalization ==========
+            int rowOffset = rowId * inputDim;
+
+            float partialSum = 0.0f;
+            for (int j = localId; j < inputDim; j += localWorkGroupSize) {
+                float normalized = rmsWeights.get(j) * scale * x.get(j);
+                partialSum += wq.get(rowOffset + j).getFloat32() * normalized;
+            }
+
+            localSum[localId] = partialSum;
+            context.localBarrier();
+
+            for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) {
+                    localSum[localId] += localSum[localId + stride];
+                }
+                context.localBarrier();
+            }
+
+            if (localId == 0) {
+                q.set(rowId, localSum[0]);
+            }
+
+        } else if (rowId < qDim + kvDim) {
+            // ========== K projection with inline normalization ==========
+            int kRow = rowId - qDim;
+            int rowOffset = kRow * inputDim;
+
+            float partialSum = 0.0f;
+            for (int j = localId; j < inputDim; j += localWorkGroupSize) {
+                float normalized = rmsWeights.get(j) * scale * x.get(j);
+                partialSum += wk.get(rowOffset + j).getFloat32() * normalized;
+            }
+
+            localSum[localId] = partialSum;
+            context.localBarrier();
+
+            for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) {
+                    localSum[localId] += localSum[localId + stride];
+                }
+                context.localBarrier();
+            }
+
+            if (localId == 0) {
+                k.set(kRow, localSum[0]);
+            }
+
+        } else if (rowId < qDim + 2 * kvDim) {
+            // ========== V projection with inline normalization ==========
+            int vRow = rowId - qDim - kvDim;
+            int rowOffset = vRow * inputDim;
+
+            float partialSum = 0.0f;
+            for (int j = localId; j < inputDim; j += localWorkGroupSize) {
+                float normalized = rmsWeights.get(j) * scale * x.get(j);
+                partialSum += wv.get(rowOffset + j).getFloat32() * normalized;
+            }
+
+            localSum[localId] = partialSum;
+            context.localBarrier();
+
+            for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) {
+                    localSum[localId] += localSum[localId + stride];
+                }
+                context.localBarrier();
+            }
+
+            if (localId == 0) {
+                v.set(vRow, localSum[0]);
+            }
+        }
+    }
+
+    /**
+     * Fused RMSNorm apply + Q/K/V projection for Qwen3 GQA with Q8_0 quantized weights.
+     * Uses the same Q8_0 block structure as matrixVectorRowMajorOptimizedQ8_0Byte.
+     */
+    public static void fusedRmsNormQKVMatmulQ8_0(
+            KernelContext context,
+            FloatArray x,               // raw input (FP32)
+            FloatArray q,               // output Q
+            FloatArray k,               // output K
+            FloatArray v,               // output V
+            FloatArray rmsWeights,      // RMS norm weights
+            FloatArray rmsScale,        // temp[0] = scale factor
+            ByteArray wq,               // Q weight matrix (Q8_0)
+            ByteArray wk,               // K weight matrix (Q8_0)
+            ByteArray wv,               // V weight matrix (Q8_0)
+            int inputDim,               // input dimension (config.dim())
+            int qDim,                   // Q output dimension
+            int kvDim,                  // KV output dimension
+            int localWorkGroupSize) {
+
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        float scale = rmsScale.get(0);
+        final int blockSize = 32;
+        final int Q8_0_BLOCK_BYTES = 34; // 2 bytes scale + 32 bytes quants
+
+        // Allocate local memory for reduction
+        float[] localSums = context.allocateFloatLocalArray(localWorkGroupSize);
+
+        if (rowId < qDim) {
+            // ========== Q projection with inline normalization ==========
+            int blocksPerRow = (inputDim + blockSize - 1) / blockSize;
+            int rowBlockOffset = rowId * blocksPerRow;
+
+            float partialSum = 0.0f;
+
+            // Main loop with 4-way unrolling
+            for (int j = localId * 4; j < inputDim - 3; j += localWorkGroupSize * 4) {
+                int blockIdx = j / blockSize;
+                int withinBlockIdx = j % blockSize;
+
+                int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+
+                // Load scale for this block
+                HalfFloat blockScale = wq.getHalfFloat(blockByteOffset);
+                float scaleFloat = blockScale.getFloat32();
+
+                // Load 4 consecutive quantized values
+                int quantsOffset = blockByteOffset + 2 + withinBlockIdx; // Skip 2-byte scale
+                byte quant1 = wq.get(quantsOffset);
+                byte quant2 = wq.get(quantsOffset + 1);
+                byte quant3 = wq.get(quantsOffset + 2);
+                byte quant4 = wq.get(quantsOffset + 3);
+
+                // Apply RMS normalization inline and compute dot product
+                float norm1 = rmsWeights.get(j) * scale * x.get(j);
+                float norm2 = rmsWeights.get(j + 1) * scale * x.get(j + 1);
+                float norm3 = rmsWeights.get(j + 2) * scale * x.get(j + 2);
+                float norm4 = rmsWeights.get(j + 3) * scale * x.get(j + 3);
+
+                partialSum += ((float) quant1 * scaleFloat) * norm1;
+                partialSum += ((float) quant2 * scaleFloat) * norm2;
+                partialSum += ((float) quant3 * scaleFloat) * norm3;
+                partialSum += ((float) quant4 * scaleFloat) * norm4;
+            }
+
+            // Handle remaining elements
+            for (int j = ((inputDim / 4) * 4) + localId; j < inputDim; j += localWorkGroupSize) {
+                int blockIdx = j / blockSize;
+                int withinBlockIdx = j % blockSize;
+
+                int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+
+                HalfFloat blockScale = wq.getHalfFloat(blockByteOffset);
+                float scaleFloat = blockScale.getFloat32();
+
+                byte quant = wq.get(blockByteOffset + 2 + withinBlockIdx);
+                float normalized = rmsWeights.get(j) * scale * x.get(j);
+
+                partialSum += ((float) quant * scaleFloat) * normalized;
+            }
+
+            localSums[localId] = partialSum;
+            context.localBarrier();
+
+            // Parallel reduction
+            for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) {
+                    localSums[localId] += localSums[localId + stride];
+                }
+                context.localBarrier();
+            }
+
+            if (localId == 0) {
+                q.set(rowId, localSums[0]);
+            }
+
+        } else if (rowId < qDim + kvDim) {
+            // ========== K projection with inline normalization ==========
+            int kRow = rowId - qDim;
+            int blocksPerRow = (inputDim + blockSize - 1) / blockSize;
+            int rowBlockOffset = kRow * blocksPerRow;
+
+            float partialSum = 0.0f;
+
+            // Main loop with 4-way unrolling
+            for (int j = localId * 4; j < inputDim - 3; j += localWorkGroupSize * 4) {
+                int blockIdx = j / blockSize;
+                int withinBlockIdx = j % blockSize;
+
+                int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+
+                HalfFloat blockScale = wk.getHalfFloat(blockByteOffset);
+                float scaleFloat = blockScale.getFloat32();
+
+                int quantsOffset = blockByteOffset + 2 + withinBlockIdx;
+                byte quant1 = wk.get(quantsOffset);
+                byte quant2 = wk.get(quantsOffset + 1);
+                byte quant3 = wk.get(quantsOffset + 2);
+                byte quant4 = wk.get(quantsOffset + 3);
+
+                float norm1 = rmsWeights.get(j) * scale * x.get(j);
+                float norm2 = rmsWeights.get(j + 1) * scale * x.get(j + 1);
+                float norm3 = rmsWeights.get(j + 2) * scale * x.get(j + 2);
+                float norm4 = rmsWeights.get(j + 3) * scale * x.get(j + 3);
+
+                partialSum += ((float) quant1 * scaleFloat) * norm1;
+                partialSum += ((float) quant2 * scaleFloat) * norm2;
+                partialSum += ((float) quant3 * scaleFloat) * norm3;
+                partialSum += ((float) quant4 * scaleFloat) * norm4;
+            }
+
+            for (int j = ((inputDim / 4) * 4) + localId; j < inputDim; j += localWorkGroupSize) {
+                int blockIdx = j / blockSize;
+                int withinBlockIdx = j % blockSize;
+
+                int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+
+                HalfFloat blockScale = wk.getHalfFloat(blockByteOffset);
+                float scaleFloat = blockScale.getFloat32();
+
+                byte quant = wk.get(blockByteOffset + 2 + withinBlockIdx);
+                float normalized = rmsWeights.get(j) * scale * x.get(j);
+
+                partialSum += ((float) quant * scaleFloat) * normalized;
+            }
+
+            localSums[localId] = partialSum;
+            context.localBarrier();
+
+            for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) {
+                    localSums[localId] += localSums[localId + stride];
+                }
+                context.localBarrier();
+            }
+
+            if (localId == 0) {
+                k.set(kRow, localSums[0]);
+            }
+
+        } else if (rowId < qDim + 2 * kvDim) {
+            // ========== V projection with inline normalization ==========
+            int vRow = rowId - qDim - kvDim;
+            int blocksPerRow = (inputDim + blockSize - 1) / blockSize;
+            int rowBlockOffset = vRow * blocksPerRow;
+
+            float partialSum = 0.0f;
+
+            // Main loop with 4-way unrolling
+            for (int j = localId * 4; j < inputDim - 3; j += localWorkGroupSize * 4) {
+                int blockIdx = j / blockSize;
+                int withinBlockIdx = j % blockSize;
+
+                int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+
+                HalfFloat blockScale = wv.getHalfFloat(blockByteOffset);
+                float scaleFloat = blockScale.getFloat32();
+
+                int quantsOffset = blockByteOffset + 2 + withinBlockIdx;
+                byte quant1 = wv.get(quantsOffset);
+                byte quant2 = wv.get(quantsOffset + 1);
+                byte quant3 = wv.get(quantsOffset + 2);
+                byte quant4 = wv.get(quantsOffset + 3);
+
+                float norm1 = rmsWeights.get(j) * scale * x.get(j);
+                float norm2 = rmsWeights.get(j + 1) * scale * x.get(j + 1);
+                float norm3 = rmsWeights.get(j + 2) * scale * x.get(j + 2);
+                float norm4 = rmsWeights.get(j + 3) * scale * x.get(j + 3);
+
+                partialSum += ((float) quant1 * scaleFloat) * norm1;
+                partialSum += ((float) quant2 * scaleFloat) * norm2;
+                partialSum += ((float) quant3 * scaleFloat) * norm3;
+                partialSum += ((float) quant4 * scaleFloat) * norm4;
+            }
+
+            for (int j = ((inputDim / 4) * 4) + localId; j < inputDim; j += localWorkGroupSize) {
+                int blockIdx = j / blockSize;
+                int withinBlockIdx = j % blockSize;
+
+                int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+
+                HalfFloat blockScale = wv.getHalfFloat(blockByteOffset);
+                float scaleFloat = blockScale.getFloat32();
+
+                byte quant = wv.get(blockByteOffset + 2 + withinBlockIdx);
+                float normalized = rmsWeights.get(j) * scale * x.get(j);
+
+                partialSum += ((float) quant * scaleFloat) * normalized;
+            }
+
+            localSums[localId] = partialSum;
+            context.localBarrier();
+
+            for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) {
+                    localSums[localId] += localSums[localId + stride];
+                }
+                context.localBarrier();
+            }
+
+            if (localId == 0) {
+                v.set(vRow, localSums[0]);
+            }
+        }
+    }
+
+
+    /**
+     * Fused Q and K RMSNorm for Qwen3.
+     * Combines rmsnormReduction + rmsnormMapIndexInPlace for both Q and K into one kernel.
+     *
+     * Workgroup assignment:
+     *   - Workgroups [0, nHeads): Process Q heads
+     *   - Workgroups [nHeads, nHeads + nHeadKv): Process K heads
+     */
+    public static void fusedQKRmsNorm(
+            KernelContext context,
+            FloatArray q,                // Q vector (in/out)
+            FloatArray k,                // K vector (in/out)
+            FloatArray qWeights,         // Q RMS norm weights
+            FloatArray kWeights,         // K RMS norm weights
+            int nHeads,                  // number of Q heads
+            int nHeadKv,                 // number of K heads
+            int nEmbdHead,               // head dimension
+            int localMemSize,            // local memory size (must be fixed)
+            float rmsNormEps) {
+
+        int groupId = context.groupIdx;
+        int localId = context.localIdx;
+        int localSize = context.localGroupSizeX;
+
+        // Allocate local memory with FIXED size parameter
+        float[] localSum = context.allocateFloatLocalArray(localMemSize);
+
+        if (groupId < nHeads) {
+            // === Process Q head ===
+            int headOffset = groupId * nEmbdHead;
+
+            // Step 1: Compute sum of squares (reduction)
+            float partialSum = 0.0f;
+            for (int i = localId; i < nEmbdHead; i += localSize) {
+                float val = q.get(headOffset + i);
+                partialSum += val * val;
+            }
+
+            localSum[localId] = partialSum;
+            context.localBarrier();
+
+            // Parallel reduction
+            for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) {
+                    localSum[localId] += localSum[localId + stride];
+                }
+                context.localBarrier();
+            }
+
+            // Compute normalization factor
+            float ss = localSum[0];
+            ss = ss / nEmbdHead + rmsNormEps;
+            ss = 1.0f / TornadoMath.sqrt(ss);
+
+            context.localBarrier();
+
+            // Step 2: Apply normalization with weights (in-place)
+            for (int i = localId; i < nEmbdHead; i += localSize) {
+                float normalized = ss * q.get(headOffset + i);
+                q.set(headOffset + i, qWeights.get(i) * normalized);
+            }
+
+        } else if (groupId < nHeads + nHeadKv) {
+            // === Process K head ===
+            int headIdx = groupId - nHeads;
+            int headOffset = headIdx * nEmbdHead;
+
+            // Step 1: Compute sum of squares (reduction)
+            float partialSum = 0.0f;
+            for (int i = localId; i < nEmbdHead; i += localSize) {
+                float val = k.get(headOffset + i);
+                partialSum += val * val;
+            }
+
+            localSum[localId] = partialSum;
+            context.localBarrier();
+
+            // Parallel reduction
+            for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) {
+                    localSum[localId] += localSum[localId + stride];
+                }
+                context.localBarrier();
+            }
+
+            // Compute normalization factor
+            float ss = localSum[0];
+            ss = ss / nEmbdHead + rmsNormEps;
+            ss = 1.0f / TornadoMath.sqrt(ss);
+
+            context.localBarrier();
+
+            // Step 2: Apply normalization with weights (in-place)
+            for (int i = localId; i < nEmbdHead; i += localSize) {
+                float normalized = ss * k.get(headOffset + i);
+                k.set(headOffset + i, kWeights.get(i) * normalized);
+            }
+        }
+    }
 }
 // @formatter:on

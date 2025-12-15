@@ -64,24 +64,15 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
     }
 
     @Override
-    public GridScheduler updateGridScheduler(GridScheduler tornadoForwardScheduler) {
+    public GridScheduler updateGridScheduler(GridScheduler gridScheduler) {
         WorkerGrid rmsNormWorker = WorkerGridFactory.createRmsNormWorker(config.dim(), state.localSize);
 
-        int matmulQGlobal = nEmbdHeadK * config.numberOfHeads() * LOCAL_WORK_GROUP_SIZE_ALLOC;
-        WorkerGrid matmulQRowMajorWorker = WorkerGridFactory.genericWorker(matmulQGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC);
+        int qkRmsNormGroups = config.numberOfHeads() + config.numberOfKeyValueHeads();
+        WorkerGrid qkRmsNormWorker = WorkerGridFactory.genericWorker(qkRmsNormGroups * nEmbdHead, nEmbdHead);
 
-        int matmulKVGlobal = nEmbdGqa * LOCAL_WORK_GROUP_SIZE_ALLOC;
-        WorkerGrid matmulKVRowMajorWorker = WorkerGridFactory.genericWorker(matmulKVGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC);
-
-        WorkerGrid qCurWorker = WorkerGridFactory.genericWorker(config.numberOfHeads() * nEmbdHead, nEmbdHead);
-        WorkerGrid kCurWorker = WorkerGridFactory.genericWorker(config.numberOfKeyValueHeads() * nEmbdHead, nEmbdHead);
-
-        int h = config.numberOfHeads();
-        int ic = nEmbdHead / 2;
-        WorkerGrid ropeWorker = WorkerGridFactory.createRoPEWorker(h, nEmbdHead);
-        WorkerGrid copyToCachesWorker = WorkerGridFactory.genericWorker(nEmbdGqa, 128);
+        WorkerGrid ropeWorker = WorkerGridFactory.createRoPEWorker(config.numberOfHeads(), nEmbdHead);
         WorkerGrid parallelAttentionWorker = WorkerGridFactory.createAttentionWorker(config.numberOfHeads(), nEmbdHead);
-
+        // attn_output_proj worker (output projection)
         int matmul1Global = config.dim() * LOCAL_WORK_GROUP_SIZE_ALLOC;
         WorkerGrid matmul1Worker = WorkerGridFactory.genericWorker(matmul1Global, LOCAL_WORK_GROUP_SIZE_ALLOC);
 
@@ -91,24 +82,27 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
         int projectionTwoGlobal = config.dim() * LOCAL_WORK_GROUP_SIZE_ALLOC;
         WorkerGrid projectionTwoWorker = WorkerGridFactory.genericWorker(projectionTwoGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC);
 
+        int qDim0 = nEmbdHeadK * qwen3Config.numberOfHeads();
+        int kvDim0 = nEmbdGqa;
+        int fusedQKVRows = qDim0 + 2 * kvDim0;  // Q rows + K rows + V rows
+        int fusedQKVGlobal = fusedQKVRows * LOCAL_WORK_GROUP_SIZE_ALLOC;
+        WorkerGrid fusedQKVWorker = WorkerGridFactory.genericWorker(fusedQKVGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC);
+
         for (int i = 0; i < config.numberOfLayers(); i++) {
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlock", rmsNormWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".qmatmul", matmulQRowMajorWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".kmatmul", matmulKVRowMajorWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".vmatmul", matmulKVRowMajorWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rmsnormReduction_Qcur", qCurWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rmsnormMapIndexInPlace_Qcur", qCurWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rmsnormReduction_Kcur", kCurWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rmsnormMapIndexInPlace_Kcur", kCurWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ropeRotation", ropeWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".copyToCaches", copyToCachesWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".parallel-attention", parallelAttentionWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".matmul1", matmul1Worker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".reductionsOneBlockFFN", rmsNormWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".fused_ffn_w1_w3", fusedFFNW1W3Worker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".projectionTwo", projectionTwoWorker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".attn_rms_reduce", rmsNormWorker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".attn_rms_qkv_projection", fusedQKVWorker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".qk_rmsnorm", qkRmsNormWorker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWorker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".attention", parallelAttentionWorker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".attn_output_proj", matmul1Worker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce", rmsNormWorker);
+            if (shouldUseFinalNormalization()) {
+                gridScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_finalize", rmsNormWorker);
+            }
+            gridScheduler.addWorkerGrid("layer_" + i + ".rms_ffn_gate_up", fusedFFNW1W3Worker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".ffn_down_proj", projectionTwoWorker);
         }
-        return tornadoForwardScheduler;
+        return gridScheduler;
     }
 
     @Override
@@ -154,120 +148,186 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
      * Setup a single transformer layer for Qwen3 with GQA (Q8_0 quantized)
      */
     TaskGraph setupSingleQwen3FFNLayer(Qwen3TornadoWeights weights, int layerIndex) {
+        var taskGraphName = "layer_" + layerIndex;
 
-        var unifiedLayerName = "layer_" + layerIndex;
-        TaskGraph unifiedLayer = new TaskGraph(unifiedLayerName);
+        // === Dimension Parameters ===
+        int qDim = nEmbdHeadK * qwen3Config.numberOfHeads();  // Q output size (full heads)
+        int kvDim = nEmbdGqa;                                  // K/V output size (reduced for GQA)
+        int inputDim = qwen3Config.dim();                      // Model dimension
+
+        var unifiedLayer = new TaskGraph(taskGraphName);
+
+        // === Data Setup ===
         unifiedLayer.consumeFromDevice(qwen3State.wrapX);
-        // Transfer Q8_0 weights for this layer (quants and scales)
         unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
-                weights.rms_att_weightLayered[layerIndex].asFloatArray(), //
-                weights.wqLayered[layerIndex].asByteArray(),
-                weights.wkLayered[layerIndex].asByteArray(),
-                weights.wvLayered[layerIndex].asByteArray(),
-                weights.woLayered[layerIndex].asByteArray(),
-                weights.rms_att_KNormLayered[layerIndex].asFloatArray(), //
-                weights.rms_att_QNormLayered[layerIndex].asFloatArray(),//
-                weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), //
-                weights.w1Layered[layerIndex].asByteArray(),
-                weights.w2Layered[layerIndex].asByteArray(),
-                weights.w3Layered[layerIndex].asByteArray());
-
-        // Configure layer data transfers (EVERY_EXECUTION and device persistence)
+                // Attention weights
+                weights.rms_att_weightLayered[layerIndex].asFloatArray(),   // RMS norm weights
+                weights.wqLayered[layerIndex].asByteArray(),                // Q projection
+                weights.wkLayered[layerIndex].asByteArray(),                // K projection
+                weights.wvLayered[layerIndex].asByteArray(),                // V projection
+                weights.woLayered[layerIndex].asByteArray(),                // Output projection
+                // Qwen3-specific Q/K norm weights
+                weights.rms_att_KNormLayered[layerIndex].asFloatArray(),    // K RMSNorm weights
+                weights.rms_att_QNormLayered[layerIndex].asFloatArray(),    // Q RMSNorm weights
+                // FFN weights
+                weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),   // FFN RMSNorm weights
+                weights.w1Layered[layerIndex].asByteArray(),                // FFN gate projection
+                weights.w2Layered[layerIndex].asByteArray(),                // FFN down projection
+                weights.w3Layered[layerIndex].asByteArray());               // FFN up projection
         unifiedLayer = configureLayerDataTransfers(unifiedLayer, layerIndex);
 
+        // ═══════════════════════════════════════════════════════════════════════
+        //                           ATTENTION BLOCK
+        // ═══════════════════════════════════════════════════════════════════════
 
-        // RMS norm for attention input
-        unifiedLayer.task("reductionsOneBlock",
-                        TransformerComputeKernelsLayered::reductionOneBlockWithLayerFuse,
-                        context, qwen3State.wrapXb, qwen3State.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), qwen3State.temp, config.dim(), config.rmsNormEps(), qwen3State.localSize);
+        // RMS Normalization - compute scale factor
+        unifiedLayer.task("attn_rms_reduce",
+                TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                context,
+                qwen3State.temp,              // output: scale factor
+                qwen3State.wrapX,             // input: hidden state
+                config.dim(),                 // dimension
+                config.rmsNormEps(),          // epsilon
+                qwen3State.localSize);        // local memory size
 
-        // QKV projections with Qwen3 GQA dimensions
-        // Q8_0 weights pass both quants and scales
-        int qDim0 = nEmbdHeadK * config.numberOfHeads();  // Query dimension
-        int kvDim0 = nEmbdGqa;                             // KV dimension (smaller due to GQA)
-        int qkvDim1 = config.dim();                        // Input dimension
+        if (shouldUseFinalNormalization()) {
+            unifiedLayer.task("attn_rms_finalize",
+                    TransformerComputeKernelsLayered::reductionFinalNormalization,
+                    context,
+                    state.temp,
+                    config.dim(),
+                    config.rmsNormEps());
+        }
 
-        unifiedLayer.task("qmatmul",
-                TransformerComputeKernelsLayered::matrixVectorGenericQ8Byte,
-                context, qwen3State.wrapXb, qwen3State.wrapQ,
-                weights.wqLayered[layerIndex].asByteArray(),
-                qkvDim1, qDim0, LOCAL_WORK_GROUP_SIZE_ALLOC)
-                .task("kmatmul",
-                        TransformerComputeKernelsLayered::matrixVectorGenericQ8Byte,
-                        context, qwen3State.wrapXb, qwen3State.wrapK,
-                        weights.wkLayered[layerIndex].asByteArray(),
-                        qkvDim1, kvDim0, LOCAL_WORK_GROUP_SIZE_ALLOC)
-                .task("vmatmul",
-                        TransformerComputeKernelsLayered::matrixVectorGenericQ8Byte,
-                        context, qwen3State.wrapXb, qwen3State.wrapV,
-                        weights.wvLayered[layerIndex].asByteArray(),
-                        qkvDim1, kvDim0, LOCAL_WORK_GROUP_SIZE_ALLOC);
+        // Fused RMS Apply + QKV Projection
+        unifiedLayer.task("attn_rms_qkv_projection",
+                Qwen3Kernels::fusedRmsNormQKVMatmulQ8_0,
+                context,
+                qwen3State.wrapX,             // input: raw hidden state (FP32)
+                qwen3State.wrapQ,             // output: Q vectors
+                qwen3State.wrapK,             // output: K vectors
+                qwen3State.wrapV,             // output: V vectors
+                weights.rms_att_weightLayered[layerIndex].asFloatArray(),  // RMS weights
+                qwen3State.temp,              // RMS scale factor from reduction
+                weights.wqLayered[layerIndex].asByteArray(),               // Wq (Q8_0)
+                weights.wkLayered[layerIndex].asByteArray(),               // Wk (Q8_0)
+                weights.wvLayered[layerIndex].asByteArray(),               // Wv (Q8_0)
+                inputDim,                     // input dimension
+                qDim,                         // Q output dimension
+                kvDim,                        // K/V output dimension (GQA: reduced)
+                LOCAL_WORK_GROUP_SIZE_ALLOC);
 
-        // Qcur: RMS norm with parallel offset for Query
-        Qwen3State qwen3State = (Qwen3State) state;
-        unifiedLayer.task("rmsnormReduction_Qcur",
-                Qwen3Kernels::rmsnormWithParallelOffset,
-                context, qwen3State.tempQcur, qwen3State.wrapQ, qwen3State.localSize, nEmbdHead, config.rmsNormEps())
-                .task("rmsnormMapIndexInPlace_Qcur",
-                        Qwen3Kernels::rmsnormMapIndexInPlaceWithParallelOffset,
-                        context, qwen3State.wrapQ, weights.rms_att_QNormLayered[layerIndex].asFloatArray(), nEmbdHead, qwen3State.tempQcur);
+        // Fused Q/K RMSNorm (Qwen3-specific)
+        unifiedLayer.task("qk_rmsnorm",
+                Qwen3Kernels::fusedQKRmsNorm,
+                context,
+                qwen3State.wrapQ,             // Q vectors (in/out)
+                qwen3State.wrapK,             // K vectors (in/out)
+                weights.rms_att_QNormLayered[layerIndex].asFloatArray(),   // Q norm weights
+                weights.rms_att_KNormLayered[layerIndex].asFloatArray(),   // K norm weights
+                qwen3Config.numberOfHeads(),           // nHeads (Q heads)
+                qwen3Config.numberOfKeyValueHeads(),   // nHeadKv (K/V heads, GQA)
+                nEmbdHead,                    // head dimension
+                nEmbdHead,                    // local memory size
+                qwen3Config.rmsNormEps());    // epsilon
 
-        // Kcur: RMS norm with parallel offset for Key
-        unifiedLayer.task("rmsnormReduction_Kcur",
-                Qwen3Kernels::rmsnormWithParallelOffset,
-                context, qwen3State.tempKcur, qwen3State.wrapK, qwen3State.localSize, nEmbdHead, config.rmsNormEps())
-                .task("rmsnormMapIndexInPlace_Kcur",
-                        Qwen3Kernels::rmsnormMapIndexInPlaceWithParallelOffset,
-                        context, qwen3State.wrapK, weights.rms_att_KNormLayered[layerIndex].asFloatArray(), nEmbdHead, qwen3State.tempKcur);
+        // Fused RoPE Rotation + KV Cache Write
+        unifiedLayer.task("rope_and_kv_cache",
+                Qwen3Kernels::ropeRotationWithCacheCopy,
+                context,
+                qwen3State.positionHolder,    // current position
+                qwen3State.wrapQ,             // Q vectors (in/out, rotated)
+                qwen3State.wrapK,             // K vectors (in/out, rotated)
+                qwen3State.wrapV,             // V vectors (in only)
+                qwen3State.wrapKeyCache,      // key cache (out)
+                qwen3State.wrapValueCache,    // value cache (out)
+                qwen3Config.numberOfKeyValueHeads(),   // nHeadKv
+                nEmbdHead,                    // head dimension
+                nEmbdGqa,                     // kvDim
+                layerIndex,                   // layer index for cache offset
+                qwen3Config.contextLength()); // max sequence length
 
-        // RoPE rotation (Qwen3 variant)
-        unifiedLayer.task("ropeRotation",
-                Qwen3Kernels::ropeRotation,
-                context, qwen3State.positionHolder, qwen3State.wrapQ, qwen3State.wrapK,
-                config.numberOfKeyValueHeads(), nEmbdHead);
+        // Flash Attention
+        unifiedLayer.task("attention",
+                TransformerComputeKernelsLayered::processHeadsFlashAttention,
+                context,
+                qwen3State.wrapQ,             // query vectors
+                qwen3State.wrapKeyCache,      // key cache
+                qwen3State.wrapValueCache,    // value cache
+                qwen3State.wrapXb,            // output: attention result
+                qwen3Config.numberOfHeads(),  // nHeads
+                nEmbdHead,                    // headSize
+                nEmbdGqa,                     // kvDim
+                gqa,                          // kvMul (nHeads / nHeadKv)
+                qwen3State.positionHolder,    // position
+                layerIndex,                   // layer index
+                qwen3Config.contextLength()); // context length
 
-        // Copy to KV cache
-        unifiedLayer.task("copyToCaches",
-                TransformerComputeKernelsLayered::copyToCache,
-                qwen3State.wrapKeyCache, qwen3State.wrapK, qwen3State.wrapValueCache, qwen3State.wrapV,
-                qwen3State.positionHolder, nEmbdGqa, layerIndex, config.contextLength());
-
-        // Parallel attention (with GQA support)
-        unifiedLayer.task("parallel-attention",
-                TransformerComputeKernelsLayered::processHeadsFlashAttentionOpt,
-                context, qwen3State.wrapQ, qwen3State.wrapKeyCache, qwen3State.wrapValueCache, qwen3State.wrapXb,
-                config.numberOfHeads(), nEmbdHead, nEmbdGqa, gqa, qwen3State.positionHolder, layerIndex, config.contextLength());
-
-        // Output projection (Q8_0 weights)
-        unifiedLayer.task("matmul1",
+        // Output Projection with Residual
+        unifiedLayer.task("attn_output_proj",
                 TransformerComputeKernelsLayered::matrixVectorGenericWithResidualQ8_0Byte,
-                context, qwen3State.wrapXb, qwen3State.wrapX,
-                weights.woLayered[layerIndex].asByteArray(),
-                qDim0, config.dim(), LOCAL_WORK_GROUP_SIZE_ALLOC);
+                context,
+                qwen3State.wrapXb,  // input: attention output
+                qwen3State.wrapX,   // output: wrapX += Wo · wrapXb
+                weights.woLayered[layerIndex].asByteArray(),    // Wo [dim x qDim]
+                nEmbdHeadK * qwen3Config.numberOfHeads(),       // input dim (qDim)
+                config.dim(),       // output dim
+                LOCAL_WORK_GROUP_SIZE_ALLOC);
 
-        // ========== FEED-FORWARD BLOCK ==========
+        // ═══════════════════════════════════════════════════════════════════════
+        //                              FFN BLOCK
+        // ═══════════════════════════════════════════════════════════════════════
 
-        // RMS norm for FFN input
-        unifiedLayer.task("reductionsOneBlockFFN",
-                        TransformerComputeKernelsLayered::reductionOneBlockWithLayerFuse,
-                        context, qwen3State.wrapXb, qwen3State.wrapX, weights.rms_ffn_weightLayered[layerIndex].asFloatArray(), qwen3State.tempFFN, config.dim(), config.rmsNormEps(), qwen3State.localSize);
+        // RMS Normalization - compute scale factor
+        unifiedLayer.task("ffn_rms_reduce",
+                TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                context,
+                qwen3State.tempFFN,           // output: scale factor
+                qwen3State.wrapX,             // input: hidden state
+                qwen3Config.dim(),            // dimension
+                qwen3Config.rmsNormEps(),     // epsilon
+                qwen3State.localSize);        // local memory size
 
-        // Fused FFN: w1(x) ⊗ w3(x) with SiLU activation (Q8_0 weights)
-        unifiedLayer.task("fused_ffn_w1_w3",
-                TransformerComputeKernelsLayered::fusedFeedForwardWithSiLUAndGLUActivationQ8_0Byte,
-                context, qwen3State.wrapXb, qwen3State.wrapHb,
-                weights.w1Layered[layerIndex].asByteArray(),
-                weights.w3Layered[layerIndex].asByteArray(),
-                config.dim(), config.hiddenDim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
-                .task("projectionTwo",
+        // Final normalization (non-NVIDIA only)
+        if (shouldUseFinalNormalization()) {
+            unifiedLayer.task("ffn_rms_finalize",
+                    TransformerComputeKernelsLayered::reductionFinalNormalization,
+                    context,
+                    qwen3State.tempFFN,       // scale factor (in/out)
+                    qwen3Config.dim(),        // dimension
+                    qwen3Config.rmsNormEps()); // epsilon
+        }
+
+        // Fused RMS Apply + Gate/Up Projection + SiLU + GLU
+        unifiedLayer.task("rms_ffn_gate_up",
+                TransformerComputeKernelsLayered::fusedRmsNormFFNGateUpQ8_0,
+                context,
+                qwen3State.wrapX,             // input: raw hidden state (FP32)
+                qwen3State.wrapHb,            // output: SiLU(x·W1) ⊙ (x·W3)
+                weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),  // RMS weights
+                qwen3State.tempFFN,           // RMS scale factor
+                weights.w1Layered[layerIndex].asByteArray(),               // W1 (gate) Q8_0
+                weights.w3Layered[layerIndex].asByteArray(),               // W3 (up) Q8_0
+                qwen3Config.dim(),            // input dimension
+                qwen3Config.hiddenDim(),      // hidden dimension
+                LOCAL_WORK_GROUP_SIZE_ALLOC);
+
+        // Down Projection with Residual
+        unifiedLayer.task("ffn_down_proj",
                         TransformerComputeKernelsLayered::matrixVectorGenericWithResidualQ8_0Byte,
-                        context, qwen3State.wrapHb, qwen3State.wrapX,
-                        weights.w2Layered[layerIndex].asByteArray(),
-                        config.hiddenDim(), config.dim(), LOCAL_WORK_GROUP_SIZE_ALLOC)
-                .persistOnDevice(state.wrapX);
+                        context,
+                        qwen3State.wrapHb,      // input: FFN intermediate
+                        qwen3State.wrapX,       // output: wrapX += W2 · wrapHb
+                        weights.w2Layered[layerIndex].asByteArray(),  // W2 (down)
+                        config.hiddenDim(),     // input dim
+                        config.dim(),           // output dim
+                        LOCAL_WORK_GROUP_SIZE_ALLOC);
+
+        unifiedLayer.persistOnDevice(state.wrapX);
 
         return unifiedLayer;
     }
+    // @formatter:on
 
     /**
      * Configure data transfers for first and subsequent layers

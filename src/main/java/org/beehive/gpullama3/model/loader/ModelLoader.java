@@ -91,6 +91,18 @@ public abstract class ModelLoader {
     }
 
     /**
+     * For compatibility with langchain4j and quarkus.
+     */
+    public static Model loadModel(Path ggufPath, int contextLength, boolean loadWeights, boolean useTornadovm) throws IOException {
+        // initial load of metadata from gguf file
+        GGUF gguf = GGUF.loadGGUFMetadata(ggufPath);
+        // detect model type
+        ModelType modelType = detectModelType(gguf.getMetadata());
+        // model type-specific load
+        return modelType.loadModel(gguf.getFileChannel(), gguf, contextLength, useTornadovm);
+    }
+
+    /**
      * Dispatcher method for loading a standard (non-tornado) tensor based on GGML type.
      * Used in CPU-path.
      */

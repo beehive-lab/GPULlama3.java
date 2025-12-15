@@ -1,5 +1,0 @@
-[submodule "external/tornadovm"]
-	path = external/tornadovm
-	url = https://github.com/beehive-lab/TornadoVM.git
-	branch = master
-

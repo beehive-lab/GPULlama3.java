@@ -3,8 +3,12 @@ package org.beehive.gpullama3.tornadovm.kernels;
 import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
 import uk.ac.manchester.tornado.api.types.HalfFloat;
+import uk.ac.manchester.tornado.api.types.HalfFloat;
+import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
+
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 
 public class TransformerComputeKernels {
@@ -20,6 +24,25 @@ public class TransformerComputeKernels {
         if (dummy > Float.MAX_VALUE) {
             buffer.set(0, dummy);
         }
+    }
+
+    public static void convertFP32toFP16v2(KernelContext context, FloatArray input, HalfFloatArray output) {
+        int i = context.globalIdx;
+        HalfFloat val = new HalfFloat(input.get(i));
+        output.set(i,val);
+    }
+
+    public static void mapContextWithQuantize(
+            KernelContext context,
+            HalfFloatArray outputFP16,    // Direct FP16 output
+            FloatArray x,
+            FloatArray weights,
+            FloatArray temp) {
+
+        int gid = context.globalIdx;
+        float ss = temp.get(0);
+        float result = weights.get(gid) * (ss * x.get(gid));
+        outputFP16.set(gid, new HalfFloat(result));
     }
 
     public static void convertFP16toFP32(KernelContext context, HalfFloatArray x, FloatArray wrapX) {
@@ -140,6 +163,14 @@ public class TransformerComputeKernels {
         int gid = context.globalIdx;
         float ss = temp.get(0);
         output.set(gid, weights.get(gid) * (ss * output.get(gid)));
+    }
+
+    public static void mapContextWithQuantizeLogits(KernelContext context, HalfFloatArray output, FloatArray input, FloatArray weights, FloatArray temp) {
+        int gid = context.globalIdx;
+        float ss = temp.get(0);
+        float in = ss * input.get(gid);
+        float interim =  weights.get(gid) * in;
+        output.set(gid, new HalfFloat(interim));
     }
 
 }

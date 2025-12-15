@@ -24,6 +24,7 @@ on:
 jobs:
   deploy:
     name: Deploy to Maven Central
+    if: github.repository == 'beehive-lab/GPULlama3.java'
     runs-on: [self-hosted, Linux, x64]
     timeout-minutes: 15
     env:

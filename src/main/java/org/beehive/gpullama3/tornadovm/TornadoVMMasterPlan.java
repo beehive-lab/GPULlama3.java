@@ -1,9 +1,9 @@
 package org.beehive.gpullama3.tornadovm;
 
-import org.beehive.gpullama3.tensor.GGMLType;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.Model;
+import org.beehive.gpullama3.tensor.GGMLType;
 import org.beehive.gpullama3.tornadovm.layerplanner.base.QuantizationPlannerFactory;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TornadoExecutionPlan;
@@ -133,6 +133,8 @@ public class TornadoVMMasterPlan {
 
         // Set the position in the state object (used by attention layers)
         state.positionHolder.set(0, position);
+        state.temp.clear();
+        state.tempFFN.clear();
 
         // 2. Execute each transformer layer graph sequentially
         // Each graph computes attention and feed-forward transformations for one layer
@@ -141,7 +143,8 @@ public class TornadoVMMasterPlan {
                     .withGridScheduler(tornadoVMLayerPlanner.getGridScheduler())
                     .execute();
         }
-
+        state.tempLogits.clear(); // Clear the intermediate logits tensor -> set to 0f
+        state.wrapLogits.clear(); // Clear the output logits tensor -> set to 0f
         // 3. Execute the final graph that projects the last hidden state to output logits
         executionPlan.withGraph(getFinalLogitsGraphIndex())
                 .withGridScheduler(tornadoVMLayerPlanner.getGridScheduler())
@@ -179,7 +182,7 @@ public class TornadoVMMasterPlan {
     /// Execute the forward pass of the LLaMA transformer model using TornadoVM acceleration just once to copy the data into the read-only data layer.
     public void forceCopyInReadOnlyDataLayered() {
         // Execute all TornadoVM graphs
-        state.wrapX.init(0.0f);
+        state.wrapX.clear();
         state.positionHolder.init(0);
 
         // Execute activation update graph

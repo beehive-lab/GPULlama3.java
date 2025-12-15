@@ -87,6 +87,8 @@ public class Phi3State extends State {
         }
         fields.wrapX = new FloatArray(dim);
         fields.wrapXb = new FloatArray(dim);
+        fields.wrapXFP16 = new HalfFloatArray(dim);
+        fields.wrapXbFP16 = new HalfFloatArray(dim);
         fields.wrapXb2 = new FloatArray(dim);
         fields.wrapHb = new FloatArray(2 * hiddenDim);
         fields.wrapHb2 = new FloatArray(hiddenDim);

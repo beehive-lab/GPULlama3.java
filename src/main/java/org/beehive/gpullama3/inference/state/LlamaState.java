@@ -64,6 +64,8 @@ public final class LlamaState extends State {
         fields.wrapK = new FloatArray(config.dim());
         fields.wrapV = new FloatArray(config.dim());
 
+        fields.wrapXFP16 = new HalfFloatArray(config.dim());
+        fields.wrapXbFP16 = new HalfFloatArray(config.dim());
         // dim vs kvdim
         fields.wrapKeyCache = new FloatArray(config.contextLength() * kvDim * config.numberOfLayers());
         fields.wrapValueCache = new FloatArray(config.contextLength() * kvDim * config.numberOfLayers());

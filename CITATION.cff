@@ -15,6 +15,6 @@ authors:
   given-names: "Christos"
 title: "GPULlama3.java"
 license: MIT License
-version: 0.1.0-beta
-date-released: "2025-05-30"
+version: 0.3.1
+date-released: 2025-12-11
 url: "https://github.com/beehive-lab/GPULlama3.java"

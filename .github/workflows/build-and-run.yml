@@ -16,6 +16,7 @@ env:
 
 jobs:
   code-quality:
+    if: github.repository == 'beehive-lab/GPULlama3.java'
     runs-on: self-hosted
     timeout-minutes: 30
 
@@ -29,6 +30,7 @@ jobs:
           # ./mvnw -T12C -Pspotless spotless:check
 
   build-and-run:
+    if: github.repository == 'beehive-lab/GPULlama3.java'
     runs-on: [self-hosted]
     needs: code-quality
     timeout-minutes: 30

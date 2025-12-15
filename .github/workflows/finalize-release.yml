@@ -15,8 +15,9 @@ jobs:
   create-release-tag:
     # Run when release PR merges OR manual trigger
     if: |
-      (github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/')) ||
-      github.event_name == 'workflow_dispatch'
+      github.repository == 'beehive-lab/GPULlama3.java' &&
+      ((github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/')) ||
+      github.event_name == 'workflow_dispatch')
     runs-on: [self-hosted, Linux, x64]
     permissions:
       contents: write
@@ -131,7 +132,7 @@ jobs:
     runs-on: [self-hosted, Linux, x64]
     permissions:
       contents: write
-    if: github.event_name == 'pull_request'
+    if: github.repository == 'beehive-lab/GPULlama3.java' && github.event_name == 'pull_request'
 
     steps:
       - name: Delete release branch

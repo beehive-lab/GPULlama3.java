@@ -75,6 +75,8 @@ public final class Qwen3State extends State {
 
         fields.wrapX = new FloatArray(config.dim());
         fields.wrapXb = new FloatArray(nEmbdHeadK * config.numberOfHeads());
+        fields.wrapXbFP16 = new HalfFloatArray(nEmbdHeadK * config.numberOfHeads());
+
         fields.wrapXb2 = new FloatArray(config.dim());
         fields.wrapHb = new FloatArray(config.hiddenDim());
         fields.wrapHb2 = new FloatArray(config.hiddenDim());

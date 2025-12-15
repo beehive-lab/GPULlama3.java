@@ -23,6 +23,7 @@ env:
 
 jobs:
   prepare-release:
+    if: github.repository == 'beehive-lab/GPULlama3.java'
     runs-on: [self-hosted, Linux, x64]
     permissions:
       contents: write
