@@ -50,7 +50,6 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
         for (int i = 0; i < config.numberOfLayers(); i++) {
             // === Attention Block ===
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_rms_reduce", rmsNormWorker);
-            //tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_rms_apply_fp16", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".qkv_projection", fusedQKVWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWithCacheWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attention", parallelAttentionWorker);
@@ -202,21 +201,6 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
                 TransformerComputeKernelsLayered::reductionOneBlockWithLayerFuseFP16,
                 context, state.wrapXbFP16, state.wrapX, weights.rms_att_weightLayered[layerIndex].asFloatArray(), state.temp,
                 config.dim(), config.rmsNormEps(), state.localSize);
-        /*unifiedLayer.task("attn_rms_reduce",
-                TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
-                context, state.temp, state.wrapX,
-                config.dim(), config.rmsNormEps(), state.localSize);
-
-        if (shouldUseFinalNormalization()) {
-            unifiedLayer.task("attn_rms_finalize",
-                    TransformerComputeKernelsLayered::reductionFinalNormalization,
-                    context, state.temp, config.dim(), config.rmsNormEps());
-        }
-
-        unifiedLayer.task("attn_rms_apply_fp16",
-                TransformerComputeKernels::mapContextWithQuantize,
-                context, state.wrapXbFP16, state.wrapX,
-                weights.rms_att_weightLayered[layerIndex].asFloatArray(), state.temp);*/
 
         // QKV Projection (fused)
         unifiedLayer.task("qkv_projection",
