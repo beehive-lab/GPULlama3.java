@@ -498,6 +498,11 @@ def main():
     parser = create_parser()
     args = parser.parse_args()
 
+    # Set default profiler log path relative to LLAMA_ROOT
+    if args.profiler_dump_dir is None:
+        llama_root = os.environ.get("LLAMA_ROOT")
+        args.profiler_dump_dir = os.path.join(llama_root, "profiler-log.json")
+
     # Set default seed if not provided
     if args.seed is None:
         args.seed = int(time.time())
