@@ -295,6 +295,10 @@ jbang LlamaTornadoCli.java -m beehive-llama-3.2-1b-instruct-fp16.gguf \
 ### Llama3.2 Collection 
 [https://huggingface.co/collections/beehive-lab/llama3-gpullama3java](https://huggingface.co/collections/beehive-lab/llama3-gpullama3java)
 
+### IBM Granite 4.0 Collection
+[https://huggingface.co/collections/beehive-lab/granite-40-language-models-gpullama3java](https://huggingface.co/collections/beehive-lab/granite-40-language-models-gpullama3java)
+
+
 ### IBM Granite 3.3 Collection
 [https://huggingface.co/collections/beehive-lab/granite-33-language-models-gpullama3java](https://huggingface.co/collections/beehive-lab/granite-33-language-models-gpullama3java)
 
