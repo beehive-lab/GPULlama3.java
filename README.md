@@ -89,7 +89,7 @@ All pre-built SDKs are available on the TornadoVM [Releases Page](https://github
 wget https://github.com/beehive-lab/TornadoVM/releases/download/v2.1.0/tornadovm-2.1.0-opencl-linux-amd64.zip
 unzip tornadovm-2.1.0-opencl-linux-amd64.zip
 # Replace <path-to-sdk> manually with the absolute path of the extracted folder
-export TORNADO_SDK="<path-to-sdk>/tornadovm-2.1.0-opencl"
+export TORNADOVM_HOME="<path-to-sdk>/tornadovm-2.1.0-opencl"
 export PATH=$TORNADO_SDK/bin:$PATH
 
 tornado --devices
@@ -102,7 +102,7 @@ tornado --version
 wget https://github.com/beehive-lab/TornadoVM/releases/download/v2.1.0/tornadovm-2.1.0-opencl-mac-aarch64.zip
 unzip tornadovm-2.1.0-opencl-mac-aarch64.zip
 # Replace <path-to-sdk> manually with the absolute path of the extracted folder
-export TORNADO_SDK="<path-to-sdk>/tornadovm-2.1.0-opencl"
+export TORNADOVM_HOME="<path-to-sdk>/tornadovm-2.1.0-opencl"
 export PATH=$TORNADO_SDK/bin:$PATH
 
 tornado --devices
@@ -251,7 +251,7 @@ You can run llama-tornado as a pure Java script using [JBang](https://www.jbang.
 ### Prerequisites for JBang
 
 1. **Install JBang**: Follow the [JBang installation guide](https://www.jbang.dev/download/)
-2. **TornadoVM SDK**: You still need TornadoVM installed and `TORNADO_SDK` environment variable set (see Setup section above)
+2. **TornadoVM SDK**: You still need TornadoVM installed and `TORNADOVM_HOME` environment variable set (see Setup section above)
 
 ### Quick Start with JBang
 
