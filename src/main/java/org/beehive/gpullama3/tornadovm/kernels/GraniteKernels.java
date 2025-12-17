@@ -342,4 +342,56 @@ public class GraniteKernels {
             output.set(rowId, logitsScale * sum);
         }
     }
+
+    public static void ropeRotationWithCacheCopy(KernelContext context, IntArray positionHolder, FloatArray sq,              // Q vector (in/out)
+            FloatArray sk,              // K vector (in/out)
+            FloatArray sv,              // V vector (in only)
+            FloatArray keyCache,        // Key cache (out)
+            FloatArray valueCache,      // Value cache (out)
+            int kvDim, int headSize,
+            float ropeTheta,
+            int layer, int contextLength) {
+
+        int i = context.globalIdx * 2;
+        int pos = positionHolder.get(0);
+
+        // Bounds check for Q rotation (Q has dim elements, processed in pairs)
+        if (i + 1 < sq.getSize()) {
+            // RoPE frequency calculation
+            int head_dim = i % headSize;
+            //            TornadoMath.pow(ropeTheta, head_dim / (float) headSize);
+            float freq = 1.0f / TornadoMath.pow(ropeTheta, head_dim / (float) headSize);
+            float val = pos * freq;
+            float fcr = TornadoMath.cos(val);
+            float fci = TornadoMath.sin(val);
+
+            // Rotate Q
+            float v0q = sq.get(i);
+            float v1q = sq.get(i + 1);
+            sq.set(i, v0q * fcr - v1q * fci);
+            sq.set(i + 1, v0q * fci + v1q * fcr);
+
+            // Rotate K AND write to cache (only for kvDim elements)
+            if (i + 1 < kvDim) {
+                float v0k = sk.get(i);
+                float v1k = sk.get(i + 1);
+                float rotated0 = v0k * fcr - v1k * fci;
+                float rotated1 = v0k * fci + v1k * fcr;
+
+                // Write rotated K back to sk
+                sk.set(i, rotated0);
+                sk.set(i + 1, rotated1);
+
+                // Direct cache write (fused - no separate copy kernel!)
+                int cacheOffset = layer * contextLength * kvDim + pos * kvDim;
+                keyCache.set(cacheOffset + i, rotated0);
+                keyCache.set(cacheOffset + i + 1, rotated1);
+
+                // Copy V to cache (V doesn't need rotation)
+                valueCache.set(cacheOffset + i, sv.get(i));
+                valueCache.set(cacheOffset + i + 1, sv.get(i + 1));
+            }
+        }
+
+    }
 }
