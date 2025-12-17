@@ -170,3 +170,10 @@ jobs:
           ./llama-tornado --gpu --${{ matrix.backend.name }} \
             --model $MODELS_DIR/Mistral-7B-Instruct-v0.3.Q8_0.gguf \
             --prompt "Say hello"
+      - name: Q8 - Run Granite-3.2-2b-instruct-Q8.gguf
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          ./llama-tornado --gpu --${{ matrix.backend.name }} \
+            --model /$MODELS_DIR/granite-3.2-2b-instruct-Q8_0.gguf \
+            --prompt "Say hello"
