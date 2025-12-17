@@ -11,7 +11,6 @@ import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernels;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
 import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
 import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
-import org.beehive.gpullama3.tornadovm.layers.AbstractLayer;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TaskGraph;
@@ -19,15 +18,19 @@ import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.WorkerGrid1D;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
-public class LogitsGraniteFP16Layer extends AbstractLayer {
+public class LogitsGraniteFP16Layer extends LogitsFP16Layer {
     private String lastTaskGraphID;
     private TaskGraph logitsTaskGraph;
     private ImmutableTaskGraph immutableLogitsGraph;
     private GridScheduler scheduler;
     private SchedulerType schedulerType;
 
-    protected LogitsGraniteFP16Layer(String taskGraphName, State state, Weights weights, GraniteConfiguration config) {
-        super(taskGraphName, state, weights, config);
+    public LogitsGraniteFP16Layer(String name, State state, Weights weights, Configuration config, String lastTaskGraphID, SchedulerType schedulerType) {
+        super(name, state, weights, config, lastTaskGraphID, schedulerType);
+        this.lastTaskGraphID = lastTaskGraphID;
+        this.schedulerType = schedulerType;
+        var tornadoWeights = requireWeightsType(weights, TornadoWeights.class, "LogitsFP16Layer", "TornadoTensor");
+        this.logitsTaskGraph = setupLogitsTaskGraph(tornadoWeights, (GraniteConfiguration) config);
     }
 
     // @formatter:off
