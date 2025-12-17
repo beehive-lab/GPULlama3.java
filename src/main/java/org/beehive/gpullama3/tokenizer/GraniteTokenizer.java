@@ -18,81 +18,107 @@ import java.util.stream.IntStream;
 /**
  * GPT-2-style BPE tokenizer for Granite models.
  * <p>
- * Granite uses the same refact BPE tokenization algorithm as Llama,
- * but with different special tokens and token IDs.
- * <p>
- * BOS/EOS Token: Token ID 0 (&lt;|end_of_text|&gt;) serves both purposes.
+ * Supports both Granite 3.3 (refact pretokenizer, 49K vocab) and Granite 4.0 (dbrx pretokenizer, 100K vocab).
  */
 public class GraniteTokenizer implements Tokenizer {
     static final Map<Integer, Integer> BYTE_ENCODER = bytesToUnicode();
     static final Map<Integer, Integer> BYTE_DECODER = BYTE_ENCODER.entrySet().stream().collect(Collectors.toMap(Map.Entry::getValue, Map.Entry::getKey));
-    private static final String GRANITE_PATTERN = "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
 
-    // general fields
+    // Pretokenizer patterns
+    private static final String REFACT_PATTERN = "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
+
+    private static final String DBRX_PATTERN = "(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
+
+    // Instance fields
     private final Pattern compiledPattern;
     private final Vocabulary vocabulary;
-    // model-specific fields
     private final Map<Pair<Integer, Integer>, Integer> merges;
     private final Map<String, Integer> specialTokens;
 
-    public GraniteTokenizer(Map<String, Object> metadata, Vocabulary vocabulary) {
-        // load from metadata
-        String[] mergeLines = (String[]) metadata.get("tokenizer.ggml.merges");
-        List<Pair<Integer, Integer>> merges = Arrays.stream(mergeLines).map(line -> line.split(" "))
-                .map(parts -> new Pair<>(vocabulary.getIndex(parts[0]).orElseThrow(), vocabulary.getIndex(parts[1]).orElseThrow())).toList();
-        int allTokens = vocabulary.size();
+    // Token IDs (version-dependent)
+    private final int bosTokenId;
+    private final int eosTokenId;
+    private final int padTokenId;
+    private final String pretokenizerType;
 
-        // For Granite, collect ALL special tokens (including token 0)
+    public GraniteTokenizer(Map<String, Object> metadata, Vocabulary vocabulary) {
+        this.vocabulary = vocabulary;
+
+        // Detect pretokenizer type and select pattern
+        this.pretokenizerType = (String) metadata.getOrDefault("tokenizer.ggml.pre", "refact");
+        String pattern = switch (pretokenizerType) {
+            case "dbrx" -> DBRX_PATTERN;
+            default -> REFACT_PATTERN;
+        };
+        this.compiledPattern = Pattern.compile(pattern);
+
+        // Read token IDs from metadata
+        this.bosTokenId = getIntFromMetadata(metadata, "tokenizer.ggml.bos_token_id", 0);
+        this.eosTokenId = getIntFromMetadata(metadata, "tokenizer.ggml.eos_token_id", 0);
+        this.padTokenId = getIntFromMetadata(metadata, "tokenizer.ggml.padding_token_id", 0);
+
+        // Load merges
+        String[] mergeLines = (String[]) metadata.get("tokenizer.ggml.merges");
+        List<Pair<Integer, Integer>> mergeList = Arrays.stream(mergeLines).map(line -> line.split(" "))
+                .map(parts -> new Pair<>(vocabulary.getIndex(parts[0]).orElseThrow(), vocabulary.getIndex(parts[1]).orElseThrow())).toList();
+
+        // Collect special tokens
         Map<String, Integer> specialTokens = new HashMap<>();
+        int allTokens = vocabulary.size();
         for (int i = 0; i < allTokens; i++) {
             String token = vocabulary.get(i);
-            // Identify special tokens by their format: start with <| and end with |>
             if (token.startsWith("<|") && token.endsWith("|>")) {
                 specialTokens.put(token, i);
             }
+            // Also catch <fim_*> style tokens used in some Granite models
+            if (token.startsWith("<") && token.endsWith(">") && !token.contains(" ")) {
+                specialTokens.putIfAbsent(token, i);
+            }
         }
+        this.specialTokens = Map.copyOf(specialTokens);
 
-        // init tokenizer object fields
-        this.vocabulary = vocabulary;
-        this.compiledPattern = Pattern.compile(GRANITE_PATTERN);
-        this.specialTokens = new HashMap<>(specialTokens);
+        // Build merge map
         this.merges = new HashMap<>();
-        for (Pair<Integer, Integer> pair : merges) {
-            int firstIndex = pair.first();
-            int secondIndex = pair.second();
-            int mergeIndex = vocabulary.getIndex(vocabulary.get(firstIndex) + vocabulary.get(secondIndex)).orElseThrow();
+        for (Pair<Integer, Integer> pair : mergeList) {
+            String merged = vocabulary.get(pair.first()) + vocabulary.get(pair.second());
+            int mergeIndex = vocabulary.getIndex(merged).orElseThrow();
             this.merges.put(pair, mergeIndex);
         }
     }
 
+    private static int getIntFromMetadata(Map<String, Object> metadata, String key, int defaultValue) {
+        Object value = metadata.get(key);
+        if (value instanceof Number num) {
+            return num.intValue();
+        }
+        return defaultValue;
+    }
 
+    // === Token ID accessors ===
     private static List<String> findAll(Pattern pattern, String text) {
-        List<String> allMatches = new ArrayList<>();
+        List<String> matches = new ArrayList<>();
         Matcher matcher = pattern.matcher(text);
         while (matcher.find()) {
-            allMatches.add(matcher.group());
+            matches.add(matcher.group());
         }
-        return allMatches;
+        return matches;
     }
 
     private static List<Integer> merge(List<Integer> ids, Pair<Integer, Integer> pair, int idx) {
-        List<Integer> newids = new ArrayList<>();
+        List<Integer> newIds = new ArrayList<>();
         int i = 0;
         while (i < ids.size()) {
-            if (ids.get(i).equals(pair.first()) && i < ids.size() - 1 && ids.get(i + 1).equals(pair.second())) {
-                newids.add(idx);
+            if (i < ids.size() - 1 && ids.get(i).equals(pair.first()) && ids.get(i + 1).equals(pair.second())) {
+                newIds.add(idx);
                 i += 2;
             } else {
-                newids.add(ids.get(i));
-                i += 1;
+                newIds.add(ids.get(i));
+                i++;
             }
         }
-        return newids;
+        return newIds;
     }
 
-    /**
-     * Returns list of utf-8 byte and a corresponding list of unicode strings.
-     */
     private static Map<Integer, Integer> bytesToUnicode() {
         List<Integer> bs = new ArrayList<>();
         IntStream.rangeClosed('!', '~').forEach(bs::add);
@@ -101,28 +127,40 @@ public class GraniteTokenizer implements Tokenizer {
 
         List<Integer> cs = new ArrayList<>(bs);
         int n = 0;
-        for (int b = 0; b < 256; ++b) {
+        for (int b = 0; b < 256; b++) {
             if (!bs.contains(b)) {
                 bs.add(b);
                 cs.add(256 + n);
-                n += 1;
+                n++;
             }
         }
-
         return IntStream.range(0, bs.size()).boxed().collect(Collectors.toMap(bs::get, cs::get));
     }
 
-    public String regexPattern() {
-        if (compiledPattern == null) {
-            return null;
-        }
-        return compiledPattern.pattern();
+    public int getBosTokenId() {
+        return bosTokenId;
+    }
+
+    // === Tokenizer interface ===
+
+    public int getEosTokenId() {
+        return eosTokenId;
+    }
+
+    public int getPadTokenId() {
+        return padTokenId;
+    }
+
+    public String getPretokenizerType() {
+        return pretokenizerType;
     }
 
     @Override
     public Map<String, Integer> getSpecialTokens() {
         return specialTokens;
     }
+
+    // === Encoding ===
 
     @Override
     public boolean isSpecialToken(int tokenIndex) {
@@ -134,85 +172,11 @@ public class GraniteTokenizer implements Tokenizer {
         return !isSpecialToken(token);
     }
 
-    private int[] encodeImpl(String text) {
-        return encode(text, Set.of()).stream().mapToInt(i -> i).toArray();
+    public String regexPattern() {
+        return compiledPattern != null ? compiledPattern.pattern() : null;
     }
 
-    /**
-     * Encode text handling special tokens.
-     */
-    public List<Integer> encode(String text, Set<String> allowedSpecial) {
-        Set<String> special = allowedSpecial;
-        assert getSpecialTokens().keySet().containsAll(special);
-        if (special.isEmpty()) {
-            return encodeOrdinary(text);
-        }
-
-        String specialPattern = special.stream().map(Pattern::quote).collect(Collectors.joining("|", "(", ")"));
-        String[] specialChunks = text.split(specialPattern);
-        List<Integer> ids = new ArrayList<>();
-        for (String part : specialChunks) {
-            if (special.contains(part)) {
-                ids.add(getSpecialTokens().get(part));
-            } else {
-                ids.addAll(encodeOrdinary(part));
-            }
-        }
-        return ids;
-    }
-
-    /**
-     * Encoding that ignores any special tokens.
-     */
-    public List<Integer> encodeOrdinary(String text) {
-        List<String> textChunks = findAll(compiledPattern, text);
-        List<Integer> ids = new ArrayList<>();
-        for (String chunk : textChunks) {
-            List<Integer> chunkIds = encodeChunk(chunk);
-            ids.addAll(chunkIds);
-        }
-        return ids;
-    }
-
-    private Map<Pair<Integer, Integer>, Integer> getStats(List<Integer> ids) {
-        Map<Pair<Integer, Integer>, Integer> map = new HashMap<>();
-        for (int i = 0; i + 1 < ids.size(); i++) {
-            Pair<Integer, Integer> key = new Pair<>(ids.get(i), ids.get(i + 1));
-            map.put(key, map.getOrDefault(key, 0) + 1);
-        }
-        return map;
-    }
-
-    private List<Integer> encodeChunk(String chunk) {
-        List<Integer> ids = new ArrayList<>();
-        for (int b : chunk.toCharArray()) {
-            int tokenIndex = this.vocabulary.getIndex(String.valueOf((char) b)).orElseThrow();
-            ids.add(tokenIndex);
-        }
-
-        while (ids.size() >= 2) {
-            Map<Pair<Integer, Integer>, Integer> stats = getStats(ids);
-            Pair<Integer, Integer> pair = stats.keySet().stream()
-                    .min(Comparator.comparingInt(key -> this.merges.getOrDefault(key, Integer.MAX_VALUE)))
-                    .orElseThrow();
-            if (!this.merges.containsKey(pair)) {
-                break;
-            }
-            int idx = this.merges.get(pair);
-            ids = merge(ids, pair, idx);
-        }
-        return ids;
-    }
-
-    public String decodeImpl(List<Integer> tokens) {
-        StringBuilder sb = new StringBuilder();
-        for (int token : tokens) {
-            String tokenString = vocabulary.get(token);
-            sb.append(tokenString);
-        }
-        return sb.toString();
-    }
-
+    //    @Override
     public int[] encode(String text) {
         StringBuilder sb = new StringBuilder();
         byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
@@ -224,22 +188,89 @@ public class GraniteTokenizer implements Tokenizer {
 
     @Override
     public List<Integer> encodeAsList(String text) {
-        StringBuilder sb = new StringBuilder();
-        byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
-        for (byte b : bytes) {
-            sb.appendCodePoint(BYTE_ENCODER.get(Byte.toUnsignedInt(b)));
+        return Arrays.stream(encode(text)).boxed().toList();
+    }
+
+    private int[] encodeImpl(String text) {
+        return encode(text, Set.of()).stream().mapToInt(i -> i).toArray();
+    }
+
+    // === Decoding ===
+
+    public List<Integer> encode(String text, Set<String> allowedSpecial) {
+        if (allowedSpecial.isEmpty()) {
+            return encodeOrdinary(text);
         }
-        return Arrays.stream(encodeImpl(sb.toString())).boxed().toList();
+
+        assert specialTokens.keySet().containsAll(allowedSpecial);
+        String specialPattern = allowedSpecial.stream().map(Pattern::quote).collect(Collectors.joining("|", "(", ")"));
+        String[] specialChunks = text.split(specialPattern);
+
+        List<Integer> ids = new ArrayList<>();
+        for (String part : specialChunks) {
+            if (allowedSpecial.contains(part)) {
+                ids.add(specialTokens.get(part));
+            } else {
+                ids.addAll(encodeOrdinary(part));
+            }
+        }
+        return ids;
+    }
+
+    public List<Integer> encodeOrdinary(String text) {
+        List<String> textChunks = findAll(compiledPattern, text);
+        List<Integer> ids = new ArrayList<>();
+        for (String chunk : textChunks) {
+            ids.addAll(encodeChunk(chunk));
+        }
+        return ids;
+    }
+
+    // === Helpers ===
+
+    private List<Integer> encodeChunk(String chunk) {
+        List<Integer> ids = new ArrayList<>();
+        for (char c : chunk.toCharArray()) {
+            int tokenIndex = vocabulary.getIndex(String.valueOf(c)).orElseThrow();
+            ids.add(tokenIndex);
+        }
+
+        while (ids.size() >= 2) {
+            Map<Pair<Integer, Integer>, Integer> stats = getStats(ids);
+            Pair<Integer, Integer> pair = stats.keySet().stream().min(Comparator.comparingInt(key -> merges.getOrDefault(key, Integer.MAX_VALUE))).orElseThrow();
+            if (!merges.containsKey(pair)) {
+                break;
+            }
+            ids = merge(ids, pair, merges.get(pair));
+        }
+        return ids;
     }
 
     @Override
     public String decode(List<Integer> tokens) {
         String decoded = decodeImpl(tokens);
-        int[] decodedBytesAsInts = decoded.codePoints().map(BYTE_DECODER::get).toArray();
+        int[] decodedBytesAsInts = decoded.codePoints().map(cp -> BYTE_DECODER.getOrDefault(cp, cp)).toArray();
         byte[] rawBytes = new byte[decodedBytesAsInts.length];
-        for (int i = 0; i < decoded.length(); i++) {
+        for (int i = 0; i < decodedBytesAsInts.length; i++) {
             rawBytes[i] = (byte) decodedBytesAsInts[i];
         }
         return new String(rawBytes, StandardCharsets.UTF_8);
+    }
+
+    private String decodeImpl(List<Integer> tokens) {
+        StringBuilder sb = new StringBuilder();
+        for (int token : tokens) {
+            sb.append(vocabulary.get(token));
+        }
+        return sb.toString();
+    }
+
+    private Map<Pair<Integer, Integer>, Integer> getStats(List<Integer> ids) {
+        Map<Pair<Integer, Integer>, Integer> map = new HashMap<>();
+        for (int i = 0; i + 1 < ids.size(); i++) {
+            Pair<Integer, Integer> key = new Pair<>(ids.get(i), ids.get(i + 1));
+            map.merge(key, 1, Integer::sum);
+        }
+        return map;
     }
 }
