@@ -1,12 +1,9 @@
 package org.beehive.gpullama3.tornadovm.layers;
 
-import org.beehive.gpullama3.inference.state.GraniteState;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.Weights;
-import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.granite.GraniteConfiguration;
 import org.beehive.gpullama3.tornadovm.kernels.GraniteKernels;
-import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernels;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.KernelContext;
@@ -20,6 +17,7 @@ import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 public class ActivationGranite extends Activation {
     private final TaskGraph activationUpdate;
 
+    // Granite is a special case where activation X is scaled by embedding scale float value that inside model.
     public ActivationGranite(String taskGraphHandle, State state, Weights weights, GraniteConfiguration config) {
         super(taskGraphHandle, state, weights, config);
 
@@ -36,7 +34,7 @@ public class ActivationGranite extends Activation {
             case "Q8_0" -> {
                 this.activationUpdate = new TaskGraph(taskGraphHandle)
                         .transferToDevice(DataTransferMode.EVERY_EXECUTION, state.embeddingX)
-                        .task("updateX", TransformerComputeKernels::convertQ8_0toFP32, kernelContext, (ByteArray) state.embeddingX, state.wrapX)
+                        .task("updateX", GraniteKernels::convertQ8_0toFP32withGraniteScale, kernelContext, (ByteArray) state.embeddingX, state.wrapX, config.embeddingScale())
                         .persistOnDevice(state.wrapX);
             }
             default -> throw new UnsupportedOperationException("Unsupported quantization format: " + config.quantization());
