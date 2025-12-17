@@ -42,16 +42,15 @@ public class GraniteTokenizer implements Tokenizer {
                 .map(parts -> new Pair<>(vocabulary.getIndex(parts[0]).orElseThrow(), vocabulary.getIndex(parts[1]).orElseThrow())).toList();
         int allTokens = vocabulary.size();
 
-        // For Granite, determine base tokens differently than Llama
-        // Find the first special token ID by looking at vocabulary
-        int baseTokens = findBaseTokensCount(vocabulary);
-        int reservedSpecialTokens = allTokens - baseTokens;
-        List<String> specialTokensList = Arrays.stream(vocabulary.tokens(), baseTokens, allTokens).toList();
-
-        assert specialTokensList.stream().allMatch(token -> vocabulary.getIndex(token).isPresent());
-
-        Map<String, Integer> specialTokens = IntStream.range(0, specialTokensList.size()).boxed()
-                .collect(Collectors.toMap(i -> specialTokensList.get(i), i -> baseTokens + i));
+        // For Granite, collect ALL special tokens (including token 0)
+        Map<String, Integer> specialTokens = new HashMap<>();
+        for (int i = 0; i < allTokens; i++) {
+            String token = vocabulary.get(i);
+            // Identify special tokens by their format: start with <| and end with |>
+            if (token.startsWith("<|") && token.endsWith("|>")) {
+                specialTokens.put(token, i);
+            }
+        }
 
         // init tokenizer object fields
         this.vocabulary = vocabulary;
@@ -66,41 +65,6 @@ public class GraniteTokenizer implements Tokenizer {
         }
     }
 
-    /**
-     * Finds the base token count by detecting where special tokens start.
-     * For Granite, this is typically around token ID 49000-49159.
-     */
-    private static int findBaseTokensCount(Vocabulary vocabulary) {
-        int allTokens = vocabulary.size();
-        // Look for special tokens in the vocabulary
-        // Granite special tokens typically start after regular vocabulary
-        // Default to 90% of vocabulary size as an estimate
-        for (int i = allTokens - 1; i >= 0; i--) {
-            String token = vocabulary.get(i);
-            if (token.startsWith("<|") && token.endsWith("|>")) {
-                // Found a special token, return this index as base
-                return i;
-            }
-        }
-        // Fallback: assume last few tokens are special
-        return Math.max(1000, (int) (allTokens * 0.98));
-    }
-
-    /**
-     * Gets the BOS (Beginning of Sequence) token ID.
-     * For Granite, this is token 0 (&lt;|end_of_text|&gt;).
-     */
-    public int getBosTokenId() {
-        return 0;
-    }
-
-    /**
-     * Gets the EOS (End of Sequence) token ID.
-     * For Granite, this is also token 0 (&lt;|end_of_text|&gt;).
-     */
-    public int getEosTokenId() {
-        return 0;
-    }
 
     private static List<String> findAll(Pattern pattern, String text) {
         List<String> allMatches = new ArrayList<>();
