@@ -1,6 +1,7 @@
 package org.beehive.gpullama3.model.format;
 
 import org.beehive.gpullama3.tokenizer.LlamaTokenizer;
+import org.beehive.gpullama3.tokenizer.Tokenizer;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -9,7 +10,7 @@ import java.util.Set;
 
 public class LlamaChatFormat implements ChatFormat {
 
-    protected final LlamaTokenizer tokenizer;
+    protected final Tokenizer tokenizer;
     protected final int beginOfText;
     protected final int endHeader;
     protected final int startHeader;
@@ -18,7 +19,7 @@ public class LlamaChatFormat implements ChatFormat {
     protected final int endOfMessage;
     protected final Set<Integer> stopTokens;
 
-    public LlamaChatFormat(LlamaTokenizer tokenizer) {
+    public LlamaChatFormat(Tokenizer tokenizer) {
         this.tokenizer = tokenizer;
         Map<String, Integer> specialTokens = tokenizer.getSpecialTokens();
         this.beginOfText = specialTokens.get("<|begin_of_text|>");
