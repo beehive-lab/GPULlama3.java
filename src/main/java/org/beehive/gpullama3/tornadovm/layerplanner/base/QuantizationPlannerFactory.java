@@ -1,5 +1,6 @@
 package org.beehive.gpullama3.tornadovm.layerplanner.base;
 
+import org.beehive.gpullama3.inference.state.GraniteState;
 import org.beehive.gpullama3.tensor.GGMLType;
 import org.beehive.gpullama3.inference.state.LlamaState;
 import org.beehive.gpullama3.inference.state.Phi3State;
@@ -8,6 +9,7 @@ import org.beehive.gpullama3.inference.state.Qwen3State;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.tornadovm.GenericLayerPlanner;
+import org.beehive.gpullama3.tornadovm.layerplanner.model.fp16.GraniteFP16LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.fp16.LlamaFP16LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.fp16.Phi3FP16LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.fp16.Qwen2FP16LayerPlanner;
@@ -55,6 +57,7 @@ public class QuantizationPlannerFactory {
             case QWEN_2 -> new Qwen2FP16LayerPlanner((Qwen2State) state, model);
             case QWEN_3 -> new Qwen3FP16LayerPlanner((Qwen3State) state, model);
             case PHI_3 -> new Phi3FP16LayerPlanner((Phi3State) state, model);
+            case GRANITE -> new GraniteFP16LayerPlanner((GraniteState) state, model);
             case DEEPSEEK_R1_DISTILL_QWEN -> new Qwen2FP16LayerPlanner((Qwen2State) state, model);
             default -> throw new UnsupportedOperationException("FP16 not supported for model: " + model.getModelType());
         };
