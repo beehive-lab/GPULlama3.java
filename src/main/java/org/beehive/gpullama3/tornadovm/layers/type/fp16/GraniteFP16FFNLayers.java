@@ -232,7 +232,7 @@ public class GraniteFP16FFNLayers extends AbstractFFNLayers {
 
         // RoPE + KV Cache
         unifiedLayer.task("rope_and_kv_cache",
-                TransformerComputeKernelsLayered::ropeRotationWithCacheCopy,
+                GraniteKernels::ropeRotationWithCacheCopy,
                 context,
                 state.positionHolder,
                 state.wrapQ,                 // Q (in/out)
@@ -242,6 +242,7 @@ public class GraniteFP16FFNLayers extends AbstractFFNLayers {
                 state.wrapValueCache,        // Value cache (out)
                 config.kvDim(),
                 config.headSize(),
+                config.ropeTheta(), // needs to load it from model
                 layerIndex,
                 config.contextLength());
         // Attention
