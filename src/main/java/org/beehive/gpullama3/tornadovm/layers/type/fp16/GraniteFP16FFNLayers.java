@@ -3,7 +3,6 @@ package org.beehive.gpullama3.tornadovm.layers.type.fp16;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.Weights;
 import org.beehive.gpullama3.inference.weights.tornado.GraniteTornadoWeights;
-import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
 import org.beehive.gpullama3.model.granite.GraniteConfiguration;
 import org.beehive.gpullama3.tornadovm.kernels.GraniteKernels;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernels;
@@ -25,7 +24,6 @@ public class GraniteFP16FFNLayers extends AbstractFFNLayers {
     TaskGraph ffnTaskGraphs;
     GridScheduler scheduler;
     List<ImmutableTaskGraph> ffnLayerTaskGraphs;
-
 
     public GraniteFP16FFNLayers(String taskGraph, State state, Weights weights, GraniteConfiguration config, SchedulerType schedulerType) {
         super(taskGraph, state, weights, config, schedulerType);
