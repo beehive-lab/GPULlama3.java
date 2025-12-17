@@ -19,7 +19,7 @@
 <strong>Llama3</strong> models written in <strong>native Java</strong> automatically accelerated on GPUs with <a href="https://github.com/beehive-lab/TornadoVM" target="_blank"><strong>TornadoVM</strong></a>.
 Runs Llama3 inference efficiently using TornadoVM's GPU acceleration.
 <br><br>
-Currently, supports <strong>Llama3</strong>, <strong>Mistral</strong>, <strong>Qwen2.5</strong>, <strong>Qwen3</strong> and <strong>Phi3</strong> , <strong> IBM Granite 3.1+ </strong> models in the GGUF format.
+Currently, supports <strong>Llama3</strong>, <strong>Mistral</strong>, <strong>Qwen2.5</strong>, <strong>Qwen3</strong>, <strong>Phi-3</strong>, <strong> IBM Granite 3.2+ </strong> and <strong> IBM Granite 4.0 </strong> models in the GGUF format.
 Also, it is used as GPU inference engine in 
 <a href="https://docs.quarkiverse.io/quarkus-langchain4j/dev/gpullama3-chat-model.html" target="_blank">Quarkus</a> 
 and 
