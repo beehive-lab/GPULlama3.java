@@ -1,5 +1,6 @@
 package org.beehive.gpullama3.model.format;
 
+import org.beehive.gpullama3.tokenizer.GraniteTokenizer;
 import org.beehive.gpullama3.tokenizer.Tokenizer;
 
 import java.util.ArrayList;
@@ -26,9 +27,17 @@ public class GraniteChatFormat implements ChatFormat {
     public GraniteChatFormat(Tokenizer tokenizer) {
         this.tokenizer = tokenizer;
         Map<String, Integer> specialTokens = tokenizer.getSpecialTokens();
+
         this.startRole = specialTokens.getOrDefault("<|start_of_role|>", -1);
         this.endRole = specialTokens.getOrDefault("<|end_of_role|>", -1);
-        this.endOfText = specialTokens.getOrDefault("<|end_of_text|>", 0);  // Token 0 is end_of_text for Granite
+
+        // Use tokenizer's EOS token instead of hardcoding
+        if (tokenizer instanceof GraniteTokenizer graniteTokenizer) {
+            this.endOfText = graniteTokenizer.getEosTokenId();
+        } else {
+            this.endOfText = specialTokens.getOrDefault("<|end_of_text|>", 0);
+        }
+
         this.stopTokens = Set.of(endOfText);
     }
 
