@@ -354,7 +354,7 @@ public class GraniteFP16FFNLayers extends AbstractFFNLayers {
         } else {
             // Standard parallel attention (for non-NVIDIA backends)
             return unifiedLayer.task("attention",
-                    TransformerComputeKernelsLayered::processHeadsParallel,
+                    GraniteKernels::processHeadsParallelGranite,
                     state.wrapQ,              // Query
                     state.wrapKeyCache,       // Key cache
                     state.wrapValueCache,     // Value cache
@@ -367,7 +367,8 @@ public class GraniteFP16FFNLayers extends AbstractFFNLayers {
                     state.positionHolder,
                     state.wrapAtt,            // Attention weights buffer
                     layerIndex,
-                    config.contextLength());
+                    config.contextLength(),
+                    config.attentionScale());
         }
     }
     // @formatter:on

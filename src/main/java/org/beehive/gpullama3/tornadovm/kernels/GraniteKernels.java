@@ -1,6 +1,7 @@
 package org.beehive.gpullama3.tornadovm.kernels;
 
 import uk.ac.manchester.tornado.api.KernelContext;
+import uk.ac.manchester.tornado.api.annotations.Parallel;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
@@ -192,6 +193,78 @@ public class GraniteKernels {
             float residual = residualScale * sum;
             float result = hb.get(rowId) + residual;
             hb.set(rowId, result);
+        }
+    }
+
+    public static void processHeadsParallelGranite(FloatArray q, FloatArray key_cache, FloatArray value_cache, FloatArray xb, int nHeads, int headSize, int kvDim, int kvMul, int seqLen,
+            IntArray positionHolder, FloatArray wrapAtt, int layer, int contextLength, float attentionScale) {
+
+        int pos = positionHolder.get(0);
+        int loff = layer * contextLength * kvDim;
+
+        // Parallelize computation across attention heads
+        for (@Parallel int h = 0; h < nHeads; h++) {
+            // Process each head in parallel
+            processHeadTornado(q, key_cache, value_cache, xb, h, headSize, kvDim, kvMul, loff, pos, wrapAtt, attentionScale);
+        }
+    }
+
+    private static void processHeadTornado(FloatArray allQ, FloatArray key_cache, FloatArray value_cache, FloatArray allXb, int h, int headSize, int kvDim, int kvMul, long loff, int pos,
+            FloatArray wrapAtt, float attentionScale) {
+
+        // Base index for this head's attention weights
+        int headOffset = h * (pos + 1);
+
+        // STEP 1: Calculate attention scores for all timesteps
+        for (int t = 0; t <= pos; t++) {
+            int kvHeadIdx = h / kvMul;
+            int keyOffset = (int) (loff + t * kvDim + kvHeadIdx * headSize);
+
+            float score = 0.0f;
+            for (int i = 0; i < headSize; i++) {
+                score += allQ.get(h * headSize + i) * key_cache.get(keyOffset + i);
+            }
+            score *= attentionScale; //TODO: might need score = score * attentionScale;
+//            score = score / TornadoMath.sqrt(headSize);
+
+            // Store in attention buffer
+            wrapAtt.set(headOffset + t, score);
+        }
+
+        // STEP 2: Find max score for softmax stability
+        float maxScore = wrapAtt.get(headOffset);
+        for (int t = 1; t <= pos; t++) {
+            float val = wrapAtt.get(headOffset + t);
+            if (val > maxScore) {
+                maxScore = val;
+            }
+        }
+
+        // STEP 3: Compute exponentials and sum
+        float sum = 0.0f;
+        for (int t = 0; t <= pos; t++) {
+            int idx = headOffset + t;
+            float expScore = TornadoMath.exp(wrapAtt.get(idx) - maxScore);
+            wrapAtt.set(idx, expScore);
+            sum += expScore;
+        }
+
+        // STEP 4: Normalize
+        float normFactor = (sum > 0.0f) ? (1.0f / sum) : (1.0f / (pos + 1));
+        for (int t = 0; t <= pos; t++) {
+            int idx = headOffset + t;
+            wrapAtt.set(idx, wrapAtt.get(idx) * normFactor);
+        }
+
+        // STEP 5: Compute weighted sum of values for each dimension
+        for (int i = 0; i < headSize; i++) {
+            float weightedSum = 0.0f;
+            for (int t = 0; t <= pos; t++) {
+                int kvHeadIdx = h / kvMul;
+                int valueOffset = (int) (loff + t * kvDim + kvHeadIdx * headSize);
+                weightedSum += wrapAtt.get(headOffset + t) * value_cache.get(valueOffset + i);
+            }
+            allXb.set(h * headSize + i, weightedSum);
         }
     }
 }
