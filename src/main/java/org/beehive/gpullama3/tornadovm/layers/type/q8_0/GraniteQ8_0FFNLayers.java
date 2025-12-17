@@ -5,6 +5,7 @@ import org.beehive.gpullama3.inference.state.LlamaState;
 import org.beehive.gpullama3.inference.weights.tornado.GraniteTornadoWeights;
 import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
 import org.beehive.gpullama3.model.Configuration;
+import org.beehive.gpullama3.model.granite.Granite;
 import org.beehive.gpullama3.model.granite.GraniteConfiguration;
 import org.beehive.gpullama3.tornadovm.kernels.GraniteKernels;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
@@ -196,7 +197,7 @@ public class GraniteQ8_0FFNLayers extends AbstractFFNLayers {
 
         // RoPE + KV Cache
         unifiedLayer.task("rope_and_kv_cache",
-                TransformerComputeKernelsLayered::ropeRotationWithCacheCopy,
+                GraniteKernels::ropeRotationWithCacheCopy,
                 context,
                 state.positionHolder,
                 state.wrapQ,                 // Q (in/out)
@@ -206,6 +207,7 @@ public class GraniteQ8_0FFNLayers extends AbstractFFNLayers {
                 state.wrapValueCache,        // Value cache (out)
                 config.kvDim(),
                 config.headSize(),
+                config.ropeTheta(),
                 layerIndex,
                 config.contextLength());
 
