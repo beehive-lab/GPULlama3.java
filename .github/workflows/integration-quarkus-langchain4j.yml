@@ -33,11 +33,11 @@ jobs:
     runs-on: [self-hosted]
     timeout-minutes: 30
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         backend:
           - name: opencl
-          #- name: ptx
+          - name: ptx
 
     steps:
       - name: Checkout GPULlama3
