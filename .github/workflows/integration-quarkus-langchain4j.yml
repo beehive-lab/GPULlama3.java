@@ -1,11 +1,9 @@
-name: [Integration] Quarkus-LangChain4j
+name: Integration Quarkus-LangChain4j
 
 on:
   # Temporarily disabled - manual trigger only
   push:
     branches: [ main, ci/quarkus-langchain4j-IT ]
-    paths:
-      - '.github/workflows/integrations/quarkus-langchain4j.yml'  # Add this
   # pull_request:
   #   branches: [ main ]
   #   types: [opened, synchronize, reopened]
@@ -192,8 +190,8 @@ jobs:
           STREAMING_HTTP_RESPONSE_CODE="${STREAMING_RESPONSE: -3}"
           
           # Check response code
-          if [ "STREAMING_HTTP_RESPONSE_CODE" != "200" ]; then
-            echo "ERROR: Streaming endpoint returned HTTP code STREAMING_HTTP_RESPONSE_CODE"
+          if [ "$STREAMING_HTTP_RESPONSE_CODE" != "200" ]; then
+            echo "ERROR: Streaming endpoint returned HTTP code $STREAMING_HTTP_RESPONSE_CODE"
             exit 1
           else
             echo "Streaming endpoint HTTP code: ${STREAMING_RESPONSE: -3}"  
