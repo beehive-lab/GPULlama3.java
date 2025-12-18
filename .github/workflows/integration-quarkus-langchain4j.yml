@@ -149,30 +149,34 @@ jobs:
       - name: Trigger Blocking Endpoint
         run: |  
           # Trigger endpoint
-          BLOCKING_RESPONSE=$(curl -s -w "%{http_code}" http://localhost:$QUARKUS_PORT/chat/blocking)
-          BLOCKING_HTTP_RESPONSE_CODE="${BLOCKING_RESPONSE: -3}"
+          HTTP_RESPONSE=$(curl -s -w "%{http_code}" http://localhost:$QUARKUS_PORT/chat/blocking)
+          HTTP_RESPONSE_CODE="${HTTP_RESPONSE: -3}"
+          HTTP_RESPONSE_BODY="$HTTP_RESPONSE%???}"
           
           # Check response code
-          if [ "$BLOCKING_HTTP_RESPONSE_CODE" != "200" ]; then
-            echo "ERROR: Blocking endpoint returned HTTP code $BLOCKING_HTTP_RESPONSE_CODE"
+          if [ "$HTTP_RESPONSE_CODE" != "200" ]; then
+            echo "ERROR: Blocking endpoint returned HTTP code $HTTP_RESPONSE_CODE"
             exit 1
           else
-            echo "Blocking endpoint HTTP code: ${BLOCKING_RESPONSE: -3}"
+            echo "SUCCESS: Blocking endpoint returned HTTP code: ${HTTP_RESPONSE: -3}"
+            echo "HTTP Response body: $HTTP_RESPONSE_BODY" 
           fi
 
       # Step 6: Run test 2
       - name: Trigger Streaming Endpoint
         run: |
           # Trigger endpoint
-          STREAMING_RESPONSE=$(timeout 10s curl -s -w "%{http_code}" http://localhost:$QUARKUS_PORT/chat/streaming)
-          STREAMING_HTTP_RESPONSE_CODE="${STREAMING_RESPONSE: -3}"
+          HTTP_RESPONSE=$(timeout 10s curl -s -w "%{http_code}" http://localhost:$QUARKUS_PORT/chat/streaming)
+          HTTP_RESPONSE_CODE="${HTTP_RESPONSE: -3}"
+          HTTP_RESPONSE_BODY="$HTTP_RESPONSE%???}"
           
           # Check response code
-          if [ "$STREAMING_HTTP_RESPONSE_CODE" != "200" ]; then
-            echo "ERROR: Streaming endpoint returned HTTP code $STREAMING_HTTP_RESPONSE_CODE"
+          if [ "$HTTP_RESPONSE_CODE" != "200" ]; then
+            echo "ERROR: Streaming endpoint returned HTTP code $HTTP_RESPONSE_CODE"
             exit 1
           else
-            echo "Streaming endpoint HTTP code: ${STREAMING_RESPONSE: -3}"  
+            echo "SUCCESS: Streaming endpoint returned HTTP code: ${HTTP_RESPONSE: -3}"
+            echo "HTTP Response body: $HTTP_RESPONSE_BODY"   
           fi
 
       # Step 7: Cleanup & Shutdown
