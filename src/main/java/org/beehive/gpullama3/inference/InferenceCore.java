@@ -663,7 +663,7 @@ public final class InferenceCore {
         weights.wcls.matmul(state.x, state.logits, config.vocabularySize(), dim);
 
         // Apply Granite logit scaling (divide by the scaling factor)
-        state.logits.mapInPlace(v -> v / logitScale);
+        state.logits.mapInPlace(v -> v * logitScale);
 
         return state.logits;
     }

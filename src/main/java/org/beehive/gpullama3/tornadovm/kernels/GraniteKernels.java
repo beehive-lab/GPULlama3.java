@@ -77,7 +77,7 @@ public class GraniteKernels {
 
         // Thread 0 in each workgroup writes the final result
         if (localId == 0) {
-            hb.set(rowId, sum);
+            hb.set(rowId,  sum * logitsScale);
         }
     }
 
@@ -156,7 +156,6 @@ public class GraniteKernels {
                     score += q_shared[d] * k_tile[score_idx_in_tile * headSize + d];
                 }
                 score *= attentionScale;
-//                score /= TornadoMath.sqrt(headSize);
                 s_tile[score_idx_in_tile] = score;
             }
 
@@ -339,7 +338,7 @@ public class GraniteKernels {
 
         // Thread 0 writes the result
         if (localId == 0) {
-            output.set(rowId, logitsScale * sum);
+            output.set(rowId, sum * logitsScale);
         }
     }
 
