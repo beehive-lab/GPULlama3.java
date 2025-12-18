@@ -9,9 +9,9 @@ import org.beehive.gpullama3.tornadovm.layers.ActivationGranite;
 import org.beehive.gpullama3.tornadovm.layers.type.q8_0.GraniteQ8_0FFNLayers;
 import org.beehive.gpullama3.tornadovm.layers.type.q8_0.LogitsGraniteQ8_0Layer;
 
-public class Granite8_0LayerPlanner extends Q8_0LayerPlanner<GraniteState, GraniteConfiguration, GraniteTornadoWeights> {
+public class GraniteQ8_0LayerPlanner extends Q8_0LayerPlanner<GraniteState, GraniteConfiguration, GraniteTornadoWeights> {
 
-    public Granite8_0LayerPlanner(GraniteState state, Model model) {
+    public GraniteQ8_0LayerPlanner(GraniteState state, Model model) {
         super(state, model);
         validateQuantizationType();
         setupTornadoForwardPlan();
