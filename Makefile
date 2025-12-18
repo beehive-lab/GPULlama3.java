@@ -15,7 +15,7 @@ clean:
 	$(MVN) clean
 
 install:
-    $(MVN) install -DskipTests
+	$(MVN) install -DskipTests
 
 # Package the project without running tests
 package:
