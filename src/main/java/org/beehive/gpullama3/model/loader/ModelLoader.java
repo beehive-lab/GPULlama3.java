@@ -48,7 +48,9 @@ public abstract class ModelLoader {
         // Check by name first
         if (name != null) {
             String lowerName = name.toLowerCase();
-            if (lowerName.contains("mistral")) {
+            if (lowerName.contains("granite")) {
+                return ModelType.GRANITE;
+            } else if (lowerName.contains("mistral")) {
                 return ModelType.MISTRAL;
             } else if (lowerName.contains("llama")) {
                 return ModelType.LLAMA_3;
@@ -61,6 +63,11 @@ public abstract class ModelLoader {
             } else if (lowerName.contains("phi3") || lowerName.contains("phi-3")) {
                 return ModelType.PHI_3;
             }
+        }
+
+        // Alternative: check by metadata keys if name-based detection fails
+        if (metadata.containsKey("granite.block_count")) {
+            return ModelType.GRANITE;
         }
 
         return ModelType.UNKNOWN;

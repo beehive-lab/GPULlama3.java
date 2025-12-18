@@ -1,6 +1,6 @@
 package org.beehive.gpullama3.model.format;
 
-import org.beehive.gpullama3.tokenizer.LlamaTokenizer;
+import org.beehive.gpullama3.tokenizer.GraniteTokenizer;
 import org.beehive.gpullama3.tokenizer.Tokenizer;
 
 import java.util.ArrayList;
@@ -8,32 +8,42 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-public class LlamaChatFormat implements ChatFormat {
+/**
+ * Chat format for Granite models.
+ *
+ * Granite uses a different chat template than Llama:
+ * <|start_of_role|>system<|end_of_role|>...<|end_of_text|>
+ * <|start_of_role|>user<|end_of_role|>...<|end_of_text|>
+ * <|start_of_role|>assistant<|end_of_role|>...
+ */
+public class GraniteChatFormat implements ChatFormat {
 
     protected final Tokenizer tokenizer;
-    protected final int beginOfText;
-    protected final int endHeader;
-    protected final int startHeader;
-    protected final int endOfTurn;
+    protected final int startRole;
+    protected final int endRole;
     protected final int endOfText;
-    protected final int endOfMessage;
     protected final Set<Integer> stopTokens;
 
-    public LlamaChatFormat(Tokenizer tokenizer) {
+    public GraniteChatFormat(Tokenizer tokenizer) {
         this.tokenizer = tokenizer;
         Map<String, Integer> specialTokens = tokenizer.getSpecialTokens();
-        this.beginOfText = specialTokens.get("<|begin_of_text|>");
-        this.startHeader = specialTokens.get("<|start_header_id|>");
-        this.endHeader = specialTokens.get("<|end_header_id|>");
-        this.endOfTurn = specialTokens.get("<|eot_id|>");
-        this.endOfText = specialTokens.get("<|end_of_text|>");
-        this.endOfMessage = specialTokens.getOrDefault("<|eom_id|>", -1); // only in 3.1
-        this.stopTokens = Set.of(endOfText, endOfTurn);
+
+        this.startRole = specialTokens.getOrDefault("<|start_of_role|>", -1);
+        this.endRole = specialTokens.getOrDefault("<|end_of_role|>", -1);
+
+        // Use tokenizer's EOS token instead of hardcoding
+        if (tokenizer instanceof GraniteTokenizer graniteTokenizer) {
+            this.endOfText = graniteTokenizer.getEosTokenId();
+        } else {
+            this.endOfText = specialTokens.getOrDefault("<|end_of_text|>", 0);
+        }
+
+        this.stopTokens = Set.of(endOfText);
     }
 
     @Override
     public int getBeginOfText() {
-        return beginOfText;
+        return endOfText;  // For Granite, token 0 is both BOS and EOS
     }
 
     @Override
@@ -44,10 +54,13 @@ public class LlamaChatFormat implements ChatFormat {
     @Override
     public List<Integer> encodeHeader(Message message) {
         List<Integer> tokens = new ArrayList<>();
-        tokens.add(startHeader);
+        if (startRole >= 0) {
+            tokens.add(startRole);
+        }
         tokens.addAll(tokenizer.encodeAsList(message.role().name()));
-        tokens.add(endHeader);
-        tokens.addAll(tokenizer.encodeAsList("\n"));
+        if (endRole >= 0) {
+            tokens.add(endRole);
+        }
         return tokens;
     }
 
@@ -55,18 +68,16 @@ public class LlamaChatFormat implements ChatFormat {
     public List<Integer> encodeMessage(Message message) {
         List<Integer> tokens = encodeHeader(message);
         tokens.addAll(tokenizer.encodeAsList(message.content().strip()));
-        tokens.add(endOfTurn);
+        tokens.add(endOfText);
         return tokens;
     }
 
     public List<Integer> encodeDialogPrompt(boolean appendAssistantTurn, List<Message> dialog) {
         List<Integer> tokens = new ArrayList<>();
-        tokens.add(beginOfText);
         for (Message message : dialog) {
             tokens.addAll(encodeMessage(message));
         }
         if (appendAssistantTurn) {
-            // Add the start of an assistant message for the model to complete.
             tokens.addAll(encodeHeader(new Message(ChatFormat.Role.ASSISTANT, "")));
         }
         return tokens;
