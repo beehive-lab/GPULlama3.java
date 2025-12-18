@@ -115,7 +115,6 @@ jobs:
         run: |
           cd ${{ github.workspace }}
           git clone https://github.com/quarkiverse/quarkus-langchain4j.git
-          echo "✅ Quarkus LangChain4j cloned"
 
       # Step 3: Build Quarkus LangChain4j (optimized)
       - name: Build Quarkus LangChain4j
@@ -127,16 +126,14 @@ jobs:
           # This recompiles everything with the same Java version, avoiding compatibility issues
           # The -Dtornado flag activates the TornadoVM profile which includes gpu-llama3 module
           mvn clean install -pl integration-tests/gpu-llama3 -am -DskipTests -Dtornado
-          
-          echo "✅ Quarkus LangChain4j built (GPULlama3 integration test + dependencies)"
 
-      # Step 4: Run Integration Test
-      - name: Run Integration Test
+      # Step 4: Start Quarkus Application and Wait for Startup
+      - name: Start Quarkus Application and Wait for Startup
         run: |
           cd ${{ github.workspace }}/quarkus-langchain4j/integration-tests/gpu-llama3
           export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
           
-          echo "Running Quarkus-Langchain4j integration test on port $QUARKUS_PORT"
+          echo "Starting Quarkus application on port $QUARKUS_PORT..."
           
           # Start the Quarkus application in the background
           java  @"$TORNADO_SDK/tornado-argfile" \
@@ -145,30 +142,66 @@ jobs:
                 -jar target/quarkus-app/quarkus-run.jar &
           APP_PID=$!
           
-          # Wait for the application to start
-          echo "Starting Quarkus application on port $QUARKUS_PORT..."
+          if [ -z "$APP_PID" ]; then
+            echo "ERROR: Failed to start Quarkus application"
+            exit 1
+          fi
+
+          echo "Waiting for Quarkus application to start..."
+          
+          # Wait for application to be ready
           for i in {1..30}; do
             if curl -s http://localhost:$QUARKUS_PORT/q/health > /dev/null 2>&1; then
-              echo "✅ Application started successfully"
+              echo "Application ready after ${i} seconds"
+              echo "Health endpoint: http://localhost:$QUARKUS_PORT/q/health"
               break
             elif [ $i -eq 30 ]; then
-              echo "❌ Application failed to start within 30 seconds"
+              echo "ERROR: Application failed to start within 30 seconds"
+              echo "Debugging info:"
+              echo "- Port: $QUARKUS_PORT"
+              echo "- Process ID: $APP_PID"
+              echo "- Health URL: http://localhost:$QUARKUS_PORT/q/health"
               kill $APP_PID || true
               exit 1
             else
+              [ $((i % 5)) -eq 0 ] && echo "Still waiting... (${i}s)"
               sleep 1
             fi
           done
-          
-          # Trigger endpoints
+
+      # Step 5: Run test 1
+      - name: Trigger Blocking Endpoint
+        run: |  
+          # Trigger endpoint
           BLOCKING_RESPONSE=$(curl -s -w "%{http_code}" http://localhost:$QUARKUS_PORT/chat/blocking)
+          BLOCKING_HTTP_RESPONSE_CODE="${BLOCKING_RESPONSE: -3}"
+          
+          # Check response code
+          if [ "$BLOCKING_HTTP_RESPONSE_CODE" != "200" ]; then
+            echo "ERROR: Blocking endpoint returned HTTP code $BLOCKING_HTTP_RESPONSE_CODE"
+            exit 1
+          else
+            echo "Blocking endpoint HTTP code: ${BLOCKING_RESPONSE: -3}"
+          fi
+
+      # Step 6: Run test 2
+      - name: Trigger Streaming Endpoint
+        run: |
+          # Trigger endpoint
           STREAMING_RESPONSE=$(timeout 10s curl -s -w "%{http_code}" http://localhost:$QUARKUS_PORT/chat/streaming)
+          STREAMING_HTTP_RESPONSE_CODE="${STREAMING_RESPONSE: -3}"
           
-          echo "Blocking endpoint HTTP code: ${BLOCKING_RESPONSE: -3}"
-          echo "Streaming endpoint HTTP code: ${STREAMING_RESPONSE: -3}"
-          
+          # Check response code
+          if [ "STREAMING_HTTP_RESPONSE_CODE" != "200" ]; then
+            echo "ERROR: Streaming endpoint returned HTTP code STREAMING_HTTP_RESPONSE_CODE"
+            exit 1
+          else
+            echo "Streaming endpoint HTTP code: ${STREAMING_RESPONSE: -3}"  
+          fi
+
+      # Step 7: Cleanup & Shutdown
+      - name: Cleanup & Shutdown
+        run: |
           # Clean shutdown
           kill $APP_PID || true
           wait $APP_PID 2>/dev/null || true
-          
-          echo "✅ Integration test completed successfully"
