@@ -5,11 +5,8 @@ import org.beehive.gpullama3.inference.weights.tornado.GraniteTornadoWeights;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.model.granite.GraniteConfiguration;
 import org.beehive.gpullama3.tornadovm.layerplanner.quantization.FP16LayerPlanner;
-import org.beehive.gpullama3.tornadovm.layers.Activation;
 import org.beehive.gpullama3.tornadovm.layers.ActivationGranite;
 import org.beehive.gpullama3.tornadovm.layers.type.fp16.GraniteFP16FFNLayers;
-import org.beehive.gpullama3.tornadovm.layers.type.fp16.LlamaFP16FFNLayers;
-import org.beehive.gpullama3.tornadovm.layers.type.fp16.LogitsFP16Layer;
 import org.beehive.gpullama3.tornadovm.layers.type.fp16.LogitsGraniteFP16Layer;
 
 public class GraniteFP16LayerPlanner extends FP16LayerPlanner<GraniteState, GraniteConfiguration, GraniteTornadoWeights> {
