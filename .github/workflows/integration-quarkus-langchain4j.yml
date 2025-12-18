@@ -1,15 +1,14 @@
 name: Integration Quarkus-LangChain4j
 
 on:
-  # Temporarily disabled - manual trigger only
   push:
-    branches: [ main, ci/quarkus-langchain4j-IT ]
-  # pull_request:
-  #   branches: [ main ]
-  #   types: [opened, synchronize, reopened]
-  # schedule:
-  #   # Run daily at 02:30 UTC to catch dependency breakages
-  #   - cron: '30 2 * * *'
+    branches: [ main ]
+  pull_request:
+     branches: [ main ]
+     types: [opened, synchronize, reopened]
+  schedule:
+     # Run every Saturday at 02:30 UTC to catch dependency breakages
+     - cron: '30 2 * * 6'
   workflow_dispatch:
     inputs:
       quarkus_langchain4j_version:
@@ -93,13 +92,13 @@ jobs:
           git clone --branch fix/gpu-llama3-config-registration \
           https://github.com/orionpapadakis/quarkus-langchain4j.git
 
-      # Step 3: Build Quarkus LangChain4j (optimized)
+      # Step 3: Build Quarkus LangChain4j
       - name: Build Quarkus LangChain4j
         run: |
           cd ${{ github.workspace }}/quarkus-langchain4j
           export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
           
-          # Use reactor to build GPULlama3 integration test + dependencies
+          # Use reactor to build *only *GPULlama3 integration test + dependencies
           # This recompiles everything with the same Java version, avoiding compatibility issues
           # The -Dtornado flag activates the TornadoVM profile which includes gpu-llama3 module
           mvn clean install -pl integration-tests/gpu-llama3 -am -DskipTests -Dtornado
