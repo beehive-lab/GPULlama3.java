@@ -89,7 +89,9 @@ jobs:
       - name: Clone Quarkus LangChain4j
         run: |
           cd ${{ github.workspace }}
-          git clone https://github.com/quarkiverse/quarkus-langchain4j.git
+          # git clone https://github.com/quarkiverse/quarkus-langchain4j.git
+          git clone --branch fix/gpu-llama3-config-registration \
+          https://github.com/orionpapadakis/quarkus-langchain4j.git
 
       # Step 3: Build Quarkus LangChain4j (optimized)
       - name: Build Quarkus LangChain4j
