@@ -43,29 +43,6 @@ jobs:
       - name: Checkout GPULlama3
         uses: actions/checkout@v4
 
-#      # Step 1: Install TornadoVM
-#      - name: Install TornadoVM
-#        run: |
-#          cd ${{ github.workspace }}
-#
-#          wget https://github.com/beehive-lab/TornadoVM/releases/download/v2.1.0/tornadovm-2.1.0-${{ matrix.backend.name }}-linux-amd64.zip
-#          unzip tornadovm-2.1.0-${{ matrix.backend.name }}-linux-amd64.zip
-#
-#          # Export environment for the current shell
-#          export TORNADO_SDK="${{ github.workspace }}/tornadovm-2.1.0-${{ matrix.backend.name }}"
-#          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
-#
-#          # Save to GitHub Actions environment for future steps
-#          echo "TORNADO_SDK=$TORNADO_SDK" >> $GITHUB_ENV
-#          echo "PATH=$PATH" >> $GITHUB_ENV
-#
-#          # Check TornadoVM installation
-#          if tornado --devices && tornado --version; then
-#              echo "✅ TornadoVM installed"
-#          else
-#              echo "❌ TornadoVM installation check failed"
-#              exit 1
-#          fi
       # Step 1: Clone and build TornadoVM
       - name: Clone TornadoVM master
         run: |
@@ -97,11 +74,11 @@ jobs:
           echo "Detected TornadoVM SDK: $FULL_SDK"
 
           # Export for current shell session
-          export TORNADO_SDK="$FULL_SDK"
+          export TORNADOVM_HOME="$FULL_SDK"
           export PATH="$FULL_SDK/bin:$JAVA_HOME/bin:$PATH"
 
           # Save for subsequent steps
-          echo "TORNADO_SDK=$FULL_SDK" >> $GITHUB_ENV
+          echo "TORNADOVM_HOME=$FULL_SDK" >> $GITHUB_ENV
           echo "PATH=$PATH" >> $GITHUB_ENV
 
           echo "=== Checking tornado CLI ==="
@@ -118,7 +95,7 @@ jobs:
       - name: Build Quarkus LangChain4j
         run: |
           cd ${{ github.workspace }}/quarkus-langchain4j
-          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
           
           # Use reactor to build GPULlama3 integration test + dependencies
           # This recompiles everything with the same Java version, avoiding compatibility issues
@@ -129,12 +106,12 @@ jobs:
       - name: Start Quarkus Application and Wait for Startup
         run: |
           cd ${{ github.workspace }}/quarkus-langchain4j/integration-tests/gpu-llama3
-          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
           
           echo "Starting Quarkus application on port $QUARKUS_PORT..."
           
           # Start the Quarkus application in the background
-          java  @"$TORNADO_SDK/tornado-argfile" \
+          java  @"$TORNADOVM_HOME/tornado-argfile" \
                 -Dtornado.device.memory=8GB \
                 -Dquarkus.http.port=$QUARKUS_PORT \
                 -jar target/quarkus-app/quarkus-run.jar &
