@@ -1,4 +1,4 @@
-name: Quarkus LangChain4j Integration Tests
+name: [Integration] Quarkus-LangChain4j
 
 on:
   # Temporarily disabled - manual trigger only
