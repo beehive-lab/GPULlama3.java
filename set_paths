@@ -8,13 +8,13 @@
 export LLAMA_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Add TornadoVM and LLaMA bin directories to PATH
-export PATH="${PATH}:${TORNADO_SDK}/bin:${LLAMA_ROOT}"
+export PATH="${PATH}:${TORNADOVM_HOME}/bin:${LLAMA_ROOT}"
 
 # Optional: Set JAVA_HOME if required
 # export JAVA_HOME=/path/to/graalvm
 # export PATH="${JAVA_HOME}/bin:${PATH}"
 
-echo "[INFO] Environment configured for LLaMA3 with TornadoVM at: $TORNADO_SDK"
+echo "[INFO] Environment configured for LLaMA3 with TornadoVM at: $TORNADOVM_HOME"
 # ===== Notes =====
 # After sourcing this script:
 # 1. TornadoVM will be available for GPU computation

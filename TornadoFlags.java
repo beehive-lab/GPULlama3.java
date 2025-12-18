@@ -13,7 +13,7 @@
 //JAVA_OPTIONS -XX:+UseParallelGC
 
 // === Native library path ===
-//JAVA_OPTIONS -Djava.library.path=${env.TORNADO_SDK}/lib
+//JAVA_OPTIONS -Djava.library.path=${env.TORNADOVM_HOME}/lib
 
 // === Tornado runtime classes ===
 //JAVA_OPTIONS -Dtornado.load.api.implementation=uk.ac.manchester.tornado.runtime.tasks.TornadoTaskGraph
@@ -23,8 +23,8 @@
 //JAVA_OPTIONS -Dtornado.load.annotation.parallel=uk.ac.manchester.tornado.api.annotations.Parallel
 
 // === Module system ===
-//JAVA_OPTIONS --module-path ${env.TORNADO_SDK}/share/java/tornado
-//JAVA_OPTIONS --upgrade-module-path ${env.TORNADO_SDK}/share/java/graalJars
+//JAVA_OPTIONS --module-path ${env.TORNADOVM_HOME}/share/java/tornado
+//JAVA_OPTIONS --upgrade-module-path ${env.TORNADOVM_HOME}/share/java/graalJars
 //JAVA_OPTIONS --add-modules ALL-SYSTEM,tornado.runtime,tornado.annotation,tornado.drivers.common,tornado.drivers.opencl
 
 // === Common exports ===

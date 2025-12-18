@@ -1,8 +1,8 @@
 //JAVA 21
 //PREVIEW
 //DEPS io.github.beehive-lab:gpu-llama3:0.3.2-dev
-//DEPS io.github.beehive-lab:tornado-api:2.1.0
-//DEPS io.github.beehive-lab:tornado-runtime:2.1.0
+//DEPS io.github.beehive-lab:tornado-api:2.2.0
+//DEPS io.github.beehive-lab:tornado-runtime:2.2.0
 
 //SOURCES TornadoFlags.java
 // === Set to not get annoying warnings about annotation processing

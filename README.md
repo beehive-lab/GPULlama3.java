@@ -70,8 +70,6 @@ Ensure you have the following installed and configured:
 
 ### Install, Build, and Run
 
-When cloning this repository, use the `--recursive` flag to ensure that TornadoVM is properly included as submodule:
-
 ```bash
 # Clone the repository with all submodules
 git clone https://github.com/beehive-lab/GPULlama3.java.git
@@ -80,66 +78,32 @@ git clone https://github.com/beehive-lab/GPULlama3.java.git
 #### Install the TornadoVM SDK on Linux or macOS
 
 Ensure that your JAVA_HOME points to a supported JDK before using the SDK. Download an SDK package matching your OS, architecture, and accelerator backend (opencl, ptx).
-All pre-built SDKs are available on the TornadoVM [Releases Page](https://github.com/beehive-lab/TornadoVM/releases).
-#After extracting the SDK, add its bin/ directory to your PATH so the `tornado` command becomes available.
+TornadoVM is distributed through our [**official website**](https://www.tornadovm.org/downloads) and **SDKMAN!**. Install a version that matches your OS, architecture, and accelerator backend.
 
-##### Linux (x86_64)
+All TornadoVM SDKs are available on the [SDKMAN! TornadoVM page](https://sdkman.io/sdks/tornadovm/).
 
+#### SDKMAN! Installation (Recommended)
+
+##### Install SDKMAN! if not installed already
 ```bash
-wget https://github.com/beehive-lab/TornadoVM/releases/download/v2.1.0/tornadovm-2.1.0-opencl-linux-amd64.zip
-unzip tornadovm-2.1.0-opencl-linux-amd64.zip
-# Replace <path-to-sdk> manually with the absolute path of the extracted folder
-export TORNADOVM_HOME="<path-to-sdk>/tornadovm-2.1.0-opencl"
-export PATH=$TORNADO_SDK/bin:$PATH
+curl -s "https://get.sdkman.io" | bash
+source "$HOME/.sdkman/bin/sdkman-init.sh"
+sdk version
+```
+##### Install TornadoVM via SDKMAN!
+```bash
+sdk install tornadovm
+```
 
+#### Verify TornadoVM is Installed Correctly
+```bash
 tornado --devices
-tornado --version
 ```
-
-##### macOS (Apple Silicon)
-
-```bash
-wget https://github.com/beehive-lab/TornadoVM/releases/download/v2.1.0/tornadovm-2.1.0-opencl-mac-aarch64.zip
-unzip tornadovm-2.1.0-opencl-mac-aarch64.zip
-# Replace <path-to-sdk> manually with the absolute path of the extracted folder
-export TORNADOVM_HOME="<path-to-sdk>/tornadovm-2.1.0-opencl"
-export PATH=$TORNADO_SDK/bin:$PATH
-
-tornado --devices
-tornado --version
-```
-
-#### Build the GPULlama3.java
-
-```bash
-# Navigate to the project directory
-cd GPULlama3.java
-
-# Source the project-specific environment paths -> this will ensure the correct paths are set for the project and the TornadoVM SDK
-# Expect to see: [INFO] Environment configured for Llama3 with TornadoVM at: $TORNADO_SDK
-source set_paths
-
-# Build the project using Maven (skip tests for faster build)
-# mvn clean package -DskipTests or just make
-make
-
-# Run the model (make sure you have downloaded the model file first -  see below)
-./llama-tornado --gpu  --verbose-init --opencl --model beehive-llama-3.2-1b-instruct-fp16.gguf --prompt "tell me a joke"
-```
-
-
 ----------
 
 ### TornadoVM-Accelerated Inference Performance and Optimization Status
 
 We are at the early stages of Java entering the AI world with features added to the JVM that enable faster execution such as GPU acceleration, Vector acceleration, high-performance access to off-heap memory and others.
-<br><br>This repository provides the first Java-native implementation of Llama3 that automatically compiles and executes Java code on GPUs via TornadoVM. 
-The baseline numbers presented below provide a solid starting point for achieving more competitive performance compared to llama.cpp or native CUDA implementations. 
-[Our roadmap](https://github.com/beehive-lab/GPULlama3.java/blob/main/docs/GPULlama3_ROADMAP.md) provides the upcoming set of features that will dramatically improve the numbers below with the clear target being to achieve performance parity with the fastest implementations. 
-<br><br>
-If you achieve additional performance data points (e.g. new hardware or platforms) please let us know to add them below. 
-<br><br>
-In addition, if you are interested to learn more about the challenges of managed programming languages and GPU acceleration, you can read [our book](https://link.springer.com/book/10.1007/978-3-031-49559-5) or consult the [TornadoVM educational pages](https://www.tornadovm.org/resources). 
 
 
 | Vendor / Backend             | Hardware     | Llama-3.2-1B-Instruct | Llama-3.2-3B-Instruct | Optimizations |

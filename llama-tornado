@@ -26,12 +26,12 @@ class LlamaRunner:
 
     def __init__(self):
         self.java_home = os.environ.get("JAVA_HOME")
-        self.tornado_sdk = os.environ.get("TORNADO_SDK")
+        self.tornado_sdk = os.environ.get("TORNADOVM_HOME")
         self.llama_root = os.environ.get("LLAMA_ROOT")
 
         if not all([self.java_home, self.tornado_sdk, self.llama_root]):
             print("Error: Required environment variables not set")
-            print("Please ensure JAVA_HOME, TORNADO_SDK, and LLAMA_ROOT are defined")
+            print("Please ensure JAVA_HOME, TORNADOVM_HOME, and LLAMA_ROOT are defined")
             print("Note: check set_path in root dir -> source set_path")
             sys.exit(1)
 
@@ -39,7 +39,7 @@ class LlamaRunner:
         """Validate that required paths exist."""
         paths_to_check = {
             "JAVA_HOME": self.java_home,
-            "TORNADO_SDK": self.tornado_sdk,
+            "TORNADOVM_HOME": self.tornado_sdk,
             "LLAMA_ROOT": self.llama_root,
         }
 
