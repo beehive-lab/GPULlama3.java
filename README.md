@@ -84,7 +84,7 @@ All TornadoVM SDKs are available on the [SDKMAN! TornadoVM page](https://sdkman.
 
 #### SDKMAN! Installation (Recommended)
 
-##### Install SDKMAN! If not installed already
+##### Install SDKMAN! if not installed already
 ```bash
 curl -s "https://get.sdkman.io" | bash
 source "$HOME/.sdkman/bin/sdkman-init.sh"
