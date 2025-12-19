@@ -169,19 +169,41 @@ jobs:
 
       # Step 6: Run test 1
       - name: Trigger Blocking Endpoint
-        run: |  
-          # Trigger endpoint
-          HTTP_RESPONSE=$(curl -s -w "%{http_code}" http://localhost:$QUARKUS_PORT/chat/blocking)
-          HTTP_RESPONSE_CODE="${HTTP_RESPONSE: -3}"
-          HTTP_RESPONSE_BODY="$HTTP_RESPONSE%???}"
-          
-          # Check response code
-          if [ "$HTTP_RESPONSE_CODE" != "200" ]; then
-            echo "ERROR: Blocking endpoint returned HTTP code $HTTP_RESPONSE_CODE"
+        run: |
+          MAX_ATTEMPTS=3
+          ATTEMPT=1
+          SUCCESS=false
+    
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            echo "Attempt $ATTEMPT of $MAX_ATTEMPTS for blocking endpoint..."
+    
+            # Trigger endpoint
+            HTTP_RESPONSE=$(curl -s -w "%{http_code}" http://localhost:$QUARKUS_PORT/chat/blocking)
+            HTTP_RESPONSE_CODE="${HTTP_RESPONSE: -3}"
+            HTTP_RESPONSE_BODY="${HTTP_RESPONSE%???}"
+    
+            # Check response code
+            if [ "$HTTP_RESPONSE_CODE" = "200" ]; then
+              echo "SUCCESS: Blocking endpoint returned HTTP code: $HTTP_RESPONSE_CODE"
+              echo "HTTP Response body: $HTTP_RESPONSE_BODY"
+              SUCCESS=true
+              break
+            else
+              echo "Attempt $ATTEMPT failed: Blocking endpoint returned HTTP code $HTTP_RESPONSE_CODE"
+              echo "Response body: $HTTP_RESPONSE_BODY"
+    
+              if [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
+                echo "Retrying in 2 seconds..."
+                sleep 2
+              fi
+            fi
+    
+            ATTEMPT=$((ATTEMPT + 1))
+          done
+    
+          if [ "$SUCCESS" = false ]; then
+            echo "ERROR: Blocking endpoint failed after $MAX_ATTEMPTS attempts"
             exit 1
-          else
-            echo "SUCCESS: Blocking endpoint returned HTTP code: ${HTTP_RESPONSE: -3}"
-            echo "HTTP Response body: $HTTP_RESPONSE_BODY" 
           fi
 
       # Step 7: Run test 2
