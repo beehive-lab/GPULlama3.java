@@ -2,6 +2,10 @@
 
 All notable changes to GPULlama3.java will be documented in this file.
 
+## [0.3.3] - 2025-12-19
+
+<!-- TODO: Add changes manually -->
+
 ## [0.3.2] - 2025-12-18
 
 ### Model Support
