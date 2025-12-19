@@ -84,24 +84,48 @@ jobs:
           which tornado || { echo "::error::tornado not in PATH"; exit 1; }
           tornado --devices
 
-      # Step 2: Clone Quarkus LangChain4j
+      # Step 2: Build GPULlama3.java
+      - name: Build GPULlama3.java
+        run: |
+          cd ${{ github.workspace }}
+          echo "Using TORNADOVM_HOME=$TORNADOVM_HOME"
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
+          tornado --version
+          
+          # Append SNAPSHOT to GPULlama3 version
+          GPULLAMA3_VERSION=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout)
+          GPULLAMA3_VERSION="${GPULLAMA3_VERSION}-SNAPSHOT"
+          echo "GPULlama3 version: $GPULLAMA3_VERSION"
+          ./mvnw versions:set -DnewVersion=$GPULLAMA3_VERSION
+          
+          # Build
+          ./mvnw clean install -DskipTests
+    
+          # Save GPULlama3.java version for subsequent steps
+          echo "GPULLAMA3_VERSION=$GPULLAMA3_VERSION" >> $GITHUB_ENV
+
+      # Step 3: Clone Quarkus LangChain4j
       - name: Clone Quarkus LangChain4j
         run: |
           cd ${{ github.workspace }}
           git clone https://github.com/quarkiverse/quarkus-langchain4j.git
 
-      # Step 3: Build Quarkus LangChain4j
+      # Step 4: Build Quarkus LangChain4j with current GPULlama3.java
       - name: Build Quarkus LangChain4j
         run: |
           cd ${{ github.workspace }}/quarkus-langchain4j
           export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
+          
+          # Update the GPULlama3 version used by quarkus-langchain4j
+          RUNTIME_POM="model-providers/gpu-llama3/runtime/pom.xml"
+          sed -i 's/<version>${gpu-llama3.version}<\/version>/<version>'$GPULLAMA3_VERSION'<\/version>/' "$RUNTIME_POM"
           
           # Use reactor to build *only *GPULlama3 integration test + dependencies
           # This recompiles everything with the same Java version, avoiding compatibility issues
           # The -Dtornado flag activates the TornadoVM profile which includes gpu-llama3 module
           mvn clean install -pl integration-tests/gpu-llama3 -am -DskipTests -Dtornado
 
-      # Step 4: Start Quarkus Application and Wait for Startup
+      # Step 5: Start Quarkus Application and Wait for Startup
       - name: Start Quarkus Application and Wait for Startup
         run: |
           cd ${{ github.workspace }}/quarkus-langchain4j/integration-tests/gpu-llama3
@@ -143,7 +167,7 @@ jobs:
             fi
           done
 
-      # Step 5: Run test 1
+      # Step 6: Run test 1
       - name: Trigger Blocking Endpoint
         run: |  
           # Trigger endpoint
@@ -160,7 +184,7 @@ jobs:
             echo "HTTP Response body: $HTTP_RESPONSE_BODY" 
           fi
 
-      # Step 6: Run test 2
+      # Step 7: Run test 2
       - name: Trigger Streaming Endpoint
         run: |
           # Trigger endpoint
@@ -177,7 +201,7 @@ jobs:
             echo "HTTP Response body: $HTTP_RESPONSE_BODY"   
           fi
 
-      # Step 7: Cleanup & Shutdown
+      # Step 8: Cleanup & Shutdown
       - name: Cleanup & Shutdown
         run: |
           # Clean shutdown
