@@ -7,7 +7,7 @@
         <!-- Use your verified namespace -->
         <groupId>io.github.beehive-lab</groupId>
         <artifactId>gpu-llama3</artifactId>
-        <version>0.3.2</version> <!-- release version (no -SNAPSHOT) -->
+        <version>0.3.3</version> <!-- release version (no -SNAPSHOT) -->
 
         <name>GPU Llama3</name>
         <description>GPU-accelerated LLaMA3 inference using TornadoVM</description>
