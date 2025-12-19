@@ -117,8 +117,8 @@ jobs:
           export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
           
           # Update the GPULlama3 version used by quarkus-langchain4j
-          RUNTIME_POM="model-providers/gpu-llama3/runtime/pom.xml"
-          sed -i 's/<version>${gpu-llama3.version}<\/version>/<version>'$GPULLAMA3_VERSION'<\/version>/' "$RUNTIME_POM"
+          POM="pom.xml"
+          sed -i 's/<gpu-llama3\.version>.*<\/gpu-llama3\.version>/<gpu-llama3.version>'$GPULLAMA3_VERSION'<\/gpu-llama3.version>/' "$POM"
           
           # Use reactor to build *only *GPULlama3 integration test + dependencies
           # This recompiles everything with the same Java version, avoiding compatibility issues
@@ -126,7 +126,7 @@ jobs:
           mvn clean install -pl integration-tests/gpu-llama3 -am -DskipTests -Dtornado
 
       # Step 4.5: Verify GPULlama3 JAR
-      - name: Verify GPULlama3 JAR
+      - name: Verify GPULlama3 Dependency
         run: |
           cd ${{ github.workspace }}/quarkus-langchain4j/integration-tests/gpu-llama3
           echo "GPULlama3 dependency used by Quarkus-LangChain4j:"
@@ -245,12 +245,12 @@ jobs:
             fi
           
               ATTEMPT=$((ATTEMPT + 1))
-            done
+          done
           
-            if [ "$SUCCESS" = false ]; then
-              echo "ERROR: Streaming endpoint failed after $MAX_ATTEMPTS attempts"
-              exit 1
-            fi
+          if [ "$SUCCESS" = false ]; then
+            echo "ERROR: Streaming endpoint failed after $MAX_ATTEMPTS attempts"
+            exit 1
+          fi
 
       # Step 8: Cleanup & Shutdown
       - name: Cleanup & Shutdown
