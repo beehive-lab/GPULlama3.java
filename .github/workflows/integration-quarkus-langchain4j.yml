@@ -125,6 +125,13 @@ jobs:
           # The -Dtornado flag activates the TornadoVM profile which includes gpu-llama3 module
           mvn clean install -pl integration-tests/gpu-llama3 -am -DskipTests -Dtornado
 
+      # Step 4.5: Verify GPULlama3 JAR
+      - name: Verify GPULlama3 JAR
+        run: |
+          cd ${{ github.workspace }}/quarkus-langchain4j/integration-tests/gpu-llama3
+          echo "GPULlama3 dependency used by Quarkus-LangChain4j:"
+          mvn dependency:tree | grep "io.github.beehive-lab:gpu-llama3"
+
       # Step 5: Start Quarkus Application and Wait for Startup
       - name: Start Quarkus Application and Wait for Startup
         run: |
