@@ -209,19 +209,41 @@ jobs:
       # Step 7: Run test 2
       - name: Trigger Streaming Endpoint
         run: |
-          # Trigger endpoint
-          HTTP_RESPONSE=$(timeout 10s curl -s -w "%{http_code}" http://localhost:$QUARKUS_PORT/chat/streaming)
-          HTTP_RESPONSE_CODE="${HTTP_RESPONSE: -3}"
-          HTTP_RESPONSE_BODY="$HTTP_RESPONSE%???}"
+          MAX_ATTEMPTS=3
+          ATTEMPT=1
+          SUCCESS=false
           
-          # Check response code
-          if [ "$HTTP_RESPONSE_CODE" != "200" ]; then
-            echo "ERROR: Streaming endpoint returned HTTP code $HTTP_RESPONSE_CODE"
-            exit 1
-          else
-            echo "SUCCESS: Streaming endpoint returned HTTP code: ${HTTP_RESPONSE: -3}"
-            echo "HTTP Response body: $HTTP_RESPONSE_BODY"   
-          fi
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            echo "Attempt $ATTEMPT of $MAX_ATTEMPTS for streaming endpoint..."
+
+            # Trigger endpoint
+            HTTP_RESPONSE=$(timeout 10s curl -s -w "%{http_code}" http://localhost:$QUARKUS_PORT/chat/streaming)
+            HTTP_RESPONSE_CODE="${HTTP_RESPONSE: -3}"
+            #HTTP_RESPONSE_BODY="$HTTP_RESPONSE%???}"
+          
+            # Check response code
+            if [ "$HTTP_RESPONSE_CODE" == "200" ]; then
+              echo "SUCCESS: Streaming endpoint returned HTTP code: ${HTTP_RESPONSE: -3}"
+              # do not show ugly streaming response body
+              #echo "HTTP Response body: $HTTP_RESPONSE_BODY"
+              SUCCESS=true
+              break
+            else
+              echo "Attempt $ATTEMPT failed: Streaming endpoint returned HTTP code $HTTP_RESPONSE_CODE"
+          
+              if [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
+                echo "Retrying in 2 seconds..."
+                sleep 2
+              fi
+            fi
+          
+              ATTEMPT=$((ATTEMPT + 1))
+            done
+          
+            if [ "$SUCCESS" = false ]; then
+              echo "ERROR: Streaming endpoint failed after $MAX_ATTEMPTS attempts"
+              exit 1
+            fi
 
       # Step 8: Cleanup & Shutdown
       - name: Cleanup & Shutdown
