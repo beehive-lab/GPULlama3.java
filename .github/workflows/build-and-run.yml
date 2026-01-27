@@ -76,11 +76,11 @@ jobs:
           echo "Detected TornadoVM SDK: $FULL_SDK"
           
           # Export for current shell session
-          export TORNADO_SDK="$FULL_SDK"
+          export TORNADOVM_HOME="$FULL_SDK"
           export PATH="$FULL_SDK/bin:$JAVA_HOME/bin:$PATH"
           
           # Save for subsequent steps
-          echo "TORNADO_SDK=$FULL_SDK" >> $GITHUB_ENV
+          echo "TORNADOVM_HOME=$FULL_SDK" >> $GITHUB_ENV
           echo "PATH=$PATH" >> $GITHUB_ENV
           
           echo "=== Checking tornado CLI ==="
@@ -89,77 +89,106 @@ jobs:
       - name: Build GPULlama3.java
         run: |
           cd ${{ github.workspace }}
-          echo "Using TORNADO_SDK=$TORNADO_SDK"
-          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          echo "Using TORNADOVM_HOME=$TORNADOVM_HOME"
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
           tornado --version
           ./mvnw clean package -DskipTests
       - name: FP16 - Run Llama-3.2-1B-Instruct-F16.gguf
         run: |
           cd ${{ github.workspace }}
-          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
           ./llama-tornado --gpu --${{ matrix.backend.name }} \
             --model $MODELS_DIR/Llama-3.2-1B-Instruct-F16.gguf \
             --prompt "Say hello"
       - name: FP16 - Run Qwen3-4B-f16.gguf
         run: |
           cd ${{ github.workspace }}
-          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
           ./llama-tornado --gpu --${{ matrix.backend.name }} \
             --model $MODELS_DIR/Qwen3-4B-f16.gguf \
             --prompt "Say hello"
       - name: FP16 - Run Mistral-7B-Instruct-v0.3.fp16.gguf
         run: |
           cd ${{ github.workspace }}
-          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
           ./llama-tornado --gpu --${{ matrix.backend.name }} \
             --model $MODELS_DIR/Mistral-7B-Instruct-v0.3.fp16.gguf \
             --prompt "Say hello"
       - name: FP16 - Run Qwen2.5-1.5b-instruct-fp16.gguf
         run: |
           cd ${{ github.workspace }}
-          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
           ./llama-tornado --gpu --${{ matrix.backend.name }} \
             --model $MODELS_DIR/qwen2.5-1.5b-instruct-fp16.gguf \
             --prompt "Say hello"
       - name: FP16 - Run Phi-3-mini-4k-instruct-fp16.gguf
         run: |
           cd ${{ github.workspace }}
-          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
           ./llama-tornado --gpu --${{ matrix.backend.name }} \
             --model /$MODELS_DIR/Phi-3-mini-4k-instruct-fp16.gguf \
+            --prompt "Say hello"
+      - name: FP16 - Run Granite-3.2-2b-instruct-f16.gguf
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
+          ./llama-tornado --gpu --${{ matrix.backend.name }} \
+            --model /$MODELS_DIR/granite-3.2-2b-instruct-f16.gguf \
+            --prompt "Say hello"
+      - name: FP16 - Run Granite-4.0-1b-F16.gguf
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
+          ./llama-tornado --gpu --${{ matrix.backend.name }} \
+            --model /$MODELS_DIR/granite-4.0-1b-F16.gguf \
             --prompt "Say hello"
       - name: Q8 - Run Llama-3.2-1B-Instruct-Q8_0.gguf
         run: |
           cd ${{ github.workspace }}
-          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
           ./llama-tornado --gpu --${{ matrix.backend.name }} \
             --model $MODELS_DIR/Llama-3.2-1B-Instruct-Q8_0.gguf \
             --prompt "Say hello"
       - name: Q8 - Run Qwen3-0.6B-Q8_0.gguf
         run: |
           cd ${{ github.workspace }}
-          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
           ./llama-tornado --gpu --${{ matrix.backend.name }} \
             --model $MODELS_DIR/Qwen3-0.6B-Q8_0.gguf \
             --prompt "Say hello"
       - name: Q8 - Run Phi-3-mini-4k-instruct-Q8_0.gguf
         run: |
           cd ${{ github.workspace }}
-          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
           ./llama-tornado --gpu --${{ matrix.backend.name }} \
             --model $MODELS_DIR/Phi-3-mini-4k-instruct-Q8_0.gguf \
             --prompt "Say hello"
       - name: Q8 - Run Qwen2.5-1.5b-instruct-q8_0.gguf
         run: |
           cd ${{ github.workspace }}
-          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
           ./llama-tornado --gpu --${{ matrix.backend.name }} \
             --model $MODELS_DIR/qwen2.5-1.5b-instruct-q8_0.gguf \
             --prompt "Say hello"
       - name: Q8 - Mistral-7B-Instruct-v0.3.Q8_0.gguf
         run: |
           cd ${{ github.workspace }}
-          export PATH="$TORNADO_SDK/bin:$JAVA_HOME/bin:$PATH"
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
           ./llama-tornado --gpu --${{ matrix.backend.name }} \
             --model $MODELS_DIR/Mistral-7B-Instruct-v0.3.Q8_0.gguf \
             --prompt "Say hello"
+      - name: Q8 - Run Granite-3.2-2b-instruct-Q8.gguf
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
+          ./llama-tornado --gpu --${{ matrix.backend.name }} \
+            --model /$MODELS_DIR/granite-3.2-2b-instruct-Q8_0.gguf \
+            --prompt "Say hello"
+      - name: Q8 - Run Granite-4.0-1b-Q8_0.gguf
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
+          ./llama-tornado --gpu --${{ matrix.backend.name }} \
+            --model /$MODELS_DIR/granite-4.0-1b-Q8_0.gguf \
+            --prompt "Say hello"
+

@@ -531,4 +531,138 @@ public final class InferenceEngine {
 
         return generatedTokens;
     }
+
+    /**
+     * Generates tokens using the Granite model with CPU inference.
+     * Identical pattern to generateTokensLlama but calls forwardGranite.
+     */
+    public static List<Integer> generateTokensGranite(Model model, State state, int startPosition,
+            List<Integer> promptTokens, Set<Integer> stopTokens, int maxTokens, Sampler sampler, boolean echo,
+            IntConsumer onTokenGenerated) {
+        long startNanos = System.nanoTime();
+        long inferenceStartNanos = 0;
+
+        Object logits;
+        if (maxTokens < 0 || model.configuration().contextLength() < maxTokens) {
+            maxTokens = model.configuration().contextLength();
+        }
+
+        List<Integer> generatedTokens = new ArrayList<>();
+
+        int currentToken = state.latestToken;
+        int nextToken;
+        int promptIndex = 0;
+        int pos = startPosition;
+
+        while (pos < maxTokens) {
+            // Call Granite-specific forward pass
+            logits = InferenceCore.forwardGranite(model, state, currentToken, pos);
+
+            if (promptIndex < promptTokens.size()) {
+                nextToken = promptTokens.get(promptIndex++);
+                if (echo) {
+                    System.err.print(Tokenizer.replaceControlCharacters(model.tokenizer().decode(List.of(nextToken))));
+                }
+            } else {
+                if (inferenceStartNanos == 0) {
+                    inferenceStartNanos = System.nanoTime();
+                }
+
+                nextToken = sampler.sampleToken(logits);
+
+                if (echo) {
+                    System.err.print(Tokenizer.replaceControlCharacters(model.tokenizer().decode(List.of(nextToken))));
+                }
+
+                generatedTokens.add(nextToken);
+
+                if (onTokenGenerated != null) {
+                    onTokenGenerated.accept(nextToken);
+                }
+
+                if (stopTokens.contains(nextToken)) {
+                    break;
+                }
+            }
+
+            currentToken = nextToken;
+            state.latestToken = currentToken;
+            pos++;
+        }
+
+        long endNanos = System.nanoTime();
+        double totalTimeSeconds = (endNanos - startNanos) / 1_000_000_000.0;
+        int totalTokens = promptIndex + generatedTokens.size();
+
+        LastRunMetrics.setMetrics(totalTokens, totalTimeSeconds);
+
+        return generatedTokens;
+    }
+
+    /**
+     * Generates tokens using the Granite model with GPU (TornadoVM) inference.
+     * Identical pattern to generateTokensGPULlama.
+     */
+    public static List<Integer> generateTokensGPUGranite(Model model, State state, int startPosition,
+            List<Integer> promptTokens, Set<Integer> stopTokens, int maxTokens, Sampler sampler, boolean echo,
+            IntConsumer onTokenGenerated, TornadoVMMasterPlan tornadoVMMasterPlan) {
+        long startNanos = System.nanoTime();
+        long inferenceStartNanos = 0;
+
+        Object logits;
+        if (maxTokens < 0 || model.configuration().contextLength() < maxTokens) {
+            maxTokens = model.configuration().contextLength();
+        }
+
+        List<Integer> generatedTokens = new ArrayList<>();
+
+        int currentToken = state.latestToken;
+        int nextToken;
+        int promptIndex = 0;
+        int pos = startPosition;
+
+        while (pos < maxTokens) {
+            // Call TornadoVM forward pass (same as Llama for now)
+            logits = InferenceCore.forwardTornadoVM(model, state, currentToken, pos, tornadoVMMasterPlan);
+
+            if (promptIndex < promptTokens.size()) {
+                nextToken = promptTokens.get(promptIndex++);
+                if (echo) {
+                    System.err.print(Tokenizer.replaceControlCharacters(model.tokenizer().decode(List.of(nextToken))));
+                }
+            } else {
+                if (inferenceStartNanos == 0) {
+                    inferenceStartNanos = System.nanoTime();
+                }
+
+                nextToken = sampler.sampleToken(logits);
+
+                if (echo) {
+                    System.err.print(Tokenizer.replaceControlCharacters(model.tokenizer().decode(List.of(nextToken))));
+                }
+
+                generatedTokens.add(nextToken);
+
+                if (onTokenGenerated != null) {
+                    onTokenGenerated.accept(nextToken);
+                }
+
+                if (stopTokens.contains(nextToken)) {
+                    break;
+                }
+            }
+
+            currentToken = nextToken;
+            state.latestToken = currentToken;
+            pos++;
+        }
+
+        long endNanos = System.nanoTime();
+        double totalTimeSeconds = (endNanos - startNanos) / 1_000_000_000.0;
+        int totalTokens = promptIndex + generatedTokens.size();
+
+        LastRunMetrics.setMetrics(totalTokens, totalTimeSeconds);
+
+        return generatedTokens;
+    }
 }

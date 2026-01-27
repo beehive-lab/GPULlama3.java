@@ -5,7 +5,7 @@
 MVN = ./mvnw
 
 # Default target
-all: package
+all: install
 
 # Build the project (clean and package without tests)
 build: clean package
@@ -13,6 +13,9 @@ build: clean package
 # Clean the project
 clean:
 	$(MVN) clean
+
+install:
+	$(MVN) install -DskipTests
 
 # Package the project without running tests
 package:
