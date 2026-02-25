@@ -1,7 +1,8 @@
 # GPULlama3.java powered by TornadoVM [![build JDK21](https://github.com/beehive-lab/GPULlama3.java/actions/workflows/build-and-run.yml/badge.svg)](https://github.com/beehive-lab/GPULlama3.java/actions/workflows/build-and-run.yml) [![Maven Central](https://img.shields.io/maven-central/v/io.github.beehive-lab/gpu-llama3?&logo=apache-maven&color=blue)](https://central.sonatype.com/artifact/io.github.beehive-lab/gpu-llama3)
 
 
-![Java Version](https://img.shields.io/badge/java-21+-blue?style=&logo=openjdk)
+![Java Version](https://img.shields.io/badge/java-21-blue?style=&logo=openjdk)
+![Java Version](https://img.shields.io/badge/java-25.0.2-yellow?style=&logo=openjdk)
 [![LangChain4j](https://img.shields.io/badge/LangChain4j-1.7.1+-purple?&logo=link&logoColor=white)](https://docs.langchain4j.dev/)
 ![OpenCL](https://img.shields.io/badge/OpenCL-supported-blue?style=&logo=khronos)
 ![CUDA](https://img.shields.io/badge/CUDA/PTX-supported-76B900?style=&logo=nvidia)
