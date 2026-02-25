@@ -72,7 +72,7 @@
         <build>
             <plugins>
                 <!-- Compiler: enable-preview for both JDKs.
-                     --add-modules jdk.incubator.vector is added per JDK profile (see below).
+                     add-modules jdk.incubator.vector is added per JDK profile (see below).
                      The Vector API remains in jdk.incubator.vector on both JDK 21 and JDK 25
                      (JEP 508 — 10th Incubator in JDK 25); the flag is required for all JDKs. -->
                 <plugin>
