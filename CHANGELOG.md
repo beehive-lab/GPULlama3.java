@@ -2,6 +2,22 @@
 
 All notable changes to GPULlama3.java will be documented in this file.
 
+## [0.3.3] - 2025-12-19
+
+<!-- TODO: Add changes manually -->
+
+## [0.3.2] - 2025-12-18
+
+### Model Support
+
+- [models] Support for IBM Granite Models 3.2, 3.3 & 4.0 with FP16 and Q8 ([#92](https://github.com/beehive-lab/GPULlama3.java/pull/92))
+
+### Other Changes
+
+- [docs] Update docs to use SDKMAN! and point to TornadoVM 2.2.0 ([#93](https://github.com/beehive-lab/GPULlama3.java/pull/93))
+- Add JBang catalog and local usage examples to README.md ([#91](https://github.com/beehive-lab/GPULlama3.java/pull/91))
+- Add `jbang` script and configuration to make easy to run ([#90](https://github.com/beehive-lab/GPULlama3.java/pull/90))
+
 ## [0.3.1] - 2025-12-11
 
 ### Model Support

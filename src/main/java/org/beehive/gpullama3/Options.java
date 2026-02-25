@@ -28,7 +28,7 @@ public record Options(Path modelPath, String prompt, String systemPrompt, String
         return Boolean.parseBoolean(System.getProperty("use.tornadovm", "false"));
     }
 
-    static void printUsage(PrintStream out) {
+    public static void printUsage(PrintStream out) {
         out.println("Usage:  jbang Llama3.java [options]");
         out.println();
         out.println("Options:");
