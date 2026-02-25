@@ -7,7 +7,7 @@
         <!-- Use your verified namespace -->
         <groupId>io.github.beehive-lab</groupId>
         <artifactId>gpu-llama3</artifactId>
-        <version>0.3.1</version> <!-- release version (no -SNAPSHOT) -->
+        <version>${revision}${jdk.version.suffix}</version>
 
         <name>GPU Llama3</name>
         <description>GPU-accelerated LLaMA3 inference using TornadoVM</description>
@@ -37,8 +37,14 @@
         </scm>
 
         <properties>
-            <maven.compiler.source>25</maven.compiler.source>
-            <maven.compiler.target>25</maven.compiler.target>
+            <!-- CI-friendly version: resolved by flatten-maven-plugin at build time -->
+            <revision>0.3.1</revision>
+            <jdk.version.suffix></jdk.version.suffix>           <!-- empty=JDK21, -jdk25=JDK25 -->
+            <!-- TornadoVM version: overridden per JDK profile -->
+            <tornadovm.version>3.0.0</tornadovm.version>        <!-- JDK21 default -->
+            <!-- Compiler defaults (overridden by JDK profiles below) -->
+            <maven.compiler.source>21</maven.compiler.source>
+            <maven.compiler.target>21</maven.compiler.target>
             <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
             <maven.javadoc.skip>true</maven.javadoc.skip>
             <gpg.skip>true</gpg.skip>
@@ -54,18 +60,20 @@
             <dependency>
                 <groupId>io.github.beehive-lab</groupId>
                 <artifactId>tornado-api</artifactId>
-                <version>3.0.0-jdk25</version>
+                <version>${tornadovm.version}</version>
             </dependency>
             <dependency>
                 <groupId>io.github.beehive-lab</groupId>
                 <artifactId>tornado-runtime</artifactId>
-                <version>3.0.0-jdk25</version>
+                <version>${tornadovm.version}</version>
             </dependency>
         </dependencies>
 
         <build>
             <plugins>
-                <!-- Compiler -->
+                <!-- Compiler: enable-preview for both JDKs.
+                     jdk.incubator.vector is added only for JDK21 (see jdk21 profile below).
+                     On JDK25 Vector API is stable; the add-modules flag is not needed. -->
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-compiler-plugin</artifactId>
@@ -73,10 +81,31 @@
                     <configuration>
                         <compilerArgs>
                             <arg>--enable-preview</arg>
-                            <arg>--add-modules</arg>
-                            <arg>jdk.incubator.vector</arg>
                         </compilerArgs>
                     </configuration>
+                </plugin>
+
+                <!-- Flatten: resolves ${revision}${jdk.version.suffix} in the published POM -->
+                <plugin>
+                    <groupId>org.codehaus.mojo</groupId>
+                    <artifactId>flatten-maven-plugin</artifactId>
+                    <version>1.6.0</version>
+                    <configuration>
+                        <updatePomFile>true</updatePomFile>
+                        <flattenMode>resolveCiFriendliesOnly</flattenMode>
+                    </configuration>
+                    <executions>
+                        <execution>
+                            <id>flatten</id>
+                            <phase>process-resources</phase>
+                            <goals><goal>flatten</goal></goals>
+                        </execution>
+                        <execution>
+                            <id>flatten.clean</id>
+                            <phase>clean</phase>
+                            <goals><goal>clean</goal></goals>
+                        </execution>
+                    </executions>
                 </plugin>
 
                 <!-- Shade (fat jar) -->
@@ -103,6 +132,56 @@
 
         <!-- Profiles for optional/conditional builds -->
         <profiles>
+
+            <!-- ─── JDK 21 ───────────────────────────────────────────────────────────
+                 Auto-activates for JDK 21.x builds.
+                 Publishes: gpu-llama3:${revision}  (no suffix)
+                 TornadoVM: 3.0.0
+                 Adds add-modules jdk.incubator.vector (still incubating in JDK21)
+            ─────────────────────────────────────────────────────────────────────── -->
+            <profile>
+                <id>jdk21</id>
+                <activation><jdk>[21,25)</jdk></activation>
+                <properties>
+                    <maven.compiler.source>21</maven.compiler.source>
+                    <maven.compiler.target>21</maven.compiler.target>
+                    <tornadovm.version>3.0.0</tornadovm.version>
+                    <jdk.version.suffix></jdk.version.suffix>
+                </properties>
+                <build>
+                    <plugins>
+                        <plugin>
+                            <groupId>org.apache.maven.plugins</groupId>
+                            <artifactId>maven-compiler-plugin</artifactId>
+                            <configuration>
+                                <!-- Appended to enable-preview already in main build -->
+                                <compilerArgs combine.children="append">
+                                    <arg>--add-modules</arg>
+                                    <arg>jdk.incubator.vector</arg>
+                                </compilerArgs>
+                            </configuration>
+                        </plugin>
+                    </plugins>
+                </build>
+            </profile>
+
+            <!-- ─── JDK 25 ───────────────────────────────────────────────────────────
+                 Auto-activates for JDK 25.0.2+ builds (minimum required version).
+                 Publishes: gpu-llama3:${revision}-jdk25
+                 TornadoVM: 3.0.0-jdk25
+                 Vector API is stable in JDK25; add-modules jdk.incubator.vector not needed
+            ─────────────────────────────────────────────────────────────────────── -->
+            <profile>
+                <id>jdk25</id>
+                <activation><jdk>[25.0.2,)</jdk></activation>
+                <properties>
+                    <maven.compiler.source>25</maven.compiler.source>
+                    <maven.compiler.target>25</maven.compiler.target>
+                    <tornadovm.version>3.0.0-jdk25</tornadovm.version>
+                    <jdk.version.suffix>-jdk25</jdk.version.suffix>
+                </properties>
+            </profile>
+
             <profile>
                 <id>release</id>
                 <properties>
@@ -132,11 +211,10 @@
                             <artifactId>maven-javadoc-plugin</artifactId>
                             <version>3.6.3</version>
                             <configuration>
-                                <source>21</source>
-                                <release>21</release>
+                                <source>${maven.compiler.source}</source>
+                                <release>${maven.compiler.source}</release>
                                 <additionalJOptions>
                                     <additionalJOption>--enable-preview</additionalJOption>
-                                    <additionalJOption>--add-modules=jdk.incubator.vector</additionalJOption>
                                 </additionalJOptions>
                                 <additionalOptions>
                                     <additionalOption>--enable-preview</additionalOption>
