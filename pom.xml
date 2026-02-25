@@ -38,7 +38,7 @@
 
         <properties>
             <!-- CI-friendly version: resolved by flatten-maven-plugin at build time -->
-            <revision>0.3.1</revision>
+            <revision>0.4.0</revision>
             <jdk.version.suffix></jdk.version.suffix>           <!-- empty=JDK21, -jdk25=JDK25 -->
             <!-- TornadoVM version: overridden per JDK profile -->
             <tornadovm.version>3.0.0</tornadovm.version>        <!-- JDK21 default -->
