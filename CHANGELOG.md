@@ -2,6 +2,12 @@
 
 All notable changes to GPULlama3.java will be documented in this file.
 
+## [0.4.0] - 2026-02-25
+
+### Other Changes
+
+-   Add JDK 25 support with TornadoVM JDK25 and dual-JDK build profiles ([#97](https://github.com/beehive-lab/GPULlama3.java/pull/97))
+
 ## [0.3.3] - 2025-12-19
 
 <!-- TODO: Add changes manually -->
