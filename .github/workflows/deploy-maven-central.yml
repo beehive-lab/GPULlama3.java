@@ -23,12 +23,20 @@ on:
 
 jobs:
   deploy:
-    name: Deploy to Maven Central
+    name: Deploy to Maven Central (${{ matrix.jdk.name }})
     if: github.repository == 'beehive-lab/GPULlama3.java'
     runs-on: [self-hosted, Linux, x64]
     timeout-minutes: 15
+    strategy:
+      fail-fast: false  # if one JDK fails, still attempt the other
+      matrix:
+        jdk:
+          - name: jdk21
+            java_home: /opt/jenkins/jdks/graal-23.1.0/jdk-21.0.3
+          - name: jdk25
+            java_home: /opt/jenkins/jdks/jdk-25.0.2
     env:
-      JAVA_HOME: /opt/jenkins/jdks/graal-23.1.0/jdk-21.0.3
+      JAVA_HOME: ${{ matrix.jdk.java_home }}
 
     steps:
       - name: Checkout code
@@ -99,13 +107,15 @@ jobs:
       - name: Deployment Summary
         if: ${{ !inputs.dry_run }}
         run: |
-          echo "## 🚀 Maven Central Deployment" >> $GITHUB_STEP_SUMMARY
+          DEPLOYED_VERSION=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout 2>/dev/null)
+          echo "## 🚀 Maven Central Deployment (${{ matrix.jdk.name }})" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Detail | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Version | ${{ steps.version.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| JDK | ${{ matrix.jdk.name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | ${DEPLOYED_VERSION} |" >> $GITHUB_STEP_SUMMARY
           echo "| GroupId | io.github.beehive-lab |" >> $GITHUB_STEP_SUMMARY
           echo "| ArtifactId | gpu-llama3 |" >> $GITHUB_STEP_SUMMARY
           echo "| Status | ✅ Deployed |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "📍 [View on Maven Central](https://central.sonatype.com/artifact/io.github.beehive-lab/gpu-llama3/${{ steps.version.outputs.version }})" >> $GITHUB_STEP_SUMMARY
+          echo "📍 [View on Maven Central](https://central.sonatype.com/artifact/io.github.beehive-lab/gpu-llama3/${DEPLOYED_VERSION})" >> $GITHUB_STEP_SUMMARY
