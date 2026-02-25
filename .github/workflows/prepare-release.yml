@@ -76,8 +76,9 @@ jobs:
       - name: Update README.md
         run: |
           if [ -f "README.md" ]; then
-            # Update version in Maven dependency example
+            # Update version in Maven dependency examples (handles plain X.Y.Z and X.Y.Z-jdkNN suffixes)
             sed -i 's|<version>[0-9]\+\.[0-9]\+\.[0-9]\+</version>|<version>${{ env.VERSION }}</version>|g' README.md
+            sed -i 's|<version>[0-9]\+\.[0-9]\+\.[0-9]\+-jdk[0-9]\+</version>|<version>${{ env.VERSION }}-jdk25</version>|g' README.md
             echo "✅ Updated README.md"
           fi
 

@@ -165,11 +165,21 @@ Despite being deprecated, OpenCL can still run on Apple Silicon; albeit, with ol
 
 You can add **GPULlama3.java** directly to your Maven project by including the following dependency in your `pom.xml`:
 
+**JDK 21:**
 ```xml
 <dependency>
     <groupId>io.github.beehive-lab</groupId>
     <artifactId>gpu-llama3</artifactId>
     <version>0.3.1</version>
+</dependency>
+```
+
+**JDK 25:**
+```xml
+<dependency>
+    <groupId>io.github.beehive-lab</groupId>
+    <artifactId>gpu-llama3</artifactId>
+    <version>0.3.1-jdk25</version>
 </dependency>
 ```
 
