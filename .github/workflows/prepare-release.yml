@@ -68,14 +68,17 @@ jobs:
 
       - name: Update Maven version
         run: |
-          ./mvnw versions:set -DnewVersion=${{ env.VERSION }} -DgenerateBackupPoms=false
+          # Update <revision> property directly; versions:set would overwrite
+          # the CI-friendly ${revision}${jdk.version.suffix} expression.
+          sed -i 's|<revision>.*</revision>|<revision>${{ env.VERSION }}</revision>|' pom.xml
           echo "✅ Maven version updated to ${{ env.VERSION }}"
 
       - name: Update README.md
         run: |
           if [ -f "README.md" ]; then
-            # Update version in Maven dependency example
+            # Update version in Maven dependency examples (handles plain X.Y.Z and X.Y.Z-jdkNN suffixes)
             sed -i 's|<version>[0-9]\+\.[0-9]\+\.[0-9]\+</version>|<version>${{ env.VERSION }}</version>|g' README.md
+            sed -i 's|<version>[0-9]\+\.[0-9]\+\.[0-9]\+-jdk[0-9]\+</version>|<version>${{ env.VERSION }}-jdk25</version>|g' README.md
             echo "✅ Updated README.md"
           fi
 

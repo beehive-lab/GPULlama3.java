@@ -78,7 +78,7 @@ jobs:
           # Export for current shell session
           export TORNADOVM_HOME="$FULL_SDK"
           export PATH="$FULL_SDK/bin:$JAVA_HOME/bin:$PATH"
-          
+
           # Save for subsequent steps
           echo "TORNADOVM_HOME=$FULL_SDK" >> $GITHUB_ENV
           echo "PATH=$PATH" >> $GITHUB_ENV
