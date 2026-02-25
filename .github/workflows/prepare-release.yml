@@ -68,7 +68,9 @@ jobs:
 
       - name: Update Maven version
         run: |
-          ./mvnw versions:set -DnewVersion=${{ env.VERSION }} -DgenerateBackupPoms=false
+          # Update <revision> property directly; versions:set would overwrite
+          # the CI-friendly ${revision}${jdk.version.suffix} expression.
+          sed -i 's|<revision>.*</revision>|<revision>${{ env.VERSION }}</revision>|' pom.xml
           echo "✅ Maven version updated to ${{ env.VERSION }}"
 
       - name: Update README.md
