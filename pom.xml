@@ -171,7 +171,7 @@
                  Publishes: gpu-llama3:${revision}-jdk25
                  TornadoVM: 3.0.0-jdk25
                  Vector API is still incubating in JDK 25 (JEP 508 — 10th Incubator);
-                 --add-modules jdk.incubator.vector is required for compilation.
+                 add-modules jdk.incubator.vector is required for compilation.
             ─────────────────────────────────────────────────────────────────────── -->
             <profile>
                 <id>jdk25</id>
@@ -223,7 +223,7 @@
                         </plugin>
 
                         <!-- Javadocs with preview feature support.
-                             --add-modules jdk.incubator.vector is required on all currently
+                             add-modules jdk.incubator.vector is required on all currently
                              supported JDKs (21 and 25) because the Vector API remains in the
                              incubator module (JEP 508 — 10th Incubator in JDK 25). -->
                         <plugin>
