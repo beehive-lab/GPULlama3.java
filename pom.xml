@@ -39,9 +39,9 @@
         <properties>
             <!-- CI-friendly version: resolved by flatten-maven-plugin at build time -->
             <revision>0.4.0</revision>
-            <jdk.version.suffix></jdk.version.suffix>           <!-- empty=JDK21, -jdk25=JDK25 -->
-            <!-- TornadoVM version: overridden per JDK profile -->
-            <tornadovm.version>3.0.0</tornadovm.version>        <!-- JDK21 default -->
+            <tornadovm.base.version>3.0.0</tornadovm.base.version>              <!-- TornadoVM base version (without jdk suffix) -->
+            <jdk.version.suffix></jdk.version.suffix>                           <!-- JDK Suffix: empty=JDK21, -jdk25=JDK25 -->
+            <tornadovm.version>${tornadovm.base.version}</tornadovm.version>    <!-- Default: JDK21 (no suffix) -->
             <!-- Compiler defaults (overridden by JDK profiles below) -->
             <maven.compiler.source>21</maven.compiler.source>
             <maven.compiler.target>21</maven.compiler.target>
@@ -137,7 +137,7 @@
             <!-- ─── JDK 21 ───────────────────────────────────────────────────────────
                  Auto-activates for JDK 21.x builds.
                  Publishes: gpu-llama3:${revision}  (no suffix)
-                 TornadoVM: 3.0.0
+                 TornadoVM: ${tornadovm.base.version}
                  Adds add-modules jdk.incubator.vector (still incubating in JDK21)
             ─────────────────────────────────────────────────────────────────────── -->
             <profile>
@@ -146,8 +146,8 @@
                 <properties>
                     <maven.compiler.source>21</maven.compiler.source>
                     <maven.compiler.target>21</maven.compiler.target>
-                    <tornadovm.version>3.0.0</tornadovm.version>
-                    <jdk.version.suffix></jdk.version.suffix>
+                    <!-- JDK21 default - no jdk suffix needed -->
+                    <tornadovm.version>${tornadovm.base.version}</tornadovm.version>
                 </properties>
                 <build>
                     <plugins>
@@ -169,7 +169,7 @@
             <!-- ─── JDK 25 ───────────────────────────────────────────────────────────
                  Auto-activates for JDK 25.0.2+ builds (minimum required version).
                  Publishes: gpu-llama3:${revision}-jdk25
-                 TornadoVM: 3.0.0-jdk25
+                 TornadoVM: ${tornadovm.base.version}-jdk25
                  Vector API is still incubating in JDK 25 (JEP 508 — 10th Incubator);
                  add-modules jdk.incubator.vector is required for compilation.
             ─────────────────────────────────────────────────────────────────────── -->
@@ -179,8 +179,8 @@
                 <properties>
                     <maven.compiler.source>25</maven.compiler.source>
                     <maven.compiler.target>25</maven.compiler.target>
-                    <tornadovm.version>3.0.0-jdk25</tornadovm.version>
                     <jdk.version.suffix>-jdk25</jdk.version.suffix>
+                    <tornadovm.version>${tornadovm.base.version}${jdk.version.suffix}</tornadovm.version>
                 </properties>
                 <build>
                     <plugins>
