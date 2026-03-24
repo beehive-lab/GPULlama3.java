@@ -128,7 +128,7 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
         return IntStream.range(0, qwen3Config.numberOfLayers()).mapToObj(i -> {
             var ffnLayer = setupSingleQwen3FFNLayer((Qwen3TornadoWeights) weights, i);
             if (i == qwen3Config.numberOfLayers() - 1) {
-                setupLastID(ffnLayer.getTaskGraphName());
+                this.lastFFNLayerTaskGraphID = ffnLayer.getTaskGraphName();
             }
             return ffnLayer.snapshot();
         }).toList();

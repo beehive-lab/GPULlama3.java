@@ -20,7 +20,7 @@ import java.util.List;
  */
 public abstract class AbstractFFNLayers extends AbstractLayer {
 
-    protected String lastTaskGraphID;
+    protected String lastFFNLayerTaskGraphID;
     protected final SchedulerType schedulerType;
 
 
@@ -51,15 +51,11 @@ public abstract class AbstractFFNLayers extends AbstractLayer {
     public abstract List<ImmutableTaskGraph> getFfnLayerTaskGraphs();
 
     /**
-     * Get the ID of the last task graph.
-     *
-     * Used by LogitsLayer to know where to attach the final logits computation. The last transformer layer's task graph ID is needed to chain the logits computation after all FFN layers complete.
-     *
-     * @return Task graph ID of the last FFN layer
+     * Returns the TaskGraph ID of the last FFN layer.
+     * Used by the logits layer to chain its consumeFromDevice call.
      */
-    @Override
-    public String getLastTaskGraphID() {
-        return lastTaskGraphID;
+    public String getLastFFNLayerTaskGraphID() {
+        return lastFFNLayerTaskGraphID;
     }
 
     /**

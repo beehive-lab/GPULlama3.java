@@ -103,7 +103,7 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
         for (int layerIndex = 0; layerIndex < phi3Config.numberOfLayers(); layerIndex++) {
             TaskGraph ffnLayer = setupSinglePhi3Q8_0FFNLayer((Phi3TornadoWeights) weights, layerIndex);
             if (layerIndex == phi3Config.numberOfLayers() - 1) {
-                setupLastID(ffnLayer.getTaskGraphName());
+                this.lastFFNLayerTaskGraphID = ffnLayer.getTaskGraphName();
             }
             ffnGraphs.add(ffnLayer.snapshot());
         }

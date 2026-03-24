@@ -19,7 +19,7 @@ public abstract class AbstractLayer {
     /** Common constants used in tasks & worker-grid sizing. */
     protected static final int LOCAL_WORK_GROUP_SIZE_ALLOC = 32;
     protected static final int THREAD_SCALE_FOR_LOGITS = 8;
-    protected static String lastTaskGraphID;
+
     protected final Weights weights;
     protected final Configuration config;
     /** Often a small context/config buffer passed into kernels. Use your real type if available. */
@@ -57,17 +57,5 @@ public abstract class AbstractLayer {
     /** Allow subclasses to override if they need custom transfers. */
     protected TaskGraph configureLayerDataTransfers(TaskGraph tg, int layerIndex) {
         return tg;
-    }
-
-    public String getLastTaskGraphID() {
-        return lastTaskGraphID;
-    }
-
-    public void setupLastID(String taskGraphID) {
-        if (lastTaskGraphID == null) {
-            lastTaskGraphID = taskGraphID;
-        } else if (!lastTaskGraphID.equals(taskGraphID)) {
-            throw new IllegalStateException("Task graph IDs do not match: " + lastTaskGraphID + " vs " + taskGraphID);
-        }
     }
 }

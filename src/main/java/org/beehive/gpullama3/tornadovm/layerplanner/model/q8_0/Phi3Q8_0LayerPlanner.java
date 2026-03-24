@@ -29,7 +29,7 @@ public class Phi3Q8_0LayerPlanner extends Q8_0LayerPlanner<Phi3State, Phi3Config
     protected void initializeLayerComponents() {
         this.activationLayer = new Activation("activationUpdate", this.state, this.weights, this.config);
         this.ffnLayers = new Phi3Q8_0FFNLayers("phi3FFN", this.state, this.weights, this.config, this.schedulerType);
-        this.logitsLayer = new LogitsQ8_0Layer("phi3Logits", this.state, this.weights, this.config, ffnLayers.getLastTaskGraphID(), this.schedulerType);
+        this.logitsLayer = new LogitsQ8_0Layer("phi3Logits", this.state, this.weights, this.config, ffnLayers.getLastFFNLayerTaskGraphID(), this.schedulerType);
     }
 
 }

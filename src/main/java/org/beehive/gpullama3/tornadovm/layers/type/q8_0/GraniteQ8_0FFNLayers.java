@@ -50,7 +50,7 @@ public class GraniteQ8_0FFNLayers extends AbstractFFNLayers {
         return IntStream.range(0, config.numberOfLayers()).mapToObj(i -> {
             var ffnLayer = setupSingleFFNLayer((GraniteTornadoWeights) weights, (GraniteConfiguration) config, i);
             if (i == config.numberOfLayers() - 1) {
-                setupLastID(ffnLayer.getTaskGraphName());
+                this.lastFFNLayerTaskGraphID = ffnLayer.getTaskGraphName();
             }
             return ffnLayer.snapshot();
         }).toList();

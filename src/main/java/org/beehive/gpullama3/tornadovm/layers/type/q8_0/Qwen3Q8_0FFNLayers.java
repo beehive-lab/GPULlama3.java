@@ -137,7 +137,7 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
         for (int layerIndex = 0; layerIndex < qwen3Config.numberOfLayers(); layerIndex++) {
             TaskGraph ffnLayer = setupSingleQwen3FFNLayer((Qwen3TornadoWeights) weights, layerIndex);
             if (layerIndex == qwen3Config.numberOfLayers() - 1) {
-                setupLastID(ffnLayer.getTaskGraphName());
+                this.lastFFNLayerTaskGraphID = ffnLayer.getTaskGraphName();
             }
             ffnGraphs.add(ffnLayer.snapshot());
         }

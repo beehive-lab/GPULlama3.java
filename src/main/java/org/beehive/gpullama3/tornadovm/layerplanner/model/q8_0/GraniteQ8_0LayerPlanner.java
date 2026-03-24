@@ -21,6 +21,6 @@ public class GraniteQ8_0LayerPlanner extends Q8_0LayerPlanner<GraniteState, Gran
     protected void initializeLayerComponents() {
         this.activationLayer = new ActivationGranite("activationUpdate", this.state, this.weights, this.config);
         this.ffnLayers = new GraniteQ8_0FFNLayers("graniteFFN", this.state, this.weights, this.config, this.schedulerType);
-        this.logitsLayer = new LogitsGraniteQ8_0Layer("graniteLogits", this.state, this.weights, this.config, ffnLayers.getLastTaskGraphID(), this.schedulerType);
+        this.logitsLayer = new LogitsGraniteQ8_0Layer("graniteLogits", this.state, this.weights, this.config, ffnLayers.getLastFFNLayerTaskGraphID(), this.schedulerType);
     }
 }
