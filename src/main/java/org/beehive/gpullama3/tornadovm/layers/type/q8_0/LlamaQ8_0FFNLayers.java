@@ -23,25 +23,11 @@ public class LlamaQ8_0FFNLayers extends AbstractFFNLayers {
 
     public LlamaQ8_0FFNLayers(String taskGraphName, LlamaState state, LlamaTornadoWeights weights, Configuration config, SchedulerType schedulerType) {
         super(taskGraphName, state, weights, config, schedulerType);
-        ffnLayerTaskGraphs = setupFFNLayered();
+        ffnLayerTaskGraphs = setupFFNLayerTaskGraphs();
     }
 
     @Override
-    public GridScheduler getGridScheduler() {
-        return scheduler;
-    }
-
-    @Override
-    public TaskGraph getTaskGraph() {
-        return null;
-    }
-
-    @Override
-    public ImmutableTaskGraph getImmutableTaskGraph() {
-        return null;
-    }
-
-    List<ImmutableTaskGraph> setupFFNLayered() {
+    protected List<ImmutableTaskGraph> setupFFNLayerTaskGraphs() {
         return IntStream.range(0, config.numberOfLayers()).mapToObj(i -> {
             var ffnLayer = setupSingleFFNLayer((LlamaTornadoWeights) weights, config, i);
             if (i == config.numberOfLayers() - 1) {

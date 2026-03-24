@@ -46,7 +46,7 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
         super(taskGraphName, state, weights, config, schedulerType);
         this.qwen2State = state;
         this.qwen2Config = config;
-        ffnLayerTaskGraphs = setupFFNLayered();
+        ffnLayerTaskGraphs = setupFFNLayerTaskGraphs();
     }
 
     @Override
@@ -137,7 +137,8 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
     /**
      * Setup all FFN layers for all transformer layers
      */
-    List<ImmutableTaskGraph> setupFFNLayered() {
+    @Override
+    protected List<ImmutableTaskGraph> setupFFNLayerTaskGraphs() {
         List<ImmutableTaskGraph> ffnGraphs = new ArrayList<>();
         qwen2State.temp.init(0.0f);
         qwen2State.tempFFN.init(0.0f);

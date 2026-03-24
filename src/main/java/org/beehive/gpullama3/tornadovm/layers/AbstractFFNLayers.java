@@ -42,6 +42,13 @@ public abstract class AbstractFFNLayers extends AbstractLayer {
     }
 
     /**
+     * Creates the TornadoVM {@link uk.ac.manchester.tornado.api.TaskGraph} for the FFN layers.
+     * It creates one TaskGraph per layer and snapshots it to produce an {@link ImmutableTaskGraph} per layer.
+     * It also stores the TaskGraph ID of the last FFN layer for use by the {@link AbstractLogitsLayer}.
+     */
+    protected abstract List<ImmutableTaskGraph> setupFFNLayerTaskGraphs();
+
+    /**
      * Returns all task graphs for the FFN layers.
      *
      * For a model with N transformer layers, this returns N ImmutableTaskGraphs, one for each layer (containing RMSNorm, Attention, FFN computations).

@@ -42,7 +42,7 @@ public class Qwen2FP16FFNLayers extends AbstractFFNLayers {
         super(taskGraphName, state, weights, config, schedulerType);
         this.qwen2State = state;
         this.qwen2Config = config;
-        ffnLayerTaskGraphs = setupFFNLayered();
+        ffnLayerTaskGraphs = setupFFNLayerTaskGraphs();
     }
 
     @Override
@@ -135,7 +135,8 @@ public class Qwen2FP16FFNLayers extends AbstractFFNLayers {
         return ffnLayerTaskGraphs;
     }
 
-    List<ImmutableTaskGraph> setupFFNLayered() {
+    @Override
+    protected List<ImmutableTaskGraph> setupFFNLayerTaskGraphs() {
         List<ImmutableTaskGraph> ffnGraphs = new ArrayList<>(qwen2Config.numberOfLayers());
         for (int layerIndex = 0; layerIndex < qwen2Config.numberOfLayers(); layerIndex++) {
             TaskGraph ffnLayer = setupSingleQwen2FFNLayer((Qwen2TornadoWeights) weights, layerIndex);

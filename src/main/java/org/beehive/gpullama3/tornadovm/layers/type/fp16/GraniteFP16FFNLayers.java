@@ -27,7 +27,7 @@ public class GraniteFP16FFNLayers extends AbstractFFNLayers {
 
     public GraniteFP16FFNLayers(String taskGraph, State state, Weights weights, GraniteConfiguration config, SchedulerType schedulerType) {
         super(taskGraph, state, weights, config, schedulerType);
-        this.ffnLayerTaskGraphs = setupFFNLayered();
+        this.ffnLayerTaskGraphs = setupFFNLayerTaskGraphs();
     }
 
     @Override
@@ -83,7 +83,8 @@ public class GraniteFP16FFNLayers extends AbstractFFNLayers {
         return ffnLayerTaskGraphs;
     }
 
-    List<ImmutableTaskGraph> setupFFNLayered() {
+    @Override
+    protected List<ImmutableTaskGraph> setupFFNLayerTaskGraphs() {
         return IntStream.range(0, config.numberOfLayers()).mapToObj(i -> {
             var ffnLayer = setupSingleFFNLayer((GraniteTornadoWeights) weights, (GraniteConfiguration) config, i);
             if (i == config.numberOfLayers() - 1) {

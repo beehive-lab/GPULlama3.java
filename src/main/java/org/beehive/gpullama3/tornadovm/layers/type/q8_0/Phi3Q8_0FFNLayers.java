@@ -41,7 +41,7 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
         this.phi3State = state;
         this.phi3Config = config;
         this.opSize = config.dim() + 2 * (config.numberOfKeyValueHeads() * config.headSize());
-        ffnLayerTaskGraphs = setupFFNLayered();
+        ffnLayerTaskGraphs = setupFFNLayerTaskGraphs();
     }
 
     @Override
@@ -98,7 +98,8 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
     /**
      * Setup all FFN layers for all transformer layers
      */
-    List<ImmutableTaskGraph> setupFFNLayered() {
+    @Override
+    protected List<ImmutableTaskGraph> setupFFNLayerTaskGraphs() {
         List<ImmutableTaskGraph> ffnGraphs = new ArrayList<>();
         for (int layerIndex = 0; layerIndex < phi3Config.numberOfLayers(); layerIndex++) {
             TaskGraph ffnLayer = setupSinglePhi3Q8_0FFNLayer((Phi3TornadoWeights) weights, layerIndex);

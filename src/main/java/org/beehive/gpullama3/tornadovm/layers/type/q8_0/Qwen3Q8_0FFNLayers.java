@@ -60,7 +60,7 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
         this.nEmbdHead = nEmbdHeadV;
         this.nEmbdGqa = nEmbdVGqa;
         this.gqa = config.numberOfHeads() / config.numberOfKeyValueHeads();
-        ffnLayerTaskGraphs = setupFFNLayered();
+        ffnLayerTaskGraphs = setupFFNLayerTaskGraphs();
     }
 
     @Override
@@ -127,7 +127,8 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers {
     /**
      * Setup all FFN layers for all transformer layers
      */
-    List<ImmutableTaskGraph> setupFFNLayered() {
+    @Override
+    protected List<ImmutableTaskGraph> setupFFNLayerTaskGraphs() {
         List<ImmutableTaskGraph> ffnGraphs = new ArrayList<>();
         qwen3State.temp.init(0.0f);
         qwen3State.tempFFN.init(0.0f);

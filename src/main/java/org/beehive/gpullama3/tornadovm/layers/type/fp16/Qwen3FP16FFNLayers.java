@@ -55,7 +55,7 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
         this.nEmbdHead = nEmbdHeadV;
         this.nEmbdGqa = nEmbdVGqa;
         this.gqa = config.numberOfHeads() / config.numberOfKeyValueHeads();
-        ffnLayerTaskGraphs = setupFFNLayered();
+        ffnLayerTaskGraphs = setupFFNLayerTaskGraphs();
     }
 
     @Override
@@ -124,7 +124,8 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
     /**
      * Setup all FFN layers for all transformer layers
      */
-    List<ImmutableTaskGraph> setupFFNLayered() {
+    @Override
+    protected List<ImmutableTaskGraph> setupFFNLayerTaskGraphs() {
         return IntStream.range(0, qwen3Config.numberOfLayers()).mapToObj(i -> {
             var ffnLayer = setupSingleQwen3FFNLayer((Qwen3TornadoWeights) weights, i);
             if (i == qwen3Config.numberOfLayers() - 1) {
