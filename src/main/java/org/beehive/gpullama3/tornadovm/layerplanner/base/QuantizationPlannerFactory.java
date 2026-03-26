@@ -11,11 +11,13 @@ import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.tornadovm.GenericLayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.fp16.GraniteFP16LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.fp16.LlamaFP16LayerPlanner;
+import org.beehive.gpullama3.tornadovm.layerplanner.model.fp16.MistralFP16LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.fp16.Phi3FP16LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.fp16.Qwen2FP16LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.fp16.Qwen3FP16LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.q8_0.GraniteQ8_0LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.q8_0.LlamaQ8_0LayerPlanner;
+import org.beehive.gpullama3.tornadovm.layerplanner.model.q8_0.MistralQ8_0LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.q8_0.Phi3Q8_0LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.q8_0.Qwen2Q8_0LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.q8_0.Qwen3Q8_0LayerPlanner;
@@ -54,7 +56,8 @@ public class QuantizationPlannerFactory {
     // ============ FP16 Planners ============
     private static GenericLayerPlanner createFP16Planner(State state, Model model) {
         return switch (model.getModelType()) {
-            case LLAMA_3, MISTRAL -> new LlamaFP16LayerPlanner((LlamaState) state, model);
+            case LLAMA_3 -> new LlamaFP16LayerPlanner((LlamaState) state, model);
+            case MISTRAL -> new MistralFP16LayerPlanner((LlamaState) state, model);
             case QWEN_2 -> new Qwen2FP16LayerPlanner((Qwen2State) state, model);
             case QWEN_3 -> new Qwen3FP16LayerPlanner((Qwen3State) state, model);
             case PHI_3 -> new Phi3FP16LayerPlanner((Phi3State) state, model);
@@ -67,7 +70,8 @@ public class QuantizationPlannerFactory {
     // ============ Q8_0 Planners ============
     private static GenericLayerPlanner createQ8_0Planner(State state, Model model) {
         return switch (model.getModelType()) {
-            case LLAMA_3, MISTRAL -> new LlamaQ8_0LayerPlanner((LlamaState) state, model);
+            case LLAMA_3 -> new LlamaQ8_0LayerPlanner((LlamaState) state, model);
+            case MISTRAL -> new MistralQ8_0LayerPlanner((LlamaState) state, model);
             case QWEN_2 -> new Qwen2Q8_0LayerPlanner((Qwen2State) state, model);
             case QWEN_3 -> new Qwen3Q8_0LayerPlanner((Qwen3State) state, model);
             case PHI_3 -> new Phi3Q8_0LayerPlanner((Phi3State) state, model);

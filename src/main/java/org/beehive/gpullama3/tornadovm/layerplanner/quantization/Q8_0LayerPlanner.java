@@ -26,7 +26,7 @@ import java.util.List;
 public abstract class Q8_0LayerPlanner<S extends State, C extends Configuration, W extends TornadoWeights> extends QuantizedLayerPlanner<S, C, W> {
 
     protected Activation activationLayer;
-    protected AbstractFFNLayers ffnLayers;
+    protected AbstractFFNLayers<?,?> ffnLayers;
     protected LogitsQ8_0Layer logitsLayer;
 
     // Cache for task graphs and scheduler (set once, reused)
@@ -59,7 +59,7 @@ public abstract class Q8_0LayerPlanner<S extends State, C extends Configuration,
         activationLayer.updateGridScheduler(masterScheduler);
 
         // 2. FFN layers (N transformer layers - model-specific)
-        allTaskGraphs.addAll(ffnLayers.getFfnLayerTaskGraphs());
+        allTaskGraphs.addAll(ffnLayers.getFFNLayerImmutableTaskGraphs());
         ffnLayers.updateGridScheduler(masterScheduler);
 
         // 3. Logits layer (common to all models)

@@ -9,13 +9,9 @@ import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
 import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
 import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
 import uk.ac.manchester.tornado.api.GridScheduler;
-import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
-
-import java.util.List;
-import java.util.stream.IntStream;
 
 /**
  * Qwen3FP16FFNLayers: FP16 FFN layers for Qwen3 with Group Query Attention (GQA) support.
@@ -25,11 +21,10 @@ import java.util.stream.IntStream;
  *
  * Works directly with Qwen3State to access and mutate Qwen3-specific state fields like tempQcur and tempKcur.
  */
-public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
+public class Qwen3FP16FFNLayers extends AbstractFFNLayers<Qwen3TornadoWeights, Qwen3Configuration> {
 
-    // Typed references to Qwen3-specific state and config
+    // Typed reference to Qwen3-specific state
     private final Qwen3State qwen3State;
-    private final Qwen3Configuration qwen3Config;
     // Qwen3-specific GQA parameters
     private final int nHeadKv;
     private final int nEmbdHeadK;
@@ -38,12 +33,10 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
     private final int nEmbdHead;
     private final int nEmbdGqa;
     private final int gqa;
-    List<ImmutableTaskGraph> ffnLayerTaskGraphs;
 
     public Qwen3FP16FFNLayers(String taskGraphName, Qwen3State state, Qwen3TornadoWeights weights, Qwen3Configuration config, SchedulerType schedulerType) {
         super(taskGraphName, state, weights, config, schedulerType);
         this.qwen3State = state;
-        this.qwen3Config = config;
 
         // Initialize GQA parameters from Qwen3Config
         this.nHeadKv = config.numberOfKeyValueHeads();
@@ -53,7 +46,7 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
         this.nEmbdHead = nEmbdHeadV;
         this.nEmbdGqa = nEmbdVGqa;
         this.gqa = config.numberOfHeads() / config.numberOfKeyValueHeads();
-        ffnLayerTaskGraphs = setupFFNLayerTaskGraphs();
+        setupFFNLayers();
     }
 
     @Override
@@ -74,7 +67,7 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
         int qkRmsNormGroups = config.numberOfHeads() + config.numberOfKeyValueHeads();
         WorkerGrid qkRmsNormWorker = WorkerGridFactory.genericWorker(qkRmsNormGroups * nEmbdHead, nEmbdHead);
 
-        int qDim0 = nEmbdHeadK * qwen3Config.numberOfHeads();
+        int qDim0 = nEmbdHeadK * config.numberOfHeads();
         int kvDim0 = nEmbdGqa;
         int fusedQKVRows = qDim0 + 2 * kvDim0;  // Q rows + K rows + V rows
         int fusedQKVGlobal = fusedQKVRows * LOCAL_WORK_GROUP_SIZE_ALLOC;
@@ -98,24 +91,6 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
             gridScheduler.addWorkerGrid("layer_" + i + ".ffn_down_proj", projectionTwoWorker);
         }
         return gridScheduler;
-    }
-
-    public List<ImmutableTaskGraph> getFFNLayerTaskGraphs() {
-        return ffnLayerTaskGraphs;
-    }
-
-    /**
-     * Setup all FFN layers for all transformer layers
-     */
-    @Override
-    protected List<ImmutableTaskGraph> setupFFNLayerTaskGraphs() {
-        return IntStream.range(0, qwen3Config.numberOfLayers()).mapToObj(i -> {
-            var ffnLayer = setupSingleQwen3FFNLayer((Qwen3TornadoWeights) weights, i);
-            if (i == qwen3Config.numberOfLayers() - 1) {
-                this.lastFFNLayerTaskGraphID = ffnLayer.getTaskGraphName();
-            }
-            return ffnLayer.snapshot();
-        }).toList();
     }
 
     // @formatter:off
@@ -205,13 +180,14 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
      *   • RoPE theta: 1,000,000 (vs Llama's 10,000 or 50,000)
      *
      */
-    TaskGraph setupSingleQwen3FFNLayer(Qwen3TornadoWeights weights, int layerIndex) {
+    @Override
+    protected TaskGraph createFFNLayerTaskGraph(int layerIndex) {
         var taskGraphName = "layer_" + layerIndex;
 
         // === Dimension Parameters ===
-        int qDim = nEmbdHeadK * qwen3Config.numberOfHeads();  // Q output size (full heads)
+        int qDim = nEmbdHeadK * config.numberOfHeads();  // Q output size (full heads)
         int kvDim = nEmbdGqa;                                  // K/V output size (reduced for GQA)
-        int inputDim = qwen3Config.dim();                      // Model dimension
+        int inputDim = config.dim();                      // Model dimension
 
         var unifiedLayer = new TaskGraph(taskGraphName);
 
@@ -244,8 +220,8 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
                 context,
                 qwen3State.temp,              // output: scale factor
                 qwen3State.wrapX,             // input: hidden state
-                qwen3Config.dim(),            // dimension
-                qwen3Config.rmsNormEps(),     // epsilon
+                config.dim(),            // dimension
+                config.rmsNormEps(),     // epsilon
                 qwen3State.localSize);        // local memory size
 
         if (shouldUseFinalNormalization()) {
@@ -283,11 +259,11 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
                 qwen3State.wrapK,             // K vectors (in/out)
                 weights.rms_att_QNormLayered[layerIndex].asFloatArray(),   // Q norm weights
                 weights.rms_att_KNormLayered[layerIndex].asFloatArray(),   // K norm weights
-                qwen3Config.numberOfHeads(),           // nHeads (Q heads)
-                qwen3Config.numberOfKeyValueHeads(),   // nHeadKv (K/V heads, GQA)
+                config.numberOfHeads(),           // nHeads (Q heads)
+                config.numberOfKeyValueHeads(),   // nHeadKv (K/V heads, GQA)
                 nEmbdHead,                    // head dimension
                 nEmbdHead,                    // local memory size
-                qwen3Config.rmsNormEps());    // epsilon
+                config.rmsNormEps());    // epsilon
 
         // Fused RoPE Rotation + KV Cache Write
         unifiedLayer.task("rope_and_kv_cache",
@@ -299,11 +275,11 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
                 qwen3State.wrapV,             // V vectors (in only)
                 qwen3State.wrapKeyCache,      // key cache (out)
                 qwen3State.wrapValueCache,    // value cache (out)
-                qwen3Config.numberOfKeyValueHeads(),   // nHeadKv
+                config.numberOfKeyValueHeads(),   // nHeadKv
                 nEmbdHead,                    // head dimension
                 nEmbdGqa,                     // kvDim
                 layerIndex,                   // layer index for cache offset
-                qwen3Config.contextLength()); // max sequence length
+                config.contextLength()); // max sequence length
 
         // Flash Attention
         unifiedLayer.task("attention",
@@ -313,13 +289,13 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
                 qwen3State.wrapKeyCache,      // key cache
                 qwen3State.wrapValueCache,    // value cache
                 qwen3State.wrapXb,            // output: attention result
-                qwen3Config.numberOfHeads(),  // nHeads
+                config.numberOfHeads(),  // nHeads
                 nEmbdHead,                    // headSize
                 nEmbdGqa,                     // kvDim
                 gqa,                          // kvMul (nHeads / nHeadKv)
                 qwen3State.positionHolder,    // position
                 layerIndex,                   // layer index
-                qwen3Config.contextLength()); // context length
+                config.contextLength()); // context length
 
         // Output Projection with Residual
         unifiedLayer.task("attn_output_proj",
@@ -328,8 +304,8 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
                 qwen3State.wrapXb,            // input: attention output
                 qwen3State.wrapX,             // output: wrapX += Wo · wrapXb
                 weights.woLayered[layerIndex].asHalfFloatArray(),  // Wo [dim x qDim]
-                nEmbdHeadK * qwen3Config.numberOfHeads(),          // input dim (qDim)
-                qwen3Config.dim(),            // output dim
+                nEmbdHeadK * config.numberOfHeads(),          // input dim (qDim)
+                config.dim(),            // output dim
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
 
         // ═══════════════════════════════════════════════════════════════════════
@@ -342,8 +318,8 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
                 context,
                 qwen3State.tempFFN,           // output: scale factor
                 qwen3State.wrapX,             // input: hidden state
-                qwen3Config.dim(),            // dimension
-                qwen3Config.rmsNormEps(),     // epsilon
+                config.dim(),            // dimension
+                config.rmsNormEps(),     // epsilon
                 qwen3State.localSize);        // local memory size
 
         // Final normalization (non-NVIDIA only)
@@ -352,8 +328,8 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
                     TransformerComputeKernelsLayered::reductionFinalNormalization,
                     context,
                     qwen3State.tempFFN,       // scale factor (in/out)
-                    qwen3Config.dim(),        // dimension
-                    qwen3Config.rmsNormEps()); // epsilon
+                    config.dim(),        // dimension
+                    config.rmsNormEps()); // epsilon
         }
 
         // Fused RMS Apply + Gate/Up Projection + SiLU + GLU
@@ -366,8 +342,8 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
                 qwen3State.tempFFN,           // RMS scale factor
                 weights.w1Layered[layerIndex].asHalfFloatArray(),          // W1 (gate)
                 weights.w3Layered[layerIndex].asHalfFloatArray(),          // W3 (up)
-                qwen3Config.dim(),            // input dimension
-                qwen3Config.hiddenDim(),      // hidden dimension
+                config.dim(),            // input dimension
+                config.hiddenDim(),      // hidden dimension
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
 
         // Down Projection with Residual
@@ -377,8 +353,8 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
                         qwen3State.wrapHb,            // input: FFN intermediate
                         qwen3State.wrapX,             // output: wrapX += W2 · wrapHb
                         weights.w2Layered[layerIndex].asHalfFloatArray(),  // W2 (down)
-                        qwen3Config.hiddenDim(),      // input dim
-                        qwen3Config.dim(),            // output dim
+                        config.hiddenDim(),      // input dim
+                        config.dim(),            // output dim
                         LOCAL_WORK_GROUP_SIZE_ALLOC)
                 .persistOnDevice(qwen3State.wrapX);
 

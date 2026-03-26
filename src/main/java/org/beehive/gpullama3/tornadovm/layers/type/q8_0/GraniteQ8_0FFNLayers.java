@@ -9,32 +9,15 @@ import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
 import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
 import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
 import uk.ac.manchester.tornado.api.GridScheduler;
-import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
-import java.util.List;
-import java.util.stream.IntStream;
-
-public class GraniteQ8_0FFNLayers extends AbstractFFNLayers {
-
-    List<ImmutableTaskGraph> ffnLayerTaskGraphs;
+public class GraniteQ8_0FFNLayers extends AbstractFFNLayers<GraniteTornadoWeights, GraniteConfiguration> {
 
     public GraniteQ8_0FFNLayers(String taskGraphName, GraniteState state, GraniteTornadoWeights weights, GraniteConfiguration config, SchedulerType schedulerType) {
         super(taskGraphName, state, weights, config, schedulerType);
-        ffnLayerTaskGraphs = setupFFNLayerTaskGraphs();
-    }
-
-    @Override
-    protected List<ImmutableTaskGraph> setupFFNLayerTaskGraphs() {
-        return IntStream.range(0, config.numberOfLayers()).mapToObj(i -> {
-            var ffnLayer = setupSingleFFNLayer((GraniteTornadoWeights) weights, (GraniteConfiguration) config, i);
-            if (i == config.numberOfLayers() - 1) {
-                this.lastFFNLayerTaskGraphID = ffnLayer.getTaskGraphName();
-            }
-            return ffnLayer.snapshot();
-        }).toList();
+        setupFFNLayers();
     }
 
     /**
@@ -124,7 +107,8 @@ public class GraniteQ8_0FFNLayers extends AbstractFFNLayers {
      * Quantization: Q8_0 format (8-bit weights with block-wise scaling)
      *
      */
-    TaskGraph setupSingleFFNLayer(GraniteTornadoWeights weights, GraniteConfiguration config, int layerIndex) {
+    @Override
+    protected TaskGraph createFFNLayerTaskGraph(int layerIndex) {
         var layerTaskGraphName = "layer_" + layerIndex;
         TaskGraph unifiedLayer = new TaskGraph(layerTaskGraphName);
 
@@ -307,10 +291,6 @@ public class GraniteQ8_0FFNLayers extends AbstractFFNLayers {
         }
 
         return tornadoForwardScheduler;
-    }
-
-    public List<ImmutableTaskGraph> getFFNLayerTaskGraphs() {
-        return ffnLayerTaskGraphs;
     }
 
     private TaskGraph configureAttention(TaskGraph unifiedLayer, int layerIndex, GraniteConfiguration config) {

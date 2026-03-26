@@ -2,38 +2,21 @@ package org.beehive.gpullama3.tornadovm.layers.type.q8_0;
 
 import org.beehive.gpullama3.inference.state.LlamaState;
 import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
-import org.beehive.gpullama3.model.Configuration;
+import org.beehive.gpullama3.model.llama.LlamaConfiguration;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
 import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
 import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
 import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
 import uk.ac.manchester.tornado.api.GridScheduler;
-import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
-import java.util.List;
-import java.util.stream.IntStream;
+public class LlamaQ8_0FFNLayers extends AbstractFFNLayers<LlamaTornadoWeights, LlamaConfiguration> {
 
-public class LlamaQ8_0FFNLayers extends AbstractFFNLayers {
-
-    List<ImmutableTaskGraph> ffnLayerTaskGraphs;
-
-    public LlamaQ8_0FFNLayers(String taskGraphName, LlamaState state, LlamaTornadoWeights weights, Configuration config, SchedulerType schedulerType) {
+    public LlamaQ8_0FFNLayers(String taskGraphName, LlamaState state, LlamaTornadoWeights weights, LlamaConfiguration config, SchedulerType schedulerType) {
         super(taskGraphName, state, weights, config, schedulerType);
-        ffnLayerTaskGraphs = setupFFNLayerTaskGraphs();
-    }
-
-    @Override
-    protected List<ImmutableTaskGraph> setupFFNLayerTaskGraphs() {
-        return IntStream.range(0, config.numberOfLayers()).mapToObj(i -> {
-            var ffnLayer = setupSingleFFNLayer((LlamaTornadoWeights) weights, config, i);
-            if (i == config.numberOfLayers() - 1) {
-                this.lastFFNLayerTaskGraphID = ffnLayer.getTaskGraphName();
-            }
-            return ffnLayer.snapshot();
-        }).toList();
+        setupFFNLayers();
     }
 
     // @formatter:off
@@ -124,7 +107,8 @@ public class LlamaQ8_0FFNLayers extends AbstractFFNLayers {
      * Quantization: Q8_0 format (8-bit weights with block-wise scaling)
      *
      */
-    TaskGraph setupSingleFFNLayer(LlamaTornadoWeights weights, Configuration config, int layerIndex) {
+    @Override
+    protected TaskGraph createFFNLayerTaskGraph(int layerIndex) {
         var layerTaskGraphName = "layer_" + layerIndex;
         TaskGraph unifiedLayer = new TaskGraph(layerTaskGraphName);
 
@@ -306,10 +290,6 @@ public class LlamaQ8_0FFNLayers extends AbstractFFNLayers {
         }
 
         return tornadoForwardScheduler;
-    }
-
-    public List<ImmutableTaskGraph> getFFNLayerTaskGraphs() {
-        return ffnLayerTaskGraphs;
     }
 
     private TaskGraph configureAttention(TaskGraph unifiedLayer, int layerIndex) {

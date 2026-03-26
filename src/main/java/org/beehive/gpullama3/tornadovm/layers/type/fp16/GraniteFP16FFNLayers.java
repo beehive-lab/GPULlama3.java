@@ -11,21 +11,15 @@ import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
 import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
 import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
 import uk.ac.manchester.tornado.api.GridScheduler;
-import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
-import java.util.List;
-import java.util.stream.IntStream;
+public class GraniteFP16FFNLayers extends AbstractFFNLayers<GraniteTornadoWeights, GraniteConfiguration> {
 
-public class GraniteFP16FFNLayers extends AbstractFFNLayers {
-
-    List<ImmutableTaskGraph> ffnLayerTaskGraphs;
-
-    public GraniteFP16FFNLayers(String taskGraph, State state, Weights weights, GraniteConfiguration config, SchedulerType schedulerType) {
+    public GraniteFP16FFNLayers(String taskGraph, State state, GraniteTornadoWeights weights, GraniteConfiguration config, SchedulerType schedulerType) {
         super(taskGraph, state, weights, config, schedulerType);
-        this.ffnLayerTaskGraphs = setupFFNLayerTaskGraphs();
+        setupFFNLayers();
     }
 
     @Override
@@ -60,21 +54,6 @@ public class GraniteFP16FFNLayers extends AbstractFFNLayers {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_down_proj", configDimRowMajorGlobalWorker);
         }
         return tornadoForwardScheduler;
-    }
-
-    public List<ImmutableTaskGraph> getFFNLayerTaskGraphs() {
-        return ffnLayerTaskGraphs;
-    }
-
-    @Override
-    protected List<ImmutableTaskGraph> setupFFNLayerTaskGraphs() {
-        return IntStream.range(0, config.numberOfLayers()).mapToObj(i -> {
-            var ffnLayer = setupSingleFFNLayer((GraniteTornadoWeights) weights, (GraniteConfiguration) config, i);
-            if (i == config.numberOfLayers() - 1) {
-                this.lastFFNLayerTaskGraphID = ffnLayer.getTaskGraphName();
-            }
-            return ffnLayer.snapshot();
-        }).toList();
     }
 
     // @formatter:off
@@ -163,7 +142,8 @@ public class GraniteFP16FFNLayers extends AbstractFFNLayers {
      *   • rms_ffn_gate_up:  Fused RMS apply + W1/W3 matmuls + SiLU + GLU (4→1 kernel)
      *
      */
-    TaskGraph setupSingleFFNLayer(GraniteTornadoWeights weights, GraniteConfiguration config, int layerIndex) {
+    @Override
+    protected TaskGraph createFFNLayerTaskGraph(int layerIndex) {
         var layerTaskGraphName = "layer_" + layerIndex;
         TaskGraph unifiedLayer = new TaskGraph(layerTaskGraphName);
 
