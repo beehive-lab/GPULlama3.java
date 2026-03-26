@@ -1,11 +1,7 @@
 package org.beehive.gpullama3.tornadovm.layers.type.q8_0;
 
 import org.beehive.gpullama3.inference.state.GraniteState;
-import org.beehive.gpullama3.inference.state.LlamaState;
 import org.beehive.gpullama3.inference.weights.tornado.GraniteTornadoWeights;
-import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
-import org.beehive.gpullama3.model.Configuration;
-import org.beehive.gpullama3.model.granite.Granite;
 import org.beehive.gpullama3.model.granite.GraniteConfiguration;
 import org.beehive.gpullama3.tornadovm.kernels.GraniteKernels;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
@@ -23,7 +19,6 @@ import java.util.stream.IntStream;
 
 public class GraniteQ8_0FFNLayers extends AbstractFFNLayers {
 
-    GridScheduler scheduler;
     List<ImmutableTaskGraph> ffnLayerTaskGraphs;
 
     public GraniteQ8_0FFNLayers(String taskGraphName, GraniteState state, GraniteTornadoWeights weights, GraniteConfiguration config, SchedulerType schedulerType) {
@@ -314,7 +309,7 @@ public class GraniteQ8_0FFNLayers extends AbstractFFNLayers {
         return tornadoForwardScheduler;
     }
 
-    public List<ImmutableTaskGraph> getFfnLayerTaskGraphs() {
+    public List<ImmutableTaskGraph> getFFNLayerTaskGraphs() {
         return ffnLayerTaskGraphs;
     }
 

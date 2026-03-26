@@ -38,8 +38,6 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
     private final int nEmbdHead;
     private final int nEmbdGqa;
     private final int gqa;
-    TaskGraph ffnLayerTaskGraph;
-    GridScheduler scheduler;
     List<ImmutableTaskGraph> ffnLayerTaskGraphs;
 
     public Qwen3FP16FFNLayers(String taskGraphName, Qwen3State state, Qwen3TornadoWeights weights, Qwen3Configuration config, SchedulerType schedulerType) {
@@ -102,22 +100,7 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers {
         return gridScheduler;
     }
 
-    @Override
-    public GridScheduler getGridScheduler() {
-        return scheduler;
-    }
-
-    @Override
-    public TaskGraph getTaskGraph() {
-        return ffnLayerTaskGraph;
-    }
-
-    @Override
-    public ImmutableTaskGraph getImmutableTaskGraph() {
-        return null;
-    }
-
-    public List<ImmutableTaskGraph> getFfnLayerTaskGraphs() {
+    public List<ImmutableTaskGraph> getFFNLayerTaskGraphs() {
         return ffnLayerTaskGraphs;
     }
 

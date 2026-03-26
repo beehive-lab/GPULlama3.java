@@ -18,7 +18,6 @@ import java.util.stream.IntStream;
 
 public class LlamaQ8_0FFNLayers extends AbstractFFNLayers {
 
-    GridScheduler scheduler;
     List<ImmutableTaskGraph> ffnLayerTaskGraphs;
 
     public LlamaQ8_0FFNLayers(String taskGraphName, LlamaState state, LlamaTornadoWeights weights, Configuration config, SchedulerType schedulerType) {
@@ -309,7 +308,7 @@ public class LlamaQ8_0FFNLayers extends AbstractFFNLayers {
         return tornadoForwardScheduler;
     }
 
-    public List<ImmutableTaskGraph> getFfnLayerTaskGraphs() {
+    public List<ImmutableTaskGraph> getFFNLayerTaskGraphs() {
         return ffnLayerTaskGraphs;
     }
 

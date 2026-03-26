@@ -32,8 +32,6 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
     private final Phi3Configuration phi3Config;
     // Phi3-specific dimension for combined QKV buffer
     private final int opSize;
-    TaskGraph ffnLayerTaskGraph;
-    GridScheduler scheduler;
     List<ImmutableTaskGraph> ffnLayerTaskGraphs;
 
     public Phi3Q8_0FFNLayers(String taskGraphName, Phi3State state, Phi3TornadoWeights weights, Phi3Configuration config, SchedulerType schedulerType) {
@@ -76,22 +74,7 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
         return tornadoForwardScheduler;
     }
 
-    @Override
-    public GridScheduler getGridScheduler() {
-        return scheduler;
-    }
-
-    @Override
-    public TaskGraph getTaskGraph() {
-        return ffnLayerTaskGraph;
-    }
-
-    @Override
-    public ImmutableTaskGraph getImmutableTaskGraph() {
-        return null;
-    }
-
-    public List<ImmutableTaskGraph> getFfnLayerTaskGraphs() {
+    public List<ImmutableTaskGraph> getFFNLayerTaskGraphs() {
         return ffnLayerTaskGraphs;
     }
 

@@ -20,9 +20,7 @@ import java.util.stream.IntStream;
 
 public class LlamaFP16FFNLayers extends AbstractFFNLayers {
 
-    TaskGraph ffnTaskGraphs;
-    GridScheduler scheduler;
-    List<ImmutableTaskGraph> ffnLayerTaskGraphs;
+    private List<ImmutableTaskGraph> ffnLayerTaskGraphs;
 
     public LlamaFP16FFNLayers(String taskGraph, State state, Weights weights, Configuration config, SchedulerType schedulerType) {
         super(taskGraph, state, weights, config, schedulerType);
@@ -64,21 +62,7 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
     }
 
     @Override
-    public GridScheduler getGridScheduler() {
-        return scheduler;
-    }
-
-    @Override
-    public TaskGraph getTaskGraph() {
-        return ffnTaskGraphs;
-    }
-
-    @Override
-    public ImmutableTaskGraph getImmutableTaskGraph() {
-        return null;
-    }
-
-    public List<ImmutableTaskGraph> getFfnLayerTaskGraphs() {
+    public List<ImmutableTaskGraph> getFFNLayerTaskGraphs() {
         return ffnLayerTaskGraphs;
     }
 

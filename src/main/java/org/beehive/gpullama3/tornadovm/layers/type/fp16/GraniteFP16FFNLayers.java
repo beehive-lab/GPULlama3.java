@@ -21,8 +21,6 @@ import java.util.stream.IntStream;
 
 public class GraniteFP16FFNLayers extends AbstractFFNLayers {
 
-    TaskGraph ffnTaskGraphs;
-    GridScheduler scheduler;
     List<ImmutableTaskGraph> ffnLayerTaskGraphs;
 
     public GraniteFP16FFNLayers(String taskGraph, State state, Weights weights, GraniteConfiguration config, SchedulerType schedulerType) {
@@ -64,22 +62,7 @@ public class GraniteFP16FFNLayers extends AbstractFFNLayers {
         return tornadoForwardScheduler;
     }
 
-    @Override
-    public GridScheduler getGridScheduler() {
-        return scheduler;
-    }
-
-    @Override
-    public TaskGraph getTaskGraph() {
-        return ffnTaskGraphs;
-    }
-
-    @Override
-    public ImmutableTaskGraph getImmutableTaskGraph() {
-        return null;
-    }
-
-    public List<ImmutableTaskGraph> getFfnLayerTaskGraphs() {
+    public List<ImmutableTaskGraph> getFFNLayerTaskGraphs() {
         return ffnLayerTaskGraphs;
     }
 

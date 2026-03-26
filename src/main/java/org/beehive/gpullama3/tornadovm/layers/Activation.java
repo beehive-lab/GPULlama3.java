@@ -50,17 +50,10 @@ public class Activation extends AbstractLayer {
         return scheduler;
     }
 
-    @Override
-    public GridScheduler getGridScheduler() {
-        return null;
-    }
-
-    @Override
     public TaskGraph getTaskGraph() {
         return activationUpdate;
     }
 
-    @Override
     public ImmutableTaskGraph getImmutableTaskGraph() {
         return activationUpdate.snapshot();
     }

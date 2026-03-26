@@ -41,28 +41,3 @@ public class ActivationGranite extends Activation {
         }
         // @formatter:on
     }
-
-    @Override
-    public GridScheduler updateGridScheduler(GridScheduler scheduler) {
-        WorkerGrid worker = new WorkerGrid1D(config.dim());
-        worker.setLocalWork(128, 1, 1);
-        scheduler.addWorkerGrid("activationUpdate.updateX", worker);
-        return scheduler;
-    }
-
-    @Override
-    public GridScheduler getGridScheduler() {
-        return null;
-    }
-
-    @Override
-    public TaskGraph getTaskGraph() {
-        return activationUpdate;
-    }
-
-    @Override
-    public ImmutableTaskGraph getImmutableTaskGraph() {
-        return activationUpdate.snapshot();
-    }
-
-}

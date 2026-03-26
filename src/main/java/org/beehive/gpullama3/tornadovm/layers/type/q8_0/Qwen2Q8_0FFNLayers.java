@@ -34,8 +34,6 @@ import java.util.List;
  */
 public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
 
-    TaskGraph ffnLayerTaskGraph;
-    GridScheduler scheduler;
     List<ImmutableTaskGraph> ffnLayerTaskGraphs;
 
     // Typed references to Qwen2-specific state and config
@@ -115,22 +113,7 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
         return tornadoForwardScheduler;
     }
 
-    @Override
-    public GridScheduler getGridScheduler() {
-        return scheduler;
-    }
-
-    @Override
-    public TaskGraph getTaskGraph() {
-        return ffnLayerTaskGraph;
-    }
-
-    @Override
-    public ImmutableTaskGraph getImmutableTaskGraph() {
-        return null;
-    }
-
-    public List<ImmutableTaskGraph> getFfnLayerTaskGraphs() {
+    public List<ImmutableTaskGraph> getFFNLayerTaskGraphs() {
         return ffnLayerTaskGraphs;
     }
 

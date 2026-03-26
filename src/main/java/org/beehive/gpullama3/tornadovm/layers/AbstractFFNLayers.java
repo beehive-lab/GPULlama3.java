@@ -11,12 +11,10 @@ import java.util.List;
 /**
  * Abstract base class for all FFN (Feed-Forward Network) layer implementations.
  *
- * Extends AbstractLayer and adds FFN-specific methods: - getFfnLayerTaskGraphs(): Returns task graphs for all transformer layers - getLastTaskGraphID(): Tracks the ID of the last task graph
+ * Each subclass builds N ImmutableTaskGraphs (one per FFN layer) via
+ * {@link #setupFFNLayerTaskGraphs}, covering RMSNorm, Attention, and FFN computations.
  *
- * All model-specific FFN layers extend this: - LlamaFP16FFNLayers, Qwen2FP16FFNLayers, Qwen3FP16FFNLayers, Phi3FP16FFNLayers - LlamaQ8_0FFNLayers, Qwen2Q8_0FFNLayers, Qwen3Q8_0FFNLayers,
- * Phi3Q8_0FFNLayers
- *
- * Used by FP16LayerPlanner and Q8_0LayerPlanner template methods for type-safe polymorphic access to any FFN layer implementation.
+ * Model-specific subclasses: Llama, Qwen2, Qwen3, Phi3, Granite — each in FP16 and Q8_0 variants.
  */
 public abstract class AbstractFFNLayers extends AbstractLayer {
 
@@ -55,7 +53,7 @@ public abstract class AbstractFFNLayers extends AbstractLayer {
      *
      * @return List of immutable task graphs (one per transformer layer)
      */
-    public abstract List<ImmutableTaskGraph> getFfnLayerTaskGraphs();
+    public abstract List<ImmutableTaskGraph> getFFNLayerTaskGraphs();
 
     /**
      * Returns the TaskGraph ID of the last FFN layer.
