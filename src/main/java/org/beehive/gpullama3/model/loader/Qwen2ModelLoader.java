@@ -12,6 +12,7 @@ import org.beehive.gpullama3.inference.weights.standard.Qwen2StandardWeights;
 import org.beehive.gpullama3.inference.weights.tornado.Qwen2TornadoWeights;
 import org.beehive.gpullama3.model.format.ChatFormat;
 import org.beehive.gpullama3.model.format.ChatFormat.ChatTokens;
+import org.beehive.gpullama3.model.qwen2.DeepSeekR1Qwen;
 import org.beehive.gpullama3.model.qwen2.Qwen2;
 import org.beehive.gpullama3.model.qwen2.Qwen2Configuration;
 import org.beehive.gpullama3.tokenizer.Qwen3Tokenizer;
@@ -85,7 +86,9 @@ public class Qwen2ModelLoader extends AbstractModelLoader<Qwen2, Qwen2Configurat
         // Qwen2.5-Coder uses <|endoftext|> as stop-token.
         ChatTokens chatTokens = isDeepSeekR1DistillQwen ? new ChatTokens("<｜begin▁of▁sentence｜>", "", "", "<｜end▁of▁sentence｜>", "")
                 : new ChatTokens("<|im_start|>", "<|im_end|>", "", "<|end_of_text|>", "<|endoftext|>");
-        return new Qwen2(config, tokenizer, weights, ChatFormat.create(tokenizer, chatTokens));
+        return isDeepSeekR1DistillQwen
+                ? new DeepSeekR1Qwen(config, tokenizer, weights, ChatFormat.create(tokenizer, chatTokens))
+                : new Qwen2(config, tokenizer, weights, ChatFormat.create(tokenizer, chatTokens));
     }
     // @formatter:on
 
