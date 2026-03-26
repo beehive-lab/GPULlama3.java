@@ -1,10 +1,9 @@
-package org.beehive.gpullama3.tornadovm.layerplanner.base;
+package org.beehive.gpullama3.tornadovm.layerplanner;
 
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.Weights;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.tornadovm.layerplanner.GenericLayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerDetectionService;
 import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
 import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
