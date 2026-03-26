@@ -29,14 +29,10 @@ public abstract class AbstractLogitsLayer extends AbstractLayer {
         this.schedulerType = schedulerType;
         TornadoWeights tornadoWeights = requireWeightsType(weights, TornadoWeights.class,
                 getClass().getSimpleName(), "TornadoTensor");
-        this.logitsTaskGraph = buildLogitsTaskGraph(tornadoWeights, config);
+        this.logitsTaskGraph = setupLogitsTaskGraph(tornadoWeights, config);
     }
 
-    /**
-     * Builds the logits task graph. Called once from the constructor.
-     * Subclasses define the quantization-specific task sequence here.
-     */
-    protected abstract TaskGraph buildLogitsTaskGraph(TornadoWeights weights, Configuration config);
+    protected abstract TaskGraph setupLogitsTaskGraph(TornadoWeights weights, Configuration config);
 
     public final TaskGraph getTaskGraph() {
         return logitsTaskGraph;
