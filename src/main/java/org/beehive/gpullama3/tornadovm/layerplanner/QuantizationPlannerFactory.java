@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.tornadovm.layerplanner.base;
+package org.beehive.gpullama3.tornadovm.layerplanner;
 
 import org.beehive.gpullama3.inference.state.GraniteState;
 import org.beehive.gpullama3.tensor.GGMLType;
@@ -8,7 +8,6 @@ import org.beehive.gpullama3.inference.state.Qwen2State;
 import org.beehive.gpullama3.inference.state.Qwen3State;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.tornadovm.GenericLayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.fp16.GraniteFP16LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.fp16.LlamaFP16LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.fp16.MistralFP16LayerPlanner;
