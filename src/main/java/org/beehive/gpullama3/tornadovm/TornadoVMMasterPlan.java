@@ -55,6 +55,8 @@ public class TornadoVMMasterPlan {
             System.err.printf("TornadoVM GPU execution plan creation: %.2f ms\n", (planCreationTime - startTime) / 1_000_000.0);
         }
 
+        tornadoVMPlan.executionPlan.withAllGraphs().withCUDAGraph();
+
         // 2. Perform warmup with extra iterations to ensure JIT compilation is complete
         tornadoVMPlan.executionPlan.withPreCompilation(); // Force JIT compilation from Java to GPU code
 
@@ -130,6 +132,7 @@ public class TornadoVMMasterPlan {
         // 1. Execute the preprocessing graph (e.g., input preparation, memory initialization)
         executionPlan.withGraph(getPreprocessingGraphIndex())
                 .withGridScheduler(tornadoVMLayerPlanner.getGridScheduler())
+                .withCUDAGraph()
                 .execute();
 
         // Set the position in the state object (used by attention layers)
@@ -142,6 +145,7 @@ public class TornadoVMMasterPlan {
         for (int layer = 0; layer < config.numberOfLayers(); layer++) {
             executionPlan.withGraph(getLayerGraphIndex(layer))
                     .withGridScheduler(tornadoVMLayerPlanner.getGridScheduler())
+                    .withCUDAGraph()
                     .execute();
         }
         state.tempLogits.clear(); // Clear the intermediate logits tensor -> set to 0f
@@ -149,6 +153,7 @@ public class TornadoVMMasterPlan {
         // 3. Execute the final graph that projects the last hidden state to output logits
         executionPlan.withGraph(getFinalLogitsGraphIndex())
                 .withGridScheduler(tornadoVMLayerPlanner.getGridScheduler())
+                .withCUDAGraph()
                 .execute();
 
         // @formatter:on
@@ -187,15 +192,15 @@ public class TornadoVMMasterPlan {
         state.positionHolder.init(0);
 
         // Execute activation update graph
-        executionPlan.withGraph(0).withGridScheduler(tornadoVMLayerPlanner.getGridScheduler()).execute();
+        executionPlan.withGraph(0).withGridScheduler(tornadoVMLayerPlanner.getGridScheduler()).withCUDAGraph().execute();
 
         // Execute layer processing graphs
         for (int layer = 0; layer < config.numberOfLayers(); layer++) {
-            executionPlan.withGraph(layer + 1).withGridScheduler(tornadoVMLayerPlanner.getGridScheduler()).execute();
+            executionPlan.withGraph(layer + 1).withGridScheduler(tornadoVMLayerPlanner.getGridScheduler()).withCUDAGraph().execute();
         }
 
         // Execute logits graph
-        executionPlan.withGraph(config.numberOfLayers() + 1).withGridScheduler(tornadoVMLayerPlanner.getGridScheduler()).execute();
+        executionPlan.withGraph(config.numberOfLayers() + 1).withGridScheduler(tornadoVMLayerPlanner.getGridScheduler()).withCUDAGraph().execute();
     }
 
     /**
