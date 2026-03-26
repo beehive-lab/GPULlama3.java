@@ -4,7 +4,6 @@ import org.beehive.gpullama3.inference.state.LlamaState;
 import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.model.mistral.MistralConfiguration;
-import org.beehive.gpullama3.tornadovm.layerplanner.quantization.Q8_0LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layers.Activation;
 import org.beehive.gpullama3.tornadovm.layers.type.q8_0.MistralQ8_0FFNLayers;
 import org.beehive.gpullama3.tornadovm.layers.type.q8_0.LogitsQ8_0Layer;

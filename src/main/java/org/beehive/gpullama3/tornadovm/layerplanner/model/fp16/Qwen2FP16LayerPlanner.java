@@ -4,7 +4,6 @@ import org.beehive.gpullama3.inference.state.Qwen2State;
 import org.beehive.gpullama3.inference.weights.tornado.Qwen2TornadoWeights;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.model.qwen2.Qwen2Configuration;
-import org.beehive.gpullama3.tornadovm.layerplanner.quantization.FP16LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layers.Activation;
 import org.beehive.gpullama3.tornadovm.layers.type.fp16.LogitsFP16Layer;
 import org.beehive.gpullama3.tornadovm.layers.type.fp16.Qwen2FP16FFNLayers;

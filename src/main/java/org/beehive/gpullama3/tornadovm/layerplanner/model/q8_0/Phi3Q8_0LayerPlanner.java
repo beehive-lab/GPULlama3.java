@@ -4,7 +4,6 @@ import org.beehive.gpullama3.inference.state.Phi3State;
 import org.beehive.gpullama3.inference.weights.tornado.Phi3TornadoWeights;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.model.phi3.Phi3Configuration;
-import org.beehive.gpullama3.tornadovm.layerplanner.quantization.Q8_0LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layers.Activation;
 import org.beehive.gpullama3.tornadovm.layers.type.q8_0.LogitsQ8_0Layer;
 import org.beehive.gpullama3.tornadovm.layers.type.q8_0.Phi3Q8_0FFNLayers;

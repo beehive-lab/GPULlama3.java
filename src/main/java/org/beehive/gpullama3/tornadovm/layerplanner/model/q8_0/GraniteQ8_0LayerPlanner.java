@@ -4,7 +4,6 @@ import org.beehive.gpullama3.inference.state.GraniteState;
 import org.beehive.gpullama3.inference.weights.tornado.GraniteTornadoWeights;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.model.granite.GraniteConfiguration;
-import org.beehive.gpullama3.tornadovm.layerplanner.quantization.Q8_0LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layers.ActivationGranite;
 import org.beehive.gpullama3.tornadovm.layers.type.q8_0.GraniteQ8_0FFNLayers;
 import org.beehive.gpullama3.tornadovm.layers.type.q8_0.LogitsGraniteQ8_0Layer;

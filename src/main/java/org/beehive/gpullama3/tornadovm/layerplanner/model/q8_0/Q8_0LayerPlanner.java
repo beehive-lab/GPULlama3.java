@@ -1,19 +1,11 @@
-package org.beehive.gpullama3.tornadovm.layerplanner.quantization;
+package org.beehive.gpullama3.tornadovm.layerplanner.model.q8_0;
 
 import org.beehive.gpullama3.tensor.GGMLType;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.tornado.TornadoWeights;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.tornadovm.layerplanner.base.QuantizedLayerPlanner;
-import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
-import org.beehive.gpullama3.tornadovm.layers.Activation;
-import org.beehive.gpullama3.tornadovm.layers.type.q8_0.LogitsQ8_0Layer;
-import uk.ac.manchester.tornado.api.GridScheduler;
-import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
-
-import java.util.ArrayList;
-import java.util.List;
+import org.beehive.gpullama3.tornadovm.layerplanner.QuantizedLayerPlanner;
 
 /**
  * Base for all Q8_0-quantized layer planners.
