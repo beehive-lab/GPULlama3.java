@@ -13,15 +13,9 @@ public class LlamaQ8_0LayerPlanner extends Q8_0LayerPlanner<LlamaState, LlamaCon
 
     public LlamaQ8_0LayerPlanner(LlamaState state, Model model) {
         super(state, model);
-        validateQuantizationType();
-        setupTornadoForwardPlan();
+        this.activationLayer = new Activation("activationUpdate", state, weights, config);
+        this.ffnLayers = new LlamaQ8_0FFNLayers("llamaFFN", state, weights, config, schedulerType);
+        this.logitsLayer = new LogitsQ8_0Layer("logits", state, weights, config, ffnLayers.getLastFFNLayerTaskGraphID(), schedulerType);
+        createTornadoInferencePlan();
     }
-
-    @Override
-    protected void initializeLayerComponents() {
-        this.activationLayer = new Activation("activationUpdate", this.state, this.weights, this.config);
-        this.ffnLayers = new LlamaQ8_0FFNLayers("llamaFFN", this.state, this.weights, this.config, this.schedulerType);
-        this.logitsLayer = new LogitsQ8_0Layer("llamaLogits", this.state, this.weights, this.config, ffnLayers.getLastFFNLayerTaskGraphID(), this.schedulerType);
-    }
-
 }

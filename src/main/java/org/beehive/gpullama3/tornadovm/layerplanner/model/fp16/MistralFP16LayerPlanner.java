@@ -16,6 +16,6 @@ public class MistralFP16LayerPlanner extends FP16LayerPlanner<LlamaState, Mistra
         this.activationLayer = new Activation("activationUpdate", state, weights, config);
         this.ffnLayers = new MistralFP16FFNLayers("mistralFFN", state, weights, config, schedulerType);
         this.logitsLayer = new LogitsFP16Layer("logits", state, weights, config, ffnLayers.getLastFFNLayerTaskGraphID(), schedulerType);
-        buildForwardPlan();
+        createTornadoInferencePlan();
     }
 }

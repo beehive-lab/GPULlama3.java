@@ -16,6 +16,6 @@ public class MistralQ8_0LayerPlanner extends Q8_0LayerPlanner<LlamaState, Mistra
         this.activationLayer = new Activation("activationUpdate", state, weights, config);
         this.ffnLayers = new MistralQ8_0FFNLayers("mistralFFN", state, weights, config, schedulerType);
         this.logitsLayer = new LogitsQ8_0Layer("logits", state, weights, config, ffnLayers.getLastFFNLayerTaskGraphID(), schedulerType);
-        buildForwardPlan();
+        createTornadoInferencePlan();
     }
 }

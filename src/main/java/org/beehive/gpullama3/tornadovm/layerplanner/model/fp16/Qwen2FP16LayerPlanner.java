@@ -20,14 +20,9 @@ public class Qwen2FP16LayerPlanner extends FP16LayerPlanner<Qwen2State, Qwen2Con
 
     public Qwen2FP16LayerPlanner(Qwen2State state, Model model) {
         super(state, model);
-        validateQuantizationType();
-        setupTornadoForwardPlan();
-    }
-
-    @Override
-    protected void initializeLayerComponents() {
-        this.activationLayer = new Activation("activationUpdate", this.state, this.weights, this.config);
-        this.ffnLayers = new Qwen2FP16FFNLayers("qwen2FFN", this.state, this.weights, this.config, this.schedulerType);
-        this.logitsLayer = new LogitsFP16Layer("qwen2Logits", this.state, this.weights, this.config, ffnLayers.getLastFFNLayerTaskGraphID(), this.schedulerType);
+        this.activationLayer = new Activation("activationUpdate", state, weights, config);
+        this.ffnLayers = new Qwen2FP16FFNLayers("qwen2FFN", state, weights, config, schedulerType);
+        this.logitsLayer = new LogitsFP16Layer("logits", state, weights, config, ffnLayers.getLastFFNLayerTaskGraphID(), schedulerType);
+        createTornadoInferencePlan();
     }
 }

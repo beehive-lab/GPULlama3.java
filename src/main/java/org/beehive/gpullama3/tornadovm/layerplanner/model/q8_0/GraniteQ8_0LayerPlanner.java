@@ -13,14 +13,9 @@ public class GraniteQ8_0LayerPlanner extends Q8_0LayerPlanner<GraniteState, Gran
 
     public GraniteQ8_0LayerPlanner(GraniteState state, Model model) {
         super(state, model);
-        validateQuantizationType();
-        setupTornadoForwardPlan();
-    }
-
-    @Override
-    protected void initializeLayerComponents() {
-        this.activationLayer = new ActivationGranite("activationUpdate", this.state, this.weights, this.config);
-        this.ffnLayers = new GraniteQ8_0FFNLayers("graniteFFN", this.state, this.weights, this.config, this.schedulerType);
-        this.logitsLayer = new LogitsGraniteQ8_0Layer("graniteLogits", this.state, this.weights, this.config, ffnLayers.getLastFFNLayerTaskGraphID(), this.schedulerType);
+        this.activationLayer = new ActivationGranite("activationUpdate", state, weights, config);
+        this.ffnLayers = new GraniteQ8_0FFNLayers("graniteFFN", state, weights, config, schedulerType);
+        this.logitsLayer = new LogitsGraniteQ8_0Layer("logits", state, weights, config, ffnLayers.getLastFFNLayerTaskGraphID(), schedulerType);
+        createTornadoInferencePlan();
     }
 }
