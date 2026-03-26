@@ -27,6 +27,9 @@ public abstract class AbstractLayer {
         this.config = config;
     }
 
+    /**
+     * Ensures weights are of the expected type.
+     */
     @SuppressWarnings("unchecked")
     protected static <T> T requireWeightsType(Object weights, Class<T> expectedType, String layerName, String layout) {
         if (expectedType.isInstance(weights)) {
