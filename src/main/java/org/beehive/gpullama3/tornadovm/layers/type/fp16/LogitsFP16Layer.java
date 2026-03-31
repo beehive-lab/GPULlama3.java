@@ -2,39 +2,29 @@ package org.beehive.gpullama3.tornadovm.layers.type.fp16;
 
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.Weights;
-import org.beehive.gpullama3.inference.weights.tornado.Qwen2TornadoWeights;
 import org.beehive.gpullama3.inference.weights.tornado.TornadoWeights;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernels;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
+import org.beehive.gpullama3.inference.weights.tornado.Qwen2TornadoWeights;
 import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
 import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
-import org.beehive.gpullama3.tornadovm.layers.AbstractLayer;
+import org.beehive.gpullama3.tornadovm.layers.AbstractLogitsLayer;
 import uk.ac.manchester.tornado.api.GridScheduler;
-import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TaskGraph;
-import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.WorkerGrid1D;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
-public class LogitsFP16Layer extends AbstractLayer {
+public class LogitsFP16Layer extends AbstractLogitsLayer {
 
-    private String lastTaskGraphID;
-    private TaskGraph logitsTaskGraph;
-    private ImmutableTaskGraph immutableLogitsGraph;
-    private GridScheduler scheduler;
-    private SchedulerType schedulerType;
-
-    public LogitsFP16Layer(String name, State state, Weights weights, Configuration config, String lastTaskGraphID, SchedulerType schedulerType) {
-        super(name, state, weights, config);
-        this.lastTaskGraphID = lastTaskGraphID;
-        this.schedulerType = schedulerType;
-        var tornadoWeights = requireWeightsType(weights, TornadoWeights.class, "LogitsFP16Layer", "TornadoTensor");
-        this.logitsTaskGraph = setupLogitsTaskGraph(tornadoWeights, config);
+    public LogitsFP16Layer(String name, State state, Weights weights, Configuration config,
+            String lastTaskGraphID, SchedulerType schedulerType) {
+        super(name, state, weights, config, lastTaskGraphID, schedulerType);
     }
 
     // @formatter:off
-    private TaskGraph setupLogitsTaskGraph(TornadoWeights weights, Configuration config) {
+    @Override
+    protected TaskGraph setupLogitsTaskGraph(TornadoWeights weights, Configuration config) {
         var logits = new TaskGraph("logits");
         // === Data Setup ===
         logits.consumeFromDevice(lastTaskGraphID, state.wrapX);
@@ -96,7 +86,7 @@ public class LogitsFP16Layer extends AbstractLayer {
 
     @Override
     public GridScheduler updateGridScheduler(GridScheduler tornadoForwardScheduler) {
-        WorkerGrid logitsRMS = WorkerGridFactory.createRmsNormWorker(config.dim(), weights instanceof Qwen2TornadoWeights ? 32 : 256);
+        var logitsRMS = WorkerGridFactory.createRmsNormWorker(config.dim(), rmsLocalSize());
         var vocabSizeRowMajor = config.vocabularySize() * LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS;
         var vocabWorker = new WorkerGrid1D(vocabSizeRowMajor);
         vocabWorker.setLocalWork(LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS, 1, 1);
@@ -106,18 +96,8 @@ public class LogitsFP16Layer extends AbstractLayer {
         return tornadoForwardScheduler;
     }
 
-    @Override
-    public GridScheduler getGridScheduler() {
-        return scheduler;
-    }
-
-    @Override
-    public TaskGraph getTaskGraph() {
-        return logitsTaskGraph;
-    }
-
-    @Override
-    public ImmutableTaskGraph getImmutableTaskGraph() {
-        return immutableLogitsGraph;
+    /** Local workgroup size for RMS norm. Qwen2 requires a smaller group (32 vs 256). */
+    protected int rmsLocalSize() {
+        return weights instanceof Qwen2TornadoWeights ? 32 : 256;
     }
 }

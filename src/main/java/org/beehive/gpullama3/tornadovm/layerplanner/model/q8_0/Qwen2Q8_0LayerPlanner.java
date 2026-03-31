@@ -4,7 +4,6 @@ import org.beehive.gpullama3.inference.state.Qwen2State;
 import org.beehive.gpullama3.inference.weights.tornado.Qwen2TornadoWeights;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.model.qwen2.Qwen2Configuration;
-import org.beehive.gpullama3.tornadovm.layerplanner.quantization.Q8_0LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layers.Activation;
 import org.beehive.gpullama3.tornadovm.layers.type.q8_0.LogitsQ8_0Layer;
 import org.beehive.gpullama3.tornadovm.layers.type.q8_0.Qwen2Q8_0FFNLayers;
@@ -21,15 +20,9 @@ public class Qwen2Q8_0LayerPlanner extends Q8_0LayerPlanner<Qwen2State, Qwen2Con
 
     public Qwen2Q8_0LayerPlanner(Qwen2State state, Model model) {
         super(state, model);
-        validateQuantizationType();
-        setupTornadoForwardPlan();
+        this.activationLayer = new Activation("activationUpdate", state, weights, config);
+        this.ffnLayers = new Qwen2Q8_0FFNLayers("qwen2FFN", state, weights, config, schedulerType);
+        this.logitsLayer = new LogitsQ8_0Layer("logits", state, weights, config, ffnLayers.getLastFFNLayerTaskGraphID(), schedulerType);
+        createTornadoInferencePlan();
     }
-
-    @Override
-    protected void initializeLayerComponents() {
-        this.activationLayer = new Activation("activationUpdate", this.state, this.weights, this.config);
-        this.ffnLayers = new Qwen2Q8_0FFNLayers("qwen2FFN", this.state, this.weights, this.config, this.schedulerType);
-        this.logitsLayer = new LogitsQ8_0Layer("qwen2Logits", this.state, this.weights, this.config, ffnLayers.getLastTaskGraphID(), this.schedulerType);
-    }
-
 }

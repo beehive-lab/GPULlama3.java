@@ -9,13 +9,9 @@ import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
 import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
 import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
 import uk.ac.manchester.tornado.api.GridScheduler;
-import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
-
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * Phi3Q8_0FFNLayers: Q8_0-quantized FFN layers for Phi3 with Group Query Attention (GQA) support.
@@ -25,23 +21,18 @@ import java.util.List;
  *
  * Works directly with Phi3State to access and mutate Phi3-specific state fields.
  */
-public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
+public class Phi3Q8_0FFNLayers extends AbstractFFNLayers<Phi3TornadoWeights, Phi3Configuration> {
 
-    // Typed references to Phi3-specific state and config
+    // Typed reference to Phi3-specific state
     private final Phi3State phi3State;
-    private final Phi3Configuration phi3Config;
     // Phi3-specific dimension for combined QKV buffer
     private final int opSize;
-    TaskGraph ffnLayerTaskGraph;
-    GridScheduler scheduler;
-    List<ImmutableTaskGraph> ffnLayerTaskGraphs;
 
     public Phi3Q8_0FFNLayers(String taskGraphName, Phi3State state, Phi3TornadoWeights weights, Phi3Configuration config, SchedulerType schedulerType) {
         super(taskGraphName, state, weights, config, schedulerType);
         this.phi3State = state;
-        this.phi3Config = config;
         this.opSize = config.dim() + 2 * (config.numberOfKeyValueHeads() * config.headSize());
-        ffnLayerTaskGraphs = setupFFNLayered();
+        setupFFNLayers();
     }
 
     @Override
@@ -74,40 +65,6 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_down_proj", configDimRowMajorGlobalWorker);
         }
         return tornadoForwardScheduler;
-    }
-
-    @Override
-    public GridScheduler getGridScheduler() {
-        return scheduler;
-    }
-
-    @Override
-    public TaskGraph getTaskGraph() {
-        return ffnLayerTaskGraph;
-    }
-
-    @Override
-    public ImmutableTaskGraph getImmutableTaskGraph() {
-        return null;
-    }
-
-    public List<ImmutableTaskGraph> getFfnLayerTaskGraphs() {
-        return ffnLayerTaskGraphs;
-    }
-
-    /**
-     * Setup all FFN layers for all transformer layers
-     */
-    List<ImmutableTaskGraph> setupFFNLayered() {
-        List<ImmutableTaskGraph> ffnGraphs = new ArrayList<>();
-        for (int layerIndex = 0; layerIndex < phi3Config.numberOfLayers(); layerIndex++) {
-            TaskGraph ffnLayer = setupSinglePhi3Q8_0FFNLayer((Phi3TornadoWeights) weights, layerIndex);
-            if (layerIndex == phi3Config.numberOfLayers() - 1) {
-                setupLastID(ffnLayer.getTaskGraphName());
-            }
-            ffnGraphs.add(ffnLayer.snapshot());
-        }
-        return ffnGraphs;
     }
 
     // @formatter:off
@@ -207,9 +164,11 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
      *   • wrapHbG: Gate output merged into final computation
      *
      */
-    TaskGraph setupSinglePhi3Q8_0FFNLayer(Phi3TornadoWeights weights, int layerIndex) {
+    @Override
+    protected TaskGraph createFFNLayerTaskGraph(int layerIndex) {
         var taskGraphName = "layer_" + layerIndex;
         var unifiedLayer = new TaskGraph(taskGraphName);
+
         unifiedLayer.consumeFromDevice(phi3State.wrapX);
         unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
                 // Copy-in quantized weights per layer (Q8_0 format: ByteArray)
@@ -232,8 +191,8 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
                 context,
                 phi3State.temp,               // output: scale factor
                 phi3State.wrapX,              // input: hidden state
-                phi3Config.dim(),             // dimension
-                phi3Config.rmsNormEps(),      // epsilon
+                config.dim(),             // dimension
+                config.rmsNormEps(),      // epsilon
                 phi3State.localSize);         // local memory size
 
         if (shouldUseFinalNormalization()) {
@@ -256,8 +215,8 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
                 weights.rms_att_weightLayered[layerIndex].asFloatArray(),  // RMS weights
                 phi3State.temp,               // RMS scale (precomputed)
                 weights.wqkvLayered[layerIndex].asByteArray(),  // Q8 combined QKV [opSize × dim]
-                phi3Config.dim(),             // input dim
-                phi3Config.kvDim(),           // K/V output dim
+                config.dim(),             // input dim
+                config.kvDim(),           // K/V output dim
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
 
         // Fused Phi3 RoPE Rotation + KV Cache Write
@@ -269,11 +228,11 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
                 phi3State.wrapV,              // V vectors (in only)
                 phi3State.wrapKeyCache,       // key cache (out)
                 phi3State.wrapValueCache,     // value cache (out)
-                phi3Config.numberOfKeyValueHeads(),  // nHeadKv
-                phi3Config.headSize(),        // head dimension
-                phi3Config.kvDim(),           // kvDim
+                config.numberOfKeyValueHeads(),  // nHeadKv
+                config.headSize(),        // head dimension
+                config.kvDim(),           // kvDim
                 layerIndex,                   // layer index for cache offset
-                phi3Config.contextLength());  // max sequence length
+                config.contextLength());  // max sequence length
 
         // Flash Attention
         unifiedLayer.task("attention",
@@ -283,13 +242,13 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
                 phi3State.wrapKeyCache,       // key cache
                 phi3State.wrapValueCache,     // value cache
                 phi3State.wrapXb,             // output: attention result
-                phi3Config.numberOfHeads(),   // nHeads
-                phi3Config.headSize(),        // headSize
-                phi3Config.kvDim(),           // kvDim
-                phi3Config.kvMul(),           // kvMul (nHeads / nHeadKv)
+                config.numberOfHeads(),   // nHeads
+                config.headSize(),        // headSize
+                config.kvDim(),           // kvDim
+                config.kvMul(),           // kvMul (nHeads / nHeadKv)
                 phi3State.positionHolder,     // position
                 layerIndex,                   // layer index
-                phi3Config.contextLength());  // context length
+                config.contextLength());  // context length
 
         // Output Projection with Residual (Q8 dequantization)
         unifiedLayer.task("attn_output_proj",
@@ -298,8 +257,8 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
                 phi3State.wrapXb,             // input: attention output
                 phi3State.wrapX,              // output: wrapX += Wo · wrapXb
                 weights.woLayered[layerIndex].asByteArray(),  // Q8 Wo [dim × dim]
-                phi3Config.dim(),             // input dim
-                phi3Config.dim(),             // output dim
+                config.dim(),             // input dim
+                config.dim(),             // output dim
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
 
         // ═══════════════════════════════════════════════════════════════════════
@@ -312,8 +271,8 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
                 context,
                 phi3State.tempFFN,            // output: scale factor
                 phi3State.wrapX,              // input: hidden state
-                phi3Config.dim(),             // dimension
-                phi3Config.rmsNormEps(),      // epsilon
+                config.dim(),             // dimension
+                config.rmsNormEps(),      // epsilon
                 phi3State.localSize);         // local memory size
 
         // Final normalization (non-NVIDIA only)
@@ -322,8 +281,8 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
                     TransformerComputeKernelsLayered::reductionFinalNormalization,
                     context,
                     phi3State.tempFFN,        // scale factor (in/out)
-                    phi3Config.dim(),         // dimension
-                    phi3Config.rmsNormEps()); // epsilon
+                    config.dim(),         // dimension
+                    config.rmsNormEps()); // epsilon
         }
 
         // Fused: RMS apply + Q8 gate/up matmul + SiLU activation + GLU
@@ -335,8 +294,8 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
                 weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),  // RMS weights
                 phi3State.tempFFN,            // RMS scale (precomputed)
                 weights.wUpLayered[layerIndex].asByteArray(),  // Q8 combined gate+up [2×hiddenDim × dim]
-                phi3Config.dim(),             // input dim
-                phi3Config.hiddenDim(),       // output dim
+                config.dim(),             // input dim
+                config.hiddenDim(),       // output dim
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
 
         // Down Projection with Residual (Q8 dequantization)
@@ -346,8 +305,8 @@ public class Phi3Q8_0FFNLayers extends AbstractFFNLayers {
                 phi3State.wrapHbU,            // input: FFN intermediate
                 phi3State.wrapX,              // output: wrapX += wDown · wrapHbU
                 weights.wDownLayered[layerIndex].asByteArray(),  // Q8 wDown [dim × hiddenDim]
-                phi3Config.hiddenDim(),       // input dim
-                phi3Config.dim(),             // output dim
+                config.hiddenDim(),       // input dim
+                config.dim(),             // output dim
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
 
         unifiedLayer.persistOnDevice(phi3State.wrapX);

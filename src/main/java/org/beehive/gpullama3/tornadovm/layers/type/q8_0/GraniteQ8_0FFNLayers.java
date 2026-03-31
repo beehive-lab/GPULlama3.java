@@ -1,11 +1,7 @@
 package org.beehive.gpullama3.tornadovm.layers.type.q8_0;
 
 import org.beehive.gpullama3.inference.state.GraniteState;
-import org.beehive.gpullama3.inference.state.LlamaState;
 import org.beehive.gpullama3.inference.weights.tornado.GraniteTornadoWeights;
-import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
-import org.beehive.gpullama3.model.Configuration;
-import org.beehive.gpullama3.model.granite.Granite;
 import org.beehive.gpullama3.model.granite.GraniteConfiguration;
 import org.beehive.gpullama3.tornadovm.kernels.GraniteKernels;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
@@ -13,47 +9,15 @@ import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
 import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
 import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
 import uk.ac.manchester.tornado.api.GridScheduler;
-import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
-import java.util.List;
-import java.util.stream.IntStream;
-
-public class GraniteQ8_0FFNLayers extends AbstractFFNLayers {
-
-    GridScheduler scheduler;
-    List<ImmutableTaskGraph> ffnLayerTaskGraphs;
+public class GraniteQ8_0FFNLayers extends AbstractFFNLayers<GraniteTornadoWeights, GraniteConfiguration> {
 
     public GraniteQ8_0FFNLayers(String taskGraphName, GraniteState state, GraniteTornadoWeights weights, GraniteConfiguration config, SchedulerType schedulerType) {
         super(taskGraphName, state, weights, config, schedulerType);
-        ffnLayerTaskGraphs = setupFFNLayered();
-    }
-
-    @Override
-    public GridScheduler getGridScheduler() {
-        return scheduler;
-    }
-
-    @Override
-    public TaskGraph getTaskGraph() {
-        return null;
-    }
-
-    @Override
-    public ImmutableTaskGraph getImmutableTaskGraph() {
-        return null;
-    }
-
-    List<ImmutableTaskGraph> setupFFNLayered() {
-        return IntStream.range(0, config.numberOfLayers()).mapToObj(i -> {
-            var ffnLayer = setupSingleFFNLayer((GraniteTornadoWeights) weights, (GraniteConfiguration) config, i);
-            if (i == config.numberOfLayers() - 1) {
-                setupLastID(ffnLayer.getTaskGraphName());
-            }
-            return ffnLayer.snapshot();
-        }).toList();
+        setupFFNLayers();
     }
 
     /**
@@ -143,7 +107,8 @@ public class GraniteQ8_0FFNLayers extends AbstractFFNLayers {
      * Quantization: Q8_0 format (8-bit weights with block-wise scaling)
      *
      */
-    TaskGraph setupSingleFFNLayer(GraniteTornadoWeights weights, GraniteConfiguration config, int layerIndex) {
+    @Override
+    protected TaskGraph createFFNLayerTaskGraph(int layerIndex) {
         var layerTaskGraphName = "layer_" + layerIndex;
         TaskGraph unifiedLayer = new TaskGraph(layerTaskGraphName);
 
@@ -326,10 +291,6 @@ public class GraniteQ8_0FFNLayers extends AbstractFFNLayers {
         }
 
         return tornadoForwardScheduler;
-    }
-
-    public List<ImmutableTaskGraph> getFfnLayerTaskGraphs() {
-        return ffnLayerTaskGraphs;
     }
 
     private TaskGraph configureAttention(TaskGraph unifiedLayer, int layerIndex, GraniteConfiguration config) {

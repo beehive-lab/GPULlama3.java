@@ -101,7 +101,12 @@ public class Qwen3ChatFormat implements ChatFormat {
 
     @Override
     public int getBeginOfText() {
-        return beginOfText;
+        if (beginOfText == -1) {
+            // deepseek-r1
+            return startHeader;
+        } else {
+            return beginOfText;
+        }
     }
 
     @Override

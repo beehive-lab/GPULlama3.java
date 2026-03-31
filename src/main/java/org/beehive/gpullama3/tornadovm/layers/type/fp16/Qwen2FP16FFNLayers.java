@@ -10,15 +10,11 @@ import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
 import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
 import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
 import uk.ac.manchester.tornado.api.GridScheduler;
-import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.WorkerGrid1D;
 import uk.ac.manchester.tornado.api.WorkerGrid2D;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
-
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * Qwen2FP16FFNLayers: FP16 FFN layers for Qwen2 with Group Query Attention (GQA) support.
@@ -29,20 +25,15 @@ import java.util.List;
  *
  * Works directly with Qwen2State to access and mutate Qwen2-specific state fields.
  */
-public class Qwen2FP16FFNLayers extends AbstractFFNLayers {
+public class Qwen2FP16FFNLayers extends AbstractFFNLayers<Qwen2TornadoWeights, Qwen2Configuration> {
 
-    // Typed references to Qwen2-specific state and config
+    // Typed reference to Qwen2-specific state
     private final Qwen2State qwen2State;
-    private final Qwen2Configuration qwen2Config;
-    TaskGraph ffnLayerTaskGraph;
-    GridScheduler scheduler;
-    List<ImmutableTaskGraph> ffnLayerTaskGraphs;
 
     public Qwen2FP16FFNLayers(String taskGraphName, Qwen2State state, Qwen2TornadoWeights weights, Qwen2Configuration config, SchedulerType schedulerType) {
         super(taskGraphName, state, weights, config, schedulerType);
         this.qwen2State = state;
-        this.qwen2Config = config;
-        ffnLayerTaskGraphs = setupFFNLayered();
+        setupFFNLayers();
     }
 
     @Override
@@ -114,37 +105,6 @@ public class Qwen2FP16FFNLayers extends AbstractFFNLayers {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rms_ffn_gate_up", configHiddenDimRowMajorWorker);
         }
         return tornadoForwardScheduler;
-    }
-
-    @Override
-    public GridScheduler getGridScheduler() {
-        return scheduler;
-    }
-
-    @Override
-    public TaskGraph getTaskGraph() {
-        return ffnLayerTaskGraph;
-    }
-
-    @Override
-    public ImmutableTaskGraph getImmutableTaskGraph() {
-        return null;
-    }
-
-    public List<ImmutableTaskGraph> getFfnLayerTaskGraphs() {
-        return ffnLayerTaskGraphs;
-    }
-
-    List<ImmutableTaskGraph> setupFFNLayered() {
-        List<ImmutableTaskGraph> ffnGraphs = new ArrayList<>(qwen2Config.numberOfLayers());
-        for (int layerIndex = 0; layerIndex < qwen2Config.numberOfLayers(); layerIndex++) {
-            TaskGraph ffnLayer = setupSingleQwen2FFNLayer((Qwen2TornadoWeights) weights, layerIndex);
-            if (layerIndex == qwen2Config.numberOfLayers() - 1) {
-                setupLastID(ffnLayer.getTaskGraphName());
-            }
-            ffnGraphs.add(ffnLayer.snapshot());
-        }
-        return ffnGraphs;
     }
 
     // @formatter:off
@@ -235,9 +195,11 @@ public class Qwen2FP16FFNLayers extends AbstractFFNLayers {
      *   • No Q/K RMSNorm: Unlike Qwen3, Qwen2 doesn't normalize Q/K after projection
      *
      */
-    TaskGraph setupSingleQwen2FFNLayer(Qwen2TornadoWeights weights, int layerIndex) {
+    @Override
+    protected TaskGraph createFFNLayerTaskGraph(int layerIndex) {
         var taskGraphName = "layer_" + layerIndex;
         TaskGraph unifiedLayer = new TaskGraph(taskGraphName);
+
         unifiedLayer.consumeFromDevice(state.wrapX);
         unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
                 // Attention weights

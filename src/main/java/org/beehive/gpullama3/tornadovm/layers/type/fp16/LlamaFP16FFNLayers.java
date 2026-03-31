@@ -1,32 +1,23 @@
 package org.beehive.gpullama3.tornadovm.layers.type.fp16;
 
 import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.inference.weights.Weights;
 import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
-import org.beehive.gpullama3.model.Configuration;
+import org.beehive.gpullama3.model.llama.LlamaConfiguration;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernels;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
 import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
 import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
 import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
 import uk.ac.manchester.tornado.api.GridScheduler;
-import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
-import java.util.List;
-import java.util.stream.IntStream;
+public class LlamaFP16FFNLayers extends AbstractFFNLayers<LlamaTornadoWeights, LlamaConfiguration> {
 
-public class LlamaFP16FFNLayers extends AbstractFFNLayers {
-
-    TaskGraph ffnTaskGraphs;
-    GridScheduler scheduler;
-    List<ImmutableTaskGraph> ffnLayerTaskGraphs;
-
-    public LlamaFP16FFNLayers(String taskGraph, State state, Weights weights, Configuration config, SchedulerType schedulerType) {
+    public LlamaFP16FFNLayers(String taskGraph, State state, LlamaTornadoWeights weights, LlamaConfiguration config, SchedulerType schedulerType) {
         super(taskGraph, state, weights, config, schedulerType);
-        this.ffnLayerTaskGraphs = setupFFNLayered();
+        setupFFNLayers();
     }
 
     @Override
@@ -61,35 +52,6 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_down_proj", configDimRowMajorGlobalWorker);
         }
         return tornadoForwardScheduler;
-    }
-
-    @Override
-    public GridScheduler getGridScheduler() {
-        return scheduler;
-    }
-
-    @Override
-    public TaskGraph getTaskGraph() {
-        return ffnTaskGraphs;
-    }
-
-    @Override
-    public ImmutableTaskGraph getImmutableTaskGraph() {
-        return null;
-    }
-
-    public List<ImmutableTaskGraph> getFfnLayerTaskGraphs() {
-        return ffnLayerTaskGraphs;
-    }
-
-    List<ImmutableTaskGraph> setupFFNLayered() {
-        return IntStream.range(0, config.numberOfLayers()).mapToObj(i -> {
-            var ffnLayer = setupSingleFFNLayer((LlamaTornadoWeights) weights, config, i);
-            if (i == config.numberOfLayers() - 1) {
-                setupLastID(ffnLayer.getTaskGraphName());
-            }
-            return ffnLayer.snapshot();
-        }).toList();
     }
 
     // @formatter:off
@@ -178,7 +140,8 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers {
      *   • rms_ffn_gate_up:  Fused RMS apply + W1/W3 matmuls + SiLU + GLU (4→1 kernel)
      *
      */
-    TaskGraph setupSingleFFNLayer(LlamaTornadoWeights weights, Configuration config, int layerIndex) {
+    @Override
+    protected TaskGraph createFFNLayerTaskGraph(int layerIndex) {
         var layerTaskGraphName = "layer_" + layerIndex;
         TaskGraph unifiedLayer = new TaskGraph(layerTaskGraphName);
 

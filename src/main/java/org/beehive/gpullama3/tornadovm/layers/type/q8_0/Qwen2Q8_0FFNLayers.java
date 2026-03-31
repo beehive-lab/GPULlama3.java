@@ -10,15 +10,11 @@ import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
 import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
 import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
 import uk.ac.manchester.tornado.api.GridScheduler;
-import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.WorkerGrid1D;
 import uk.ac.manchester.tornado.api.WorkerGrid2D;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
-
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * Qwen2Q8_0FFNLayers: Q8_0-quantized FFN layers for Qwen2 with Group Query Attention (GQA) support.
@@ -32,21 +28,14 @@ import java.util.List;
  *
  * Works directly with Qwen2State to access and mutate Qwen2-specific state fields.
  */
-public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
-
-    TaskGraph ffnLayerTaskGraph;
-    GridScheduler scheduler;
-    List<ImmutableTaskGraph> ffnLayerTaskGraphs;
-
-    // Typed references to Qwen2-specific state and config
+public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers<Qwen2TornadoWeights, Qwen2Configuration> {
+    // Typed reference to Qwen2-specific state
     private final Qwen2State qwen2State;
-    private final Qwen2Configuration qwen2Config;
 
     public Qwen2Q8_0FFNLayers(String taskGraphName, Qwen2State state, Qwen2TornadoWeights weights, Qwen2Configuration config, SchedulerType schedulerType) {
         super(taskGraphName, state, weights, config, schedulerType);
         this.qwen2State = state;
-        this.qwen2Config = config;
-        ffnLayerTaskGraphs = setupFFNLayered();
+        setupFFNLayers();
     }
 
     @Override
@@ -115,48 +104,13 @@ public class Qwen2Q8_0FFNLayers extends AbstractFFNLayers {
         return tornadoForwardScheduler;
     }
 
-    @Override
-    public GridScheduler getGridScheduler() {
-        return scheduler;
-    }
-
-    @Override
-    public TaskGraph getTaskGraph() {
-        return ffnLayerTaskGraph;
-    }
-
-    @Override
-    public ImmutableTaskGraph getImmutableTaskGraph() {
-        return null;
-    }
-
-    public List<ImmutableTaskGraph> getFfnLayerTaskGraphs() {
-        return ffnLayerTaskGraphs;
-    }
-
-    /**
-     * Setup all FFN layers for all transformer layers
-     */
-    List<ImmutableTaskGraph> setupFFNLayered() {
-        List<ImmutableTaskGraph> ffnGraphs = new ArrayList<>();
-        qwen2State.temp.init(0.0f);
-        qwen2State.tempFFN.init(0.0f);
-
-        for (int layerIndex = 0; layerIndex < qwen2Config.numberOfLayers(); layerIndex++) {
-            TaskGraph ffnLayer = setupSingleQwen2Q8_0FFNLayer((Qwen2TornadoWeights) weights, layerIndex);
-            if (layerIndex == qwen2Config.numberOfLayers() - 1) {
-                setupLastID(ffnLayer.getTaskGraphName());
-            }
-            ffnGraphs.add(ffnLayer.snapshot());
-        }
-        return ffnGraphs;
-    }
-
     /**
      * Setup a single transformer layer for Qwen2 with Q8_0 quantization and GQA
      */
-    TaskGraph setupSingleQwen2Q8_0FFNLayer(Qwen2TornadoWeights weights, int layerIndex) {
-      TaskGraph  unifiedLayer = new TaskGraph("layer_" + layerIndex);
+    @Override
+    protected TaskGraph createFFNLayerTaskGraph(int layerIndex) {
+        TaskGraph  unifiedLayer = new TaskGraph("layer_" + layerIndex);
+
         unifiedLayer.consumeFromDevice(state.wrapX);
         unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
                 // Attention weights
