@@ -3,9 +3,13 @@ package org.beehive.gpullama3.inference;
 import org.beehive.gpullama3.auxiliary.Parallel;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.standard.StandardWeights;
+import org.beehive.gpullama3.inference.weights.tornado.TornadoWeights;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.tensor.standard.FloatTensor;
+import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanWithPrefillDecode;
+
+import java.lang.foreign.MemorySegment;
 
 /**
  * Low-level forward passes for the prefill/decode separated inference path.
@@ -120,5 +124,41 @@ public final class InferenceCoreWithPrefillDecode {
 
         // Final RMSNorm and vocab projection intentionally omitted:
         // logits are not needed for prefill positions — only the KV cache matters.
+    }
+
+    /**
+     * GPU prefill-only forward pass for LLaMA (FP16, TornadoVM).
+     *
+     * <p>Copies the token embedding into {@code state.embeddingX} (same as
+     * {@link InferenceCore#forwardTornadoVM}) then delegates to
+     * {@link TornadoVMMasterPlanWithPrefillDecode#tornadoVMForwardPrefill},
+     * which executes preprocessing + layer graphs but skips the logits graph.</p>
+     *
+     * @param model       the LLaMA model (must carry {@link TornadoWeights}, FP16 only)
+     * @param state       mutable inference state
+     * @param token       input token id
+     * @param position    sequence position being processed
+     * @param prefillPlan the prefill/decode plan wrapper
+     * @throws UnsupportedOperationException if the model uses Q8_0 weights
+     */
+    public static void forwardTornadoVMPrefill(Model model, State state, int token, int position,
+            TornadoVMMasterPlanWithPrefillDecode prefillPlan) {
+        final Configuration configuration = model.configuration();
+        final TornadoWeights weights = (TornadoWeights) model.weights();
+
+        switch (weights.getWeightType()) {
+            case F16 -> {
+                MemorySegment tokenEmbeddings = weights.getTokenEmbeddingTable().asHalfFloatArray().getSegment();
+                int bytes = Short.BYTES;
+                MemorySegment.copy(tokenEmbeddings, (long) token * configuration.dim() * bytes,
+                        state.embeddingX.getSegment(), 0, (long) configuration.dim() * bytes);
+            }
+            case Q8_0 -> throw new UnsupportedOperationException(
+                    // TODO Phase 4: implement Q8_0 GPU batched prefill kernels
+                    "GPU prefill/decode path not yet implemented for Q8_0 weights");
+            default -> throw new IllegalArgumentException("Unsupported weight type: " + weights.getWeightType());
+        }
+
+        prefillPlan.tornadoVMForwardPrefill(position);
     }
 }

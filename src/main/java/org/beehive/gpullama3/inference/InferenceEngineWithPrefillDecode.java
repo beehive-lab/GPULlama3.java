@@ -3,9 +3,13 @@ package org.beehive.gpullama3.inference;
 import org.beehive.gpullama3.auxiliary.LastRunMetrics;
 import org.beehive.gpullama3.inference.sampler.Sampler;
 import org.beehive.gpullama3.inference.state.State;
+import org.beehive.gpullama3.inference.weights.tornado.TornadoWeights;
+import org.beehive.gpullama3.tensor.GGMLType;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.tokenizer.Tokenizer;
+import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlan;
+import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanWithPrefillDecode;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -117,4 +121,94 @@ public final class InferenceEngineWithPrefillDecode {
 
         return generatedTokens;
     }
+
+    /**
+     * LLaMA GPU token generation with prefill/decode separation (Phase 2).
+     *
+     * <p>Drop-in replacement for
+     * {@link InferenceEngine#generateTokensGPULlama} when the batched-prefill
+     * flag is enabled. FP16 only; Q8_0 throws {@link UnsupportedOperationException}.</p>
+     *
+     * <p>Split loop:</p>
+     * <ul>
+     *   <li><b>Prefill</b> (0..N-1): {@link InferenceCoreWithPrefillDecode#forwardTornadoVMPrefill}
+     *       — layer graphs execute, logits graph is skipped.</li>
+     *   <li><b>Decode</b> (N onward): {@link InferenceCore#forwardTornadoVM}
+     *       — identical to the baseline GPU decode path.</li>
+     * </ul>
+     */
+    public static List<Integer> generateTokensGPULlama(
+            Model model, State state, int startPosition,
+            List<Integer> promptTokens, Set<Integer> stopTokens,
+            int maxTokens, Sampler sampler, boolean echo,
+            IntConsumer onTokenGenerated, TornadoVMMasterPlan tornadoVMPlan) {
+
+        // Q8_0 GPU prefill not implemented yet
+        if (((TornadoWeights) model.weights()).getWeightType() == GGMLType.Q8_0) {
+            // TODO Phase 4: implement Q8_0 GPU batched prefill kernels
+            throw new UnsupportedOperationException(
+                    "GPU prefill/decode path not yet implemented for Q8_0 weights");
+        }
+
+        long startNanos = System.nanoTime();
+
+        final Configuration config = model.configuration();
+        int actualMaxTokens = (maxTokens < 0 || config.contextLength() < maxTokens)
+                ? config.contextLength() : maxTokens;
+
+        List<Integer> generatedTokens = new ArrayList<>();
+
+        int currentToken = state.latestToken; // BOS
+        int pos = startPosition;
+
+        // Thin wrapper: no new TornadoVM plan created, just holds the reference
+        TornadoVMMasterPlanWithPrefillDecode prefillPlan =
+                new TornadoVMMasterPlanWithPrefillDecode(tornadoVMPlan, state, model);
+
+        // ── Phase 1: Prefill (GPU, no logits) ────────────────────────────────
+        for (int promptIndex = 0; promptIndex < promptTokens.size() && pos < actualMaxTokens; promptIndex++) {
+            InferenceCoreWithPrefillDecode.forwardTornadoVMPrefill(model, state, currentToken, pos, prefillPlan);
+            currentToken = promptTokens.get(promptIndex);
+            if (echo) {
+                System.err.print(Tokenizer.replaceControlCharacters(
+                        model.tokenizer().decode(List.of(currentToken))));
+            }
+            pos++;
+        }
+
+        state.latestToken = currentToken;
+
+        // ── Phase 2: Decode (GPU, with logits) ───────────────────────────────
+        while (pos < actualMaxTokens) {
+            var logits = InferenceCore.forwardTornadoVM(model, state, currentToken, pos, tornadoVMPlan);
+            int nextToken = sampler.sampleToken(logits);
+
+            if (echo) {
+                System.err.print(Tokenizer.replaceControlCharacters(
+                        model.tokenizer().decode(List.of(nextToken))));
+            }
+
+            generatedTokens.add(nextToken);
+
+            if (onTokenGenerated != null) {
+                onTokenGenerated.accept(nextToken);
+            }
+
+            if (stopTokens.contains(nextToken)) {
+                break;
+            }
+
+            currentToken = nextToken;
+            state.latestToken = currentToken;
+            pos++;
+        }
+
+        long endNanos = System.nanoTime();
+        int totalTokens = promptTokens.size() + generatedTokens.size();
+        LastRunMetrics.setMetrics(totalTokens, (endNanos - startNanos) / 1_000_000_000.0);
+
+        return generatedTokens;
+    }
+
+
 }
