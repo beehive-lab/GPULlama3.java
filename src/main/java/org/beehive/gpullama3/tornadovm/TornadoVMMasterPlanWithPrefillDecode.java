@@ -6,9 +6,9 @@ import org.beehive.gpullama3.model.Model;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
 /**
- * Wraps {@link TornadoVMMasterPlan} and adds a prefill-only GPU forward pass.
+ * Wraps {@link TornadoVMMasterPlanStandard} and adds a prefill-only GPU forward pass.
  *
- * <p>Parallel to {@link TornadoVMMasterPlan} — does NOT modify it.</p>
+ * <p>Parallel to {@link TornadoVMMasterPlanStandard} — does NOT modify it.</p>
  *
  * <p>The existing execution plan has this graph layout:</p>
  * <pre>
@@ -28,11 +28,11 @@ import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
  */
 public class TornadoVMMasterPlanWithPrefillDecode {
 
-    private final TornadoVMMasterPlan plan;
+    private final TornadoVMMasterPlanStandard plan;
     private final State state;
     private final Configuration config;
 
-    public TornadoVMMasterPlanWithPrefillDecode(TornadoVMMasterPlan plan, State state, Model model) {
+    public TornadoVMMasterPlanWithPrefillDecode(TornadoVMMasterPlanStandard plan, State state, Model model) {
         this.plan = plan;
         this.state = state;
         this.config = model.configuration();

@@ -2,6 +2,7 @@ package org.beehive.gpullama3.inference;
 
 import org.beehive.gpullama3.auxiliary.LastRunMetrics;
 import org.beehive.gpullama3.inference.sampler.Sampler;
+import org.beehive.gpullama3.inference.state.LlamaState;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.tornado.TornadoWeights;
 import org.beehive.gpullama3.tensor.GGMLType;
@@ -9,6 +10,8 @@ import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.tokenizer.Tokenizer;
 import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlan;
+import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanBatchPrefill;
+import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanStandard;
 import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanWithPrefillDecode;
 
 import java.util.ArrayList;
@@ -40,7 +43,7 @@ public final class InferenceEngineWithPrefillDecode {
 
     private InferenceEngineWithPrefillDecode() {}
 
-    /** Prefill chunk size. 1 = sequential (Phase 1 behaviour), >1 = batched (Phase 3). */
+    /** Prefill chunk size. 1 = sequential (Phase 1 behaviour), >1 = batched (Phase 3/4). */
     static final int PREFILL_BATCH_SIZE = Integer.getInteger("llama.prefillBatchSize", 1);
 
     /**
@@ -195,9 +198,82 @@ public final class InferenceEngineWithPrefillDecode {
         int currentToken = state.latestToken; // BOS
         int pos = startPosition;
 
+        if (PREFILL_BATCH_SIZE > 1) {
+            // ── Phase 4: Batch GPU Prefill ────────────────────────────────────
+            // Plan was pre-initialized in Model.runInstructOnce/runInteractive
+            // as a TornadoVMMasterPlanBatchPrefill by TornadoVMMasterPlan.initializeTornadoVMPlan.
+            TornadoVMMasterPlanBatchPrefill plan = (TornadoVMMasterPlanBatchPrefill) tornadoVMPlan;
+
+            int N = promptTokens.size();
+
+            // Build the token sequence at positions [startPosition .. startPosition+N-1]:
+            //   position startPosition+0 : currentToken (BOS/previous token)
+            //   position startPosition+1 : promptTokens[0]
+            //   ...
+            //   position startPosition+N-1: promptTokens[N-2]
+            int[] prefillSeq = new int[N];
+            prefillSeq[0] = currentToken;
+            for (int i = 1; i < N; i++) prefillSeq[i] = promptTokens.get(i - 1);
+
+            for (int chunkStart = 0; chunkStart < N && pos + chunkStart < actualMaxTokens; chunkStart += PREFILL_BATCH_SIZE) {
+                int chunkEnd  = Math.min(Math.min(chunkStart + PREFILL_BATCH_SIZE, N), actualMaxTokens - pos);
+                int chunkSize = chunkEnd - chunkStart;
+                int[] chunk   = Arrays.copyOfRange(prefillSeq, chunkStart, chunkEnd);
+
+                if (chunkSize == 1) {
+                    // Single-token chunk: use decode path (includes logits skip is not needed
+                    // here, but we need the KV cache populated — use batch prefill with size 1)
+                    plan.tornadoVMForwardBatchPrefill(chunk, pos + chunkStart, model, 1);
+                } else {
+                    plan.tornadoVMForwardBatchPrefill(chunk, pos + chunkStart, model, chunkSize);
+                }
+
+                if (echo) {
+                    for (int b = 0; b < chunkSize; b++) {
+                        int echoed = promptTokens.get(Math.min(chunkStart + b, N - 1));
+                        System.err.print(Tokenizer.replaceControlCharacters(
+                                model.tokenizer().decode(List.of(echoed))));
+                    }
+                }
+            }
+
+            currentToken = promptTokens.get(N - 1);
+            pos = startPosition + N;
+            state.latestToken = currentToken;
+
+            // ── Phase 4: Decode (GPU, with logits, via unified plan) ──────────
+            while (pos < actualMaxTokens) {
+                var logits = plan.tornadoVMForwardDecode(currentToken, pos, model);
+                int nextToken = sampler.sampleToken(logits);
+
+                if (echo) {
+                    System.err.print(Tokenizer.replaceControlCharacters(
+                            model.tokenizer().decode(List.of(nextToken))));
+                }
+
+                generatedTokens.add(nextToken);
+
+                if (onTokenGenerated != null) {
+                    onTokenGenerated.accept(nextToken);
+                }
+
+                if (stopTokens.contains(nextToken)) {
+                    break;
+                }
+
+                currentToken = nextToken;
+                state.latestToken = currentToken;
+                pos++;
+            }
+
+        } else {
+        // ── Phase 2: Sequential GPU Prefill + Decode ─────────────────────────
+
         // Thin wrapper: no new TornadoVM plan created, just holds the reference
+        // Plan is a TornadoVMMasterPlanStandard when PREFILL_BATCH_SIZE == 1.
         TornadoVMMasterPlanWithPrefillDecode prefillPlan =
-                new TornadoVMMasterPlanWithPrefillDecode(tornadoVMPlan, state, model);
+                new TornadoVMMasterPlanWithPrefillDecode(
+                        (TornadoVMMasterPlanStandard) tornadoVMPlan, state, model);
 
         // ── Phase 1: Prefill (GPU, no logits) ────────────────────────────────
         for (int promptIndex = 0; promptIndex < promptTokens.size() && pos < actualMaxTokens; promptIndex++) {
@@ -236,6 +312,8 @@ public final class InferenceEngineWithPrefillDecode {
             state.latestToken = currentToken;
             pos++;
         }
+
+        } // end else (Phase 2)
 
         long endNanos = System.nanoTime();
         int totalTokens = promptTokens.size() + generatedTokens.size();
