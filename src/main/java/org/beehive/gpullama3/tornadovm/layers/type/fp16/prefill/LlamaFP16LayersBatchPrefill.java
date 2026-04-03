@@ -24,7 +24,7 @@ import java.util.stream.IntStream;
  * <p>KV cache ({@code wrapKeyCache}, {@code wrapValueCache}) is persisted on device
  * after every layer so the subsequent single-token decode layers can consume it.</p>
  */
-public class LlamaFP16BatchPrefillLayers {
+public class LlamaFP16LayersBatchPrefill {
 
     // Matches the local workgroup size used by the single-token kernels.
     static final int LOCAL_WORK_GROUP_SIZE = 32;
@@ -37,20 +37,20 @@ public class LlamaFP16BatchPrefillLayers {
     private final List<ImmutableTaskGraph> layerITGs;
     private String lastLayerTaskGraphID;
 
-    public LlamaFP16BatchPrefillLayers(LlamaState state, LlamaTornadoWeights weights,
-                                        LlamaConfiguration config, int batchSize) {
+    public LlamaFP16LayersBatchPrefill(LlamaState state, LlamaTornadoWeights weights,
+                                       LlamaConfiguration config, int batchSize) {
         this.state = state;
         this.weights = weights;
         this.config = config;
         this.batchSize = batchSize;
         this.layerITGs = IntStream.range(0, config.numberOfLayers())
-                .mapToObj(this::createBatchLayerTaskGraph)
+                .mapToObj(this::createBatchPrefillLayerTaskGraph)
                 .map(TaskGraph::snapshot)
                 .toList();
     }
 
     // @formatter:off
-    private TaskGraph createBatchLayerTaskGraph(int layerIndex) {
+    private TaskGraph createBatchPrefillLayerTaskGraph(int layerIndex) {
         String graphName = "batchLayer_" + layerIndex;
         if (layerIndex == config.numberOfLayers() - 1) lastLayerTaskGraphID = graphName;
 

@@ -9,7 +9,7 @@ import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
 import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerDetectionService;
 import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
 import org.beehive.gpullama3.tornadovm.layers.type.fp16.decode.LlamaFP16FFNLayersDecode;
-import org.beehive.gpullama3.tornadovm.layers.type.fp16.prefill.LlamaFP16BatchPrefillLayers;
+import org.beehive.gpullama3.tornadovm.layers.type.fp16.prefill.LlamaFP16LayersBatchPrefill;
 import org.beehive.gpullama3.tornadovm.layers.type.fp16.LogitsFP16Layer;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
@@ -80,15 +80,15 @@ public class TornadoVMMasterPlanBatchPrefill implements TornadoVMMasterPlan {
         List<ImmutableTaskGraph> all       = new ArrayList<>(2 * N + 3);
         GridScheduler            scheduler = new GridScheduler();
 
-        // [0] Batch activation ────────────────────────────────────────────────
+        // [0] Batch prefill activation ────────────────────────────────────────────────
         KernelContext batchActCtx = new KernelContext();
-        all.add(buildBatchActivationGraph(batchActCtx).snapshot());
+        all.add(buildBatchPrefillActivationGraph(batchActCtx).snapshot());
         scheduler.addWorkerGrid("batchActivation.batchUpdateX",
                 WorkerGridFactory.genericWorker(batchSize * config.dim(), 128));
 
-        // [1..N] Batch layer graphs ───────────────────────────────────────────
-        LlamaFP16BatchPrefillLayers batchLayers =
-                new LlamaFP16BatchPrefillLayers(state, weights, config, batchSize);
+        // [1..N] Batch prefill layer graphs ───────────────────────────────────────────
+        LlamaFP16LayersBatchPrefill batchLayers =
+                new LlamaFP16LayersBatchPrefill(state, weights, config, batchSize);
         all.addAll(batchLayers.getLayerImmutableTaskGraphs());
         batchLayers.updateGridScheduler(scheduler);
 
@@ -116,10 +116,10 @@ public class TornadoVMMasterPlanBatchPrefill implements TornadoVMMasterPlan {
         this.executionPlan  = new TornadoExecutionPlan(all.toArray(new ImmutableTaskGraph[0]));
     }
 
-    // ── Activation graphs ─────────────────────────────────────────────────────
+    // ── Batch Prefill Activation graphs ─────────────────────────────────────────────────────
 
     /** Graph 0: B×dim FP16 embeddings → FP32 wrapXBatch. */
-    private TaskGraph buildBatchActivationGraph(KernelContext ctx) {
+    private TaskGraph buildBatchPrefillActivationGraph(KernelContext ctx) {
         return new TaskGraph("batchActivation")
                 .transferToDevice(DataTransferMode.FIRST_EXECUTION, ctx, state.wrapXBatch)
                 .transferToDevice(DataTransferMode.EVERY_EXECUTION, state.embeddingXBatch)
@@ -142,6 +142,9 @@ public class TornadoVMMasterPlanBatchPrefill implements TornadoVMMasterPlan {
     private TaskGraph buildDecodeActivationGraph(KernelContext ctx) {
         return new TaskGraph("activationUpdate")
                 .consumeFromDevice(state.wrapKeyCache, state.wrapValueCache)   // KV pass-through
+//                .transferToDevice(DataTransferMode.EVERY_EXECUTION,
+//                        state.wrapKeyCache,
+//                        state.wrapValueCache)
                 .transferToDevice(DataTransferMode.FIRST_EXECUTION, ctx, state.wrapX)
                 .transferToDevice(DataTransferMode.EVERY_EXECUTION, state.embeddingX)
                 .task("updateX",
@@ -235,6 +238,7 @@ public class TornadoVMMasterPlanBatchPrefill implements TornadoVMMasterPlan {
             if (CUDA_GRAPHS) batchLayer.withCUDAGraph();
             batchLayer.execute();
         }
+        //System.err.println("[DEBUG] last batch layer done, about to return from prefill");
         // Logits skipped — not needed for prefill positions.
     }
 
@@ -262,12 +266,14 @@ public class TornadoVMMasterPlanBatchPrefill implements TornadoVMMasterPlan {
         // Graph N+1: decode activation
         var decodeAct = executionPlan.withGraph(decodeActivationIdx()).withGridScheduler(gridScheduler);
         if (CUDA_GRAPHS) decodeAct.withCUDAGraph();
+        //System.err.println("[DEBUG] about to execute decode activation (graph " + decodeActivationIdx() + "--)");
         decodeAct.execute();
 
         // Graphs N+2..2N+1: decode transformer layers
         for (int l = 0; l < N; l++) {
             var decodeLayer = executionPlan.withGraph(decodeLayerIdx(l)).withGridScheduler(gridScheduler);
             if (CUDA_GRAPHS) decodeLayer.withCUDAGraph();
+            //System.err.println("[DEBUG] about to execute decode transformer layer (graph " + decodeLayerIdx(l) + "--)");
             decodeLayer.execute();
         }
 
