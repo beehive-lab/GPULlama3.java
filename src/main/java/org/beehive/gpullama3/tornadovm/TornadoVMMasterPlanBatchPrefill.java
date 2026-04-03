@@ -170,7 +170,7 @@ public class TornadoVMMasterPlanBatchPrefill implements TornadoVMMasterPlan {
             System.err.printf("[BatchPlan] Graph construction: %.2f ms%n",
                     (System.nanoTime() - t0) / 1e6);
 
-        plan.executionPlan.withAllGraphs().withCUDAGraph();
+        if (CUDA_GRAPHS) plan.executionPlan.withAllGraphs().withCUDAGraph();
         plan.executionPlan.withPreCompilation();
 
         if (ENABLE_TIMING)
@@ -194,10 +194,9 @@ public class TornadoVMMasterPlanBatchPrefill implements TornadoVMMasterPlan {
         state.batchStartPosHolder.init(0);
 
         for (int i = 0; i <= logitsIdx(); i++) {
-            executionPlan.withGraph(i)
-                    .withGridScheduler(gridScheduler)
-                    .withCUDAGraph()
-                    .execute();
+            var g = executionPlan.withGraph(i).withGridScheduler(gridScheduler);
+            if (CUDA_GRAPHS) g.withCUDAGraph();
+            g.execute();
         }
     }
 
@@ -226,17 +225,15 @@ public class TornadoVMMasterPlanBatchPrefill implements TornadoVMMasterPlan {
         state.batchStartPosHolder.set(0, startPos);
 
         // Graph 0: batch activation
-        executionPlan.withGraph(batchActivationIdx())
-                .withGridScheduler(gridScheduler)
-                .withCUDAGraph()
-                .execute();
+        var batchAct = executionPlan.withGraph(batchActivationIdx()).withGridScheduler(gridScheduler);
+        if (CUDA_GRAPHS) batchAct.withCUDAGraph();
+        batchAct.execute();
 
         // Graphs 1..N: batch transformer layers
         for (int l = 0; l < N; l++) {
-            executionPlan.withGraph(batchLayerIdx(l))
-                    .withGridScheduler(gridScheduler)
-                    .withCUDAGraph()
-                    .execute();
+            var batchLayer = executionPlan.withGraph(batchLayerIdx(l)).withGridScheduler(gridScheduler);
+            if (CUDA_GRAPHS) batchLayer.withCUDAGraph();
+            batchLayer.execute();
         }
         // Logits skipped — not needed for prefill positions.
     }
@@ -263,27 +260,24 @@ public class TornadoVMMasterPlanBatchPrefill implements TornadoVMMasterPlan {
         state.tempFFN.clear();
 
         // Graph N+1: decode activation
-        executionPlan.withGraph(decodeActivationIdx())
-                .withGridScheduler(gridScheduler)
-                .withCUDAGraph()
-                .execute();
+        var decodeAct = executionPlan.withGraph(decodeActivationIdx()).withGridScheduler(gridScheduler);
+        if (CUDA_GRAPHS) decodeAct.withCUDAGraph();
+        decodeAct.execute();
 
         // Graphs N+2..2N+1: decode transformer layers
         for (int l = 0; l < N; l++) {
-            executionPlan.withGraph(decodeLayerIdx(l))
-                    .withGridScheduler(gridScheduler)
-                    .withCUDAGraph()
-                    .execute();
+            var decodeLayer = executionPlan.withGraph(decodeLayerIdx(l)).withGridScheduler(gridScheduler);
+            if (CUDA_GRAPHS) decodeLayer.withCUDAGraph();
+            decodeLayer.execute();
         }
 
         state.tempLogits.clear();
         state.wrapLogits.clear();
 
         // Graph 2N+2: logits
-        executionPlan.withGraph(logitsIdx())
-                .withGridScheduler(gridScheduler)
-                .withCUDAGraph()
-                .execute();
+        var logits = executionPlan.withGraph(logitsIdx()).withGridScheduler(gridScheduler);
+        if (CUDA_GRAPHS) logits.withCUDAGraph();
+        logits.execute();
 
         return state.wrapLogits;
     }

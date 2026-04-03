@@ -26,6 +26,10 @@ public interface TornadoVMMasterPlan {
     boolean ENABLE_TORNADOVM_INIT_TIME = Boolean.parseBoolean(
             System.getProperty("llama.EnableTimingForTornadoVMInit", "False"));
 
+    /** When {@code false}, {@code withCUDAGraph()} is never called — useful for debugging. */
+    boolean CUDA_GRAPHS = Boolean.parseBoolean(
+            System.getProperty("llama.cudaGraphs", "true"));
+
     /**
      * Single-token forward pass returning output logits.
      *

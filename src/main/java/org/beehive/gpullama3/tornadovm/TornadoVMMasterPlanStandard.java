@@ -56,7 +56,7 @@ public class TornadoVMMasterPlanStandard implements TornadoVMMasterPlan {
             System.err.printf("TornadoVM GPU execution plan creation: %.2f ms\n", (planCreationTime - startTime) / 1_000_000.0);
         }
 
-        tornadoVMPlan.executionPlan.withAllGraphs().withCUDAGraph();
+        if (CUDA_GRAPHS) tornadoVMPlan.executionPlan.withAllGraphs().withCUDAGraph();
         tornadoVMPlan.executionPlan.withPreCompilation();
 
         if (ENABLE_TORNADOVM_INIT_TIME) {
@@ -89,10 +89,10 @@ public class TornadoVMMasterPlanStandard implements TornadoVMMasterPlan {
     @Override
     public FloatArray tornadoVMForwardExecuteLayered(int position) {
         // @formatter:off
-        executionPlan.withGraph(getPreprocessingGraphIndex())
-                .withGridScheduler(tornadoVMLayerPlanner.getGridScheduler())
-                .withCUDAGraph()
-                .execute();
+        var preGraph = executionPlan.withGraph(getPreprocessingGraphIndex())
+                .withGridScheduler(tornadoVMLayerPlanner.getGridScheduler());
+        if (CUDA_GRAPHS) preGraph.withCUDAGraph();
+        preGraph.execute();
 
         state.positionHolder.set(0, position);
         state.temp.clear();
@@ -106,10 +106,10 @@ public class TornadoVMMasterPlanStandard implements TornadoVMMasterPlan {
         }
         state.tempLogits.clear();
         state.wrapLogits.clear();
-        executionPlan.withGraph(getFinalLogitsGraphIndex())
-                .withGridScheduler(tornadoVMLayerPlanner.getGridScheduler())
-                .withCUDAGraph()
-                .execute();
+        var logitsGraph = executionPlan.withGraph(getFinalLogitsGraphIndex())
+                .withGridScheduler(tornadoVMLayerPlanner.getGridScheduler());
+        if (CUDA_GRAPHS) logitsGraph.withCUDAGraph();
+        logitsGraph.execute();
         // @formatter:on
         return state.wrapLogits;
     }
