@@ -12,13 +12,13 @@ import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
  * <ul>
  *   <li>{@link TornadoVMMasterPlanStandard} — single-token forward pass; used for the
  *       baseline GPU path and Phase 2 sequential prefill/decode.</li>
- *   <li>{@link TornadoVMMasterPlanBatchPrefill} — unified plan for Phase 4 batched
+ *   <li>{@link TornadoVMMasterPlanWithBatchPrefillDecode} — unified plan for Phase 4 batched
  *       prefill + single-token decode within one {@code TornadoExecutionPlan}.</li>
  * </ul>
  *
  * <p>The {@link #initializeTornadoVMPlan} factory selects the appropriate implementation
  * based on {@code llama.prefillBatchSize}: if {@code > 1}, returns a
- * {@link TornadoVMMasterPlanBatchPrefill}; otherwise returns a
+ * {@link TornadoVMMasterPlanWithBatchPrefillDecode}; otherwise returns a
  * {@link TornadoVMMasterPlanStandard}.</p>
  */
 public interface TornadoVMMasterPlan {
@@ -35,7 +35,7 @@ public interface TornadoVMMasterPlan {
      *
      * <p>Used by the standard GPU path ({@link org.beehive.gpullama3.inference.InferenceCore#forwardTornadoVM})
      * and the Phase 2 sequential decode path. Not applicable to
-     * {@link TornadoVMMasterPlanBatchPrefill} — that plan uses its own typed methods.</p>
+     * {@link TornadoVMMasterPlanWithBatchPrefillDecode} — that plan uses its own typed methods.</p>
      *
      * @param position sequence position of the current token
      * @return logits array for token sampling
@@ -48,7 +48,7 @@ public interface TornadoVMMasterPlan {
     /**
      * Factory: creates, JIT-compiles, and warms up the appropriate plan.
      *
-     * <p>When {@code llama.prefillBatchSize > 1} a {@link TornadoVMMasterPlanBatchPrefill}
+     * <p>When {@code llama.prefillBatchSize > 1} a {@link TornadoVMMasterPlanWithBatchPrefillDecode}
      * is returned; otherwise a {@link TornadoVMMasterPlanStandard} is returned.</p>
      *
      * @param state the model state (must be {@link LlamaState} when batch size {@code > 1})
@@ -59,7 +59,7 @@ public interface TornadoVMMasterPlan {
         int batchSize = Integer.getInteger("llama.prefillBatchSize", 1);
         TornadoVMMasterPlan plan;
         if (batchSize > 1) {
-            plan = TornadoVMMasterPlanBatchPrefill.initializeUnifiedPlan(
+            plan = TornadoVMMasterPlanWithBatchPrefillDecode.initializeUnifiedPlan(
                     (LlamaState) state, model, batchSize);
         } else {
             plan = TornadoVMMasterPlanStandard.initialize(state, model);

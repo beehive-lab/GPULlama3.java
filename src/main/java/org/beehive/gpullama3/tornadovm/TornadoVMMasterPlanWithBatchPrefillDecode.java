@@ -48,7 +48,7 @@ import java.util.List;
  *   decodeLayer[0]   --consumeFromDevice(wrapKeyCache)-→  (used by attention)
  * </pre>
  */
-public class TornadoVMMasterPlanBatchPrefill implements TornadoVMMasterPlan {
+public class TornadoVMMasterPlanWithBatchPrefillDecode implements TornadoVMMasterPlan {
 
     private static final boolean ENABLE_TIMING =
             Boolean.parseBoolean(System.getProperty("llama.EnableTimingForTornadoVMInit", "False"));
@@ -68,7 +68,7 @@ public class TornadoVMMasterPlanBatchPrefill implements TornadoVMMasterPlan {
     private int logitsIdx()                { return 2 * N + 2; }
 
     // ── Construction ─────────────────────────────────────────────────────────
-    private TornadoVMMasterPlanBatchPrefill(LlamaState state, Model model, int batchSize) {
+    private TornadoVMMasterPlanWithBatchPrefillDecode(LlamaState state, Model model, int batchSize) {
         this.state     = state;
         this.config    = (LlamaConfiguration) model.configuration();
         this.batchSize = batchSize;
@@ -162,12 +162,12 @@ public class TornadoVMMasterPlanBatchPrefill implements TornadoVMMasterPlan {
      * Creates, JIT-compiles, and warms up the unified plan.
      * Mirrors {@link TornadoVMMasterPlan#initializeTornadoVMPlan}.
      */
-    public static TornadoVMMasterPlanBatchPrefill initializeUnifiedPlan(
+    public static TornadoVMMasterPlanWithBatchPrefillDecode initializeUnifiedPlan(
             LlamaState state, Model model, int batchSize) {
 
         long t0 = System.nanoTime();
-        TornadoVMMasterPlanBatchPrefill plan =
-                new TornadoVMMasterPlanBatchPrefill(state, model, batchSize);
+        TornadoVMMasterPlanWithBatchPrefillDecode plan =
+                new TornadoVMMasterPlanWithBatchPrefillDecode(state, model, batchSize);
 
         if (ENABLE_TIMING)
             System.err.printf("[BatchPlan] Graph construction: %.2f ms%n",

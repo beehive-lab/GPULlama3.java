@@ -10,7 +10,7 @@ import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.tokenizer.Tokenizer;
 import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlan;
-import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanBatchPrefill;
+import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanWithBatchPrefillDecode;
 import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanStandard;
 import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanWithPrefillDecode;
 
@@ -202,7 +202,7 @@ public final class InferenceEngineWithPrefillDecode {
             // ── Phase 4: Batch GPU Prefill ────────────────────────────────────
             // Plan was pre-initialized in Model.runInstructOnce/runInteractive
             // as a TornadoVMMasterPlanBatchPrefill by TornadoVMMasterPlan.initializeTornadoVMPlan.
-            TornadoVMMasterPlanBatchPrefill plan = (TornadoVMMasterPlanBatchPrefill) tornadoVMPlan;
+            TornadoVMMasterPlanWithBatchPrefillDecode plan = (TornadoVMMasterPlanWithBatchPrefillDecode) tornadoVMPlan;
 
             int N = promptTokens.size();
 
