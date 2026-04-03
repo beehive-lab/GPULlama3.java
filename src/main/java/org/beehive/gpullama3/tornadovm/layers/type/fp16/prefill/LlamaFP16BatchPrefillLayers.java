@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.tornadovm.layers.type.fp16;
+package org.beehive.gpullama3.tornadovm.layers.type.fp16.prefill;
 
 import org.beehive.gpullama3.inference.state.LlamaState;
 import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
