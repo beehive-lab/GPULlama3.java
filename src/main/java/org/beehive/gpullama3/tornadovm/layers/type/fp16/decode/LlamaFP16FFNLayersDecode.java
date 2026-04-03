@@ -16,10 +16,10 @@ import uk.ac.manchester.tornado.api.enums.DataTransferMode;
  * persisted by the last batch prefill layer and passed through the decode
  * activation graph.</p>
  */
-public class LlamaFP16FFNLayersForUnifiedDecode extends LlamaFP16FFNLayers {
-    public LlamaFP16FFNLayersForUnifiedDecode(String taskGraph, LlamaState state,
-                                              LlamaTornadoWeights weights, LlamaConfiguration config,
-                                              SchedulerType schedulerType) {
+public class LlamaFP16FFNLayersDecode extends LlamaFP16FFNLayers {
+    public LlamaFP16FFNLayersDecode(String taskGraph, LlamaState state,
+                                    LlamaTornadoWeights weights, LlamaConfiguration config,
+                                    SchedulerType schedulerType) {
         super(taskGraph, state, weights, config, schedulerType);
     }
 

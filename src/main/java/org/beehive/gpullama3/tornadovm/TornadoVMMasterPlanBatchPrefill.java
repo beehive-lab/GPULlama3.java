@@ -8,7 +8,7 @@ import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernels;
 import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
 import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerDetectionService;
 import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
-import org.beehive.gpullama3.tornadovm.layers.type.fp16.decode.LlamaFP16FFNLayersForUnifiedDecode;
+import org.beehive.gpullama3.tornadovm.layers.type.fp16.decode.LlamaFP16FFNLayersDecode;
 import org.beehive.gpullama3.tornadovm.layers.type.fp16.prefill.LlamaFP16BatchPrefillLayers;
 import org.beehive.gpullama3.tornadovm.layers.type.fp16.LogitsFP16Layer;
 import uk.ac.manchester.tornado.api.GridScheduler;
@@ -100,8 +100,8 @@ public class TornadoVMMasterPlanBatchPrefill implements TornadoVMMasterPlan {
 
         // [N+2..2N+1] Decode layer graphs  ────────────────────────────────────
         // Layer 0 uses consumeFromDevice for KV cache (no FIRST_EXECUTION upload).
-        LlamaFP16FFNLayersForUnifiedDecode decodeLayers =
-                new LlamaFP16FFNLayersForUnifiedDecode(
+        LlamaFP16FFNLayersDecode decodeLayers =
+                new LlamaFP16FFNLayersDecode(
                         "llamaFFNDecode", state, weights, config, schedulerType);
         all.addAll(decodeLayers.getFFNLayerImmutableTaskGraphs());
         decodeLayers.updateGridScheduler(scheduler);
