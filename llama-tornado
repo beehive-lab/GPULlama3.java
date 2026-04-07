@@ -19,6 +19,7 @@ from enum import Enum
 class Backend(Enum):
     OPENCL = "opencl"
     PTX = "ptx"
+    METAL = "metal"
 
 
 class LlamaRunner:
@@ -166,6 +167,14 @@ class LlamaRunner:
                     f"@{self.tornado_sdk}/etc/exportLists/ptx-exports",
                     "--add-modules",
                     "ALL-SYSTEM,jdk.incubator.vector,tornado.runtime,tornado.annotation,tornado.drivers.common,tornado.drivers.ptx",
+                ]
+            )
+        elif args.backend == Backend.METAL:
+            module_config.extend(
+                [
+                    f"@{self.tornado_sdk}/etc/exportLists/metal-exports",
+                    "--add-modules",
+                    "ALL-SYSTEM,jdk.incubator.vector,tornado.runtime,tornado.annotation,tornado.drivers.common,tornado.drivers.metal",
                 ]
             )
 
@@ -409,6 +418,13 @@ def create_parser() -> argparse.ArgumentParser:
         action="store_const",
         const=Backend.PTX,
         help="Use PTX/CUDA backend",
+    )
+    hw_group.add_argument(
+        "--metal",
+        dest="backend",
+        action="store_const",
+        const=Backend.METAL,
+        help="Use Apple Metal backend (macOS only, requires TornadoVM 4.0+)",
     )
     hw_group.add_argument("--gpu-memory", default="14GB", help="GPU memory allocation")
     hw_group.add_argument("--heap-min", default="20g", help="Minimum JVM heap size")
