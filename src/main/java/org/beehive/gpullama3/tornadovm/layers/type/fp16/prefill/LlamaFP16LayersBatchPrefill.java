@@ -69,10 +69,19 @@ public class LlamaFP16LayersBatchPrefill {
                     state.wrapXbBatch,
                     state.wrapHbBatch,
                     state.wrapKeyCache, state.wrapValueCache);
-            // wrapXBatch produced by the batch activation graph
-            layer.consumeFromDevice(state.wrapXBatch);
+            // wrapXBatch produced by the batch activation graph.
+            // Explicit source name required: the no-arg form uses the current graph's own
+            // name ("batchLayer_0") which never matches "batchActivation" in interpreter mode,
+            // causing wrapXBatch to be re-uploaded from host (zeros) instead of using the
+            // FP32 embeddings computed by the activation graph's convertFP16toFP32 kernel.
+            layer.consumeFromDevice("batchActivation", state.wrapXBatch);
         } else {
-            layer.consumeFromDevice(
+            // Explicit predecessor name for all objects.
+            // The no-arg form would use "batchLayer_k" as the source key, which never matches
+            // "batchLayer_{k-1}" in interpreter mode — every object would be re-uploaded from
+            // host (zeros or stale), corrupting the KV cache written by the previous layer.
+            String pred = "batchLayer_" + (layerIndex - 1);
+            layer.consumeFromDevice(pred,
                     context,
                     state.wrapXBatch,
                     state.wrapXbFP16Batch,

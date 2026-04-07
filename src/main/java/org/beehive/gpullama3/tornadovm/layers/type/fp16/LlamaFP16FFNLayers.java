@@ -146,7 +146,17 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers<LlamaTornadoWeights, L
         TaskGraph unifiedLayer = new TaskGraph(layerTaskGraphName);
 
         // === Data Setup ===
-        unifiedLayer.consumeFromDevice(state.wrapX);
+        // consumeFromDevice for wrapX: the no-arg form uses the current graph's own name as the
+        // source key, which works in CUDA-graph mode (pointers are frozen) but fails in interpreter
+        // mode (updatePersistedObjectState looks up the predecessor's name, not the current name).
+        // Subclasses that receive wrapX across a graph boundary override predecessorGraphName() to
+        // return the correct predecessor graph name so the XPUBuffer is propagated in both modes.
+        String wrapXSrc = predecessorGraphName(layerIndex);
+        if (wrapXSrc != null) {
+            unifiedLayer.consumeFromDevice(wrapXSrc, state.wrapX);
+        } else {
+            unifiedLayer.consumeFromDevice(state.wrapX);
+        }
         unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
                 weights.rms_att_weightLayered[layerIndex].asFloatArray(),
                 weights.wqLayered[layerIndex].asHalfFloatArray(),
@@ -248,9 +258,29 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers<LlamaTornadoWeights, L
                 weights.w2Layered[layerIndex].asHalfFloatArray(),
                 config.hiddenDim(), config.dim(), LOCAL_WORK_GROUP_SIZE_ALLOC);
 
-        unifiedLayer.persistOnDevice(state.wrapX);
+        unifiedLayer.persistOnDevice(state.wrapX, state.wrapKeyCache,
+                state.wrapValueCache);
 
         return unifiedLayer;
+    }
+
+    /**
+     * Returns the name of the predecessor task graph from which {@code wrapX} should be consumed,
+     * or {@code null} to fall back to the no-arg form (source key = own graph name).
+     *
+     * <p>The no-arg form is safe in CUDA-graph mode (device pointers are frozen at capture time)
+     * but fails in interpreter mode: {@code updatePersistedObjectState} looks up the predecessor's
+     * graph name, not the current graph's name, so the XPUBuffer is never propagated and
+     * {@code executeAlloc} NPEs on a null buffer.</p>
+     *
+     * <p>Override in subclasses that receive {@code wrapX} from a named predecessor graph:</p>
+     * <ul>
+     *   <li>layer 0: return the activation graph name (e.g. {@code "activationUpdate"})</li>
+     *   <li>layer k &gt; 0: return {@code "layer_" + (k-1)}</li>
+     * </ul>
+     */
+    protected String predecessorGraphName(int layerIndex) {
+        return null;
     }
 
     protected TaskGraph configureLayerDataTransfers(TaskGraph unifiedLayer, int layerIndex) {
