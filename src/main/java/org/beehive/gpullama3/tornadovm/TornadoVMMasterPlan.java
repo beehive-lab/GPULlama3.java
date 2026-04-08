@@ -30,6 +30,40 @@ public interface TornadoVMMasterPlan {
     boolean CUDA_GRAPHS = Boolean.parseBoolean(
             System.getProperty("llama.cudaGraphs", "true"));
 
+    boolean WITH_PREFILL_DECODE = Boolean.getBoolean("llama.withPrefillDecode");
+
+    int PREFILL_BATCH_SIZE = Integer.getInteger("llama.prefillBatchSize", 1);
+
+    /**
+     * Factory: creates, JIT-compiles, and warms up the appropriate plan.
+     *
+     * <p>When {@code llama.withPrefillDecode=true} and {@code llama.prefillBatchSize > 1},
+     * a {@link TornadoVMMasterPlanWithBatchPrefillDecode} is returned.
+     * Otherwise a {@link TornadoVMMasterPlanStandard} is returned (used for the baseline
+     * path and the sequential prefill/decode path when batch size is 1).</p>
+     *
+     * @param state the model state (must be {@link LlamaState} when batch size {@code > 1})
+     * @param model the model instance
+     * @return the initialized plan, also stored via {@link Model#setTornadoVMPlan}
+     */
+    static TornadoVMMasterPlan initializeTornadoVMPlan(State state, Model model) {
+        TornadoVMMasterPlan plan;
+
+        if (WITH_PREFILL_DECODE && PREFILL_BATCH_SIZE > 1) {
+            // GPU path with batched prefill/decode
+            plan = TornadoVMMasterPlanWithBatchPrefillDecode.initializeUnifiedPlan(
+                    (LlamaState) state, model, PREFILL_BATCH_SIZE);
+        } else if (WITH_PREFILL_DECODE) {
+            // GPU path with simple prefill/decode
+            plan = TornadoVMMasterPlanWithPrefillDecode.initialize(state, model);
+        } else {
+            // GPU path with no prefill/decode
+            plan = TornadoVMMasterPlanStandard.initialize(state, model);
+        }
+        model.setTornadoVMPlan(plan);
+        return plan;
+    }
+
     /**
      * Single-token forward pass returning output logits.
      *
@@ -44,27 +78,4 @@ public interface TornadoVMMasterPlan {
 
     /** Releases all device memory held by this plan. */
     void freeTornadoExecutionPlan();
-
-    /**
-     * Factory: creates, JIT-compiles, and warms up the appropriate plan.
-     *
-     * <p>When {@code llama.prefillBatchSize > 1} a {@link TornadoVMMasterPlanWithBatchPrefillDecode}
-     * is returned; otherwise a {@link TornadoVMMasterPlanStandard} is returned.</p>
-     *
-     * @param state the model state (must be {@link LlamaState} when batch size {@code > 1})
-     * @param model the model instance
-     * @return the initialized plan, also stored via {@link Model#setTornadoVMPlan}
-     */
-    static TornadoVMMasterPlan initializeTornadoVMPlan(State state, Model model) {
-        int batchSize = Integer.getInteger("llama.prefillBatchSize", 1);
-        TornadoVMMasterPlan plan;
-        if (batchSize > 1) {
-            plan = TornadoVMMasterPlanWithBatchPrefillDecode.initializeUnifiedPlan(
-                    (LlamaState) state, model, batchSize);
-        } else {
-            plan = TornadoVMMasterPlanStandard.initialize(state, model);
-        }
-        model.setTornadoVMPlan(plan);
-        return plan;
-    }
 }

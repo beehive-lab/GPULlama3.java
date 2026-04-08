@@ -88,11 +88,11 @@ class LlamaRunner:
         if args.verbose_init:
             cmd.append("-Dllama.EnableTimingForTornadoVMInit=true")
 
-        if args.batched_prefill:
-            cmd.append("-Dllama.batchedPrefill=true")
+        if args.with_prefill_decode or args.batch_prefill_size is not None:
+            cmd.append("-Dllama.withPrefillDecode=true")
 
-        if args.prefill_batch_size is not None:
-            cmd.append(f"-Dllama.prefillBatchSize={args.prefill_batch_size}")
+        if args.batch_prefill_size is not None:
+            cmd.append(f"-Dllama.prefillBatchSize={args.batch_prefill_size}")
 
         if args.no_cuda_graphs:
             cmd.append("-Dllama.cudaGraphs=false")
@@ -500,17 +500,26 @@ def create_parser() -> argparse.ArgumentParser:
     # Prefill/Decode optimization
     prefill_group = parser.add_argument_group("Prefill/Decode Optimization")
     prefill_group.add_argument(
-        "--batched-prefill",
-        dest="batched_prefill",
+        "--with-prefill-decode",
+        dest="with_prefill_decode",
         action="store_true",
-        help="Enable batched prefill/decode separation (llama.batchedPrefill=true)",
+        help=(
+            "Enable prefill/decode separation. "
+            "Alone: sequential prefill (skip logits) + standard decode. "
+            "With --batch-prefill-size N (N>1): batched GPU prefill via TornadoVMMasterPlanWithBatchPrefillDecode."
+        ),
     )
     prefill_group.add_argument(
-        "--prefill-batch-size",
-        dest="prefill_batch_size",
+        "--batch-prefill-size",
+        dest="batch_prefill_size",
         type=int,
         default=None,
-        help="Prefill chunk/batch size (llama.prefillBatchSize=N, default: 32)",
+        metavar="N",
+        help=(
+            "Prefill chunk size (requires --with-prefill-decode). "
+            "N=1: sequential prefill (same as --with-prefill-decode alone). "
+            "N>1: batched prefill processing N tokens per chunk (llama.prefillBatchSize=N)."
+        ),
     )
     prefill_group.add_argument(
         "--no-cuda-graphs",

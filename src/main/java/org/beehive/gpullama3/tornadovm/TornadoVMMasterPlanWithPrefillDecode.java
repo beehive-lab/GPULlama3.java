@@ -25,8 +25,12 @@ import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
  * <p>For decode, {@link #tornadoVMForwardDecode} delegates to the wrapped
  * plan's {@code tornadoVMForwardExecuteLayered}, preserving identical behaviour
  * to the baseline GPU path.</p>
+ *
+ * <p>Implements {@link TornadoVMMasterPlan} so it can be returned by the factory
+ * and stored in the model; {@link #tornadoVMForwardExecuteLayered} delegates to
+ * {@link #tornadoVMForwardDecode}.</p>
  */
-public class TornadoVMMasterPlanWithPrefillDecode {
+public class TornadoVMMasterPlanWithPrefillDecode implements TornadoVMMasterPlan {
 
     private final TornadoVMMasterPlanStandard plan;
     private final State state;
@@ -36,6 +40,12 @@ public class TornadoVMMasterPlanWithPrefillDecode {
         this.plan = plan;
         this.state = state;
         this.config = model.configuration();
+    }
+
+    /** Factory: initializes the inner standard plan then wraps it. */
+    public static TornadoVMMasterPlanWithPrefillDecode initialize(State state, Model model) {
+        TornadoVMMasterPlanStandard inner = TornadoVMMasterPlanStandard.initialize(state, model);
+        return new TornadoVMMasterPlanWithPrefillDecode(inner, state, model);
     }
 
     /**
@@ -75,5 +85,16 @@ public class TornadoVMMasterPlanWithPrefillDecode {
      */
     public FloatArray tornadoVMForwardDecode(int position) {
         return plan.tornadoVMForwardExecuteLayered(position);
+    }
+
+    /** Delegates to the wrapped plan's full forward pass (used by the standard decode path). */
+    @Override
+    public FloatArray tornadoVMForwardExecuteLayered(int position) {
+        return tornadoVMForwardDecode(position);
+    }
+
+    @Override
+    public void freeTornadoExecutionPlan() {
+        plan.freeTornadoExecutionPlan();
     }
 }

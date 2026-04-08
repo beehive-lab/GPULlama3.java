@@ -20,7 +20,7 @@ import java.util.function.IntConsumer;
 
 public class Llama extends AbstractModel {
 
-    static final boolean BATCHED_PREFILL = Boolean.getBoolean("llama.batchedPrefill");
+    static final boolean WITH_PREFILL_DECODE = Boolean.getBoolean("llama.withPrefillDecode");
 
     LlamaConfiguration configuration;
 
@@ -66,7 +66,7 @@ public class Llama extends AbstractModel {
     @Override
     public List<Integer> generateTokens(State state, int startPosition, List<Integer> promptTokens, Set<Integer> stopTokens, int maxTokens, Sampler sampler, boolean echo,
             IntConsumer onTokenGenerated) {
-        if (BATCHED_PREFILL) {
+        if (WITH_PREFILL_DECODE) {
             return InferenceEngineWithPrefillDecode.generateTokensLlama(this, state, startPosition, promptTokens, stopTokens, maxTokens, sampler, echo, onTokenGenerated);
         }
         return InferenceEngine.generateTokensLlama(this, state, startPosition, promptTokens, stopTokens, maxTokens, sampler, echo, onTokenGenerated);
@@ -75,7 +75,7 @@ public class Llama extends AbstractModel {
     @Override
     public List<Integer> generateTokensGPU(State state, int startPosition, List<Integer> promptTokens, Set<Integer> stopTokens, int maxTokens, Sampler sampler, boolean echo,
             IntConsumer onTokenGenerated, TornadoVMMasterPlan tornadoVMPlan) {
-        if (BATCHED_PREFILL) {
+        if (WITH_PREFILL_DECODE) {
             return InferenceEngineWithPrefillDecode.generateTokensGPULlama(this, state, startPosition, promptTokens, stopTokens, maxTokens, sampler, echo, onTokenGenerated, tornadoVMPlan);
         }
         return InferenceEngine.generateTokensGPULlama(this, state, startPosition, promptTokens, stopTokens, maxTokens, sampler, echo, onTokenGenerated, tornadoVMPlan);

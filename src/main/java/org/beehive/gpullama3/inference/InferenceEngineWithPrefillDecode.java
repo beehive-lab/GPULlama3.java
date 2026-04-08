@@ -11,7 +11,6 @@ import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.tokenizer.Tokenizer;
 import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlan;
 import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanWithBatchPrefillDecode;
-import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanStandard;
 import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanWithPrefillDecode;
 
 import java.util.ArrayList;
@@ -36,8 +35,8 @@ import java.util.function.IntConsumer;
  *       Behaviour is identical to the baseline decode path.</li>
  * </ol>
  *
- * <p>Activated by {@code -Dllama.batchedPrefill=true} (set via
- * {@code --batched-prefill} in the Python launcher).</p>
+ * <p>Activated by {@code -Dllama.withPrefillDecode=true} (set via
+ * {@code --with-prefill-decode} in the Python launcher).</p>
  */
 public final class InferenceEngineWithPrefillDecode {
 
@@ -269,11 +268,10 @@ public final class InferenceEngineWithPrefillDecode {
         } else {
         // ── Phase 2: Sequential GPU Prefill + Decode ─────────────────────────
 
-        // Thin wrapper: no new TornadoVM plan created, just holds the reference
-        // Plan is a TornadoVMMasterPlanStandard when PREFILL_BATCH_SIZE == 1.
+        // Plan was initialized by TornadoVMMasterPlan.initializeTornadoVMPlan as
+        // TornadoVMMasterPlanWithPrefillDecode when WITH_PREFILL_DECODE && PREFILL_BATCH_SIZE == 1.
         TornadoVMMasterPlanWithPrefillDecode prefillPlan =
-                new TornadoVMMasterPlanWithPrefillDecode(
-                        (TornadoVMMasterPlanStandard) tornadoVMPlan, state, model);
+                (TornadoVMMasterPlanWithPrefillDecode) tornadoVMPlan;
 
         // ── Phase 1: Prefill (GPU, no logits) ────────────────────────────────
         for (int promptIndex = 0; promptIndex < promptTokens.size() && pos < actualMaxTokens; promptIndex++) {
