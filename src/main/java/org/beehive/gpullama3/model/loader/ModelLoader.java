@@ -85,6 +85,9 @@ public abstract class ModelLoader {
      * @throws IllegalStateException if AOT loading is enabled but the preloaded model is unavailable
      */
     public static Model loadModel(Options options) throws IOException {
+        //Keep track of load time for performance metrics
+        long startLoadNanos = System.nanoTime();
+
         Path ggufPath = options.modelPath();
         int contextLength = options.maxTokens();
         boolean useTornadovm = options.useTornadovm();
@@ -94,19 +97,36 @@ public abstract class ModelLoader {
         // detect model type
         ModelType modelType = detectModelType(gguf.getMetadata());
         // model type-specific load
-        return modelType.loadModel(gguf.getFileChannel(), gguf, contextLength, useTornadovm);
+        Model loadedModel = modelType.loadModel(gguf.getFileChannel(), gguf, contextLength, useTornadovm);
+
+        //Calculate load time and send to LastRunMetrics
+        long endLoadNanos = System.nanoTime();
+        long loadNanos = (endLoadNanos - startLoadNanos);
+        LastRunMetrics.setModelLoadDuration(loadNanos);
+
+        return loadedModel;
     }
 
     /**
      * For compatibility with langchain4j and quarkus.
      */
     public static Model loadModel(Path ggufPath, int contextLength, boolean loadWeights, boolean useTornadovm) throws IOException {
+        //Keep track of load time for performance metrics
+        long startLoadNanos = System.nanoTime();
+        
         // initial load of metadata from gguf file
         GGUF gguf = GGUF.loadGGUFMetadata(ggufPath);
         // detect model type
         ModelType modelType = detectModelType(gguf.getMetadata());
         // model type-specific load
-        return modelType.loadModel(gguf.getFileChannel(), gguf, contextLength, useTornadovm);
+        Model loadedModel = modelType.loadModel(gguf.getFileChannel(), gguf, contextLength, useTornadovm);
+
+        //Calculate load time and send to LastRunMetrics
+        long endLoadNanos = System.nanoTime();
+        long loadNanos = (endLoadNanos - startLoadNanos);
+        LastRunMetrics.setModelLoadDuration(loadNanos);
+
+        return loadedModel;
     }
 
     /**
