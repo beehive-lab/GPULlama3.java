@@ -658,10 +658,16 @@ public final class InferenceEngine {
         }
 
         long endNanos = System.nanoTime();
-        double totalTimeSeconds = (endNanos - startNanos) / 1_000_000_000.0;
+        if (inferenceStartNanos == 0) {
+            inferenceStartNanos = endNanos; // Prevents negative time if no tokens were generated
+        }
         int totalTokens = promptIndex + generatedTokens.size();
-
-        LastRunMetrics.setMetrics(totalTokens, totalTimeSeconds);
+        long totalNanos = (endNanos - startNanos);
+        int promptEvalCount = promptIndex;
+        long promptNanos = inferenceStartNanos - startNanos;
+        int inferenceEvalCount = generatedTokens.size();
+        long inferenceNanos = endNanos - inferenceStartNanos;
+        LastRunMetrics.setMetrics(totalTokens, totalNanos, promptEvalCount, promptNanos, inferenceEvalCount, inferenceNanos);
 
         return generatedTokens;
     }
