@@ -54,7 +54,7 @@ public class TornadoVMMasterPlan {
      * @return The initialized TornadoVMMasterPlan ready for inference
      */
     public static TornadoVMMasterPlan initializeTornadoVMPlan(State state, Model model) {
-        // Record Start Time for Performance stats
+        // Record Start Time for Performance metrics
         long startTime = System.nanoTime();
 
         // Start a timing message if enabled

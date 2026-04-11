@@ -16,8 +16,8 @@ public record LastRunMetrics(int totalTokens, long totalNanos, int promptEvalCou
      * Singleton instance to store the latest metrics
      */
     private static LastRunMetrics latestMetrics;
+    // Load duration is static because it only occurs once
     private static long loadDurationNanos = 0;
-    private static boolean displayLoadDuration = true;
 
     /**
      * Sets the metrics for the latest run
@@ -46,11 +46,10 @@ public record LastRunMetrics(int totalTokens, long totalNanos, int promptEvalCou
     public static void printMetrics() {
         if (latestMetrics != null) {
             
-            // If statement to only print metrics when they change, because they won't always change after every prompt, and it should keep things more organized.
-            if (displayLoadDuration) {
+            // If statements to only print model load once, and only print TornadoVM metrics if using GPU
+            if (loadDurationNanos > 0) {
                 double loadSeconds = loadDurationNanos / 1_000_000_000.0;
                 System.err.printf("Model load time: %d ns (%.2f s)\n", loadDurationNanos, loadSeconds);
-                displayLoadDuration = false;
             }
             if (latestMetrics.compileNanos() > 0) {
                 double compileSeconds = latestMetrics.compileNanos() / 1_000_000_000.0;
@@ -61,9 +60,8 @@ public record LastRunMetrics(int totalTokens, long totalNanos, int promptEvalCou
                 System.err.printf("TornadoVM Warmup Time: %d ns (%.2f s)\n", latestMetrics.warmupNanos(), warmupSeconds);
             }
             
-            // Print metrics which WILL change for every prompt
             double totalSeconds = latestMetrics.totalNanos() / 1_000_000_000.0;
-            // Time to First Token = Load Time + Promt Eval time (which includes first decode step)
+            // Time to First Token = Load Time + Prompt Eval time (which includes first decode step)
             long ttftNanos = loadDurationNanos + latestMetrics.promptNanos();
             double ttftSeconds = ttftNanos / 1_000_000_000.0;
             double promptSeconds = latestMetrics.promptNanos() / 1_000_000_000.0;
@@ -73,6 +71,7 @@ public record LastRunMetrics(int totalTokens, long totalNanos, int promptEvalCou
             double tokensPerSecond = latestMetrics.totalTokens() / totalSeconds;
             System.err.printf("\n\nAchieved tok/s: %.2f. Total tokens: %d, Total time: %d ns (%.2f s), Time to first Token: %d ns (%.2f s)\nPrefill throughput: %.2f tok/s, Prompt tokens: %d, Prompt time: %d ns (%.2f s)\nDecode throughput: %.2f tok/s, Inference tokens: %d, Inference time: %d ns (%.2f s)\n", tokensPerSecond, latestMetrics.totalTokens(), latestMetrics.totalNanos(), totalSeconds, ttftNanos, ttftSeconds, prefillThroughput, latestMetrics.promptEvalCount(), latestMetrics.promptNanos(), promptSeconds, decodeThroughput, latestMetrics.inferenceEvalCount(), latestMetrics.inferenceNanos(), inferenceSeconds);
             
+            loadDurationNanos = 0;
         }
     }
 }
