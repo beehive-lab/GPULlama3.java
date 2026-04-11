@@ -1,0 +1,364 @@
+#!/usr/bin/env -S java --source 25
+
+import module java.logging;
+
+String name = MethodHandles.lookup().lookupClass().getName();
+String version = "2026-04-11.1";
+
+enum Backend { OPENCL, PTX, METAL }
+
+record Config(
+    String modelPath, String prompt, String systemPrompt,
+    double temperature, double topP, long seed, int maxTokens,
+    boolean stream, boolean echo, boolean interactive, boolean instruct,
+    boolean useGpu, Backend backend, String gpuMemory,
+    String heapMin, String heapMax,
+    boolean debug, boolean profiler, String profilerDumpDir,
+    boolean printBytecodes, boolean threads, boolean printKernel,
+    boolean fullDump, boolean verboseInit,
+    boolean showCommand, boolean executeAfterShow,
+    String openclFlags, int maxWaitEvents, boolean verbose
+) {}
+
+Config parseArgs(String[] args) {
+    String modelPath = null;
+    String prompt = null;
+    String systemPrompt = null;
+    double temperature = 0.1;
+    double topP = 0.95;
+    long seed = System.currentTimeMillis() / 1000;
+    int maxTokens = 512;
+    boolean stream = true;
+    boolean echo = false;
+    boolean interactive = false;
+    boolean instruct = true;
+    boolean useGpu = false;
+    Backend backend = Backend.OPENCL;
+    String gpuMemory = "14GB";
+    String heapMin = "20g";
+    String heapMax = "20g";
+    boolean debug = false;
+    boolean profiler = false;
+    String profilerDumpDir = null;
+    boolean printBytecodes = false;
+    boolean threads = false;
+    boolean printKernel = false;
+    boolean fullDump = false;
+    boolean verboseInit = false;
+    boolean showCommand = false;
+    boolean executeAfterShow = false;
+    String openclFlags = "-cl-denorms-are-zero -cl-no-signed-zeros -cl-finite-math-only";
+    int maxWaitEvents = 32000;
+    boolean verbose = false;
+
+    for (int i = 0; i < args.length; i++) {
+        switch (args[i]) {
+            case "--model", "-m" -> modelPath = args[++i];
+            case "--prompt", "-p" -> prompt = args[++i];
+            case "--system-prompt", "-sp" -> systemPrompt = args[++i];
+            case "--temperature" -> temperature = Double.parseDouble(args[++i]);
+            case "--top-p" -> topP = Double.parseDouble(args[++i]);
+            case "--seed" -> seed = Long.parseLong(args[++i]);
+            case "--max-tokens", "-n" -> maxTokens = Integer.parseInt(args[++i]);
+            case "--stream" -> stream = Boolean.parseBoolean(args[++i]);
+            case "--echo" -> echo = Boolean.parseBoolean(args[++i]);
+            case "-i", "--interactive" -> { interactive = true; instruct = false; }
+            case "--instruct" -> instruct = true;
+            case "--gpu" -> useGpu = true;
+            case "--opencl" -> backend = Backend.OPENCL;
+            case "--ptx" -> backend = Backend.PTX;
+            case "--metal" -> backend = Backend.METAL;
+            case "--gpu-memory" -> gpuMemory = args[++i];
+            case "--heap-min" -> heapMin = args[++i];
+            case "--heap-max" -> heapMax = args[++i];
+            case "--debug" -> debug = true;
+            case "--profiler" -> profiler = true;
+            case "--profiler-dump-dir" -> profilerDumpDir = args[++i];
+            case "--print-bytecodes" -> printBytecodes = true;
+            case "--print-threads" -> threads = true;
+            case "--print-kernel" -> printKernel = true;
+            case "--full-dump" -> fullDump = true;
+            case "--verbose-init" -> verboseInit = true;
+            case "--show-command" -> showCommand = true;
+            case "--execute-after-show" -> executeAfterShow = true;
+            case "--opencl-flags" -> openclFlags = args[++i];
+            case "--max-wait-events" -> maxWaitEvents = Integer.parseInt(args[++i]);
+            case "--verbose", "-v" -> verbose = true;
+            default -> {
+                System.err.println("Unknown option: " + args[i]);
+                System.exit(1);
+            }
+        }
+    }
+
+    if (modelPath == null) {
+        System.err.println("Error: --model is required");
+        printUsage();
+        System.exit(1);
+    }
+
+    if (profilerDumpDir == null) {
+        profilerDumpDir = System.getenv("LLAMA_ROOT") + "/profiler-log.json";
+    }
+
+    return new Config(modelPath, prompt, systemPrompt, temperature, topP, seed, maxTokens,
+            stream, echo, interactive, instruct, useGpu, backend, gpuMemory, heapMin, heapMax,
+            debug, profiler, profilerDumpDir, printBytecodes, threads, printKernel, fullDump,
+            verboseInit, showCommand, executeAfterShow, openclFlags, maxWaitEvents, verbose);
+}
+
+void printUsage() {
+    IO.println("""
+            Usage: %s --model <path> [options]
+
+            GPU-accelerated LLM runner using TornadoVM
+
+            Required:
+              --model, -m <path>      Path to the LLM gguf file
+
+            LLaMA Configuration:
+              --prompt, -p <text>     Input prompt
+              --system-prompt, -sp    System prompt
+              --temperature <val>     Sampling temperature (default: 0.1)
+              --top-p <val>           Top-p sampling (default: 0.95)
+              --seed <val>            Random seed (default: current timestamp)
+              --max-tokens, -n <val>  Max tokens to generate (default: 512)
+              --stream <bool>         Enable streaming (default: true)
+              --echo <bool>           Echo input prompt (default: false)
+
+            Mode:
+              -i, --interactive       Interactive/chat mode
+              --instruct              Instruction mode (default)
+
+            Hardware:
+              --gpu                   Enable GPU acceleration
+              --opencl                Use OpenCL backend (default)
+              --ptx                   Use PTX/CUDA backend
+              --metal                 Use Metal backend (macOS)
+              --gpu-memory <val>      GPU memory allocation (default: 14GB)
+              --heap-min <val>        Min JVM heap (default: 20g)
+              --heap-max <val>        Max JVM heap (default: 20g)
+
+            Debug:
+              --debug                 Enable debug output
+              --profiler              Enable TornadoVM profiler
+              --profiler-dump-dir     Profiler output directory
+              --print-bytecodes       Print bytecodes
+              --print-threads         Print thread info
+              --print-kernel          Print kernel info
+              --full-dump             Full debug dump
+              --verbose-init          TornadoVM init timing
+              --show-command          Display the full Java command
+              --execute-after-show    Execute after showing command
+              --verbose, -v           Verbose output
+
+              -help                   Show this help
+              -version                Show version
+            """.formatted(name));
+}
+
+String findLlamaJar(String llamaRoot) {
+    var targetDir = Path.of(llamaRoot, "target");
+    try (var stream = Files.newDirectoryStream(targetDir, "gpu-llama3-*-SNAPSHOT.jar")) {
+        var jars = new ArrayList<Path>();
+        stream.forEach(jars::add);
+        if (jars.isEmpty()) {
+            try (var fallback = Files.newDirectoryStream(targetDir, "gpu-llama3-*.jar")) {
+                fallback.forEach(jars::add);
+            }
+        }
+        if (jars.isEmpty()) {
+            System.err.println("Error: No gpu-llama3 JAR found in " + targetDir);
+            System.exit(1);
+        }
+        jars.sort(Comparator.reverseOrder());
+        return jars.getFirst().toString();
+    } catch (IOException e) {
+        System.err.println("Error searching for JAR: " + e.getMessage());
+        System.exit(1);
+        return null;
+    }
+}
+
+String modulePath(String tornadoSdk) {
+    var sep = System.getProperty("os.name").toLowerCase().contains("win") ? ";" : ":";
+    return "." + sep + tornadoSdk + "/share/java/tornado";
+}
+
+List<String> buildCommand(Config cfg, String javaHome, String tornadoSdk, String llamaRoot) {
+    var cmd = new ArrayList<String>();
+
+    cmd.addAll(List.of(
+        javaHome + "/bin/java",
+        "-server",
+        "-XX:+UnlockExperimentalVMOptions",
+        "-XX:+EnableJVMCI",
+        "-Xms" + cfg.heapMin(),
+        "-Xmx" + cfg.heapMax(),
+        "--enable-preview",
+        "-Djava.library.path=" + tornadoSdk + "/lib",
+        "-Djdk.module.showModuleResolution=false",
+        "--module-path", modulePath(tornadoSdk)
+    ));
+
+    // TornadoVM configuration
+    cmd.addAll(List.of(
+        "-Dtornado.load.api.implementation=uk.ac.manchester.tornado.runtime.tasks.TornadoTaskGraph",
+        "-Dtornado.load.runtime.implementation=uk.ac.manchester.tornado.runtime.TornadoCoreRuntime",
+        "-Dtornado.load.tornado.implementation=uk.ac.manchester.tornado.runtime.common.Tornado",
+        "-Dtornado.load.annotation.implementation=uk.ac.manchester.tornado.annotation.ASMClassVisitor",
+        "-Dtornado.load.annotation.parallel=uk.ac.manchester.tornado.api.annotations.Parallel",
+        "-Dtornado.tvm.maxbytecodesize=65536"
+    ));
+
+    if (cfg.useGpu()) cmd.add("-Duse.tornadovm=true");
+    if (cfg.verboseInit()) cmd.add("-Dllama.EnableTimingForTornadoVMInit=true");
+
+    // Debug flags
+    cmd.add("-Dtornado.debug=" + cfg.debug());
+    cmd.add("-Dtornado.threadInfo=" + cfg.threads());
+    cmd.add("-Dtornado.fullDebug=" + cfg.fullDump());
+    cmd.add("-Dtornado.printKernel=" + cfg.printKernel());
+    cmd.add("-Dtornado.print.bytecodes=" + cfg.printBytecodes());
+
+    // Runtime configuration
+    cmd.addAll(List.of(
+        "-Dtornado.device.memory=" + cfg.gpuMemory(),
+        "-Dtornado.profiler=" + cfg.profiler(),
+        "-Dtornado.log.profiler=false",
+        "-Dtornado.profiler.dump.dir=" + cfg.profilerDumpDir(),
+        "-Dtornado.enable.fastMathOptimizations=true",
+        "-Dtornado.enable.mathOptimizations=false",
+        "-Dtornado.enable.nativeFunctions=true",
+        "-Dtornado.loop.interchange=true",
+        "-Dtornado.eventpool.maxwaitevents=" + cfg.maxWaitEvents()
+    ));
+
+    if (cfg.backend() == Backend.OPENCL) {
+        cmd.add("-Dtornado.opencl.compiler.flags=" + cfg.openclFlags());
+    }
+
+    // Module configuration
+    cmd.addAll(List.of(
+        "--upgrade-module-path", tornadoSdk + "/share/java/graalJars",
+        "@" + tornadoSdk + "/etc/exportLists/common-exports"
+    ));
+
+    switch (cfg.backend()) {
+        case OPENCL -> {
+            cmd.add("@" + tornadoSdk + "/etc/exportLists/opencl-exports");
+            cmd.addAll(List.of("--add-modules",
+                "ALL-SYSTEM,jdk.incubator.vector,tornado.runtime,tornado.annotation,tornado.drivers.common,tornado.drivers.opencl"));
+        }
+        case PTX -> {
+            cmd.add("@" + tornadoSdk + "/etc/exportLists/ptx-exports");
+            cmd.addAll(List.of("--add-modules",
+                "ALL-SYSTEM,jdk.incubator.vector,tornado.runtime,tornado.annotation,tornado.drivers.common,tornado.drivers.ptx"));
+        }
+        case METAL -> {
+            cmd.add("@" + tornadoSdk + "/etc/exportLists/metal-exports");
+            cmd.addAll(List.of("--add-modules",
+                "ALL-SYSTEM,jdk.incubator.vector,tornado.runtime,tornado.annotation,tornado.drivers.common,tornado.drivers.metal"));
+        }
+    }
+
+    cmd.addAll(List.of("-cp", findLlamaJar(llamaRoot), "org.beehive.gpullama3.LlamaApp"));
+
+    // LLaMA arguments
+    cmd.addAll(List.of(
+        "-m", cfg.modelPath(),
+        "--temperature", String.valueOf(cfg.temperature()),
+        "--top-p", String.valueOf(cfg.topP()),
+        "--seed", String.valueOf(cfg.seed()),
+        "--max-tokens", String.valueOf(cfg.maxTokens()),
+        "--stream", String.valueOf(cfg.stream()),
+        "--echo", String.valueOf(cfg.echo())
+    ));
+
+    if (cfg.prompt() != null) cmd.addAll(List.of("-p", cfg.prompt()));
+    if (cfg.systemPrompt() != null) cmd.addAll(List.of("-sp", cfg.systemPrompt()));
+    if (cfg.interactive()) cmd.add("--interactive");
+    else if (cfg.instruct()) cmd.add("--instruct");
+
+    return cmd;
+}
+
+String resolveLlamaRoot() {
+    var envRoot = System.getenv("LLAMA_ROOT");
+    if (envRoot != null && !envRoot.isBlank()) return envRoot;
+
+    // Derive from the script's own location, same as set_paths does
+    try {
+        var scriptPath = Path.of(MethodHandles.lookup().lookupClass()
+                .getProtectionDomain().getCodeSource().getLocation().toURI());
+        return scriptPath.getParent().toString();
+    } catch (Exception e) {
+        System.err.println("Error: LLAMA_ROOT not set and could not determine script location");
+        System.err.println("Note: check set_path in root dir -> source set_path");
+        System.exit(1);
+        return null;
+    }
+}
+
+String requireEnv(String key) {
+    var value = System.getenv(key);
+    if (value == null || value.isBlank()) {
+        System.err.println("Error: " + key + " is not set");
+        System.err.println("Please ensure JAVA_HOME and TORNADOVM_HOME are defined");
+        System.exit(1);
+    }
+    if (!Files.exists(Path.of(value))) {
+        System.err.println("Error: " + key + " path does not exist: " + value);
+        System.exit(1);
+    }
+    return value;
+}
+
+void main(String... args) {
+    if (args.length == 0 || args[0].equals("-help")) {
+        printUsage();
+        return;
+    }
+    if (args[0].equals("-version")) {
+        IO.println(name + " " + version);
+        return;
+    }
+
+    var javaHome = requireEnv("JAVA_HOME");
+    var tornadoSdk = requireEnv("TORNADOVM_HOME");
+    var llamaRoot = resolveLlamaRoot();
+
+    var cfg = parseArgs(args);
+    var cmd = buildCommand(cfg, javaHome, tornadoSdk, llamaRoot);
+
+    if (cfg.showCommand()) {
+        IO.println("Full Java command:");
+        IO.println("-".repeat(80));
+        IO.println(String.join(" ", cmd));
+        IO.println("-".repeat(80));
+        IO.println();
+        if (!cfg.executeAfterShow()) {
+            IO.println("Command built successfully. Use --execute-after-show to run after displaying.");
+            return;
+        }
+    }
+
+    if (cfg.verbose()) {
+        IO.println("Executing command:");
+        cmd.forEach(arg -> IO.println("  " + arg));
+        IO.println();
+    }
+
+    try {
+        var process = new ProcessBuilder(cmd)
+                .inheritIO()
+                .start();
+        System.exit(process.waitFor());
+    } catch (InterruptedException e) {
+        System.err.println("\nOperation cancelled");
+        System.exit(130);
+    } catch (IOException e) {
+        System.err.println("Error: " + e.getMessage());
+        System.exit(1);
+    }
+}
