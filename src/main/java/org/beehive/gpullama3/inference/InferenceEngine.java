@@ -667,7 +667,19 @@ public final class InferenceEngine {
         long promptNanos = inferenceStartNanos - startNanos;
         int inferenceEvalCount = generatedTokens.size();
         long inferenceNanos = endNanos - inferenceStartNanos;
-        LastRunMetrics.setMetrics(totalTokens, totalNanos, promptEvalCount, promptNanos, inferenceEvalCount, inferenceNanos);
+        long tornadoCompileNanos = 0;
+        long tornadoWarmupNanos = 0;
+        // If statement to prevent inadvertent crashes from future features
+        if (tornadoVMMasterPlan != null) {
+            tornadoCompileNanos = tornadoVMMasterPlan.getCompileDurationNanos();
+            tornadoWarmupNanos = tornadoVMMasterPlan.getWarmupDurationNanos();
+            // Reset values so they are only output if they are changed in tornadoVMMasterPlan.java
+            tornadoVMMasterPlan.setCompileDurationNanos(0);
+            tornadoVMMasterPlan.setWarmupDurationNanos(0
+                
+            );
+        }
+        LastRunMetrics.setMetrics(totalTokens, totalNanos, promptEvalCount, promptNanos, inferenceEvalCount, inferenceNanos, tornadoCompileNanos, tornadoWarmupNanos);
 
         return generatedTokens;
     }

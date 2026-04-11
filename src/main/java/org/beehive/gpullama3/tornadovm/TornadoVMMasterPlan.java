@@ -17,6 +17,24 @@ public class TornadoVMMasterPlan {
     private final Configuration config;
     public TornadoExecutionPlan executionPlan;
     GenericLayerPlanner tornadoVMLayerPlanner;
+    
+    // Performance variables and their corresponding methods to be accessed from LastRunMetrics
+    private long compileDurationNanos = 0;
+    private long warmupDurationNanos = 0;
+
+    public long getCompileDurationNanos() {
+        return compileDurationNanos;
+    }
+    public void setCompileDurationNanos(long nanos) {
+        this.compileDurationNanos = nanos;
+    }
+
+    public long getWarmupDurationNanos() {
+        return warmupDurationNanos;
+    }
+    public void setWarmupDurationNanos(long nanos) {
+        this.warmupDurationNanos = nanos;
+    }
 
     public TornadoVMMasterPlan(State state, Model model) {
         this.tornadoVMLayerPlanner = createPlanner(state, model);
@@ -36,10 +54,8 @@ public class TornadoVMMasterPlan {
      * @return The initialized TornadoVMMasterPlan ready for inference
      */
     public static TornadoVMMasterPlan initializeTornadoVMPlan(State state, Model model) {
-        // Initialize timing variables outside conditional blocks to avoid scope issues
+        // Record Start Time for Performance stats
         long startTime = System.nanoTime();
-        long planCreationTime = 0;
-        long warmupTime = 0;
 
         // Start a timing message if enabled
         if (ENABLE_TORNADOVM_INIT_TIME) {
@@ -49,27 +65,34 @@ public class TornadoVMMasterPlan {
         // 1. Pre-allocate the TornadoVM plan
         TornadoVMMasterPlan tornadoVMPlan = new TornadoVMMasterPlan(state, model);
 
+        // Calculate and Set Compile Time
+        long planCreationTime = System.nanoTime();
+        tornadoVMPlan.setCompileDurationNanos(planCreationTime - startTime);
+
         // Record time after plan creation
         if (ENABLE_TORNADOVM_INIT_TIME) {
-            planCreationTime = System.nanoTime();
             System.err.printf("TornadoVM GPU execution plan creation: %.2f ms\n", (planCreationTime - startTime) / 1_000_000.0);
         }
 
         // 2. Perform warmup with extra iterations to ensure JIT compilation is complete
         tornadoVMPlan.executionPlan.withPreCompilation(); // Force JIT compilation from Java to GPU code
 
+        long warmupTime = System.nanoTime();
+
         // Record time after warmup
         if (ENABLE_TORNADOVM_INIT_TIME) {
-            warmupTime = System.nanoTime();
             System.err.printf("Java to GPU JIT compiler warmup: %.2f ms\n", (warmupTime - planCreationTime) / 1_000_000.0);
         }
 
         // 3. Perform copy-in of read-only weights and objects
         tornadoVMPlan.forceCopyInReadOnlyDataLayered(); // Force copy-in read-only weights
+        
+        // Calculate and Set Total Warmup Time
+        long copyTime = System.nanoTime();
+        tornadoVMPlan.setWarmupDurationNanos(copyTime - planCreationTime);
 
         // Record final timing information
         if (ENABLE_TORNADOVM_INIT_TIME) {
-            long copyTime = System.nanoTime();
             System.err.printf("Transfer read-only weights to GPU: %.2f ms\n", (copyTime - warmupTime) / 1_000_000.0);
             System.err.printf("Finished TornadoVM initialization...\n \n");
         }
