@@ -396,12 +396,12 @@ public final class InferenceEngine {
         long tornadoCompileNanos = 0;
         long tornadoWarmupNanos = 0;
         // If statement to prevent inadvertent crashes from future features
-        if (tornadoVMMasterPlan != null) {
-            tornadoCompileNanos = tornadoVMMasterPlan.getCompileDurationNanos();
-            tornadoWarmupNanos = tornadoVMMasterPlan.getWarmupDurationNanos();
+        if (tornadoVMPlan != null) {
+            tornadoCompileNanos = tornadoVMPlan.getCompileDurationNanos();
+            tornadoWarmupNanos = tornadoVMPlan.getWarmupDurationNanos();
             // Reset values so they are only output if they are changed in tornadoVMMasterPlan.java
-            tornadoVMMasterPlan.setCompileDurationNanos(0);
-            tornadoVMMasterPlan.setWarmupDurationNanos(0);
+            tornadoVMPlan.setCompileDurationNanos(0);
+            tornadoVMPlan.setWarmupDurationNanos(0);
         }
         LastRunMetrics.setMetrics(totalTokens, totalNanos, promptEvalCount, promptNanos, inferenceEvalCount, inferenceNanos, tornadoCompileNanos, tornadoWarmupNanos);
 
@@ -490,7 +490,7 @@ public final class InferenceEngine {
             state.latestToken = currentToken = nextToken;
         }
 
-        // Calculate and print performance metrics
+        // Calculate and Print Performance Metrics
         long endNanos = System.nanoTime();
         if (inferenceStartNanos == 0) {
             inferenceStartNanos = endNanos; // Prevents negative time if no tokens were generated
@@ -504,12 +504,12 @@ public final class InferenceEngine {
         long tornadoCompileNanos = 0;
         long tornadoWarmupNanos = 0;
         // If statement to prevent inadvertent crashes from future features
-        if (tornadoVMMasterPlan != null) {
-            tornadoCompileNanos = tornadoVMMasterPlan.getCompileDurationNanos();
-            tornadoWarmupNanos = tornadoVMMasterPlan.getWarmupDurationNanos();
+        if (tornadoVMPlan != null) {
+            tornadoCompileNanos = tornadoVMPlan.getCompileDurationNanos();
+            tornadoWarmupNanos = tornadoVMPlan.getWarmupDurationNanos();
             // Reset values so they are only output if they are changed in tornadoVMMasterPlan.java
-            tornadoVMMasterPlan.setCompileDurationNanos(0);
-            tornadoVMMasterPlan.setWarmupDurationNanos(0);
+            tornadoVMPlan.setCompileDurationNanos(0);
+            tornadoVMPlan.setWarmupDurationNanos(0);
         }
         LastRunMetrics.setMetrics(totalTokens, totalNanos, promptEvalCount, promptNanos, inferenceEvalCount, inferenceNanos, tornadoCompileNanos, tornadoWarmupNanos);
 
@@ -581,7 +581,7 @@ public final class InferenceEngine {
             pos++;
         }
 
-        // Calculate and print performance metrics
+        // Calculate and Print Performance Metrics
         long endNanos = System.nanoTime();
         if (inferenceStartNanos == 0) {
             inferenceStartNanos = endNanos; // Prevents negative time if no tokens were generated
@@ -595,12 +595,12 @@ public final class InferenceEngine {
         long tornadoCompileNanos = 0;
         long tornadoWarmupNanos = 0;
         // If statement to prevent inadvertent crashes from future features
-        if (tornadoVMMasterPlan != null) {
-            tornadoCompileNanos = tornadoVMMasterPlan.getCompileDurationNanos();
-            tornadoWarmupNanos = tornadoVMMasterPlan.getWarmupDurationNanos();
+        if (tornadoVMPlan != null) {
+            tornadoCompileNanos = tornadoVMPlan.getCompileDurationNanos();
+            tornadoWarmupNanos = tornadoVMPlan.getWarmupDurationNanos();
             // Reset values so they are only output if they are changed in tornadoVMMasterPlan.java
-            tornadoVMMasterPlan.setCompileDurationNanos(0);
-            tornadoVMMasterPlan.setWarmupDurationNanos(0);
+            tornadoVMPlan.setCompileDurationNanos(0);
+            tornadoVMPlan.setWarmupDurationNanos(0);
         }
         LastRunMetrics.setMetrics(totalTokens, totalNanos, promptEvalCount, promptNanos, inferenceEvalCount, inferenceNanos, tornadoCompileNanos, tornadoWarmupNanos);
 
@@ -689,7 +689,7 @@ public final class InferenceEngine {
      */
     public static List<Integer> generateTokensGPUGranite(Model model, State state, int startPosition,
             List<Integer> promptTokens, Set<Integer> stopTokens, int maxTokens, Sampler sampler, boolean echo,
-            IntConsumer onTokenGenerated, TornadoVMMasterPlan tornadoVMMasterPlan) {
+            IntConsumer onTokenGenerated, TornadoVMMasterPlan tornadoVMPlan) {
         long startNanos = System.nanoTime();
         long inferenceStartNanos = 0;
 
@@ -707,7 +707,7 @@ public final class InferenceEngine {
 
         while (pos < maxTokens) {
             // Call TornadoVM forward pass (same as Llama for now)
-            logits = InferenceCore.forwardTornadoVM(model, state, currentToken, pos, tornadoVMMasterPlan);
+            logits = InferenceCore.forwardTornadoVM(model, state, currentToken, pos, tornadoVMPlan);
 
             if (promptIndex < promptTokens.size()) {
                 nextToken = promptTokens.get(promptIndex++);
@@ -755,12 +755,12 @@ public final class InferenceEngine {
         long tornadoCompileNanos = 0;
         long tornadoWarmupNanos = 0;
         // If statement to prevent inadvertent crashes from future features
-        if (tornadoVMMasterPlan != null) {
-            tornadoCompileNanos = tornadoVMMasterPlan.getCompileDurationNanos();
-            tornadoWarmupNanos = tornadoVMMasterPlan.getWarmupDurationNanos();
+        if (tornadoVMPlan != null) {
+            tornadoCompileNanos = tornadoVMPlan.getCompileDurationNanos();
+            tornadoWarmupNanos = tornadoVMPlan.getWarmupDurationNanos();
             // Reset values so they are only output if they are changed in tornadoVMMasterPlan.java
-            tornadoVMMasterPlan.setCompileDurationNanos(0);
-            tornadoVMMasterPlan.setWarmupDurationNanos(0);
+            tornadoVMPlan.setCompileDurationNanos(0);
+            tornadoVMPlan.setWarmupDurationNanos(0);
         }
         LastRunMetrics.setMetrics(totalTokens, totalNanos, promptEvalCount, promptNanos, inferenceEvalCount, inferenceNanos, tornadoCompileNanos, tornadoWarmupNanos);
 
