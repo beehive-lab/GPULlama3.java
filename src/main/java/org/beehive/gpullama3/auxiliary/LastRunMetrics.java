@@ -51,13 +51,13 @@ public record LastRunMetrics(int totalTokens, long totalNanos, int promptEvalCou
                 double loadSeconds = loadDurationNanos / 1_000_000_000.0;
                 System.err.printf("Model load time: %d ns (%.2f s)\n", loadDurationNanos, loadSeconds);
             }
-            if (latestMetrics.compileNanos() > 0) {
-                double compileSeconds = latestMetrics.compileNanos() / 1_000_000_000.0;
-                System.err.printf("TornadoVM Compile Time: %d ns (%.2f s)\n", latestMetrics.compileNanos(), compileSeconds);
+            if (latestMetrics.tornadoCompileNanos() > 0) {
+                double compileSeconds = latestMetrics.tornadoCompileNanos() / 1_000_000_000.0;
+                System.err.printf("TornadoVM Compile Time: %d ns (%.2f s)\n", latestMetrics.tornadoCompileNanos(), compileSeconds);
             }
-            if (latestMetrics.warmupNanos() > 0) {
-                double warmupSeconds = latestMetrics.warmupNanos() / 1_000_000_000.0;
-                System.err.printf("TornadoVM Warmup Time: %d ns (%.2f s)\n", latestMetrics.warmupNanos(), warmupSeconds);
+            if (latestMetrics.tornadoWarmupNanos() > 0) {
+                double warmupSeconds = latestMetrics.tornadoWarmupNanos() / 1_000_000_000.0;
+                System.err.printf("TornadoVM Warmup Time: %d ns (%.2f s)\n", latestMetrics.tornadoWarmupNanos(), warmupSeconds);
             }
             
             double totalSeconds = latestMetrics.totalNanos() / 1_000_000_000.0;

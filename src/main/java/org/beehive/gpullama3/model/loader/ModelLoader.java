@@ -11,6 +11,7 @@ import org.beehive.gpullama3.tensor.tornado.FP16TornadoTensor;
 import org.beehive.gpullama3.tensor.tornado.FP32TornadoTensor;
 import org.beehive.gpullama3.tensor.tornado.Q8_0TornadoTensor;
 import org.beehive.gpullama3.tensor.tornado.TornadoTensor;
+import org.beehive.gpullama3.auxiliary.LastRunMetrics;
 import uk.ac.manchester.tornado.api.types.HalfFloat;
 import uk.ac.manchester.tornado.api.types.arrays.*;
 
