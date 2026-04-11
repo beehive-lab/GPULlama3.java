@@ -119,11 +119,9 @@ We are at the early stages of Java entering the AI world with features added to 
 |                              | M4 Pro       |    16.77 tokens/s     |     8.56 tokens/s     |      (WIP)    |
 | **AMD / OpenCL**             | Radeon RX    |         (WIP)         |         (WIP)         |      (WIP)    |
 
-##### ⚠️ Note on Apple Silicon Performance
+##### Apple Silicon Support
 
-TornadoVM currently runs on Apple Silicon via [OpenCL](https://developer.apple.com/opencl/), which has been officially deprecated since macOS 10.14.
-
-Despite being deprecated, OpenCL can still run on Apple Silicon; albeit, with older drivers which do not support all optimizations of TornadoVM. Therefore, the performance is not optimal since TornadoVM does not have a Metal backend yet (it currently has OpenCL, PTX, and SPIR-V backends). We recommend using Apple silicon for development and for performance testing to use OpenCL/PTX compatible Nvidia GPUs for the time being (until we add a Metal backend to TornadoVM and start optimizing it).
+TornadoVM 4.0 includes a native [Metal](https://developer.apple.com/metal/) backend, enabling GPU-accelerated inference on Apple Silicon.
 
 -----------
 ## 📦 Maven Dependency
@@ -311,6 +309,14 @@ Run a model with a text prompt:
 Enable GPU acceleration with Q8_0 quantization:
 ```bash
 ./llama-tornado --gpu  --verbose-init --model beehive-llama-3.2-1b-instruct-fp16.gguf --prompt "tell me a joke"
+```
+
+#### Running with `llamaTornado` (Java 25 single-file script)
+
+`llamaTornado` is a zero-dependency Java 25 single-file script that replaces the Python launcher. It requires `java 25+` on your PATH:
+
+```bash
+./llamaTornado --gpu --verbose-init --metal --model /Users/abien/work/workspaces/llms/Mistral-7B-Instruct-v0.3.Q8_0.gguf --prompt "what is java"
 ```
 
 -----------
