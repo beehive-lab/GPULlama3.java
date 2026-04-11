@@ -39,12 +39,12 @@
         <properties>
             <!-- CI-friendly version: resolved by flatten-maven-plugin at build time -->
             <revision>0.4.0</revision>
-            <tornadovm.base.version>3.0.0</tornadovm.base.version>              <!-- TornadoVM base version (without jdk suffix) -->
+            <tornadovm.base.version>4.0.0</tornadovm.base.version>              <!-- TornadoVM base version (without jdk suffix) -->
             <jdk.version.suffix></jdk.version.suffix>                           <!-- JDK Suffix: empty=JDK21, -jdk25=JDK25 -->
             <tornadovm.version>${tornadovm.base.version}</tornadovm.version>    <!-- Default: JDK21 (no suffix) -->
             <!-- Compiler defaults (overridden by JDK profiles below) -->
-            <maven.compiler.source>21</maven.compiler.source>
-            <maven.compiler.target>21</maven.compiler.target>
+            <maven.compiler.source>25</maven.compiler.source>
+            <maven.compiler.target>25</maven.compiler.target>
             <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
             <maven.javadoc.skip>true</maven.javadoc.skip>
             <gpg.skip>true</gpg.skip>
