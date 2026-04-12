@@ -1,5 +1,6 @@
 package org.beehive.gpullama3.model;
 
+import org.beehive.gpullama3.model.loader.DevstralModelLoader;
 import org.beehive.gpullama3.model.loader.GraniteLoader;
 import org.beehive.gpullama3.tensor.GGUF;
 import org.beehive.gpullama3.model.loader.LlamaModelLoader;
@@ -34,6 +35,13 @@ public enum ModelType {
         @Override
         public Model loadModel(FileChannel fileChannel, GGUF gguf, int contextLength, boolean useTornadovm) {
             return new MistralModelLoader(fileChannel, gguf, contextLength, useTornadovm).loadModel();
+        }
+    },
+
+    DEVSTRAL_2 {
+        @Override
+        public Model loadModel(FileChannel fileChannel, GGUF gguf, int contextLength, boolean useTornadovm) {
+            return new DevstralModelLoader(fileChannel, gguf, contextLength, useTornadovm).loadModel();
         }
     },
 

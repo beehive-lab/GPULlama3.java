@@ -1,5 +1,6 @@
 package org.beehive.gpullama3.tornadovm.layerplanner;
 
+import org.beehive.gpullama3.inference.state.DevstralState;
 import org.beehive.gpullama3.inference.state.GraniteState;
 import org.beehive.gpullama3.tensor.GGMLType;
 import org.beehive.gpullama3.inference.state.LlamaState;
@@ -8,12 +9,14 @@ import org.beehive.gpullama3.inference.state.Qwen2State;
 import org.beehive.gpullama3.inference.state.Qwen3State;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.model.Model;
+import org.beehive.gpullama3.tornadovm.layerplanner.model.fp16.DevstralFP16LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.fp16.GraniteFP16LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.fp16.LlamaFP16LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.fp16.MistralFP16LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.fp16.Phi3FP16LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.fp16.Qwen2FP16LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.fp16.Qwen3FP16LayerPlanner;
+import org.beehive.gpullama3.tornadovm.layerplanner.model.q8_0.DevstralQ8_0LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.q8_0.GraniteQ8_0LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.q8_0.LlamaQ8_0LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.q8_0.MistralQ8_0LayerPlanner;
@@ -57,6 +60,7 @@ public class QuantizationPlannerFactory {
         return switch (model.getModelType()) {
             case LLAMA_3 -> new LlamaFP16LayerPlanner((LlamaState) state, model);
             case MISTRAL -> new MistralFP16LayerPlanner((LlamaState) state, model);
+            case DEVSTRAL_2 -> new DevstralFP16LayerPlanner((DevstralState) state, model);
             case QWEN_2 -> new Qwen2FP16LayerPlanner((Qwen2State) state, model);
             case QWEN_3 -> new Qwen3FP16LayerPlanner((Qwen3State) state, model);
             case PHI_3 -> new Phi3FP16LayerPlanner((Phi3State) state, model);
@@ -71,6 +75,7 @@ public class QuantizationPlannerFactory {
         return switch (model.getModelType()) {
             case LLAMA_3 -> new LlamaQ8_0LayerPlanner((LlamaState) state, model);
             case MISTRAL -> new MistralQ8_0LayerPlanner((LlamaState) state, model);
+            case DEVSTRAL_2 -> new DevstralQ8_0LayerPlanner((DevstralState) state, model);
             case QWEN_2 -> new Qwen2Q8_0LayerPlanner((Qwen2State) state, model);
             case QWEN_3 -> new Qwen3Q8_0LayerPlanner((Qwen3State) state, model);
             case PHI_3 -> new Phi3Q8_0LayerPlanner((Phi3State) state, model);

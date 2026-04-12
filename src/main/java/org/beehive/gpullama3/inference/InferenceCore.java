@@ -12,6 +12,7 @@ import org.beehive.gpullama3.inference.weights.tornado.TornadoWeights;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.model.granite.GraniteConfiguration;
+import org.beehive.gpullama3.model.devstral.DevstralConfiguration;
 import org.beehive.gpullama3.model.phi3.Phi3Configuration;
 import org.beehive.gpullama3.model.qwen2.Qwen2Configuration;
 import org.beehive.gpullama3.model.qwen3.Qwen3Configuration;
@@ -174,6 +175,95 @@ public final class InferenceCore {
 
         rmsnorm(state.x, state.x, weights.rms_final_weight, 0, dim, config.rmsNormEps());
 
+        weights.wcls.matmul(state.x, state.logits, config.vocabularySize(), dim);
+
+        return state.logits;
+    }
+
+    /**
+     * Forward pass for Devstral 2 models where head_dim != dim/num_heads.
+     * Q projection outputs qDim (num_heads * head_dim) instead of dim.
+     */
+    public static FloatTensor forwardJavaDevstral(Model model, State state, int token, int position) {
+        final DevstralConfiguration config = (DevstralConfiguration) model.configuration();
+        final StandardWeights weights = (StandardWeights) model.weights();
+        int dim = config.dim();
+        int headSize = config.headSize();       // 128 (independent head_dim)
+        int qDim = config.qDim();               // 4096 = 32 * 128
+        int kvDim = config.kvDim();              // 1024 = 8 * 128
+        int kvMul = config.kvMul();
+        float sqrtHeadSize = (float) Math.sqrt(headSize);
+
+        weights.token_embedding_table.copyTo(token * dim, state.x, 0, dim);
+
+        for (int l = 0; l < config.numberOfLayers(); l++) {
+            rmsnorm(state.xb, state.x, weights.rms_att_weight[l], 0, dim, config.rmsNormEps());
+
+            weights.wq[l].matmul(state.xb, state.q, qDim, dim);
+            weights.wk[l].matmul(state.xb, state.k, kvDim, dim);
+            weights.wv[l].matmul(state.xb, state.v, kvDim, dim);
+
+            // RoPE over qDim (not dim)
+            for (int i = 0; i < qDim; i += 2) {
+                int head_dim = i % headSize;
+                float fcr = weights.freq_cis_real.getFloat(position * (headSize / 2) + (head_dim / 2));
+                float fci = weights.freq_cis_imag.getFloat(position * (headSize / 2) + (head_dim / 2));
+                int rotn = i < kvDim ? 2 : 1;
+                for (int v = 0; v < rotn; v++) {
+                    FloatTensor vec = v == 0 ? state.q : state.k;
+                    float v0 = vec.getFloat(i);
+                    float v1 = vec.getFloat(i + 1);
+                    vec.setFloat(i, v0 * fcr - v1 * fci);
+                    vec.setFloat(i + 1, v0 * fci + v1 * fcr);
+                }
+            }
+
+            state.k.copyTo(0, state.keyCache[l], position * kvDim, kvDim);
+            state.v.copyTo(0, state.valueCache[l], position * kvDim, kvDim);
+
+            int curLayer = l;
+
+            Parallel.parallelFor(0, config.numberOfHeads(), h -> {
+                int qOffset = h * headSize;
+                int attOffset = h * config.contextLength();
+
+                for (int t = 0; t <= position; t++) {
+                    int keyCacheOffset = t * kvDim + (h / kvMul) * headSize;
+                    float score = state.q.dot(qOffset, state.keyCache[curLayer], keyCacheOffset, headSize);
+                    score /= sqrtHeadSize;
+                    state.att.setFloat(attOffset + t, score);
+                }
+
+                state.att.softmaxInPlace(attOffset, position + 1);
+
+                int xbOffset = h * headSize;
+                state.xb.fillInPlace(xbOffset, headSize, 0f);
+
+                for (int t = 0; t <= position; t++) {
+                    int vOffset = t * kvDim + (h / kvMul) * headSize;
+                    float a = state.att.getFloat(attOffset + t);
+                    state.xb.saxpyInPlace(xbOffset, state.valueCache[curLayer], vOffset, headSize, a);
+                }
+            });
+
+            // O projection: input qDim, output dim
+            weights.wo[l].matmul(state.xb, state.xb2, dim, qDim);
+
+            state.x.addInPlace(state.xb2);
+
+            rmsnorm(state.xb, state.x, weights.rms_ffn_weight[l], 0, dim, config.rmsNormEps());
+
+            weights.w1[l].matmul(state.xb, state.hb, config.hiddenDim(), dim);
+            weights.w3[l].matmul(state.xb, state.hb2, config.hiddenDim(), dim);
+
+            state.hb.mapInPlace(value -> value / (float) (1.0 + Math.exp(-value)));
+            state.hb.multiplyInPlace(state.hb2);
+
+            weights.w2[l].matmul(state.hb, state.xb, dim, config.hiddenDim());
+            state.x.addInPlace(state.xb);
+        }
+
+        rmsnorm(state.x, state.x, weights.rms_final_weight, 0, dim, config.rmsNormEps());
         weights.wcls.matmul(state.x, state.logits, config.vocabularySize(), dim);
 
         return state.logits;
