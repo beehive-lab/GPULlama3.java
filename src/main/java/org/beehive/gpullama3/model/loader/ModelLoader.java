@@ -50,6 +50,8 @@ public abstract class ModelLoader {
             String lowerName = name.toLowerCase();
             if (lowerName.contains("granite")) {
                 return ModelType.GRANITE;
+            } else if (lowerName.contains("devstral")) {
+                return ModelType.DEVSTRAL_2;
             } else if (lowerName.contains("mistral")) {
                 return ModelType.MISTRAL;
             } else if (lowerName.contains("llama")) {
