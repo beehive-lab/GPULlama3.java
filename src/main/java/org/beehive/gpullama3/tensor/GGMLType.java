@@ -67,10 +67,10 @@ public enum GGMLType {
         this(typeSize, 1);
     }
 
-    public long byteSizeFor(int numberOfElements) {
+    public long byteSizeFor(long numberOfElements) {
         long t = numberOfElements * (long) getTypeSize();
         assert t % getBlockSize() == 0;
-        return Math.toIntExact(t / getBlockSize());
+        return t / getBlockSize();
     }
 
     public static final int QK_K = 256; // or 64?

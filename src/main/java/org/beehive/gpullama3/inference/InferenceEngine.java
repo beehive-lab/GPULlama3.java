@@ -599,6 +599,69 @@ public final class InferenceEngine {
         return generatedTokens;
     }
 
+    public static List<Integer> generateTokensGemma4(Model model, State state, int startPosition,
+            List<Integer> promptTokens, Set<Integer> stopTokens, int maxTokens, Sampler sampler, boolean echo,
+            IntConsumer onTokenGenerated) {
+        long startNanos = System.nanoTime();
+        long inferenceStartNanos = 0;
+
+        if (maxTokens < 0 || model.configuration().contextLength() < maxTokens) {
+            maxTokens = model.configuration().contextLength();
+        }
+
+        List<Integer> generatedTokens = new ArrayList<>();
+        int currentToken = state.latestToken;
+        int nextToken = 0;
+        int promptIndex = 0;
+
+        for (int position = startPosition; position < maxTokens; ++position) {
+
+            if (promptIndex < promptTokens.size()) {
+                final int token = promptTokens.get(promptIndex);
+                model.forward(state, token, position);
+                promptIndex++;
+                if (promptIndex < promptTokens.size()) {
+                    continue;
+                }
+                if (echo) {
+                    System.err.print(Tokenizer.replaceControlCharacters(model.tokenizer().decode(List.of(nextToken))));
+                }
+                position++;
+            } else {
+                if (inferenceStartNanos == 0) {
+                    inferenceStartNanos = System.nanoTime();
+                }
+                model.forward(state, currentToken, position);
+            }
+
+            nextToken = sampler.sampleToken(state.logits);
+
+            if (echo) {
+                System.err.print(Tokenizer.replaceControlCharacters(model.tokenizer().decode(List.of(nextToken))));
+            }
+
+            generatedTokens.add(nextToken);
+
+            if (onTokenGenerated != null) {
+                onTokenGenerated.accept(nextToken);
+            }
+
+            if (stopTokens.contains(nextToken)) {
+                break;
+            }
+
+            state.latestToken = currentToken = nextToken;
+        }
+
+        long endNanos = System.nanoTime();
+        double totalTimeSeconds = (endNanos - startNanos) / 1_000_000_000.0;
+        int totalTokens = promptIndex + generatedTokens.size();
+
+        LastRunMetrics.setMetrics(totalTokens, totalTimeSeconds);
+
+        return generatedTokens;
+    }
+
     /**
      * Generates tokens using the Granite model with GPU (TornadoVM) inference.
      * Identical pattern to generateTokensGPULlama.
@@ -655,6 +718,71 @@ public final class InferenceEngine {
             currentToken = nextToken;
             state.latestToken = currentToken;
             pos++;
+        }
+
+        long endNanos = System.nanoTime();
+        double totalTimeSeconds = (endNanos - startNanos) / 1_000_000_000.0;
+        int totalTokens = promptIndex + generatedTokens.size();
+
+        LastRunMetrics.setMetrics(totalTokens, totalTimeSeconds);
+
+        return generatedTokens;
+    }
+
+    /**
+     * Generates tokens using the Gemma4 model with GPU (TornadoVM) inference.
+     * Uses CPU forward for prompt prefill, then GPU via TornadoVM for generation.
+     * Same pattern as generateTokensGPUQwen3.
+     */
+    public static List<Integer> generateTokensGPUGemma4(Model model, State state, int startPosition,
+            List<Integer> promptTokens, Set<Integer> stopTokens, int maxTokens, Sampler sampler, boolean echo,
+            IntConsumer onTokenGenerated, TornadoVMMasterPlan tornadoVMPlan) {
+        long startNanos = System.nanoTime();
+        long inferenceStartNanos = 0;
+
+        int actualMaxTokens = Math.min(maxTokens > 0 ? maxTokens : model.configuration().contextLength(),
+                model.configuration().contextLength());
+
+        List<Integer> generatedTokens = new ArrayList<>(Math.min(256, actualMaxTokens - promptTokens.size()));
+
+        int currentToken = state.latestToken;
+        int nextToken = 0;
+        int promptIndex = 0;
+
+        for (int position = startPosition; position < actualMaxTokens; ++position) {
+
+            // All tokens (prompt + generation) go through TornadoVM GPU path
+            FloatArray logits = InferenceCore.forwardTornadoVM(model, state, currentToken, position, tornadoVMPlan);
+
+            if (promptIndex < promptTokens.size()) {
+                nextToken = promptTokens.get(promptIndex++);
+                if (echo) {
+                    System.err.print(Tokenizer.replaceControlCharacters(model.tokenizer().decode(List.of(nextToken))));
+                }
+            } else {
+                if (inferenceStartNanos == 0) {
+                    inferenceStartNanos = System.nanoTime();
+                }
+
+                nextToken = sampler.sampleToken(logits);
+
+                if (echo) {
+                    System.err.print(Tokenizer.replaceControlCharacters(model.tokenizer().decode(List.of(nextToken))));
+                }
+
+                generatedTokens.add(nextToken);
+
+                if (onTokenGenerated != null) {
+                    onTokenGenerated.accept(nextToken);
+                }
+
+                if (stopTokens.contains(nextToken)) {
+                    break;
+                }
+            }
+
+            currentToken = nextToken;
+            state.latestToken = currentToken;
         }
 
         long endNanos = System.nanoTime();

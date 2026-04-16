@@ -73,6 +73,31 @@ public final class RoPE {
         return new Pair<>(cr, ci);
     }
 
+    /**
+     * Precompute RoPE frequencies using model-provided frequency factors.
+     * Used by Gemma 4 for full attention layers where rope_freqs.weight
+     * provides per-dimension frequency divisors.
+     */
+    public static Pair<float[], float[]> precomputeFreqsCisFromFreqs(
+            int contextLength, int headSize, double ropeTheta, float[] ropeFreqFactors) {
+        int halfHead = ropeFreqFactors.length;
+        assert halfHead == headSize / 2;
+        float[] cr = new float[contextLength * halfHead];
+        float[] ci = new float[contextLength * halfHead];
+        int n = 0;
+        for (int pos = 0; pos < contextLength; ++pos) {
+            for (int i = 0; i < halfHead; i++) {
+                float baseFreq = (float) (1.0 / Math.pow(ropeTheta, (2.0 * i) / headSize));
+                float val = pos * baseFreq / ropeFreqFactors[i];
+                cr[n] = (float) Math.cos(val);
+                ci[n] = (float) Math.sin(val);
+                n++;
+            }
+        }
+        assert contextLength * halfHead == n;
+        return new Pair<>(cr, ci);
+    }
+
     private static float yarnCorrDim(int nDims, int nCtxOrig, float nRot, float base) {
         return nDims * (float) Math.log(nCtxOrig / (nRot * 2.0f * (float) Math.PI)) / (2.0f * (float) Math.log(base));
     }

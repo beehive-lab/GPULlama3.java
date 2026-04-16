@@ -1,6 +1,7 @@
 package org.beehive.gpullama3.model.format;
 
 import org.beehive.gpullama3.tokenizer.DevstralTokenizer;
+import org.beehive.gpullama3.tokenizer.Gemma4Tokenizer;
 import org.beehive.gpullama3.tokenizer.GraniteTokenizer;
 import org.beehive.gpullama3.tokenizer.LlamaTokenizer;
 import org.beehive.gpullama3.tokenizer.MistralTokenizer;
@@ -20,6 +21,7 @@ public interface ChatFormat {
             case MistralTokenizer mistralTokenizer -> new MistralChatFormat(mistralTokenizer);
             case Qwen3Tokenizer qwen3Tokenizer -> new Qwen3ChatFormat(qwen3Tokenizer, chatTokens);
             case Phi3Tokenizer phi3Tokenizer -> new Phi3ChatFormat(phi3Tokenizer, chatTokens);
+            case Gemma4Tokenizer gemma4Tokenizer -> new Gemma4ChatFormat(gemma4Tokenizer);
             default -> throw new IllegalArgumentException("Unsupported tokenizer type: " + tokenizer.getClass().getName());
         };
     }

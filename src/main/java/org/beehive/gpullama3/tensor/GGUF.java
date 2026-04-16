@@ -117,13 +117,12 @@ public final class GGUF {
         for (Map.Entry<String, GGUFTensorInfo> entry : tensorInfos.entrySet()) {
             GGUFTensorInfo ti = entry.getValue();
 
-            // skip rope_freqs.weight (not needed for inference)
-            if (ti.name().equals("rope_freqs.weight")) {
-                continue;
+            // use long arithmetic to avoid overflow on large tensors (e.g. per_layer_token_embd)
+            long numberOfElements = 1;
+            for (int d : ti.dimensions()) {
+                numberOfElements *= d;
             }
-
-            int numberOfElements = FloatTensor.numberOfElements(ti.dimensions());
-            int sizeInBytes = Math.toIntExact(ti.ggmlType().byteSizeFor(numberOfElements));
+            long sizeInBytes = ti.ggmlType().byteSizeFor(numberOfElements);
 
             // per-tensor slice offset; ti.offset() is relative to tensor-data start
             long offset = ti.offset();
@@ -164,6 +163,21 @@ public final class GGUF {
 
             // skip rope_freqs.weight (not required for inference)
             if (ti.name().equals("rope_freqs.weight")) {
+                continue;
+            }
+
+            // skip tensors whose element count overflows int (e.g. per_layer_token_embd)
+            // these are handled on CPU, not needed for TornadoVM GPU inference
+            long numElements = 1;
+            boolean overflow = false;
+            for (int d : ti.dimensions()) {
+                numElements *= d;
+                if (numElements > Integer.MAX_VALUE) {
+                    overflow = true;
+                    break;
+                }
+            }
+            if (overflow) {
                 continue;
             }
 

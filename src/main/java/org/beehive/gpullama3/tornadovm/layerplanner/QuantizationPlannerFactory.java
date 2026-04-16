@@ -1,6 +1,7 @@
 package org.beehive.gpullama3.tornadovm.layerplanner;
 
 import org.beehive.gpullama3.inference.state.DevstralState;
+import org.beehive.gpullama3.inference.state.Gemma4State;
 import org.beehive.gpullama3.inference.state.GraniteState;
 import org.beehive.gpullama3.tensor.GGMLType;
 import org.beehive.gpullama3.inference.state.LlamaState;
@@ -22,6 +23,7 @@ import org.beehive.gpullama3.tornadovm.layerplanner.model.q8_0.LlamaQ8_0LayerPla
 import org.beehive.gpullama3.tornadovm.layerplanner.model.q8_0.MistralQ8_0LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.q8_0.Phi3Q8_0LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.q8_0.Qwen2Q8_0LayerPlanner;
+import org.beehive.gpullama3.tornadovm.layerplanner.model.q8_0.Gemma4Q8_0LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.q8_0.Qwen3Q8_0LayerPlanner;
 
 /**
@@ -80,6 +82,7 @@ public class QuantizationPlannerFactory {
             case QWEN_3 -> new Qwen3Q8_0LayerPlanner((Qwen3State) state, model);
             case PHI_3 -> new Phi3Q8_0LayerPlanner((Phi3State) state, model);
             case GRANITE -> new GraniteQ8_0LayerPlanner((GraniteState) state, model);
+            case GEMMA_4 -> new Gemma4Q8_0LayerPlanner((Gemma4State) state, model);
             case DEEPSEEK_R1_DISTILL_QWEN -> new Qwen2Q8_0LayerPlanner((Qwen2State) state, model);
             default -> throw new UnsupportedOperationException("Q8_0 not supported for model: " + model.getModelType());
         };

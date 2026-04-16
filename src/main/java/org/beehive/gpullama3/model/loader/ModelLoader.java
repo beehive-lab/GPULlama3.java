@@ -64,12 +64,17 @@ public abstract class ModelLoader {
                 return ModelType.DEEPSEEK_R1_DISTILL_QWEN;
             } else if (lowerName.contains("phi3") || lowerName.contains("phi-3")) {
                 return ModelType.PHI_3;
+            } else if (lowerName.contains("gemma")) {
+                return ModelType.GEMMA_4;
             }
         }
 
         // Alternative: check by metadata keys if name-based detection fails
         if (metadata.containsKey("granite.block_count")) {
             return ModelType.GRANITE;
+        }
+        if (metadata.containsKey("gemma4.block_count")) {
+            return ModelType.GEMMA_4;
         }
 
         return ModelType.UNKNOWN;
@@ -122,6 +127,17 @@ public abstract class ModelLoader {
             case Q8_0 -> new Q8_0FloatTensor(FloatTensor.numberOfElements(entry.shape()), entry.memorySegment());
             case Q4_0 -> new Q4_0FloatTensor(FloatTensor.numberOfElements(entry.shape()), entry.memorySegment());
             case F16 -> new FP16FloatTensor(FloatTensor.numberOfElements(entry.shape()), entry.memorySegment());
+            case BF16 -> {
+                // Dequantize BF16 to F32 on load
+                int numElements = FloatTensor.numberOfElements(entry.shape());
+                float[] data = new float[numElements];
+                MemorySegment seg = entry.memorySegment();
+                for (int i = 0; i < numElements; i++) {
+                    short bits = FloatTensor.readShort(seg, (long) i * 2);
+                    data[i] = Float.intBitsToFloat(bits << 16);
+                }
+                yield new ArrayFloatTensor(data);
+            }
             default -> throw new UnsupportedOperationException("Quantization format " + ggmlType);
         };
     }

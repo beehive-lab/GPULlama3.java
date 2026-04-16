@@ -1,9 +1,12 @@
 package org.beehive.gpullama3.inference;
 
 import org.beehive.gpullama3.auxiliary.Parallel;
+import org.beehive.gpullama3.tensor.GGMLType;
 import org.beehive.gpullama3.tensor.standard.FloatTensor;
+import org.beehive.gpullama3.inference.state.Gemma4State;
 import org.beehive.gpullama3.inference.state.Phi3State;
 import org.beehive.gpullama3.inference.state.State;
+import org.beehive.gpullama3.inference.weights.standard.Gemma4StandardWeights;
 import org.beehive.gpullama3.inference.weights.standard.Phi3StandardWeights;
 import org.beehive.gpullama3.inference.weights.standard.Qwen2StandardWeights;
 import org.beehive.gpullama3.inference.weights.standard.Qwen3StandardWeights;
@@ -11,6 +14,7 @@ import org.beehive.gpullama3.inference.weights.standard.StandardWeights;
 import org.beehive.gpullama3.inference.weights.tornado.TornadoWeights;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.Model;
+import org.beehive.gpullama3.model.gemma4.Gemma4Configuration;
 import org.beehive.gpullama3.model.granite.GraniteConfiguration;
 import org.beehive.gpullama3.model.devstral.DevstralConfiguration;
 import org.beehive.gpullama3.model.phi3.Phi3Configuration;
@@ -20,6 +24,7 @@ import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlan;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
 import java.lang.foreign.MemorySegment;
+import java.nio.FloatBuffer;
 
 /**
  * Low-level operations for model inference.
@@ -764,6 +769,371 @@ public final class InferenceCore {
         Parallel.parallelFor(0, dim1Out, i -> {
             out.setFloat(i, in.getFloat(startOffsetInDim1 + i));
         });
+    }
+
+    // === Gemma 4 helper methods ===
+
+    static float gelu(float x) {
+        return (float) (0.5 * x * (1 + Math.tanh(Math.sqrt(2 / Math.PI) * (x + 0.044715 * Math.pow(x, 3)))));
+    }
+
+    /** Read a float from a quantized MemorySegment at a long element index. Supports Q8_0, F32, F16. */
+    static float getQuantizedFloat(MemorySegment segment, GGMLType type, long index) {
+        return switch (type) {
+            case Q8_0 -> {
+                long blockIndex = index / GGMLType.Q8_0.getBlockSize();
+                long withinBlock = index % GGMLType.Q8_0.getBlockSize();
+                long blockOffset = blockIndex * GGMLType.Q8_0.getTypeSize();
+                // Q8_0 layout: 2 bytes fp16 scale + 32 bytes int8 quants
+                float scale = Float.float16ToFloat(FloatTensor.readShort(segment, blockOffset));
+                byte quant = FloatTensor.readByte(segment, blockOffset + 2 + withinBlock);
+                yield quant * scale;
+            }
+            case F32 -> {
+                // F32: 4 bytes per element, read as int bits then convert
+                long byteOffset = index * Float.BYTES;
+                int bits = (FloatTensor.readByte(segment, byteOffset) & 0xFF)
+                        | ((FloatTensor.readByte(segment, byteOffset + 1) & 0xFF) << 8)
+                        | ((FloatTensor.readByte(segment, byteOffset + 2) & 0xFF) << 16)
+                        | ((FloatTensor.readByte(segment, byteOffset + 3) & 0xFF) << 24);
+                yield Float.intBitsToFloat(bits);
+            }
+            case F16 -> Float.float16ToFloat(FloatTensor.readShort(segment, index * 2));
+            default -> throw new UnsupportedOperationException("Unsupported type for long-indexed access: " + type);
+        };
+    }
+
+    /** RMS norm using FloatBuffer weights (for Gemma 4 norm tensors stored as F32 buffers). */
+    static void rmsnormBuf(FloatTensor out, FloatTensor x, FloatBuffer weight, int size, float rmsNormEps) {
+        float ss = x.reduce(0, size, 0f, (acc, xi) -> acc + xi * xi);
+        ss /= size;
+        ss += rmsNormEps;
+        ss = (float) (1.0 / Math.sqrt(ss));
+        final float finalss = ss;
+        out.mapWithIndexInPlace(0, size, (value, index) -> weight.get(index) * (finalss * x.getFloat(index)));
+    }
+
+    /** RMS norm with offset, using FloatBuffer weights. */
+    static void rmsnormBuf(FloatTensor out, int outOffset, FloatTensor x, int xOffset,
+                           FloatBuffer weight, int size, float rmsNormEps) {
+        float ss = 0f;
+        for (int i = 0; i < size; i++) {
+            float xi = x.getFloat(xOffset + i);
+            ss += xi * xi;
+        }
+        ss /= size;
+        ss += rmsNormEps;
+        ss = (float) (1.0 / Math.sqrt(ss));
+        for (int i = 0; i < size; i++) {
+            out.setFloat(outOffset + i, weight.get(i) * ss * x.getFloat(xOffset + i));
+        }
+    }
+
+    /** Bare RMS norm without learned weights (just normalize to unit RMS). */
+    static void rmsnormNoWeight(FloatTensor out, int outOffset, FloatTensor x, int xOffset,
+                                int size, float rmsNormEps) {
+        float ss = 0f;
+        for (int i = 0; i < size; i++) {
+            float xi = x.getFloat(xOffset + i);
+            ss += xi * xi;
+        }
+        ss /= size;
+        ss += rmsNormEps;
+        ss = (float) (1.0 / Math.sqrt(ss));
+        for (int i = 0; i < size; i++) {
+            out.setFloat(outOffset + i, ss * x.getFloat(xOffset + i));
+        }
+    }
+
+    /**
+     * Forward pass for Gemma 4 models.
+     * Key differences: dual head sizes (SWA vs full), per-head Q/K norm, GELU activation,
+     * post-attention/FFN norms, no attention scaling, embedding scaling, per-layer output scaling,
+     * sliding window attention, shared KV cache, optional per-layer embeddings, optional MoE.
+     */
+    public static FloatTensor forwardJavaGemma4(Model model, Gemma4State state, int token, int position) {
+        final Gemma4Configuration config = (Gemma4Configuration) model.configuration();
+        final Gemma4StandardWeights weights = (Gemma4StandardWeights) model.weights();
+        int dim = config.dim();
+        float sqrtDim = (float) Math.sqrt(dim);
+
+        // Embedding: x = embeddings[token] * sqrt(dim)
+        weights.token_embedding_table.copyTo(token * dim, state.x, 0, dim);
+        state.x.mapInPlace(v -> v * sqrtDim);
+
+        // Compute per-layer inputs (if model has per-layer embeddings)
+        int plDim = config.embeddingLengthPerLayer();
+        int plTotal = plDim * config.numberOfLayers();
+        if (plDim > 0 && weights.perLayerTokenEmbdSegment != null && state.perLayerInputs != null) {
+            float sqrtPlDim = (float) Math.sqrt(plDim);
+            float projScale = (float) (1.0 / Math.sqrt(dim));
+            float inputScale = (float) (1.0 / Math.sqrt(2.0));
+
+            weights.perLayerModelProj.matmul(state.x, state.perLayerInputs, plTotal, dim);
+            state.perLayerInputs.mapWithIndexInPlace(0, plTotal, (v, i) -> v * projScale);
+            for (int l = 0; l < config.numberOfLayers(); l++) {
+                rmsnormBuf(state.perLayerInputs, l * plDim, state.perLayerInputs, l * plDim,
+                        weights.perLayerProjNorm, plDim, config.rmsNormEps());
+            }
+
+            long tokEmbOffset = (long) token * plTotal;
+            for (int i = 0; i < plTotal; i++) {
+                float tokEmb = getQuantizedFloat(weights.perLayerTokenEmbdSegment,
+                        weights.perLayerTokenEmbdType, tokEmbOffset + i) * sqrtPlDim;
+                state.perLayerInputs.setFloat(i, state.perLayerInputs.getFloat(i) + tokEmb);
+            }
+
+            state.perLayerInputs.mapWithIndexInPlace(0, plTotal, (v, i) -> v * inputScale);
+        }
+
+        // Forward all layers
+        for (int l = 0; l < config.numberOfLayers(); l++) {
+            boolean layerIsSWA = config.isSWA()[l];
+            int headSize = config.headSize(l);
+            int halfHead = headSize / 2;
+            int queryDim = config.queryDim(l);
+            int kvDim = config.kvDim(l);
+            int hiddenDim = config.feedForwardLength()[l];
+
+            // Attention RMSNorm (parent's FloatTensor field)
+            rmsnorm(state.xb, state.x, weights.rms_att_weight[l], 0, dim, config.rmsNormEps());
+
+            // Q projection + per-head RMS norm
+            weights.wq[l].matmul(state.xb, state.q, queryDim, dim);
+            for (int h = 0; h < config.numberOfHeads(); h++) {
+                rmsnormBuf(state.q, h * headSize, state.q, h * headSize,
+                        weights.attnQNorm[l], headSize, config.rmsNormEps());
+            }
+
+            // RoPE for Q (NeoX style)
+            FloatTensor freqsReal = layerIsSWA ? weights.freq_cis_real_swa : weights.freq_cis_real_full;
+            FloatTensor freqsImag = layerIsSWA ? weights.freq_cis_imag_swa : weights.freq_cis_imag_full;
+            for (int h = 0; h < config.numberOfHeads(); ++h) {
+                int poffset = h * headSize;
+                for (int i0 = 0; i0 < headSize; i0 += 2) {
+                    int ic = i0 / 2;
+                    float fcr = freqsReal.getFloat(position * halfHead + ic);
+                    float fci = freqsImag.getFloat(position * halfHead + ic);
+                    float v0 = state.q.getFloat(poffset + ic);
+                    float v1 = state.q.getFloat(poffset + ic + halfHead);
+                    state.q.setFloat(poffset + ic, v0 * fcr - v1 * fci);
+                    state.q.setFloat(poffset + ic + halfHead, v0 * fci + v1 * fcr);
+                }
+            }
+
+            // KV projection
+            int kvLayer = config.kvSourceLayer(l);
+            int nKvHeads = config.numberOfKeyValueHeads(l);
+            int kvMul = config.numberOfHeads() / nKvHeads;
+            if (config.hasKv(l)) {
+                weights.wk[l].matmul(state.xb, state.k, kvDim, dim);
+                // V = wv @ xb if V weight exists, otherwise V = K
+                if (weights.wv[l] != null) {
+                    weights.wv[l].matmul(state.xb, state.v, kvDim, dim);
+                } else {
+                    state.k.copyTo(0, state.v, 0, kvDim);
+                }
+
+                // Per-head K norm (learned) and V norm (bare RMS)
+                for (int h = 0; h < nKvHeads; h++) {
+                    rmsnormBuf(state.k, h * headSize, state.k, h * headSize,
+                            weights.attnKNorm[l], headSize, config.rmsNormEps());
+                    rmsnormNoWeight(state.v, h * headSize, state.v, h * headSize,
+                            headSize, config.rmsNormEps());
+                }
+
+                // RoPE for K
+                for (int h = 0; h < nKvHeads; ++h) {
+                    int poffset = h * headSize;
+                    for (int i0 = 0; i0 < headSize; i0 += 2) {
+                        int ic = i0 / 2;
+                        float fcr = freqsReal.getFloat(position * halfHead + ic);
+                        float fci = freqsImag.getFloat(position * halfHead + ic);
+                        float v0 = state.k.getFloat(poffset + ic);
+                        float v1 = state.k.getFloat(poffset + ic + halfHead);
+                        state.k.setFloat(poffset + ic, v0 * fcr - v1 * fci);
+                        state.k.setFloat(poffset + ic + halfHead, v0 * fci + v1 * fcr);
+                    }
+                }
+
+                // Store K,V to cache
+                int kvPos = config.kvCacheIndex(l, position);
+                state.k.copyTo(0, state.keyCache[kvLayer], kvPos * kvDim, kvDim);
+                state.v.copyTo(0, state.valueCache[kvLayer], kvPos * kvDim, kvDim);
+            }
+
+            // Attention (scale=1.0, NO 1/sqrt(headSize))
+            int attStart = layerIsSWA ? Math.max(0, position - config.slidingWindow() + 1) : 0;
+            int finalKvLayer = kvLayer;
+            int finalKvDim = kvDim;
+            int finalAttStart = attStart;
+            int finalLayer = l;
+            int finalHeadSize = headSize;
+
+            Parallel.parallelFor(0, config.numberOfHeads(), h -> {
+                int qOffset = h * finalHeadSize;
+                int attOffset = h * config.contextLength();
+                int kvHeadOffset = (h / kvMul) * finalHeadSize;
+                for (int t = finalAttStart; t <= position; t++) {
+                    int keyCacheOffset = config.kvCacheIndex(finalLayer, t) * finalKvDim + kvHeadOffset;
+                    float score = state.q.dot(qOffset, state.keyCache[finalKvLayer], keyCacheOffset, finalHeadSize);
+                    state.att.setFloat(attOffset + t, score);
+                }
+
+                state.att.softmaxInPlace(attOffset + finalAttStart, position - finalAttStart + 1);
+                int xbOffset = h * finalHeadSize;
+                state.xb_k.fillInPlace(xbOffset, finalHeadSize, 0f);
+                for (int t = finalAttStart; t <= position; t++) {
+                    int vOffset = config.kvCacheIndex(finalLayer, t) * finalKvDim + kvHeadOffset;
+                    float a = state.att.getFloat(attOffset + t);
+                    state.xb_k.saxpyInPlace(xbOffset, state.valueCache[finalKvLayer], vOffset, finalHeadSize, a);
+                }
+            });
+
+            // Output projection + post-attention norm + residual
+            weights.wo[l].matmul(state.xb_k, state.xb2, dim, queryDim);
+            rmsnormBuf(state.xb2, state.xb2, weights.postAttentionNorm[l], dim, config.rmsNormEps());
+            state.x.addInPlace(state.xb2);
+
+            // FFN (MoE vs dense)
+            boolean isMoELayer = config.isMoE() && weights.ffnGateInp != null && weights.ffnGateInp[l] != null;
+            if (isMoELayer) {
+                // === MoE FFN ===
+                // Shared MLP path
+                rmsnorm(state.xb, state.x, weights.rms_ffn_weight[l], 0, dim, config.rmsNormEps());
+                weights.w1[l].matmul(state.xb, state.hb, hiddenDim, dim);
+                weights.w3[l].matmul(state.xb, state.hb2, hiddenDim, dim);
+                state.hb.mapWithIndexInPlace(0, hiddenDim, (v, i) -> gelu(v));
+                state.hb.mapWithIndexInPlace(0, hiddenDim, (v, i) -> v * state.hb2.getFloat(i));
+                weights.w2[l].matmul(state.hb, state.xb, dim, hiddenDim);
+                rmsnormBuf(state.xb, state.xb, weights.ffnPostNorm1[l], dim, config.rmsNormEps());
+
+                // Expert routing
+                rmsnormBuf(state.moeInput, state.x, weights.preFfwNorm2[l], dim, config.rmsNormEps());
+
+                // Router computation
+                float ss = state.x.reduce(0, dim, 0f, (acc, xi) -> acc + xi * xi);
+                ss /= dim;
+                ss += config.rmsNormEps();
+                float rmsScale = (float) (1.0 / Math.sqrt(ss)) / (float) Math.sqrt(dim);
+                for (int i = 0; i < dim; i++) {
+                    state.xb2.setFloat(i, state.x.getFloat(i) * rmsScale * weights.ffnGateInpScale[l].get(i));
+                }
+                weights.ffnGateInp[l].matmul(state.xb2, state.routerLogits, config.expertCount(), dim);
+                state.routerLogits.softmaxInPlace(0, config.expertCount());
+
+                // Top-k expert selection
+                int topK = config.expertUsedCount();
+                int[] topExperts = new int[topK];
+                float[] topProbs = new float[topK];
+                for (int ki = 0; ki < topK; ki++) {
+                    int bestIdx = 0;
+                    float bestVal = Float.NEGATIVE_INFINITY;
+                    for (int ei = 0; ei < config.expertCount(); ei++) {
+                        float val = state.routerLogits.getFloat(ei);
+                        if (val > bestVal) {
+                            bestVal = val;
+                            bestIdx = ei;
+                        }
+                    }
+                    topExperts[ki] = bestIdx;
+                    topProbs[ki] = bestVal;
+                    state.routerLogits.setFloat(bestIdx, Float.NEGATIVE_INFINITY);
+                }
+
+                // Run experts and accumulate
+                int expertFF = config.expertFeedForwardLength();
+                int gateUpDim = 2 * expertFF;
+                state.moeOutput.fillInPlace(0, dim, 0f);
+
+                for (int ki = 0; ki < topK; ki++) {
+                    int expertIdx = topExperts[ki];
+                    float prob = topProbs[ki];
+                    float downScale = weights.ffnDownExpsScale[l].get(expertIdx);
+
+                    // gate_up computation via offset matmul
+                    int gateUpOffset = expertIdx * gateUpDim * dim;
+                    // Manual offset matmul for expert weights
+                    for (int i = 0; i < gateUpDim; i++) {
+                        float dot = 0f;
+                        for (int j = 0; j < dim; j++) {
+                            dot += weights.ffnGateUpExps[l].getFloat(gateUpOffset + i * dim + j) * state.moeInput.getFloat(j);
+                        }
+                        state.expertGateUp.setFloat(i, dot);
+                    }
+
+                    // GELU on gate part, multiply by up part
+                    state.expertGateUp.mapWithIndexInPlace(0, expertFF, (v, i) -> gelu(v));
+                    for (int i = 0; i < expertFF; i++) {
+                        state.expertGateUp.setFloat(i,
+                                state.expertGateUp.getFloat(i) * state.expertGateUp.getFloat(expertFF + i));
+                    }
+
+                    // down projection
+                    int downOffset = expertIdx * dim * expertFF;
+                    for (int i = 0; i < dim; i++) {
+                        float dot = 0f;
+                        for (int j = 0; j < expertFF; j++) {
+                            dot += weights.ffnDownExps[l].getFloat(downOffset + i * expertFF + j) * state.expertGateUp.getFloat(j);
+                        }
+                        state.expertDown.setFloat(i, dot);
+                    }
+
+                    float finalWeight = prob * downScale;
+                    state.moeOutput.saxpyInPlace(0, state.expertDown, 0, dim, finalWeight);
+                }
+
+                // Post-norm for MoE + combine
+                rmsnormBuf(state.moeOutput, state.moeOutput, weights.ffnPostNorm2[l], dim, config.rmsNormEps());
+                state.xb.mapWithIndexInPlace(0, dim, (v, i) -> v + state.moeOutput.getFloat(i));
+
+                // Overall post-FFW norm + residual
+                rmsnormBuf(state.xb, state.xb, weights.postFfwNorm[l], dim, config.rmsNormEps());
+                state.x.addInPlace(state.xb);
+            } else {
+                // Standard dense FFN: w2(GELU(w1(x)) * w3(x))
+                rmsnorm(state.xb, state.x, weights.rms_ffn_weight[l], 0, dim, config.rmsNormEps());
+                weights.w1[l].matmul(state.xb, state.hb, hiddenDim, dim);
+                weights.w3[l].matmul(state.xb, state.hb2, hiddenDim, dim);
+                state.hb.mapWithIndexInPlace(0, hiddenDim, (v, i) -> gelu(v));
+                state.hb.mapWithIndexInPlace(0, hiddenDim, (v, i) -> v * state.hb2.getFloat(i));
+                weights.w2[l].matmul(state.hb, state.xb, dim, hiddenDim);
+                rmsnormBuf(state.xb, state.xb, weights.postFfwNorm[l], dim, config.rmsNormEps());
+                state.x.addInPlace(state.xb);
+            }
+
+            // Per-layer embedding: GELU-gated projection
+            if (plDim > 0 && weights.perLayerInpGate != null && state.perLayerInputs != null) {
+                weights.perLayerInpGate[l].matmul(state.x, state.plGate, plDim, dim);
+                state.plGate.mapWithIndexInPlace(0, plDim, (v, i) -> gelu(v));
+                int plOffset = l * plDim;
+                for (int i = 0; i < plDim; i++) {
+                    state.plGate.setFloat(i,
+                            state.plGate.getFloat(i) * state.perLayerInputs.getFloat(plOffset + i));
+                }
+                weights.perLayerProj[l].matmul(state.plGate, state.plProj, dim, plDim);
+                rmsnormBuf(state.plProj, state.plProj, weights.perLayerPostNorm[l], dim, config.rmsNormEps());
+                state.x.addInPlace(state.plProj);
+            }
+
+            // Layer output scale
+            float scale = weights.layerOutputScale[l];
+            if (scale != 1.0f) {
+                state.x.mapWithIndexInPlace(0, dim, (v, i) -> v * scale);
+            }
+        }
+
+        // Final norm + logits (parent's FloatTensor field)
+        rmsnorm(state.x, state.x, weights.rms_final_weight, 0, dim, config.rmsNormEps());
+        weights.wcls.matmul(state.x, state.logits, config.vocabularySize(), dim);
+
+        // Optional logit softcapping
+        if (config.logitSoftcapping() > 0) {
+            float cap = config.logitSoftcapping();
+            state.logits.mapInPlace(v -> cap * (float) Math.tanh(v / cap));
+        }
+
+        return state.logits;
     }
 
     /**
