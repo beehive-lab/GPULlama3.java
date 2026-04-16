@@ -81,7 +81,6 @@ public class TornadoVMMasterPlanWithBatchPrefillDecode implements TornadoVMMaste
         this.config    = (LlamaConfiguration) model.configuration();
         this.batchSize = PREFILL_BATCH_SIZE;
         this.N         = config.numberOfLayers();
-
         this.gridScheduler  = new GridScheduler();
         this.executionPlan  = createExecutionPlan();
 
@@ -129,23 +128,12 @@ public class TornadoVMMasterPlanWithBatchPrefillDecode implements TornadoVMMaste
      * not forwarded in interpreter (non-CUDA-graph) mode.</p>
      */
     private TaskGraph buildDecodeActivationGraph(KernelContext ctx, String lastBatchLayerID) {
-//        System.out.println("lastBatchLayerID = " + lastBatchLayerID);
-//        System.out.println("[buildDecodeActivationGraph] state.wrapX = " + state.wrapX.toString());
-//        System.out.println("[buildDecodeActivationGraph] state.wrapKeyCache = " + state.wrapKeyCache.toString());
-//        System.out.println("[buildDecodeActivationGraph] state.wrapValueCache = " + state.wrapValueCache.toString());
         return new TaskGraph("decodeActivationUpdate")
                 .consumeFromDevice(lastBatchLayerID, state.wrapKeyCache, state.wrapValueCache)   // KV pass-through
-                //.transferToDevice(DataTransferMode.FIRST_EXECUTION, ctx, state.wrapX, debugKV)
-                //.transferToDevice(DataTransferMode.FIRST_EXECUTION, ctx, state.wrapX)
                 .transferToDevice(DataTransferMode.EVERY_EXECUTION, state.embeddingX)
                 .task("updateX",
                         TransformerComputeKernels::convertFP16toFP32,
                         ctx, (HalfFloatArray) state.embeddingX, state.wrapX)
-//                // DEBUG: snapshot first 8 elements of wrapKeyCache and wrapX for host-side probe
-//                .task("dbgKV",
-//                        TransformerComputeKernels::dbgCopyFirst8,
-//                        state.wrapKeyCache, debugKV)
-//                .transferToHost(DataTransferMode.EVERY_EXECUTION, state.wrapX, debugKV)
                 // wrapX persisted for decode layer 0; wrapKeyCache/wrapValueCache
                 // re-persisted so updatePersistedObjectState() propagates the device
                 // pointer to decode layer 0's consumeFromDevice without CUDA graphs.
@@ -210,7 +198,6 @@ public class TornadoVMMasterPlanWithBatchPrefillDecode implements TornadoVMMaste
         state.batchStartPosHolder.init(0);
 
         for (int i = 0; i <= logitsIdx(); i++) {
-            //System.out.println(i + " " + executionPlan.withGraph(i).toString());
             var g = executionPlan.withGraph(i).withGridScheduler(gridScheduler);
             if (CUDA_GRAPHS) g.withCUDAGraph();
             g.execute();
@@ -252,7 +239,6 @@ public class TornadoVMMasterPlanWithBatchPrefillDecode implements TornadoVMMaste
             if (CUDA_GRAPHS) batchLayer.withCUDAGraph();
             batchLayer.execute();
         }
-        //System.err.println("[DEBUG] last batch layer done, about to return from prefill");
         // Logits skipped — not needed for prefill positions.
     }
 
@@ -280,16 +266,7 @@ public class TornadoVMMasterPlanWithBatchPrefillDecode implements TornadoVMMaste
         // Graph N+1: decode activation
         var decodeAct = executionPlan.withGraph(decodeActivationIdx()).withGridScheduler(gridScheduler);
         if (CUDA_GRAPHS) decodeAct.withCUDAGraph();
-        //System.err.println("[DEBUG] about to execute decode activation (graph " + decodeActivationIdx() + "--)");
         decodeAct.execute();
-        // DEBUG: print first 4 of wrapX (should be non-zero FP32 embedding) and
-        //        first 4 of debugKV (should be non-zero after batch prefill wrote the KV cache)
-//        if (position <= 290) {
-//            System.err.printf("[DBG pos=%d] wrapX[0..3]  = %.4f %.4f %.4f %.4f%n",
-//                    position, state.wrapX.get(0), state.wrapX.get(1), state.wrapX.get(2), state.wrapX.get(3));
-//            System.err.printf("[DBG pos=%d] debugKV[0..3]= %.4f %.4f %.4f %.4f%n",
-//                    position, debugKV.get(0), debugKV.get(1), debugKV.get(2), debugKV.get(3));
-//        }
 
         // Graphs N+2..2N+1: decode transformer layers
         for (int l = 0; l < N; l++) {
@@ -321,11 +298,4 @@ public class TornadoVMMasterPlanWithBatchPrefillDecode implements TornadoVMMaste
         executionPlan.freeDeviceMemory();
     }
 
-    // ── Inner class: decode layer 0 with consumeFromDevice for KV cache ───────
-// moved to package
-//
-//    private static final class LlamaFP16FFNLayersForUnifiedDecode extends LlamaFP16FFNLayers {
-//
-//
-//    }
 }

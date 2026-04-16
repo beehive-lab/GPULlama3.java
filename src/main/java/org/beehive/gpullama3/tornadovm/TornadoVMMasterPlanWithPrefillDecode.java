@@ -50,7 +50,6 @@ public class TornadoVMMasterPlanWithPrefillDecode implements TornadoVMMasterPlan
         this.state = state;
         this.model = model;
         this.config = model.configuration();
-
         this.executionPlan = createExecutionPlan();
 
         if (ENABLE_TORNADOVM_INIT_TIME) {

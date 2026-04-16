@@ -38,7 +38,6 @@ public class TornadoVMMasterPlanStandard implements TornadoVMMasterPlan {
         this.state = state;
         this.model = model;
         this.config = model.configuration();
-
         this.executionPlan = createExecutionPlan();
 
         if (ENABLE_TORNADOVM_INIT_TIME) {
@@ -62,12 +61,6 @@ public class TornadoVMMasterPlanStandard implements TornadoVMMasterPlan {
             System.err.printf("Finished TornadoVM initialization...\n \n");
         }
     }
-
-//    @Override
-//    public GenericLayerPlanner createPlanner() {
-//        GGMLType weightType = model.weights().getWeightType();
-//        return QuantizationPlannerFactory.create(weightType, state, model);
-//    }
 
     /**
      * Creates the {@link TornadoExecutionPlan} for *simple/standard* single-token forward pass.
