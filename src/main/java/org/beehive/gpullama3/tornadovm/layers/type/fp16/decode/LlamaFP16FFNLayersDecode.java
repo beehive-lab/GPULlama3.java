@@ -9,7 +9,8 @@ import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
 /**
- * Decode-path FFN layers for the Phase 4 unified plan.
+ * Decode FFN layers of the unified batched prefill-decode plan
+ * ({@link org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanWithBatchPrefillDecode}).
  *
  * <p>Overrides data-transfer declarations so that all cross-graph boundaries use
  * the explicit-source form of {@code consumeFromDevice}.  The no-arg form (used by
@@ -20,11 +21,6 @@ import uk.ac.manchester.tornado.api.enums.DataTransferMode;
  * never propagated — causing either a null-pointer crash or a silent re-upload
  * from host (zeros), corrupting the hidden state and KV cache.</p>
  *
- * <p>Two boundaries are fixed here:</p>
- * <ul>
- *   <li>{@code wrapX}: via {@link #predecessorGraphName} hook in the base class.</li>
- *   <li>All other consumed objects: via the {@link #configureLayerDataTransfers} override.</li>
- * </ul>
  */
 public class LlamaFP16FFNLayersDecode extends LlamaFP16FFNLayers {
     public LlamaFP16FFNLayersDecode(String taskGraph, LlamaState state,

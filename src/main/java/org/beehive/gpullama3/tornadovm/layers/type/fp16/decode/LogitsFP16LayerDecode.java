@@ -8,7 +8,8 @@ import org.beehive.gpullama3.tornadovm.layers.type.fp16.LogitsFP16Layer;
 import uk.ac.manchester.tornado.api.TaskGraph;
 
 /**
- * Logits layer for the unified prefill-decode plan (Phase 4).
+ * Logits layer of the unified batched prefill-decode plan
+ *  * ({@link org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanWithBatchPrefillDecode}).
  *
  * <p>Extends {@link LogitsFP16Layer} with KV-cache pass-through so the device
  * pointers for {@code wrapKeyCache} and {@code wrapValueCache} survive the

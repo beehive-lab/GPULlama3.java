@@ -16,7 +16,8 @@ import java.util.List;
 import java.util.stream.IntStream;
 
 /**
- * Builds per-layer batch prefill TaskGraphs for Phase 4 GPU batched prefill.
+ * Prefill FFN layers with batching for the unified batched prefill-decode plan
+ * ({@link org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanWithBatchPrefillDecode}).
  *
  * <p>One {@link ImmutableTaskGraph} per transformer layer, each processing
  * {@code batchSize} tokens simultaneously via {@link TransformerBatchPrefillKernels}.</p>
