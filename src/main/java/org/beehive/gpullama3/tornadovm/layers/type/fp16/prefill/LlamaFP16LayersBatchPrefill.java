@@ -51,17 +51,17 @@ public class LlamaFP16LayersBatchPrefill {
 
     // @formatter:off
     private TaskGraph createBatchPrefillLayerTaskGraph(int layerIndex) {
-        String graphName = "batchLayer_" + layerIndex;
+        String graphName = "batchPrefillLayer_" + layerIndex;
         if (layerIndex == config.numberOfLayers() - 1) lastLayerTaskGraphID = graphName;
 
-        TaskGraph layer = new TaskGraph(graphName);
+        TaskGraph batchPrefillLayer = new TaskGraph(graphName);
 
         // ── Data Transfers ─────────────────────────────────────────────────────
         if (layerIndex == 0) {
             // batchStartPosHolder is set by host before each chunk → EVERY_EXECUTION
-            layer.transferToDevice(DataTransferMode.EVERY_EXECUTION, state.batchStartPosHolder);
+            batchPrefillLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION, state.batchStartPosHolder);
             // Allocate persistent GPU-side intermediates once
-            layer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
+            batchPrefillLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
                     context,
                     state.attnScaleBatch, state.ffnScaleBatch,
                     state.wrapXbFP16Batch,
@@ -69,19 +69,14 @@ public class LlamaFP16LayersBatchPrefill {
                     state.wrapXbBatch,
                     state.wrapHbBatch,
                     state.wrapKeyCache, state.wrapValueCache);
-            // wrapXBatch produced by the batch activation graph.
-            // Explicit source name required: the no-arg form uses the current graph's own
-            // name ("batchLayer_0") which never matches "batchActivation" in interpreter mode,
-            // causing wrapXBatch to be re-uploaded from host (zeros) instead of using the
-            // FP32 embeddings computed by the activation graph's convertFP16toFP32 kernel.
-            layer.consumeFromDevice("batchActivation", state.wrapXBatch);
+            // wrapXBatch produced by the prefillActivation graph and persists in device memory
+            // to consume it from there we should use the explicit uniqueTaskGraph name
+            // the no-arg form would use current graph name, which causes NPE without CUDA Graphs
+            batchPrefillLayer.consumeFromDevice("prefillActivation", state.wrapXBatch);
         } else {
-            // Explicit predecessor name for all objects.
-            // The no-arg form would use "batchLayer_k" as the source key, which never matches
-            // "batchLayer_{k-1}" in interpreter mode — every object would be re-uploaded from
-            // host (zeros or stale), corrupting the KV cache written by the previous layer.
-            String pred = "batchLayer_" + (layerIndex - 1);
-            layer.consumeFromDevice(pred,
+            // for the same reasons as above, we should use the explicit uniqueTaskGraph name to consume
+            String pred = "batchPrefillLayer_" + (layerIndex - 1);
+            batchPrefillLayer.consumeFromDevice(pred,
                     context,
                     state.wrapXBatch,
                     state.wrapXbFP16Batch,
@@ -94,7 +89,7 @@ public class LlamaFP16LayersBatchPrefill {
         }
 
         // Per-layer weights: upload once
-        layer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
+        batchPrefillLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
                 weights.rms_att_weightLayered[layerIndex].asFloatArray(),
                 weights.wqLayered[layerIndex].asHalfFloatArray(),
                 weights.wkLayered[layerIndex].asHalfFloatArray(),
@@ -110,18 +105,18 @@ public class LlamaFP16LayersBatchPrefill {
         int hidDim   = config.hiddenDim();
 
         // ── Attention Block ────────────────────────────────────────────────────
-        layer.task("batch_attn_rms",
+        batchPrefillLayer.task("batch_attn_rms",
                 TransformerBatchPrefillKernels::batchedRmsReduce,
                 context, state.wrapXBatch, state.attnScaleBatch,
                 dim, config.rmsNormEps());
 
-        layer.task("batch_attn_rms_apply",
+        batchPrefillLayer.task("batch_attn_rms_apply",
                 TransformerBatchPrefillKernels::batchedRmsApplyFP16,
                 context, state.wrapXbFP16Batch, state.wrapXBatch,
                 weights.rms_att_weightLayered[layerIndex].asFloatArray(),
                 state.attnScaleBatch, dim);
 
-        layer.task("batch_qkv",
+        batchPrefillLayer.task("batch_qkv",
                 TransformerBatchPrefillKernels::batchedFusedQKVMatmul,
                 context,
                 state.wrapXbFP16Batch,
@@ -131,14 +126,14 @@ public class LlamaFP16LayersBatchPrefill {
                 weights.wvLayered[layerIndex].asHalfFloatArray(),
                 dim, kvDim, LOCAL_WORK_GROUP_SIZE);
 
-        layer.task("batch_rope_kv",
+        batchPrefillLayer.task("batch_rope_kv",
                 TransformerBatchPrefillKernels::batchedRopeWithKVCache,
                 context, state.batchStartPosHolder,
                 state.wrapQBatch, state.wrapKBatch, state.wrapVBatch,
                 state.wrapKeyCache, state.wrapValueCache,
                 kvDim, config.headSize(), layerIndex, config.contextLength(), dim);
 
-        layer.task("batch_attention",
+        batchPrefillLayer.task("batch_attention",
                 TransformerBatchPrefillKernels::batchedFlashAttention,
                 context, state.batchStartPosHolder,
                 state.wrapQBatch, state.wrapKeyCache, state.wrapValueCache,
@@ -146,19 +141,19 @@ public class LlamaFP16LayersBatchPrefill {
                 config.numberOfHeads(), config.headSize(),
                 kvDim, config.kvMul(), layerIndex, config.contextLength(), dim);
 
-        layer.task("batch_attn_out",
+        batchPrefillLayer.task("batch_attn_out",
                 TransformerBatchPrefillKernels::batchedMatVecWithResidual,
                 context, state.wrapXbBatch, state.wrapXBatch,
                 weights.woLayered[layerIndex].asHalfFloatArray(),
                 dim, dim, LOCAL_WORK_GROUP_SIZE);
 
         // ── FFN Block ──────────────────────────────────────────────────────────
-        layer.task("batch_ffn_rms",
+        batchPrefillLayer.task("batch_ffn_rms",
                 TransformerBatchPrefillKernels::batchedFFNRmsReduce,
                 context, state.wrapXBatch, state.ffnScaleBatch,
                 dim, config.rmsNormEps());
 
-        layer.task("batch_ffn_gate_up",
+        batchPrefillLayer.task("batch_ffn_gate_up",
                 TransformerBatchPrefillKernels::batchedFusedRmsNormFFNGateUp,
                 context, state.wrapXBatch, state.wrapHbBatch,
                 weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),
@@ -167,7 +162,7 @@ public class LlamaFP16LayersBatchPrefill {
                 weights.w3Layered[layerIndex].asHalfFloatArray(),
                 dim, hidDim, LOCAL_WORK_GROUP_SIZE);
 
-        layer.task("batch_ffn_down",
+        batchPrefillLayer.task("batch_ffn_down",
                 TransformerBatchPrefillKernels::batchedMatVecWithResidual,
                 context, state.wrapHbBatch, state.wrapXBatch,
                 weights.w2Layered[layerIndex].asHalfFloatArray(),
@@ -175,9 +170,9 @@ public class LlamaFP16LayersBatchPrefill {
 
         // Persist wrapXBatch for the next layer, and KV cache so the decode
         // layers can consume it via the activation graph pass-through.
-        layer.persistOnDevice(state.wrapXBatch, state.wrapKeyCache, state.wrapValueCache);
+        batchPrefillLayer.persistOnDevice(state.wrapXBatch, state.wrapKeyCache, state.wrapValueCache);
 
-        return layer;
+        return batchPrefillLayer;
     }
     // @formatter:on
 
@@ -218,7 +213,7 @@ public class LlamaFP16LayersBatchPrefill {
                 batchSize * hidDim * LOCAL_WORK_GROUP_SIZE, LOCAL_WORK_GROUP_SIZE);
 
         for (int i = 0; i < config.numberOfLayers(); i++) {
-            String p = "batchLayer_" + i + ".";
+            String p = "batchPrefillLayer_" + i + ".";
             scheduler.addWorkerGrid(p + "batch_attn_rms",     rmsWorker);
             scheduler.addWorkerGrid(p + "batch_attn_rms_apply", rmsApplyWorker);
             scheduler.addWorkerGrid(p + "batch_qkv",          qkvWorker);

@@ -110,10 +110,10 @@ public class TornadoVMMasterPlanWithBatchPrefillDecode implements TornadoVMMaste
 
     /** Graph 0: B×dim FP16 embeddings → FP32 wrapXBatch. */
     private TaskGraph buildBatchPrefillActivationGraph(KernelContext ctx) {
-        return new TaskGraph("batchActivation")
+        return new TaskGraph("prefillActivation")
                 .transferToDevice(DataTransferMode.FIRST_EXECUTION, ctx, state.wrapXBatch)
                 .transferToDevice(DataTransferMode.EVERY_EXECUTION, state.embeddingXBatch)
-                .task("batchUpdateX", TransformerComputeKernels::convertFP16toFP32,
+                .task("updateX", TransformerComputeKernels::convertFP16toFP32,
                         ctx, state.embeddingXBatch, state.wrapXBatch)
                 .persistOnDevice(state.wrapXBatch);
     }
@@ -128,7 +128,7 @@ public class TornadoVMMasterPlanWithBatchPrefillDecode implements TornadoVMMaste
      * not forwarded in interpreter (non-CUDA-graph) mode.</p>
      */
     private TaskGraph buildDecodeActivationGraph(KernelContext ctx, String lastBatchLayerID) {
-        return new TaskGraph("decodeActivationUpdate")
+        return new TaskGraph("decodeActivation")
                 .consumeFromDevice(lastBatchLayerID, state.wrapKeyCache, state.wrapValueCache)   // KV pass-through
                 .transferToDevice(DataTransferMode.EVERY_EXECUTION, state.embeddingX)
                 .task("updateX",
@@ -153,7 +153,7 @@ public class TornadoVMMasterPlanWithBatchPrefillDecode implements TornadoVMMaste
         // [0] Batch prefill activation ────────────────────────────────────────────────
         KernelContext batchActCtx = new KernelContext();
         all.add(buildBatchPrefillActivationGraph(batchActCtx).snapshot());
-        gridScheduler.addWorkerGrid("batchActivation.batchUpdateX",
+        gridScheduler.addWorkerGrid("prefillActivation.updateX",
                 WorkerGridFactory.genericWorker(batchSize * config.dim(), 128));
 
         // [1..N] Batch prefill layer graphs ───────────────────────────────────────────
@@ -165,14 +165,14 @@ public class TornadoVMMasterPlanWithBatchPrefillDecode implements TornadoVMMaste
         // [N+1] Decode activation (with KV-cache pass-through) ────────────────
         KernelContext decodeActCtx = new KernelContext();
         all.add(buildDecodeActivationGraph(decodeActCtx, batchLayers.getLastLayerTaskGraphID()).snapshot());
-        gridScheduler.addWorkerGrid("decodeActivationUpdate.updateX",
+        gridScheduler.addWorkerGrid("decodeActivation.updateX",
                 WorkerGridFactory.genericWorker(config.dim(), 128));
 
         // [N+2..2N+1] Decode layer graphs  ────────────────────────────────────
         // Layer 0 uses consumeFromDevice for KV cache (no FIRST_EXECUTION upload).
         LlamaFP16FFNLayersDecode decodeLayers =
                 new LlamaFP16FFNLayersDecode(
-                        "llamaFFNDecode", state, weights, config, schedulerType);
+                        "decode", state, weights, config, schedulerType);
         all.addAll(decodeLayers.getFFNLayerImmutableTaskGraphs());
         decodeLayers.updateGridScheduler(gridScheduler);
 

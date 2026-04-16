@@ -43,7 +43,7 @@ public class LlamaFP16FFNLayersDecode extends LlamaFP16FFNLayers {
      */
     @Override
     protected String predecessorGraphName(int layerIndex) {
-        return (layerIndex == 0) ? "decodeActivationUpdate" : "layer_" + (layerIndex - 1);
+        return (layerIndex == 0) ? "decodeActivation" : "layer_" + (layerIndex - 1);
     }
 
     @Override
@@ -60,7 +60,7 @@ public class LlamaFP16FFNLayersDecode extends LlamaFP16FFNLayers {
                     state.wrapQ, state.wrapK, state.wrapV,
                     state.wrapAtt, state.wrapHb, state.wrapXbFP16);
             // Explicit source — must match the TaskGraph name in buildDecodeActivationGraph().
-            layer.consumeFromDevice("decodeActivationUpdate", state.wrapKeyCache, state.wrapValueCache);
+            layer.consumeFromDevice("decodeActivation", state.wrapKeyCache, state.wrapValueCache);
         } else {
             // Layers 1+: use explicit predecessor name for ALL consumed objects.
             // Calling super here would use the no-arg form (source key = own graph name),
