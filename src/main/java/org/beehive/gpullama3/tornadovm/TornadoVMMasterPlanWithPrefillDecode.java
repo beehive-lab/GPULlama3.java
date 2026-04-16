@@ -3,98 +3,168 @@ package org.beehive.gpullama3.tornadovm;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.Model;
+import org.beehive.gpullama3.tensor.GGMLType;
+import org.beehive.gpullama3.tornadovm.layerplanner.GenericLayerPlanner;
+import org.beehive.gpullama3.tornadovm.layerplanner.QuantizationPlannerFactory;
+import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
+import uk.ac.manchester.tornado.api.TornadoExecutionPlan;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
 /**
- * Wraps {@link TornadoVMMasterPlanStandard} and adds a prefill-only GPU forward pass.
+ * GPU execution plan for single-token prefill/decode separation.
  *
- * <p>Parallel to {@link TornadoVMMasterPlanStandard} — does NOT modify it.</p>
+ * <p>Uses the same single-token execution plan as {@link TornadoVMMasterPlanStandard}
+ * but exposes two distinct forward passes:</p>
+ * <ul>
+ *   <li>{@link #tornadoVMForwardPrefill} — runs graphs 0..N, skips the logits graph.
+ *       Called for each prompt token; KV cache is populated but logits are discarded.</li>
+ *   <li>{@link #tornadoVMForwardDecode} — full execution including logits.
+ *       Called for each generated token.</li>
+ * </ul>
  *
- * <p>The existing execution plan has this graph layout:</p>
+ * <p>Graph layout (same as {@link TornadoVMMasterPlanStandard}):</p>
  * <pre>
  *   graph 0         : preprocessing (embedding setup)
  *   graphs 1..N     : transformer layers
  *   graph N+1       : logits projection (final RMSNorm + wcls matmul)
  * </pre>
- *
- * <p>{@link #tornadoVMForwardPrefill} executes graphs 0..N and deliberately
- * skips graph N+1. The KV cache is populated correctly by the layer graphs;
- * the logits are not needed for prefill positions so the projection is wasted
- * work that we avoid.</p>
- *
- * <p>For decode, {@link #tornadoVMForwardDecode} delegates to the wrapped
- * plan's {@code tornadoVMForwardExecuteLayered}, preserving identical behaviour
- * to the baseline GPU path.</p>
- *
- * <p>Implements {@link TornadoVMMasterPlan} so it can be returned by the factory
- * and stored in the model; {@link #tornadoVMForwardExecuteLayered} delegates to
- * {@link #tornadoVMForwardDecode}.</p>
  */
 public class TornadoVMMasterPlanWithPrefillDecode implements TornadoVMMasterPlan {
 
-    private final TornadoVMMasterPlanStandard plan;
     private final State state;
+    private final Model model;
     private final Configuration config;
 
-    public TornadoVMMasterPlanWithPrefillDecode(TornadoVMMasterPlanStandard plan, State state, Model model) {
-        this.plan = plan;
+    GenericLayerPlanner tornadoVMLayerPlanner;
+    public TornadoExecutionPlan executionPlan;
+
+    public TornadoVMMasterPlanWithPrefillDecode(State state, Model model) {
+        long startTime = System.nanoTime();
+        long planCreationTime = 0;
+        long warmupTime = 0;
+
+        if (ENABLE_TORNADOVM_INIT_TIME) {
+            System.err.println("\nStarting TornadoVM initialization...");
+        }
+
         this.state = state;
+        this.model = model;
         this.config = model.configuration();
+
+        this.executionPlan = createExecutionPlan();
+
+        if (ENABLE_TORNADOVM_INIT_TIME) {
+            planCreationTime = System.nanoTime();
+            System.err.printf("TornadoVM GPU single-token prefill/decode execution plan creation: %.2f ms\n", (planCreationTime - startTime) / 1_000_000.0);
+        }
+
+        if (CUDA_GRAPHS) executionPlan.withAllGraphs().withCUDAGraph();
+        executionPlan.withPreCompilation();
+
+        if (ENABLE_TORNADOVM_INIT_TIME) {
+            warmupTime = System.nanoTime();
+            System.err.printf("Java to GPU JIT compiler warmup: %.2f ms\n", (warmupTime - planCreationTime) / 1_000_000.0);
+        }
+
+        forceCopyInReadOnlyData();
+
+        if (ENABLE_TORNADOVM_INIT_TIME) {
+            long copyTime = System.nanoTime();
+            System.err.printf("Transfer read-only weights to GPU: %.2f ms\n", (copyTime - warmupTime) / 1_000_000.0);
+            System.err.printf("Finished TornadoVM initialization...\n \n");
+        }
     }
 
-    /** Factory: initializes the inner standard plan then wraps it. */
-    public static TornadoVMMasterPlanWithPrefillDecode initialize(State state, Model model) {
-        TornadoVMMasterPlanStandard inner = TornadoVMMasterPlanStandard.initialize(state, model);
-        return new TornadoVMMasterPlanWithPrefillDecode(inner, state, model);
+    /**
+     * Creates the {@link TornadoExecutionPlan} for forward pass with *prefill/decode separation*.
+     * Prefill is token-by-token but does not compute logits.
+     */
+    @Override
+    public TornadoExecutionPlan createExecutionPlan() {
+        GGMLType weightType = model.weights().getWeightType();
+        this.tornadoVMLayerPlanner = QuantizationPlannerFactory.create(weightType, state, model);
+        var taskGraphs = tornadoVMLayerPlanner.getImmutableTaskGraphs();
+        var taskGraphArray = taskGraphs.toArray(new ImmutableTaskGraph[taskGraphs.size()]);
+        return new TornadoExecutionPlan(taskGraphArray);
+    }
+
+    @Override
+    public void forceCopyInReadOnlyData() {
+        state.wrapX.clear();
+        state.positionHolder.init(0);
+
+        executionPlan.withGraph(0).withGridScheduler(tornadoVMLayerPlanner.getGridScheduler()).execute();
+
+        for (int layer = 0; layer < config.numberOfLayers(); layer++) {
+            executionPlan.withGraph(layer + 1).withGridScheduler(tornadoVMLayerPlanner.getGridScheduler()).execute();
+        }
+
+        executionPlan.withGraph(config.numberOfLayers() + 1).withGridScheduler(tornadoVMLayerPlanner.getGridScheduler()).execute();
     }
 
     /**
      * GPU prefill forward: runs preprocessing + all transformer layers, skips logits.
-     *
-     * <p>Mirrors {@link TornadoVMMasterPlan#tornadoVMForwardExecuteLayered} except
-     * the final logits graph (graph {@code numberOfLayers + 1}) is not executed.</p>
+     * KV cache is populated; logits projection is intentionally omitted.
      *
      * @param position sequence position being processed
      */
     public void tornadoVMForwardPrefill(int position) {
         // Graph 0: preprocessing
-        plan.executionPlan.withGraph(0)
-                .withGridScheduler(plan.tornadoVMLayerPlanner.getGridScheduler())
+        executionPlan.withGraph(0)
+                .withGridScheduler(tornadoVMLayerPlanner.getGridScheduler())
                 .execute();
 
         state.positionHolder.set(0, position);
         state.temp.clear();
         state.tempFFN.clear();
 
-        // Graphs 1..N: transformer layers
+        // Graphs 1..N: transformer layers (logits graph N+1 intentionally skipped)
         for (int layer = 1; layer <= config.numberOfLayers(); layer++) {
-            plan.executionPlan.withGraph(layer)
-                    .withGridScheduler(plan.tornadoVMLayerPlanner.getGridScheduler())
+            executionPlan.withGraph(layer)
+                    .withGridScheduler(tornadoVMLayerPlanner.getGridScheduler())
                     .execute();
         }
-
-        // Graph N+1 (logits) intentionally skipped — not needed for prefill positions.
     }
 
     /**
      * GPU decode forward: full execution including logits.
-     * Delegates to {@link TornadoVMMasterPlan#tornadoVMForwardExecuteLayered}.
      *
      * @param position sequence position being processed
      * @return logits array for token sampling
      */
     public FloatArray tornadoVMForwardDecode(int position) {
-        return plan.tornadoVMForwardExecuteLayered(position);
+        return tornadoVMForwardExecuteLayered(position);
     }
 
-    /** Delegates to the wrapped plan's full forward pass (used by the standard decode path). */
     @Override
     public FloatArray tornadoVMForwardExecuteLayered(int position) {
-        return tornadoVMForwardDecode(position);
+        var preGraph = executionPlan.withGraph(0)
+                .withGridScheduler(tornadoVMLayerPlanner.getGridScheduler());
+        if (CUDA_GRAPHS) preGraph.withCUDAGraph();
+        preGraph.execute();
+
+        state.positionHolder.set(0, position);
+        state.temp.clear();
+        state.tempFFN.clear();
+
+        for (int layer = 0; layer < config.numberOfLayers(); layer++) {
+            executionPlan.withGraph(1 + layer)
+                    .withGridScheduler(tornadoVMLayerPlanner.getGridScheduler())
+                    .execute();
+        }
+
+        state.tempLogits.clear();
+        state.wrapLogits.clear();
+        var logitsGraph = executionPlan.withGraph(config.numberOfLayers() + 1)
+                .withGridScheduler(tornadoVMLayerPlanner.getGridScheduler());
+        if (CUDA_GRAPHS) logitsGraph.withCUDAGraph();
+        logitsGraph.execute();
+
+        return state.wrapLogits;
     }
 
     @Override
     public void freeTornadoExecutionPlan() {
-        plan.freeTornadoExecutionPlan();
+        executionPlan.freeDeviceMemory();
     }
 }

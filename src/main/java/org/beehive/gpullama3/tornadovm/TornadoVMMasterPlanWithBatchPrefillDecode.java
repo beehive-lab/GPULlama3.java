@@ -1,6 +1,7 @@
 package org.beehive.gpullama3.tornadovm;
 
 import org.beehive.gpullama3.inference.state.LlamaState;
+import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.model.llama.LlamaConfiguration;
@@ -25,7 +26,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Unified GPU execution plan for Phase 4: batched prefill + single-token decode.
+ * GPU execution plan for batched prefill + single-token decode.
  *
  * <p>A single {@link TornadoExecutionPlan} holds all graphs so that the KV cache
  * ({@code wrapKeyCache}, {@code wrapValueCache}) is shared on device via
@@ -50,10 +51,8 @@ import java.util.List;
  */
 public class TornadoVMMasterPlanWithBatchPrefillDecode implements TornadoVMMasterPlan {
 
-    private static final boolean ENABLE_TIMING =
-            Boolean.parseBoolean(System.getProperty("llama.EnableTimingForTornadoVMInit", "False"));
-
     private final LlamaState         state;
+    private final Model              model;
     private final LlamaConfiguration config;
     private final int                batchSize;
     private final int                N;   // numberOfLayers
@@ -68,55 +67,44 @@ public class TornadoVMMasterPlanWithBatchPrefillDecode implements TornadoVMMaste
     private int logitsIdx()                { return 2 * N + 2; }
 
     // ── Construction ─────────────────────────────────────────────────────────
-    private TornadoVMMasterPlanWithBatchPrefillDecode(LlamaState state, Model model, int batchSize) {
-        this.state     = state;
+    TornadoVMMasterPlanWithBatchPrefillDecode(State initialState, Model model) {
+        long startTime = System.nanoTime();
+        long planCreationTime = 0;
+        long warmupTime = 0;
+
+        if (ENABLE_TORNADOVM_INIT_TIME) {
+            System.err.println("\nStarting TornadoVM initialization...");
+        }
+
+        this.state     = (LlamaState) initialState; // only LlamaFP16 supports batched prefill for now
+        this.model     = model;
         this.config    = (LlamaConfiguration) model.configuration();
-        this.batchSize = batchSize;
+        this.batchSize = PREFILL_BATCH_SIZE;
         this.N         = config.numberOfLayers();
 
-        LlamaTornadoWeights weights       = (LlamaTornadoWeights) model.weights();
-        SchedulerType       schedulerType = SchedulerDetectionService.determineSchedulerType(model);
+        this.gridScheduler  = new GridScheduler();
+        this.executionPlan  = createExecutionPlan();
 
-        List<ImmutableTaskGraph> all       = new ArrayList<>(2 * N + 3);
-        GridScheduler            scheduler = new GridScheduler();
+        if (ENABLE_TORNADOVM_INIT_TIME) {
+            planCreationTime = System.nanoTime();
+            System.err.printf("TornadoVM GPU batched prefill/decode execution plan creation: %.2f ms\n", (planCreationTime - startTime) / 1_000_000.0);
+        }
 
-        // [0] Batch prefill activation ────────────────────────────────────────────────
-        KernelContext batchActCtx = new KernelContext();
-        all.add(buildBatchPrefillActivationGraph(batchActCtx).snapshot());
-        scheduler.addWorkerGrid("batchActivation.batchUpdateX",
-                WorkerGridFactory.genericWorker(batchSize * config.dim(), 128));
+        if (CUDA_GRAPHS) executionPlan.withAllGraphs().withCUDAGraph();
+        executionPlan.withPreCompilation();
 
-        // [1..N] Batch prefill layer graphs ───────────────────────────────────────────
-        LlamaFP16LayersBatchPrefill batchLayers =
-                new LlamaFP16LayersBatchPrefill(state, weights, config, batchSize);
-        all.addAll(batchLayers.getLayerImmutableTaskGraphs());
-        batchLayers.updateGridScheduler(scheduler);
+        if (ENABLE_TORNADOVM_INIT_TIME) {
+            warmupTime = System.nanoTime();
+            System.err.printf("Java to GPU JIT compiler warmup: %.2f ms\n", (warmupTime - planCreationTime) / 1_000_000.0);
+        }
 
-        // [N+1] Decode activation (with KV-cache pass-through) ────────────────
-        KernelContext decodeActCtx = new KernelContext();
-        all.add(buildDecodeActivationGraph(decodeActCtx, batchLayers.getLastLayerTaskGraphID()).snapshot());
-        scheduler.addWorkerGrid("decodeActivationUpdate.updateX",
-                WorkerGridFactory.genericWorker(config.dim(), 128));
+        forceCopyInReadOnlyData();
 
-        // [N+2..2N+1] Decode layer graphs  ────────────────────────────────────
-        // Layer 0 uses consumeFromDevice for KV cache (no FIRST_EXECUTION upload).
-        LlamaFP16FFNLayersDecode decodeLayers =
-                new LlamaFP16FFNLayersDecode(
-                        "llamaFFNDecode", state, weights, config, schedulerType);
-        all.addAll(decodeLayers.getFFNLayerImmutableTaskGraphs());
-        decodeLayers.updateGridScheduler(scheduler);
-
-        // [2N+2] Logits ───────────────────────────────────────────────────────
-        // LogitsFP16LayerDecode extends LogitsFP16Layer: adds consumeFromDevice(wrapKeyCache)
-        // at the start of the graph and persistOnDevice(wrapKeyCache) at the end, so the
-        // KV-cache pointer survives the logits → decode-activation boundary across tokens.
-        LogitsFP16LayerDecode logitsLayer = new LogitsFP16LayerDecode("logits", state, weights, config,
-                decodeLayers.getLastFFNLayerTaskGraphID(), schedulerType);
-        all.add(logitsLayer.getImmutableTaskGraph());
-        logitsLayer.updateGridScheduler(scheduler);
-
-        this.gridScheduler  = scheduler;
-        this.executionPlan  = new TornadoExecutionPlan(all.toArray(new ImmutableTaskGraph[0]));
+        if (ENABLE_TORNADOVM_INIT_TIME) {
+            long copyTime = System.nanoTime();
+            System.err.printf("Transfer read-only weights to GPU: %.2f ms\n", (copyTime - warmupTime) / 1_000_000.0);
+            System.err.printf("Finished TornadoVM initialization...\n \n");
+        }
     }
 
     // ── Batch Prefill Activation graphs ─────────────────────────────────────────────────────
@@ -164,41 +152,58 @@ public class TornadoVMMasterPlanWithBatchPrefillDecode implements TornadoVMMaste
                 .persistOnDevice(state.wrapX, state.wrapKeyCache, state.wrapValueCache);
     }
 
-    // ── Static factory ────────────────────────────────────────────────────────
-
     /**
-     * Creates, JIT-compiles, and warms up the unified plan.
-     * Mirrors {@link TornadoVMMasterPlan#initializeTornadoVMPlan}.
+     * Creates the {@link TornadoExecutionPlan} for forward pass with *prefill in batches and separated decode*.
      */
-    public static TornadoVMMasterPlanWithBatchPrefillDecode initializeUnifiedPlan(
-            LlamaState state, Model model, int batchSize) {
+    @Override
+    public TornadoExecutionPlan createExecutionPlan() {
+        LlamaTornadoWeights weights       = (LlamaTornadoWeights) model.weights();
+        SchedulerType       schedulerType = SchedulerDetectionService.determineSchedulerType(model);
 
-        long t0 = System.nanoTime();
-        TornadoVMMasterPlanWithBatchPrefillDecode plan =
-                new TornadoVMMasterPlanWithBatchPrefillDecode(state, model, batchSize);
+        List<ImmutableTaskGraph> all       = new ArrayList<>(2 * N + 3);
 
-        if (ENABLE_TIMING)
-            System.err.printf("[BatchPlan] Graph construction: %.2f ms%n",
-                    (System.nanoTime() - t0) / 1e6);
+        // [0] Batch prefill activation ────────────────────────────────────────────────
+        KernelContext batchActCtx = new KernelContext();
+        all.add(buildBatchPrefillActivationGraph(batchActCtx).snapshot());
+        gridScheduler.addWorkerGrid("batchActivation.batchUpdateX",
+                WorkerGridFactory.genericWorker(batchSize * config.dim(), 128));
 
-        if (CUDA_GRAPHS) plan.executionPlan.withAllGraphs().withCUDAGraph();
-        plan.executionPlan.withPreCompilation();
+        // [1..N] Batch prefill layer graphs ───────────────────────────────────────────
+        LlamaFP16LayersBatchPrefill batchLayers =
+                new LlamaFP16LayersBatchPrefill(state, weights, config, batchSize);
+        all.addAll(batchLayers.getLayerImmutableTaskGraphs());
+        batchLayers.updateGridScheduler(gridScheduler);
 
-        if (ENABLE_TIMING)
-            System.err.printf("[BatchPlan] JIT compilation: %.2f ms%n",
-                    (System.nanoTime() - t0) / 1e6);
+        // [N+1] Decode activation (with KV-cache pass-through) ────────────────
+        KernelContext decodeActCtx = new KernelContext();
+        all.add(buildDecodeActivationGraph(decodeActCtx, batchLayers.getLastLayerTaskGraphID()).snapshot());
+        gridScheduler.addWorkerGrid("decodeActivationUpdate.updateX",
+                WorkerGridFactory.genericWorker(config.dim(), 128));
 
-        plan.forceCopyInReadOnlyData();
+        // [N+2..2N+1] Decode layer graphs  ────────────────────────────────────
+        // Layer 0 uses consumeFromDevice for KV cache (no FIRST_EXECUTION upload).
+        LlamaFP16FFNLayersDecode decodeLayers =
+                new LlamaFP16FFNLayersDecode(
+                        "llamaFFNDecode", state, weights, config, schedulerType);
+        all.addAll(decodeLayers.getFFNLayerImmutableTaskGraphs());
+        decodeLayers.updateGridScheduler(gridScheduler);
 
-        if (ENABLE_TIMING)
-            System.err.printf("[BatchPlan] Init complete: %.2f ms%n",
-                    (System.nanoTime() - t0) / 1e6);
+        // [2N+2] Logits ───────────────────────────────────────────────────────
+        // LogitsFP16LayerDecode extends LogitsFP16Layer: adds consumeFromDevice(wrapKeyCache)
+        // at the start of the graph and persistOnDevice(wrapKeyCache) at the end, so the
+        // KV-cache pointer survives the logits → decode-activation boundary across tokens.
+        LogitsFP16LayerDecode logitsLayer = new LogitsFP16LayerDecode("logits", state, weights, config,
+                decodeLayers.getLastFFNLayerTaskGraphID(), schedulerType);
+        all.add(logitsLayer.getImmutableTaskGraph());
+        logitsLayer.updateGridScheduler(gridScheduler);
 
-        return plan;
+        return new TornadoExecutionPlan(all.toArray(new ImmutableTaskGraph[0]));
     }
 
+
     /** Runs all graphs once to trigger FIRST_EXECUTION uploads and warm up CUDA graphs. */
-    private void forceCopyInReadOnlyData() {
+    @Override
+    public void forceCopyInReadOnlyData() {
         state.wrapXBatch.clear();
         state.wrapX.clear();
         state.positionHolder.init(0);

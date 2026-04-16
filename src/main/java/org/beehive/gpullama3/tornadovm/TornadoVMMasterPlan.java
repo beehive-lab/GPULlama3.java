@@ -1,8 +1,8 @@
 package org.beehive.gpullama3.tornadovm;
 
-import org.beehive.gpullama3.inference.state.LlamaState;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.model.Model;
+import uk.ac.manchester.tornado.api.TornadoExecutionPlan;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
 /**
@@ -35,14 +35,14 @@ public interface TornadoVMMasterPlan {
     int PREFILL_BATCH_SIZE = Integer.getInteger("llama.prefillBatchSize", 1);
 
     /**
-     * Factory: creates, JIT-compiles, and warms up the appropriate plan.
+     * Factory: creates, JIT-compiles, and warms up the appropriate TornadoVMMasterPlan.
      *
      * <p>When {@code llama.withPrefillDecode=true} and {@code llama.prefillBatchSize > 1},
      * a {@link TornadoVMMasterPlanWithBatchPrefillDecode} is returned.
      * Otherwise a {@link TornadoVMMasterPlanStandard} is returned (used for the baseline
      * path and the sequential prefill/decode path when batch size is 1).</p>
      *
-     * @param state the model state (must be {@link LlamaState} when batch size {@code > 1})
+     * @param state the model state
      * @param model the model instance
      * @return the initialized plan, also stored via {@link Model#setTornadoVMPlan}
      */
@@ -51,29 +51,26 @@ public interface TornadoVMMasterPlan {
 
         if (WITH_PREFILL_DECODE && PREFILL_BATCH_SIZE > 1) {
             // GPU path with batched prefill/decode
-            plan = TornadoVMMasterPlanWithBatchPrefillDecode.initializeUnifiedPlan(
-                    (LlamaState) state, model, PREFILL_BATCH_SIZE);
+            plan = new TornadoVMMasterPlanWithBatchPrefillDecode(state, model);
         } else if (WITH_PREFILL_DECODE) {
             // GPU path with simple prefill/decode
-            plan = TornadoVMMasterPlanWithPrefillDecode.initialize(state, model);
+            plan = new TornadoVMMasterPlanWithPrefillDecode(state, model);
         } else {
             // GPU path with no prefill/decode
-            plan = TornadoVMMasterPlanStandard.initialize(state, model);
+            plan = new TornadoVMMasterPlanStandard(state, model);
         }
         model.setTornadoVMPlan(plan);
         return plan;
     }
 
     /**
-     * Single-token forward pass returning output logits.
-     *
-     * <p>Used by the standard GPU path ({@link org.beehive.gpullama3.inference.InferenceCore#forwardTornadoVM})
-     * and the Phase 2 sequential decode path. Not applicable to
-     * {@link TornadoVMMasterPlanWithBatchPrefillDecode} — that plan uses its own typed methods.</p>
-     *
-     * @param position sequence position of the current token
-     * @return logits array for token sampling
+     * Creates the appropriate {@link TornadoExecutionPlan} instance
+     * for the given {@link Model} and {@link State}.
      */
+    TornadoExecutionPlan createExecutionPlan();
+
+    void forceCopyInReadOnlyData();
+
     FloatArray tornadoVMForwardExecuteLayered(int position);
 
     /** Releases all device memory held by this plan. */
