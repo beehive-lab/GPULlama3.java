@@ -2,6 +2,7 @@ package org.beehive.gpullama3.model.llama;
 
 import org.beehive.gpullama3.inference.InferenceCore;
 import org.beehive.gpullama3.inference.InferenceEngine;
+import org.beehive.gpullama3.inference.InferenceEngineWithBatchPrefillDecode;
 import org.beehive.gpullama3.inference.InferenceEngineWithPrefillDecode;
 import org.beehive.gpullama3.inference.sampler.Sampler;
 import org.beehive.gpullama3.inference.state.LlamaState;
@@ -66,6 +67,9 @@ public class Llama extends AbstractModel {
     @Override
     public List<Integer> generateTokens(State state, int startPosition, List<Integer> promptTokens, Set<Integer> stopTokens, int maxTokens, Sampler sampler, boolean echo,
             IntConsumer onTokenGenerated) {
+        if (WITH_PREFILL_DECODE && TornadoVMMasterPlan.PREFILL_BATCH_SIZE > 1) {
+            return InferenceEngineWithBatchPrefillDecode.generateTokensLlama(this, state, startPosition, promptTokens, stopTokens, maxTokens, sampler, echo, onTokenGenerated);
+        }
         if (WITH_PREFILL_DECODE) {
             return InferenceEngineWithPrefillDecode.generateTokensLlama(this, state, startPosition, promptTokens, stopTokens, maxTokens, sampler, echo, onTokenGenerated);
         }
@@ -75,6 +79,9 @@ public class Llama extends AbstractModel {
     @Override
     public List<Integer> generateTokensGPU(State state, int startPosition, List<Integer> promptTokens, Set<Integer> stopTokens, int maxTokens, Sampler sampler, boolean echo,
             IntConsumer onTokenGenerated, TornadoVMMasterPlan tornadoVMPlan) {
+        if (WITH_PREFILL_DECODE && TornadoVMMasterPlan.PREFILL_BATCH_SIZE > 1) {
+            return InferenceEngineWithBatchPrefillDecode.generateTokensGPULlama(this, state, startPosition, promptTokens, stopTokens, maxTokens, sampler, echo, onTokenGenerated, tornadoVMPlan);
+        }
         if (WITH_PREFILL_DECODE) {
             return InferenceEngineWithPrefillDecode.generateTokensGPULlama(this, state, startPosition, promptTokens, stopTokens, maxTokens, sampler, echo, onTokenGenerated, tornadoVMPlan);
         }
