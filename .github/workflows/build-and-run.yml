@@ -100,37 +100,37 @@ jobs:
           ./llama-tornado --gpu --${{ matrix.backend.name }} \
             --model $MODELS_DIR/Llama-3.2-1B-Instruct-F16.gguf \
             --prompt "Say hello"
-      - name: FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Prefill-Decode
+      - name: FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Prefill-Decode - PTX
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
-          ./llama-tornado --gpu --${{ matrix.backend.name }} \
+          ./llama-tornado --gpu --ptx \
             --model $MODELS_DIR/Llama-3.2-1B-Instruct-F16.gguf \
             --prompt "Say hello" \
             --with-prefill-decode \
             --no-cuda-graphs
-      - name: FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Batch-Prefill-Decode
+      - name: PTX- FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Batch-Prefill-Decode
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
-          ./llama-tornado --gpu --${{ matrix.backend.name }} \
+          ./llama-tornado --gpu --ptx \
             --model $MODELS_DIR/Llama-3.2-1B-Instruct-F16.gguf \
             --prompt "Say hello" \
             --with-prefill-decode --batch-prefill-size 32 \
             --no-cuda-graphs
-      - name: FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Prefill-Decode-CUDA-Graphs
+      - name: PTX- FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Prefill-Decode-CUDA-Graphs
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
-          ./llama-tornado --gpu --${{ matrix.backend.name }} \
+          ./llama-tornado --gpu --ptx \
             --model $MODELS_DIR/Llama-3.2-1B-Instruct-F16.gguf \
             --prompt "Say hello" \
             --with-prefill-decode
-      - name: FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Batch-Prefill-Decode-CUDA-Graphs
+      - name: PTX - FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Batch-Prefill-Decode-CUDA-Graphs
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
-          ./llama-tornado --gpu --${{ matrix.backend.name }} \
+          ./llama-tornado --gpu --ptx \
             --model $MODELS_DIR/Llama-3.2-1B-Instruct-F16.gguf \
             --prompt "Say hello" \
             --with-prefill-decode --batch-prefill-size 32
