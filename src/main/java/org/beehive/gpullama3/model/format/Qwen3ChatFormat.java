@@ -129,4 +129,128 @@ public class Qwen3ChatFormat implements ChatFormat {
 
         return stopTokens;
     }
+
+    // ── Tool calling ──────────────────────────────────────────────────────────
+
+    /**
+     * Qwen3 tool calling system prompt suffix.
+     * Appended to the system message; instructs the model to wrap tool calls in
+     * {@code <tool_call>…</tool_call>} XML tags.
+     */
+    @Override
+    public String toolSystemPromptSuffix(String toolsJson) {
+        return "\n\n# Tools\n\n"
+                + "You may call one or more functions to assist with the user query.\n\n"
+                + "You are provided with function signatures within <tools></tools> XML tags:\n"
+                + "<tools>\n"
+                + toolsJson
+                + "\n</tools>\n\n"
+                + "For each function call, return a json object with function name and arguments "
+                + "within <tool_call></tool_call> XML tags:\n"
+                + "<tool_call>\n"
+                + "{\"name\": <function-name>, \"arguments\": <args-json-object>}\n"
+                + "</tool_call>";
+    }
+
+    /**
+     * Re-encodes a prior assistant tool-call turn for multi-turn history.
+     * Format: {@code <|im_start|>assistant\n<tool_call>\nJSON\n</tool_call><|im_end|>}
+     */
+    @Override
+    public List<Integer> encodeToolCallAssistantTurn(ToolCallExtract toolCall) {
+        List<Integer> tokens = new ArrayList<>();
+        tokens.add(imStart);
+        tokens.addAll(tokenizer.encodeOrdinaryAsList("assistant\n"));
+        String json = "{\"name\":\"" + toolCall.name() + "\",\"arguments\":" + toolCall.argumentsJson() + "}";
+        tokens.addAll(tokenizer.encodeOrdinaryAsList("<tool_call>\n" + json + "\n</tool_call>"));
+        if (imEnd != -1) {
+            tokens.add(imEnd);
+        }
+        return tokens;
+    }
+
+    /**
+     * Encodes a tool result using the Qwen3 "tool" role.
+     * Format: {@code <|im_start|>tool\nresult<|im_end|>}
+     */
+    @Override
+    public List<Integer> encodeToolResultTurn(String toolCallId, String toolName, String result) {
+        List<Integer> tokens = new ArrayList<>();
+        tokens.add(imStart);
+        tokens.addAll(tokenizer.encodeOrdinaryAsList("tool\n"));
+        tokens.addAll(tokenizer.encodeOrdinaryAsList(result));
+        if (imEnd != -1) {
+            tokens.add(imEnd);
+        }
+        return tokens;
+    }
+
+    /**
+     * Detects a tool call enclosed in {@code <tool_call>…</tool_call>} tags.
+     */
+    @Override
+    public Optional<ToolCallExtract> extractToolCall(String responseText) {
+        int start = responseText.indexOf("<tool_call>");
+        int end = responseText.lastIndexOf("</tool_call>");
+        if (start == -1 || end == -1) {
+            return Optional.empty();
+        }
+        String json = responseText.substring(start + "<tool_call>".length(), end).strip();
+        return parseToolCallJson(json, "arguments");
+    }
+
+    /**
+     * Parses {@code name} and the value of {@code argsKey} out of a tool-call JSON object.
+     * Uses brace-counting to extract nested argument objects correctly.
+     * Avoids a JSON-library dependency.
+     */
+    private static Optional<ToolCallExtract> parseToolCallJson(String json, String argsKey) {
+        // extract "name"
+        String name = extractStringValue(json, "name");
+        if (name == null) {
+            return Optional.empty();
+        }
+
+        // extract arguments object using brace-counting
+        String argsJson = extractNestedObject(json, argsKey);
+        if (argsJson == null) {
+            argsJson = "{}"; // tool call with no arguments
+        }
+
+        return Optional.of(new ToolCallExtract(name, argsJson));
+    }
+
+    /** Extracts the string value for {@code "key":"<value>"} from a JSON object. */
+    private static String extractStringValue(String json, String key) {
+        String marker = "\"" + key + "\":";
+        int markerIdx = json.indexOf(marker);
+        if (markerIdx == -1) return null;
+        int quoteStart = json.indexOf('"', markerIdx + marker.length());
+        if (quoteStart == -1) return null;
+        int quoteEnd = json.indexOf('"', quoteStart + 1);
+        if (quoteEnd == -1) return null;
+        return json.substring(quoteStart + 1, quoteEnd);
+    }
+
+    /**
+     * Extracts the JSON object value for {@code "key":{…}} using brace-counting,
+     * so nested objects are handled correctly regardless of what follows.
+     */
+    private static String extractNestedObject(String json, String key) {
+        String marker = "\"" + key + "\":";
+        int markerIdx = json.indexOf(marker);
+        if (markerIdx == -1) return null;
+        int braceStart = json.indexOf('{', markerIdx + marker.length());
+        if (braceStart == -1) return null;
+        int depth = 0;
+        for (int i = braceStart; i < json.length(); i++) {
+            char c = json.charAt(i);
+            if (c == '{') depth++;
+            else if (c == '}') {
+                depth--;
+                if (depth == 0) return json.substring(braceStart, i + 1);
+            }
+        }
+        return null; // unbalanced JSON
+    }
 }

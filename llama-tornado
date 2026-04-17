@@ -191,7 +191,7 @@ class LlamaRunner:
             [
                 "-cp",
                 self._find_llama_jar(),
-                "org.beehive.gpullama3.LlamaApp",
+                args.main_class,
             ]
         )
         cmd.extend(module_config)
@@ -245,6 +245,9 @@ class LlamaRunner:
             llama_args.append("--interactive")
         elif args.instruct:
             llama_args.append("--instruct")
+
+        if args.tool_demo:
+            llama_args.append("--tool-demo")
 
         return cmd + llama_args
 
@@ -527,6 +530,16 @@ def create_parser() -> argparse.ArgumentParser:
 
     # Advanced options
     advanced_group = parser.add_argument_group("Advanced Options")
+    advanced_group.add_argument(
+        "--main-class",
+        default="org.beehive.gpullama3.cli.LlamaTornadoCli",
+        help="Java main class to run (default: LlamaTornadoCli)",
+    )
+    advanced_group.add_argument(
+        "--tool-demo",
+        action="store_true",
+        help="Run the tool calling demo (requires a LLaMA 3.1 or Qwen3 model)",
+    )
     advanced_group.add_argument(
         "--opencl-flags",
         default="-cl-denorms-are-zero -cl-no-signed-zeros -cl-finite-math-only",
