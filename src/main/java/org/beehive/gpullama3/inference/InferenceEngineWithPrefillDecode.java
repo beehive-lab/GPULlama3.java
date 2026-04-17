@@ -3,8 +3,6 @@ package org.beehive.gpullama3.inference;
 import org.beehive.gpullama3.auxiliary.LastRunMetrics;
 import org.beehive.gpullama3.inference.sampler.Sampler;
 import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.inference.weights.tornado.TornadoWeights;
-import org.beehive.gpullama3.tensor.GGMLType;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.tokenizer.Tokenizer;
@@ -128,11 +126,6 @@ public final class InferenceEngineWithPrefillDecode {
             List<Integer> promptTokens, Set<Integer> stopTokens,
             int maxTokens, Sampler sampler, boolean echo,
             IntConsumer onTokenGenerated, TornadoVMMasterPlan tornadoVMPlan) {
-
-        if (((TornadoWeights) model.weights()).getWeightType() == GGMLType.Q8_0) {
-            throw new UnsupportedOperationException(
-                    "GPU prefill/decode path not yet implemented for Q8_0 weights");
-        }
 
         long startNanos = System.nanoTime();
 

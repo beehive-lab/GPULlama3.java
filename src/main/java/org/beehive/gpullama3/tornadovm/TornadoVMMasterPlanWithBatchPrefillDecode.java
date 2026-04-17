@@ -2,6 +2,7 @@ package org.beehive.gpullama3.tornadovm;
 
 import org.beehive.gpullama3.inference.state.LlamaState;
 import org.beehive.gpullama3.inference.state.State;
+import org.beehive.gpullama3.tensor.GGMLType;
 import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.model.llama.LlamaConfiguration;
@@ -142,9 +143,21 @@ public class TornadoVMMasterPlanWithBatchPrefillDecode implements TornadoVMMaste
 
     /**
      * Creates the {@link TornadoExecutionPlan} for forward pass with *prefill in batches and separated decode*.
+     *
+     * TODO: support Q8_0 weights
+     * To implement this, consult how {@link TornadoVMMasterPlanStandard} uses the {@link QuantizationPlannerFactory}
      */
     @Override
     public TornadoExecutionPlan createExecutionPlan() {
+        GGMLType weightType = model.weights().getWeightType();
+        switch (weightType) {
+            case F16 -> { /* supported — continue below */ }
+            case Q8_0 -> throw new UnsupportedOperationException(
+                    "Batched prefill/decode GPU path not yet implemented for Q8_0 weights");
+            default -> throw new UnsupportedOperationException(
+                    "Batched prefill/decode GPU path not supported for weight type: " + weightType);
+        }
+
         LlamaTornadoWeights weights       = (LlamaTornadoWeights) model.weights();
         SchedulerType       schedulerType = SchedulerDetectionService.determineSchedulerType(model);
 
