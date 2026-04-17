@@ -8,6 +8,7 @@ import org.beehive.gpullama3.tokenizer.Phi3Tokenizer;
 import org.beehive.gpullama3.tokenizer.Qwen3Tokenizer;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 public interface ChatFormat {
@@ -35,6 +36,58 @@ public interface ChatFormat {
     int getBeginOfText();
 
     Set<Integer> getStopTokens();
+
+    /**
+     * Returns plain text to append to the system message content when tools are available.
+     * The returned string is concatenated to the system message before encoding, so the
+     * normal {@link #encodeMessage} path handles tokenization.
+     *
+     * @param toolsJson JSON array of tool definitions, e.g.
+     *                  {@code [{"type":"function","function":{...}}]}
+     */
+    default String toolSystemPromptSuffix(String toolsJson) {
+        throw new UnsupportedOperationException("Tool calling not supported for: " + getClass().getSimpleName());
+    }
+
+    /**
+     * Re-encodes a prior assistant tool-call turn into the conversation token stream.
+     * Used when replaying multi-turn history that contains a previous tool call.
+     *
+     * @param toolCall the tool call to encode (name + raw arguments JSON)
+     */
+    default List<Integer> encodeToolCallAssistantTurn(ToolCallExtract toolCall) {
+        throw new UnsupportedOperationException("Tool calling not supported for: " + getClass().getSimpleName());
+    }
+
+    /**
+     * Encodes a tool execution result message in the model-native format.
+     *
+     * @param toolCallId the ID of the originating tool call (may be ignored by some formats)
+     * @param toolName   the name of the tool that was called
+     * @param result     the result content string
+     */
+    default List<Integer> encodeToolResultTurn(String toolCallId, String toolName, String result) {
+        throw new UnsupportedOperationException("Tool calling not supported for: " + getClass().getSimpleName());
+    }
+
+    /**
+     * Detects and extracts a tool call from fully decoded model response text.
+     * Returns {@link Optional#empty()} when the response is a plain text answer.
+     *
+     * @param responseText the fully decoded response from the model
+     */
+    default Optional<ToolCallExtract> extractToolCall(String responseText) {
+        return Optional.empty();
+    }
+
+    /**
+     * Stop tokens to use when tool calling is enabled.
+     * Some models (LLaMA 3.1+) use a different end-of-turn token ({@code <|eom_id|>})
+     * when emitting a tool call instead of a regular response.
+     */
+    default Set<Integer> getToolAwareStopTokens() {
+        return getStopTokens();
+    }
 
     record ChatTokens(String tStartHeader, String tEndHeader, String tEndOfTurn, String tEndOfText, String tEndOfTextFim) {
     }
