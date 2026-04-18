@@ -187,70 +187,10 @@ public class Qwen3ChatFormat implements ChatFormat {
 
     /**
      * Detects a tool call enclosed in {@code <tool_call>…</tool_call>} tags.
+     * Delegates to {@link ToolCallParserUtils#parseQwen3Response}.
      */
     @Override
     public Optional<ToolCallExtract> extractToolCall(String responseText) {
-        int start = responseText.indexOf("<tool_call>");
-        int end = responseText.lastIndexOf("</tool_call>");
-        if (start == -1 || end == -1) {
-            return Optional.empty();
-        }
-        String json = responseText.substring(start + "<tool_call>".length(), end).strip();
-        return parseToolCallJson(json, "arguments");
-    }
-
-    /**
-     * Parses {@code name} and the value of {@code argsKey} out of a tool-call JSON object.
-     * Uses brace-counting to extract nested argument objects correctly.
-     * Avoids a JSON-library dependency.
-     */
-    private static Optional<ToolCallExtract> parseToolCallJson(String json, String argsKey) {
-        // extract "name"
-        String name = extractStringValue(json, "name");
-        if (name == null) {
-            return Optional.empty();
-        }
-
-        // extract arguments object using brace-counting
-        String argsJson = extractNestedObject(json, argsKey);
-        if (argsJson == null) {
-            argsJson = "{}"; // tool call with no arguments
-        }
-
-        return Optional.of(new ToolCallExtract(name, argsJson));
-    }
-
-    /** Extracts the string value for {@code "key":"<value>"} from a JSON object. */
-    private static String extractStringValue(String json, String key) {
-        String marker = "\"" + key + "\":";
-        int markerIdx = json.indexOf(marker);
-        if (markerIdx == -1) return null;
-        int quoteStart = json.indexOf('"', markerIdx + marker.length());
-        if (quoteStart == -1) return null;
-        int quoteEnd = json.indexOf('"', quoteStart + 1);
-        if (quoteEnd == -1) return null;
-        return json.substring(quoteStart + 1, quoteEnd);
-    }
-
-    /**
-     * Extracts the JSON object value for {@code "key":{…}} using brace-counting,
-     * so nested objects are handled correctly regardless of what follows.
-     */
-    private static String extractNestedObject(String json, String key) {
-        String marker = "\"" + key + "\":";
-        int markerIdx = json.indexOf(marker);
-        if (markerIdx == -1) return null;
-        int braceStart = json.indexOf('{', markerIdx + marker.length());
-        if (braceStart == -1) return null;
-        int depth = 0;
-        for (int i = braceStart; i < json.length(); i++) {
-            char c = json.charAt(i);
-            if (c == '{') depth++;
-            else if (c == '}') {
-                depth--;
-                if (depth == 0) return json.substring(braceStart, i + 1);
-            }
-        }
-        return null; // unbalanced JSON
+        return ToolCallParserUtils.parseQwen3Response(responseText);
     }
 }

@@ -83,11 +83,17 @@ public class LlamaChatFormat implements ChatFormat {
      */
     @Override
     public String toolSystemPromptSuffix(String toolsJson) {
-        return "\n\nGiven the following functions, please respond with a JSON for a function call "
-                + "with its proper arguments that best answers the given prompt.\n\n"
-                + "Respond in the format {\"name\": function name, \"parameters\": dictionary of "
-                + "argument name and its value}. Do not use variables.\n\n"
-                + toolsJson;
+        return "\n\n# Tools\n\n"
+                + "You may call one or more functions to assist with the user query.\n\n"
+                + "You are provided with function signatures within <tools></tools> XML tags:\n\n"
+                + "<tools>\n" + toolsJson + "\n</tools>\n\n"
+                + "IMPORTANT: the \"name\" field in your tool call MUST be exactly one of the function names "
+                + "listed inside <tools> above — not a path, not a word from the user's message.\n\n"
+                + "For each function call, return a json object with function name and arguments "
+                + "within <tool_call></tool_call> XML tags:\n\n"
+                + "<tool_call>\n"
+                + "{\"name\": <function-name>, \"arguments\": <args-json-object>}\n"
+                + "</tool_call>";
     }
 
     /**
@@ -97,16 +103,9 @@ public class LlamaChatFormat implements ChatFormat {
     @Override
     public List<Integer> encodeToolCallAssistantTurn(ToolCallExtract toolCall) {
         List<Integer> tokens = new ArrayList<>(encodeHeader(new Message(Role.ASSISTANT, "")));
-        if (pythonTag != -1) {
-            tokens.add(pythonTag);
-        }
-        String json = "{\"name\":\"" + toolCall.name() + "\",\"parameters\":" + toolCall.argumentsJson() + "}";
+        String json = "<tool_call>\n{\"name\":\"" + toolCall.name() + "\",\"arguments\":" + toolCall.argumentsJson() + "}\n</tool_call>";
         tokens.addAll(tokenizer.encodeAsList(json));
-        if (endOfMessage != -1) {
-            tokens.add(endOfMessage);
-        } else {
-            tokens.add(endOfTurn);
-        }
+        tokens.add(endOfTurn);
         return tokens;
     }
 
@@ -128,31 +127,13 @@ public class LlamaChatFormat implements ChatFormat {
 
     /**
      * Detects a tool call in the decoded response text.
-     *
-     * <p>Two formats are recognised:</p>
-     * <ol>
-     *   <li><strong>LLaMA 3.1 native</strong>: {@code <|python_tag|>{"name":…,"parameters":{…}}}</li>
-     *   <li><strong>Fallback</strong>: raw JSON object (possibly wrapped in markdown code fences),
-     *       as produced by smaller models that follow the system-prompt instructions but skip
-     *       the special token prefix.</li>
-     * </ol>
+     * Supports LLaMA 3.1 (native {@code <|python_tag|>} + {@code "parameters"} key),
+     * LLaMA 3.2 ({@code "arguments"} key, tag often absent), and a raw-JSON fallback
+     * for smaller models. Delegates to {@link ToolCallParserUtils#parseLlamaResponse}.
      */
     @Override
     public Optional<ToolCallExtract> extractToolCall(String responseText) {
-        // ── 1. Native LLaMA 3.1 format: <|python_tag|>{...} ──────────────────
-        int idx = responseText.indexOf("<|python_tag|>");
-        if (idx != -1) {
-            String json = responseText.substring(idx + "<|python_tag|>".length()).strip();
-            return parseToolCallJson(json);
-        }
-
-        // ── 2. Fallback: raw JSON, possibly inside markdown code fences ───────
-        String stripped = stripMarkdownFences(responseText.strip());
-        if (stripped.startsWith("{")) {
-            return parseToolCallJson(stripped);
-        }
-
-        return Optional.empty();
+        return ToolCallParserUtils.parseLlamaResponse(responseText);
     }
 
     /**
@@ -167,88 +148,4 @@ public class LlamaChatFormat implements ChatFormat {
         return stopTokens;
     }
 
-    /**
-     * Strips surrounding markdown code fences (``` or ```json / ```python etc.) if present.
-     */
-    private static String stripMarkdownFences(String text) {
-        if (!text.startsWith("```")) {
-            return text;
-        }
-        int firstNewline = text.indexOf('\n');
-        if (firstNewline == -1) {
-            return text;
-        }
-        String body = text.substring(firstNewline + 1);
-        if (body.endsWith("```")) {
-            body = body.substring(0, body.length() - 3).stripTrailing();
-        }
-        return body.strip();
-    }
-
-    /**
-     * Parses a tool call JSON object into a {@link ToolCallExtract}.
-     *
-     * <p>Accepts both formats produced by LLaMA variants:</p>
-     * <ul>
-     *   <li>{@code {"name":"fn","parameters":{…}}} — LLaMA 3.1 native</li>
-     *   <li>{@code {"function":"fn","parameters":{…}}} — produced by some fine-tunes</li>
-     *   <li>{@code {"name":"fn","arguments":{…}}} — alternative key</li>
-     * </ul>
-     * Uses brace-counting to extract nested argument objects correctly.
-     */
-    private static Optional<ToolCallExtract> parseToolCallJson(String json) {
-        // ── extract tool name: try "name" then "function" ─────────────────────
-        String name = extractStringValue(json, "name");
-        if (name == null) {
-            name = extractStringValue(json, "function");
-        }
-        if (name == null) {
-            return Optional.empty();
-        }
-
-        // ── extract arguments object: try "parameters" then "arguments" ───────
-        String argsJson = extractNestedObject(json, "parameters");
-        if (argsJson == null) {
-            argsJson = extractNestedObject(json, "arguments");
-        }
-        if (argsJson == null) {
-            argsJson = "{}"; // tool call with no arguments
-        }
-
-        return Optional.of(new ToolCallExtract(name, argsJson));
-    }
-
-    /** Extracts the string value for {@code "key":"<value>"} from a JSON object. */
-    private static String extractStringValue(String json, String key) {
-        String marker = "\"" + key + "\":";
-        int markerIdx = json.indexOf(marker);
-        if (markerIdx == -1) return null;
-        int quoteStart = json.indexOf('"', markerIdx + marker.length());
-        if (quoteStart == -1) return null;
-        int quoteEnd = json.indexOf('"', quoteStart + 1);
-        if (quoteEnd == -1) return null;
-        return json.substring(quoteStart + 1, quoteEnd);
-    }
-
-    /**
-     * Extracts the JSON object value for {@code "key":{…}} using brace-counting,
-     * so nested objects are handled correctly regardless of what follows.
-     */
-    private static String extractNestedObject(String json, String key) {
-        String marker = "\"" + key + "\":";
-        int markerIdx = json.indexOf(marker);
-        if (markerIdx == -1) return null;
-        int braceStart = json.indexOf('{', markerIdx + marker.length());
-        if (braceStart == -1) return null;
-        int depth = 0;
-        for (int i = braceStart; i < json.length(); i++) {
-            char c = json.charAt(i);
-            if (c == '{') depth++;
-            else if (c == '}') {
-                depth--;
-                if (depth == 0) return json.substring(braceStart, i + 1);
-            }
-        }
-        return null; // unbalanced JSON
-    }
 }
