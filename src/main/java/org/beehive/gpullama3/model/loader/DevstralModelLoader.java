@@ -143,11 +143,7 @@ public class DevstralModelLoader extends AbstractModelLoader<Devstral, DevstralC
     // @formatter:off
     @Override
     protected Weights createTornadoVMWeights(Map<String, GGMLTensorEntry> tensorEntries, DevstralConfiguration config, Pair<float[], float[]> ropeFreqs, GGMLTensorEntry tokenEmbeddings, GGMLTensorEntry outputWeight) {
-        GGMLType ggmlType = outputWeight.ggmlType();
-
-        if (TornadoVMMasterPlan.ENABLE_TORNADOVM_INIT_TIME) {
-            System.out.println("Loading model weights in TornadoVM format (loading " + ggmlType + ")");
-        }
+        GGMLType ggmlType = effectiveGpuWeightType(outputWeight.ggmlType());
 
         if (ggmlType != GGMLType.F16 && ggmlType != GGMLType.Q8_0) {
             throw new UnsupportedOperationException("Type: " + ggmlType + " currently not supported for TornadoVM weights.");
