@@ -1,5 +1,6 @@
 package org.beehive.gpullama3.model.loader;
 
+import org.beehive.gpullama3.tensor.GGMLType;
 import org.beehive.gpullama3.tensor.GGUF;
 import org.beehive.gpullama3.tensor.GGMLTensorEntry;
 import org.beehive.gpullama3.auxiliary.Pair;
@@ -8,6 +9,7 @@ import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.tokenizer.Tokenizer;
 import org.beehive.gpullama3.tokenizer.Vocabulary;
+import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlan;
 
 import java.io.IOException;
 import java.nio.channels.FileChannel;
@@ -40,7 +42,36 @@ public abstract class AbstractModelLoader<M extends Model, C extends Configurati
         return switch (modelQuantizationAsInt) {
             case 1 -> "FP16";
             case 7 -> "Q8_0";
+            case 14, 15 -> "Q8_0"; // Q4_K_S, Q4_K_M (K-quants use Q8_0 activations)
+            case 16, 17 -> "Q8_0"; // Q5_K_S, Q5_K_M
+            case 18 -> "Q8_0";     // Q6_K
             default -> throw new UnsupportedOperationException("Unsupported quantization format: " + modelQuantizationAsInt + " (as int).");
+        };
+    }
+
+    /**
+     * Returns the effective GPU weight type for TornadoVM execution.
+     * K-quant types (Q4_K, Q5_K, Q6_K) are dequantized to Q8_0 at load time.
+     */
+    protected static GGMLType effectiveGpuWeightType(GGMLType ggmlType) {
+        return switch (ggmlType) {
+            case F16, F32, Q8_0 -> ggmlType;
+            case Q4_K, Q5_K, Q6_K -> GGMLType.Q8_0;
+            default -> ggmlType;
+        };
+    }
+
+    private static String fileTypeName(int fileType) {
+        return switch (fileType) {
+            case 0 -> "F32";
+            case 1 -> "F16";
+            case 7 -> "Q8_0";
+            case 14 -> "Q4_K_S";
+            case 15 -> "Q4_K_M";
+            case 16 -> "Q5_K_S";
+            case 17 -> "Q5_K_M";
+            case 18 -> "Q6_K";
+            default -> "type_" + fileType;
         };
     }
 
@@ -123,6 +154,11 @@ public abstract class AbstractModelLoader<M extends Model, C extends Configurati
 
         // Delegate to specific implementation
         if (useTornadovm) {
+            GGMLType gpuType = effectiveGpuWeightType(outputWeight.ggmlType());
+            if (TornadoVMMasterPlan.ENABLE_TORNADOVM_INIT_TIME) {
+                int fileType = (int) gguf.getMetadata().get("general.file_type");
+                System.out.println("Loading model weights in TornadoVM format (" + fileTypeName(fileType) + " -> " + gpuType + ")");
+            }
             return createTornadoVMWeights(tensorEntries, config, ropeFreqs, tokenEmbeddings, outputWeight);
         } else {
             return createStandardWeights(tensorEntries, config, ropeFreqs, tokenEmbeddings, outputWeight);

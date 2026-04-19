@@ -15,6 +15,7 @@ import uk.ac.manchester.tornado.api.types.HalfFloat;
 import uk.ac.manchester.tornado.api.types.arrays.*;
 
 import java.io.IOException;
+import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.nio.ByteOrder;
@@ -121,6 +122,9 @@ public abstract class ModelLoader {
             case F32 -> new FP32FloatTensor(FloatTensor.numberOfElements(entry.shape()), entry.memorySegment());
             case Q8_0 -> new Q8_0FloatTensor(FloatTensor.numberOfElements(entry.shape()), entry.memorySegment());
             case Q4_0 -> new Q4_0FloatTensor(FloatTensor.numberOfElements(entry.shape()), entry.memorySegment());
+            case Q4_K -> new Q4_KFloatTensor(FloatTensor.numberOfElements(entry.shape()), entry.memorySegment());
+            case Q5_K -> new Q5_KFloatTensor(FloatTensor.numberOfElements(entry.shape()), entry.memorySegment());
+            case Q6_K -> new Q6_KFloatTensor(FloatTensor.numberOfElements(entry.shape()), entry.memorySegment());
             case F16 -> new FP16FloatTensor(FloatTensor.numberOfElements(entry.shape()), entry.memorySegment());
             default -> throw new UnsupportedOperationException("Quantization format " + ggmlType);
         };
@@ -149,9 +153,67 @@ public abstract class ModelLoader {
             case F32 -> FP32TornadoTensor.fromTornadoMemorySegment(entry.memorySegment());
             case F16 -> FP16TornadoTensor.fromTornadoMemorySegment(entry.memorySegment());
             case Q8_0 -> Q8_0TornadoTensor.fromTornadoMemorySegment(entry.memorySegment());
-            case Q4_0 -> throw new UnsupportedOperationException("Q4 format not supported yet");
+            case Q4_K, Q5_K, Q6_K -> dequantizeToQ8_0TornadoTensor(entry);
+            case Q4_0 -> throw new UnsupportedOperationException("Q4_0 format not supported for TornadoVM yet");
             default -> throw new UnsupportedOperationException("Quantization format " + ggmlType);
         };
+    }
+
+    /**
+     * Dequantizes a K-quant tensor (Q4_K, Q5_K, Q6_K) to Q8_0 format for TornadoVM/GPU execution.
+     * This is a load-time conversion that allows K-quant models to run on GPU with existing Q8_0 kernels.
+     */
+    private static Q8_0TornadoTensor dequantizeToQ8_0TornadoTensor(GGMLTensorEntry entry) {
+        // The entry's memorySegment includes a TornadoVM ARRAY_HEADER prefix (16 bytes of zeros).
+        // Slice past it so the K-quant FloatTensor reads raw tensor data starting at byte 0.
+        long headerBytes = TornadoNativeArray.ARRAY_HEADER;
+        GGMLTensorEntry dataEntry = new GGMLTensorEntry(
+                entry.mappedFile(), entry.name(), entry.ggmlType(), entry.shape(),
+                entry.memorySegment().asSlice(headerBytes));
+        FloatTensor sourceTensor = loadTensor(dataEntry);
+        int numElements = sourceTensor.size();
+        int blockSize = 32;
+        int blocksNeeded = (numElements + blockSize - 1) / blockSize;
+        int q8BlockBytes = 34; // 2 bytes scale + 32 bytes quants
+        int q8BytesNeeded = blocksNeeded * q8BlockBytes;
+
+        byte[] q8Data = new byte[q8BytesNeeded];
+
+        for (int b = 0; b < blocksNeeded; b++) {
+            int start = b * blockSize;
+            int end = Math.min(start + blockSize, numElements);
+
+            // Find max absolute value for scale
+            float maxAbs = 0;
+            for (int i = start; i < end; i++) {
+                maxAbs = Math.max(maxAbs, Math.abs(sourceTensor.getFloat(i)));
+            }
+            float scale = maxAbs / 127.0f;
+
+            // Write scale as fp16 (little-endian)
+            short scaleF16 = Float.floatToFloat16(scale);
+            int blockOff = b * q8BlockBytes;
+            q8Data[blockOff] = (byte) (scaleF16 & 0xFF);
+            q8Data[blockOff + 1] = (byte) ((scaleF16 >> 8) & 0xFF);
+
+            // Quantize values
+            float invScale = scale != 0 ? 1.0f / scale : 0;
+            for (int i = start; i < end; i++) {
+                int qi = Math.round(sourceTensor.getFloat(i) * invScale);
+                qi = Math.max(-128, Math.min(127, qi));
+                q8Data[blockOff + 2 + (i - start)] = (byte) qi;
+            }
+        }
+
+        // Allocate native memory with TornadoNativeArray header, matching GGUF.loadTensorsTornado layout
+        MemorySegment nativeSegment = Arena.ofAuto().allocate(headerBytes + q8BytesNeeded, 4);
+        // Zero out the header
+        for (int i = 0; i < headerBytes; i++) {
+            nativeSegment.set(ValueLayout.JAVA_BYTE, i, (byte) 0);
+        }
+        // Copy Q8_0 data after header
+        MemorySegment.copy(MemorySegment.ofArray(q8Data), 0, nativeSegment, headerBytes, q8BytesNeeded);
+        return Q8_0TornadoTensor.fromTornadoMemorySegment(nativeSegment);
     }
 
     /**
