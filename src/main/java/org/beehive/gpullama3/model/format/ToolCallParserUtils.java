@@ -1,5 +1,7 @@
 package org.beehive.gpullama3.model.format;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -41,6 +43,11 @@ public final class ToolCallParserUtils {
             String json = responseText.substring(tcStart + "<tool_call>".length(), tcEnd).strip();
             return parseLlamaJson(json);
         }
+        // 2b. Unclosed <tool_call> — model stopped (eot_id / eom_id) before writing the closing tag
+        if (tcStart != -1 && tcEnd == -1) {
+            String json = responseText.substring(tcStart + "<tool_call>".length()).strip();
+            return parseLlamaJson(json);
+        }
 
         // 3. Fallback: raw JSON, possibly inside markdown code fences
         String stripped = stripMarkdownFences(responseText.strip());
@@ -73,15 +80,65 @@ public final class ToolCallParserUtils {
     // ── Qwen3 ─────────────────────────────────────────────────────────────────
 
     /**
+     * Extracts ALL tool calls from a response that may contain multiple
+     * {@code <tool_call>…</tool_call>} blocks (Llama 3.2 and Qwen3 batch calls).
+     *
+     * Falls back to the raw-JSON single-call path if no tags are found.
+     * Returns an empty list when the response contains no tool calls.
+     */
+    public static List<ToolCallExtract> parseAllToolCalls(String responseText) {
+        List<ToolCallExtract> calls = new java.util.ArrayList<>();
+
+        // <|python_tag|> (Llama 3.1) — single call by definition
+        int pythonIdx = responseText.indexOf("<|python_tag|>");
+        if (pythonIdx != -1) {
+            parseLlamaJson(responseText.substring(pythonIdx + "<|python_tag|>".length()).strip())
+                    .ifPresent(calls::add);
+            return calls;
+        }
+
+        // Scan for all <tool_call>…</tool_call> blocks
+        int searchFrom = 0;
+        while (true) {
+            int start = responseText.indexOf("<tool_call>", searchFrom);
+            if (start == -1) break;
+            int end = responseText.indexOf("</tool_call>", start);
+            String json;
+            if (end != -1) {
+                json = responseText.substring(start + "<tool_call>".length(), end).strip();
+                searchFrom = end + "</tool_call>".length();
+            } else {
+                // Unclosed tag — model stopped before writing the closing tag
+                json = responseText.substring(start + "<tool_call>".length()).strip();
+                searchFrom = responseText.length();
+            }
+            parseLlamaJson(json).ifPresent(calls::add);
+            if (end == -1) break;
+        }
+
+        // Raw JSON fallback (no tags at all)
+        if (calls.isEmpty()) {
+            String stripped = stripMarkdownFences(responseText.strip());
+            if (stripped.startsWith("{")) {
+                parseLlamaJson(stripped).ifPresent(calls::add);
+            }
+        }
+
+        return calls;
+    }
+
+    /**
      * Extracts a tool call enclosed in {@code <tool_call>…</tool_call>} tags
      * as produced by Qwen3 models.
      */
     public static Optional<ToolCallExtract> parseQwen3Response(String responseText) {
         int start = responseText.indexOf("<tool_call>");
         int end   = responseText.lastIndexOf("</tool_call>");
-        if (start == -1 || end == -1 || end <= start) return Optional.empty();
+        if (start == -1) return Optional.empty();
 
-        String json = responseText.substring(start + "<tool_call>".length(), end).strip();
+        String json = (end != -1 && end > start)
+                ? responseText.substring(start + "<tool_call>".length(), end).strip()
+                : responseText.substring(start + "<tool_call>".length()).strip();
 
         String name = extractStringValue(json, "name");
         if (name == null) return Optional.empty();
@@ -104,7 +161,11 @@ public final class ToolCallParserUtils {
         return body.strip();
     }
 
-    /** Extracts the string value for {@code "key": "<value>"} from a JSON object. Tolerates whitespace around {@code :}. */
+    /**
+     * Extracts the string value for {@code "key": "<value>"} from a JSON object.
+     * Tolerates whitespace around {@code :} and correctly skips escaped quotes ({@code \"})
+     * inside the value, so multi-line code strings with embedded {@code "} are returned intact.
+     */
     public static String extractStringValue(String json, String key) {
         String marker = "\"" + key + "\"";
         int markerIdx = json.indexOf(marker);
@@ -113,9 +174,20 @@ public final class ToolCallParserUtils {
         if (colonIdx == -1) return null;
         int quoteStart = json.indexOf('"', colonIdx + 1);
         if (quoteStart == -1) return null;
-        int quoteEnd = json.indexOf('"', quoteStart + 1);
-        if (quoteEnd == -1) return null;
-        return json.substring(quoteStart + 1, quoteEnd);
+        // Scan for the closing quote, honouring backslash escapes
+        int i = quoteStart + 1;
+        while (i < json.length()) {
+            char c = json.charAt(i);
+            if (c == '\\') {
+                i += 2; // skip escape sequence (e.g. \", \\, \n)
+            } else if (c == '"') {
+                break;
+            } else {
+                i++;
+            }
+        }
+        if (i >= json.length()) return null;
+        return json.substring(quoteStart + 1, i);
     }
 
     /**

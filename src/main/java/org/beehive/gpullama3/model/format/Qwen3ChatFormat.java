@@ -193,4 +193,9 @@ public class Qwen3ChatFormat implements ChatFormat {
     public Optional<ToolCallExtract> extractToolCall(String responseText) {
         return ToolCallParserUtils.parseQwen3Response(responseText);
     }
+
+    @Override
+    public List<ToolCallExtract> extractAllToolCalls(String responseText) {
+        return ToolCallParserUtils.parseAllToolCalls(responseText);
+    }
 }
