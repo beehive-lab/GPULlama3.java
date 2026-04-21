@@ -78,32 +78,58 @@ public class LlamaChatFormat implements ChatFormat {
     // ── Tool calling ──────────────────────────────────────────────────────────
 
     /**
-     * LLaMA 3.1 tool calling system prompt suffix.
-     * Instructs the model to respond with JSON using the {"name":…,"parameters":{…}} format.
+     * Llama 3.2 Instruct injects tool definitions into the <em>first user message</em>
+     * (the GGUF-embedded chat template has {@code tools_in_user_message = true} by default).
+     * The system message receives only an environment prefix; the tools and usage instructions
+     * go in the user turn.
      */
     @Override
-    public String toolSystemPromptSuffix(String toolsJson) {
-        return "\n\n# Tools\n\n"
-                + "You may call one or more functions to assist with the user query.\n\n"
-                + "You are provided with function signatures within <tools></tools> XML tags:\n\n"
-                + "<tools>\n" + toolsJson + "\n</tools>\n\n"
-                + "IMPORTANT: the \"name\" field in your tool call MUST be exactly one of the function names "
-                + "listed inside <tools> above — not a path, not a word from the user's message.\n\n"
-                + "For each function call, return a json object with function name and arguments "
-                + "within <tool_call></tool_call> XML tags:\n\n"
-                + "<tool_call>\n"
-                + "{\"name\": <function-name>, \"arguments\": <args-json-object>}\n"
-                + "</tool_call>";
+    public boolean injectsToolsInUserMessage() {
+        return true;
     }
 
     /**
-     * Re-encodes a prior assistant tool-call turn for multi-turn history.
-     * Format: {@code <|start_header_id|>assistant<|end_header_id|>\n<|python_tag|>JSON<|eom_id|>}
+     * System-message prefix that signals tool availability to Llama 3.2.
+     * Matches the template's {@code "Environment: ipython\n"} line.
+     */
+    @Override
+    public String toolSystemMessagePrefix() {
+        return "Environment: ipython\n\n";
+    }
+
+    /**
+     * Prepends tool definitions and usage instructions to the first user message,
+     * matching the Llama 3.2 GGUF chat template ({@code tools_in_user_message = true}).
+     *
+     * <p>Format mirrors:
+     * <pre>
+     * Given the following functions, please respond with a JSON for a function call
+     * with its proper arguments that best answers the given prompt.
+     *
+     * Respond in the format {"name": function name, "parameters": dictionary of argument name and its value}.
+     * Do not use variables.
+     *
+     * {toolsJson}
+     *
+     * </pre>
+     */
+    @Override
+    public String toolFirstUserMessagePrefix(String toolsJson) {
+        return "Given the following functions, please respond with a JSON for a function call "
+                + "with its proper arguments that best answers the given prompt.\n\n"
+                + "Respond in the format {\"name\": function name, \"parameters\": dictionary of "
+                + "argument name and its value}. Do not use variables.\n\n"
+                + toolsJson + "\n\n";
+    }
+
+    /**
+     * Re-encodes a prior assistant tool-call turn for multi-turn history using the
+     * Llama 3.2 native JSON format: {@code {"name":"…","parameters":{…}}<|eot_id|>}.
      */
     @Override
     public List<Integer> encodeToolCallAssistantTurn(ToolCallExtract toolCall) {
         List<Integer> tokens = new ArrayList<>(encodeHeader(new Message(Role.ASSISTANT, "")));
-        String json = "<tool_call>\n{\"name\":\"" + toolCall.name() + "\",\"arguments\":" + toolCall.argumentsJson() + "}\n</tool_call>";
+        String json = "{\"name\": \"" + toolCall.name() + "\", \"parameters\": " + toolCall.argumentsJson() + "}";
         tokens.addAll(tokenizer.encodeAsList(json));
         tokens.add(endOfTurn);
         return tokens;
@@ -134,6 +160,11 @@ public class LlamaChatFormat implements ChatFormat {
     @Override
     public Optional<ToolCallExtract> extractToolCall(String responseText) {
         return ToolCallParserUtils.parseLlamaResponse(responseText);
+    }
+
+    @Override
+    public List<ToolCallExtract> extractAllToolCalls(String responseText) {
+        return ToolCallParserUtils.parseAllToolCalls(responseText);
     }
 
     /**

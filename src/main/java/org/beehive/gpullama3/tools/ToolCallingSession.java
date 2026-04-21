@@ -50,23 +50,45 @@ public class ToolCallingSession {
     public ToolCallingResult run(String systemPrompt, String userPrompt) {
         ChatFormat chatFormat = model.chatFormat();
         String toolsJson = registry.toToolsJson();
-        String toolSuffix = chatFormat.toolSystemPromptSuffix(toolsJson);
 
-        String effectiveSystem = systemPrompt == null
-                ? toolSuffix.stripLeading()
-                : systemPrompt + toolSuffix;
+        // Build effective system and user messages according to the model's tool injection strategy.
+        // Formats like Llama 3.2 inject tool definitions into the first user message
+        // (injectsToolsInUserMessage() == true); others (Qwen3, Mistral) append to the system message.
+        String effectiveSystem;
+        String effectiveUser;
+        if (chatFormat.injectsToolsInUserMessage()) {
+            String prefix = chatFormat.toolSystemMessagePrefix();
+            effectiveSystem = systemPrompt == null
+                    ? prefix.stripLeading()
+                    : prefix + systemPrompt;
+            effectiveUser = chatFormat.toolFirstUserMessagePrefix(toolsJson) + userPrompt;
+        } else {
+            String toolSuffix = chatFormat.toolSystemPromptSuffix(toolsJson);
+            effectiveSystem = systemPrompt == null
+                    ? toolSuffix.stripLeading()
+                    : systemPrompt + toolSuffix;
+            effectiveUser = userPrompt;
+        }
+
+        log("\n[DEBUG] model: %s", model.getClass().getSimpleName());
+        log("[DEBUG] chatFormat: %s", chatFormat.getClass().getSimpleName());
+        log("[DEBUG] shouldAddSystemPrompt: %s", model.shouldAddSystemPrompt());
+        log("[DEBUG] toolAwareStopTokens: %s", chatFormat.getToolAwareStopTokens());
+        log("[DEBUG] ── effective system prompt ──────────────────────────");
+        log("%s", effectiveSystem);
+        log("[DEBUG] ── end system prompt ─────────────────────────────────");
 
         // ── Build initial prompt tokens ───────────────────────────────────────
         List<Integer> promptTokens = new ArrayList<>();
         if (model.shouldAddBeginOfText()) {
             promptTokens.add(chatFormat.getBeginOfText());
         }
-        if (model.shouldAddSystemPrompt()) {
+        if (model.shouldAddSystemPrompt() && !effectiveSystem.isBlank()) {
             promptTokens.addAll(chatFormat.encodeMessage(
                     new ChatFormat.Message(ChatFormat.Role.SYSTEM, effectiveSystem)));
         }
         promptTokens.addAll(chatFormat.encodeMessage(
-                new ChatFormat.Message(ChatFormat.Role.USER, userPrompt)));
+                new ChatFormat.Message(ChatFormat.Role.USER, effectiveUser)));
         promptTokens.addAll(chatFormat.encodeHeader(
                 new ChatFormat.Message(ChatFormat.Role.ASSISTANT, "")));
 
@@ -92,31 +114,38 @@ public class ToolCallingSession {
             }
             String rawResponse = model.tokenizer().decode(responseTokens);
 
-            Optional<ToolCallExtract> maybeCall = chatFormat.extractToolCall(rawResponse);
-            if (maybeCall.isEmpty()) {
+            log("[DEBUG] raw response (round %d): >>>%s<<<", round + 1, rawResponse);
+            log("[DEBUG] response tokens: %d  (stop token stripped: %s)",
+                    responseTokens.size(),
+                    !responseTokens.isEmpty() && toolStopTokens.contains(responseTokens.getLast()) ? "yes" : "no — stop token was removed before decoding");
+
+            List<ToolCallExtract> batchCalls = chatFormat.extractAllToolCalls(rawResponse);
+            log("[DEBUG] extractAllToolCalls found: %d call(s)", batchCalls.size());
+            if (batchCalls.isEmpty()) {
                 log("\n--- No tool call detected; returning plain text response ---");
                 return new ToolCallingResult(rawResponse, callsMade, toolResults, false);
             }
 
-            ToolCallExtract call = maybeCall.get();
-            callsMade.add(call);
-            log("\n[Tool call] %s(%s)", call.name(), call.argumentsJson());
-
-            ToolResult result = registry.execute(call);
-            toolResults.add(result);
-            log("[Tool result] %s", result.isError() ? "ERROR: " + result.error() : truncate(result.resultText()));
-
-            // ── Build continuation tokens ─────────────────────────────────────
-            String feedbackContent = result.isError()
-                    ? "Tool '" + call.name() + "' failed: " + result.error()
-                    : "Tool '" + call.name() + "' returned:\n" + truncate(result.resultText());
-
+            // ── Execute all tool calls found in this response ─────────────────
             promptTokens = new ArrayList<>(promptTokens);
-            promptTokens.addAll(chatFormat.encodeToolCallAssistantTurn(call));
-            promptTokens.addAll(chatFormat.encodeToolResultTurn(null, call.name(), feedbackContent));
+            for (ToolCallExtract call : batchCalls) {
+                callsMade.add(call);
+                log("\n[Tool call] %s(%s)", call.name(), call.argumentsJson());
+
+                ToolResult result = registry.execute(call);
+                toolResults.add(result);
+                log("[Tool result] %s", result.isError() ? "ERROR: " + result.error() : truncate(result.resultText()));
+
+                String feedbackContent = result.isError()
+                        ? "Tool '" + call.name() + "' failed: " + result.error()
+                        : "Tool '" + call.name() + "' returned:\n" + truncate(result.resultText());
+
+                promptTokens.addAll(chatFormat.encodeToolCallAssistantTurn(call));
+                promptTokens.addAll(chatFormat.encodeToolResultTurn(null, call.name(), feedbackContent));
+            }
             promptTokens.addAll(chatFormat.encodeMessage(
                     new ChatFormat.Message(ChatFormat.Role.USER,
-                            "Using only the tool result above, answer the user's question in plain text. Do not repeat the raw output.")));
+                            "Using the tool results above, call the next required tool or answer the user's original question if all steps are complete.")));
             promptTokens.addAll(chatFormat.encodeHeader(
                     new ChatFormat.Message(ChatFormat.Role.ASSISTANT, "")));
         }

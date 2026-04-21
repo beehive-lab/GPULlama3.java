@@ -39,14 +39,52 @@ public interface ChatFormat {
 
     /**
      * Returns plain text to append to the system message content when tools are available.
-     * The returned string is concatenated to the system message before encoding, so the
-     * normal {@link #encodeMessage} path handles tokenization.
+     * Used by formats that inject tool definitions into the <em>system</em> message.
      *
-     * @param toolsJson JSON array of tool definitions, e.g.
-     *                  {@code [{"type":"function","function":{...}}]}
+     * <p>Formats that inject tools into the <em>user</em> message instead should override
+     * {@link #injectsToolsInUserMessage()}, {@link #toolSystemMessagePrefix()}, and
+     * {@link #toolFirstUserMessagePrefix(String)} rather than this method.
+     *
+     * @param toolsJson JSON array of tool definitions
      */
     default String toolSystemPromptSuffix(String toolsJson) {
         throw new UnsupportedOperationException("Tool calling not supported for: " + getClass().getSimpleName());
+    }
+
+    /**
+     * Returns {@code true} when this format injects tool definitions into the
+     * <em>first user message</em> instead of the system message.
+     *
+     * <p>When this returns {@code true}, callers should:
+     * <ol>
+     *   <li>Prepend {@link #toolSystemMessagePrefix()} to the system message content.</li>
+     *   <li>Prepend {@link #toolFirstUserMessagePrefix(String)} to the first user message.</li>
+     * </ol>
+     * When {@code false} (default), callers should append {@link #toolSystemPromptSuffix} to
+     * the system message as before.
+     */
+    default boolean injectsToolsInUserMessage() {
+        return false;
+    }
+
+    /**
+     * Returns text to <em>prepend</em> to the system message content when tools are active
+     * and {@link #injectsToolsInUserMessage()} is {@code true}.
+     * Default: empty string (no prefix).
+     */
+    default String toolSystemMessagePrefix() {
+        return "";
+    }
+
+    /**
+     * Returns the preamble to <em>prepend</em> to the first user message when
+     * {@link #injectsToolsInUserMessage()} is {@code true}.
+     * The preamble should include the tool definitions and usage instructions.
+     *
+     * @param toolsJson JSON array of tool definitions
+     */
+    default String toolFirstUserMessagePrefix(String toolsJson) {
+        return "";
     }
 
     /**
@@ -78,6 +116,18 @@ public interface ChatFormat {
      */
     default Optional<ToolCallExtract> extractToolCall(String responseText) {
         return Optional.empty();
+    }
+
+    /**
+     * Extracts ALL tool calls from a response. Models may emit multiple
+     * {@code <tool_call>} blocks in a single turn (batch tool calls).
+     * The default delegates to {@link #extractToolCall} for formats that
+     * do not support batch calls.
+     *
+     * @param responseText the fully decoded response from the model
+     */
+    default List<ToolCallExtract> extractAllToolCalls(String responseText) {
+        return extractToolCall(responseText).map(List::of).orElse(List.of());
     }
 
     /**
