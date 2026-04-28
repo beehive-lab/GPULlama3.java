@@ -129,9 +129,15 @@ public class LlamaChatFormat implements ChatFormat {
     @Override
     public List<Integer> encodeToolCallAssistantTurn(ToolCallExtract toolCall) {
         List<Integer> tokens = new ArrayList<>(encodeHeader(new Message(Role.ASSISTANT, "")));
+        // Preserve the <|python_tag|> prefix used by LLaMA 3.1/3.2 for tool calls so that
+        // replayed history looks identical to what the model originally generated.
+        if (pythonTag != -1) {
+            tokens.add(pythonTag);
+        }
         String json = "{\"name\": \"" + toolCall.name() + "\", \"parameters\": " + toolCall.argumentsJson() + "}";
         tokens.addAll(tokenizer.encodeAsList(json));
-        tokens.add(endOfTurn);
+        // LLaMA 3.1 ends tool-call turns with <|eom_id|>; fall back to <|eot_id|> for 3.2.
+        tokens.add(endOfMessage != -1 ? endOfMessage : endOfTurn);
         return tokens;
     }
 
