@@ -94,7 +94,9 @@ class LlamaRunner:
         if args.batch_prefill_size is not None:
             cmd.append(f"-Dllama.prefillBatchSize={args.batch_prefill_size}")
 
-        if args.no_cuda_graphs:
+        if args.cuda_graphs:
+            cmd.append("-Dllama.cudaGraphs=true")
+        elif args.no_cuda_graphs:
             cmd.append("-Dllama.cudaGraphs=false")
 
         # Debug options
@@ -522,10 +524,16 @@ def create_parser() -> argparse.ArgumentParser:
         ),
     )
     prefill_group.add_argument(
+        "--cuda-graphs",
+        dest="cuda_graphs",
+        action="store_true",
+        help="Enable CUDA graph capture/replay (llama.cudaGraphs=true); PTX backend only",
+    )
+    prefill_group.add_argument(
         "--no-cuda-graphs",
         dest="no_cuda_graphs",
         action="store_true",
-        help="Disable CUDA graph capture/replay (llama.cudaGraphs=false); useful for debugging",
+        help="Disable CUDA graph capture/replay (llama.cudaGraphs=false); no-op, disabled by default",
     )
 
     # Advanced options
