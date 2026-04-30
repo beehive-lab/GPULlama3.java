@@ -37,6 +37,7 @@ jobs:
 
     strategy:
       fail-fast: true
+      max-parallel: 1
       matrix:
         backend:
           - name: opencl
