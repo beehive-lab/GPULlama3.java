@@ -101,6 +101,7 @@ jobs:
             --model $MODELS_DIR/Llama-3.2-1B-Instruct-F16.gguf \
             --prompt "Say hello"
       - name: FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Prefill-Decode - PTX
+        if: matrix.backend.name == 'ptx'
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
@@ -110,6 +111,7 @@ jobs:
             --with-prefill-decode \
             --no-cuda-graphs
       - name: PTX- FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Batch-Prefill-Decode
+        if: matrix.backend.name == 'ptx'
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
@@ -119,6 +121,7 @@ jobs:
             --with-prefill-decode --batch-prefill-size 32 \
             --no-cuda-graphs
       - name: PTX- FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Prefill-Decode-CUDA-Graphs
+        if: matrix.backend.name == 'ptx'
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
@@ -127,6 +130,7 @@ jobs:
             --prompt "Say hello" \
             --with-prefill-decode
       - name: PTX - FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Batch-Prefill-Decode-CUDA-Graphs
+        if: matrix.backend.name == 'ptx'
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
