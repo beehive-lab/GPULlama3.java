@@ -280,7 +280,7 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers<LlamaTornadoWeights, L
      * </ul>
      */
     protected String predecessorGraphName(int layerIndex) {
-        return null;
+        return (layerIndex == 0) ? "activationUpdate" : "layer_" + (layerIndex - 1);
     }
 
     protected TaskGraph configureLayerDataTransfers(TaskGraph unifiedLayer, int layerIndex) {
@@ -302,8 +302,11 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers<LlamaTornadoWeights, L
                     // Attention & FFN buffers
                     state.wrapAtt, state.wrapHb, state.wrapXbFP16);
         } else {
-            // Subsequent layers: Consume data already on device from previous layer
-            unifiedLayer.consumeFromDevice(
+            // Subsequent layers: consume from the previous layer graph by name.
+            // The no-arg consumeFromDevice form uses the current graph's own name as source key,
+            // which never matches the predecessor in interpreter mode (no CUDA graphs).
+            String pred = "layer_" + (layerIndex - 1);
+            unifiedLayer.consumeFromDevice(pred,
                     // Kernel context
                     context,
                     // Intermediate buffers
