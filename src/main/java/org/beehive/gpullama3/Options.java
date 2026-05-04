@@ -5,7 +5,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 
 public record Options(Path modelPath, String prompt, String systemPrompt, String suffix, boolean interactive, float temperature, float topp, long seed, int maxTokens, boolean stream, boolean echo,
-                      boolean useTornadovm) {
+                      boolean useTornadovm, boolean withPrefillDecode, int batchPrefillSize) {
 
     public static final int DEFAULT_MAX_TOKENS = 1024;
 
@@ -13,6 +13,12 @@ public record Options(Path modelPath, String prompt, String systemPrompt, String
         require(interactive || prompt != null, "Missing argument: --prompt is required in --instruct mode e.g. --prompt \"Why is the sky blue?\"");
         require(0 <= temperature, "Invalid argument: --temperature must be non-negative");
         require(0 <= topp && topp <= 1, "Invalid argument: --top-p must be within [0, 1]");
+        require(batchPrefillSize >= 1, "Invalid argument: --batch-prefill-size must be >= 1");
+        require(batchPrefillSize == 1 || withPrefillDecode, "Invalid argument: --batch-prefill-size requires --with-prefill-decode");
+        // Publish to system properties so TornadoVMMasterPlan and Llama read the right values
+        // even when the JAR is invoked directly (without the Python launcher).
+        if (withPrefillDecode) System.setProperty("llama.withPrefillDecode", "true");
+        if (batchPrefillSize > 1) System.setProperty("llama.prefillBatchSize", String.valueOf(batchPrefillSize));
     }
 
     static void require(boolean condition, String messageFormat, Object... args) {
@@ -44,6 +50,8 @@ public record Options(Path modelPath, String prompt, String systemPrompt, String
         out.println("  --max-tokens, -n <int>        number of steps to run for < 0 = limited by context length, default " + DEFAULT_MAX_TOKENS);
         out.println("  --stream <boolean>            print tokens during generation; may cause encoding artifacts for non ASCII text, default true");
         out.println("  --echo <boolean>              print ALL tokens to stderr, if true, recommended to set --stream=false, default false");
+        out.println("  --with-prefill-decode         enable prefill/decode separation (skip logits during prefill)");
+        out.println("  --batch-prefill-size <int>    batched prefill chunk size; requires --with-prefill-decode, must be > 1, enables batched CPU/GPU prefill");
         out.println();
     }
 
@@ -61,7 +69,7 @@ public record Options(Path modelPath, String prompt, String systemPrompt, String
         boolean echo = false;
         boolean useTornadoVM = getDefaultTornadoVM();
 
-        return new Options(modelPath, prompt, systemPrompt, suffix, interactive, temperature, topp, seed, maxTokens, stream, echo, useTornadoVM);
+        return new Options(modelPath, prompt, systemPrompt, suffix, interactive, temperature, topp, seed, maxTokens, stream, echo, useTornadoVM, false, 1);
     }
 
     public static Options parseOptions(String[] args) {
@@ -77,6 +85,8 @@ public record Options(Path modelPath, String prompt, String systemPrompt, String
         boolean stream = false;
         boolean echo = false;
         Boolean useTornadovm = null; // null means not specified via command line
+        boolean withPrefillDecode = false;
+        int batchPrefillSize = 1;
 
         for (int i = 0; i < args.length; i++) {
             String optionName = args[i];
@@ -84,6 +94,7 @@ public record Options(Path modelPath, String prompt, String systemPrompt, String
             switch (optionName) {
                 case "--interactive", "--chat", "-i" -> interactive = true;
                 case "--instruct" -> interactive = false;
+                case "--with-prefill-decode" -> withPrefillDecode = true;
                 case "--help", "-h" -> {
                     printUsage(System.out);
                     System.exit(0);
@@ -111,6 +122,7 @@ public record Options(Path modelPath, String prompt, String systemPrompt, String
                         case "--stream" -> stream = Boolean.parseBoolean(nextArg);
                         case "--echo" -> echo = Boolean.parseBoolean(nextArg);
                         case "--use-tornadovm" -> useTornadovm = Boolean.parseBoolean(nextArg);
+                        case "--batch-prefill-size" -> batchPrefillSize = Integer.parseInt(nextArg);
                         default -> require(false, "Unknown option: %s", optionName);
                     }
                 }
@@ -123,6 +135,6 @@ public record Options(Path modelPath, String prompt, String systemPrompt, String
             useTornadovm = getDefaultTornadoVM();
         }
 
-        return new Options(modelPath, prompt, systemPrompt, suffix, interactive, temperature, topp, seed, maxTokens, stream, echo, useTornadovm);
+        return new Options(modelPath, prompt, systemPrompt, suffix, interactive, temperature, topp, seed, maxTokens, stream, echo, useTornadovm, withPrefillDecode, batchPrefillSize);
     }
 }

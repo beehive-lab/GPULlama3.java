@@ -75,7 +75,7 @@ public abstract class State {
     /** last index in previous block */
 
     protected State(Configuration config, int batchsize) {
-        this.batchsize = -1;
+        this.batchsize = batchsize;
         this.latestToken = -1;
         this.localSize = 256;
 

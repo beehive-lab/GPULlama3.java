@@ -22,11 +22,25 @@ public class LogitsFP16Layer extends AbstractLogitsLayer {
         super(name, state, weights, config, lastTaskGraphID, schedulerType);
     }
 
+    /**
+     * Hook called before any data transfers or tasks. Override to prepend
+     * {@code consumeFromDevice} declarations that must precede the bytecode
+     * (e.g. KV-cache pass-through in the Phase 4 unified plan).
+     */
+    protected void configureAdditionalConsumes(TaskGraph logits) {}
+
+    /**
+     * Hook called after {@code transferToHost}. Override to append
+     * {@code persistOnDevice} declarations (e.g. KV-cache pass-through in Phase 4).
+     */
+    protected void configureAdditionalPersists(TaskGraph logits) {}
+
     // @formatter:off
     @Override
     protected TaskGraph setupLogitsTaskGraph(TornadoWeights weights, Configuration config) {
         var logits = new TaskGraph("logits");
         // === Data Setup ===
+        configureAdditionalConsumes(logits);
         logits.consumeFromDevice(lastTaskGraphID, state.wrapX);
         logits.transferToDevice(DataTransferMode.EVERY_EXECUTION, state.tempLogits);
         logits.transferToDevice(DataTransferMode.FIRST_EXECUTION,
@@ -80,6 +94,7 @@ public class LogitsFP16Layer extends AbstractLogitsLayer {
 
         // === Transfer Results to Host ===
         logits.transferToHost(DataTransferMode.EVERY_EXECUTION, state.wrapLogits);
+        configureAdditionalPersists(logits);
         return logits;
     }
     // @formatter:on

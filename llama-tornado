@@ -88,6 +88,17 @@ class LlamaRunner:
         if args.verbose_init:
             cmd.append("-Dllama.EnableTimingForTornadoVMInit=true")
 
+        if args.with_prefill_decode or args.batch_prefill_size is not None:
+            cmd.append("-Dllama.withPrefillDecode=true")
+
+        if args.batch_prefill_size is not None:
+            cmd.append(f"-Dllama.prefillBatchSize={args.batch_prefill_size}")
+
+        if args.cuda_graphs:
+            cmd.append("-Dllama.cudaGraphs=true")
+        elif args.no_cuda_graphs:
+            cmd.append("-Dllama.cudaGraphs=false")
+
         # Debug options
         debug_config = []
 
@@ -486,6 +497,43 @@ def create_parser() -> argparse.ArgumentParser:
         "--execute-after-show",
         action="store_true",
         help="Execute the command after showing it (use with --show-command)",
+    )
+
+    # Prefill/Decode optimization
+    prefill_group = parser.add_argument_group("Prefill/Decode Optimization")
+    prefill_group.add_argument(
+        "--with-prefill-decode",
+        dest="with_prefill_decode",
+        action="store_true",
+        help=(
+            "Enable prefill/decode separation. "
+            "Alone: sequential prefill (skip logits) + standard decode. "
+            "With --batch-prefill-size N (N>1): batched GPU prefill via TornadoVMMasterPlanWithBatchPrefillDecode."
+        ),
+    )
+    prefill_group.add_argument(
+        "--batch-prefill-size",
+        dest="batch_prefill_size",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Prefill chunk size (requires --with-prefill-decode). "
+            "N=1: sequential prefill (same as --with-prefill-decode alone). "
+            "N>1: batched prefill processing N tokens per chunk (llama.prefillBatchSize=N)."
+        ),
+    )
+    prefill_group.add_argument(
+        "--cuda-graphs",
+        dest="cuda_graphs",
+        action="store_true",
+        help="Enable CUDA graph capture/replay (llama.cudaGraphs=true); PTX backend only",
+    )
+    prefill_group.add_argument(
+        "--no-cuda-graphs",
+        dest="no_cuda_graphs",
+        action="store_true",
+        help="Disable CUDA graph capture/replay (llama.cudaGraphs=false); no-op, disabled by default",
     )
 
     # Advanced options

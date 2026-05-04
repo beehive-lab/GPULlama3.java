@@ -17,6 +17,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.function.IntConsumer;
 
+import static org.beehive.gpullama3.tornadovm.TornadoVMMasterPlan.WITH_PREFILL_DECODE;
+
 public class Qwen2 extends AbstractModel {
 
     Qwen2Configuration configuration;
@@ -92,12 +94,24 @@ public class Qwen2 extends AbstractModel {
     @Override
     public List<Integer> generateTokens(State state, int startPosition, List<Integer> promptTokens, Set<Integer> stopTokens, int maxTokens, Sampler sampler, boolean echo,
             IntConsumer onTokenGenerated) {
+        if (WITH_PREFILL_DECODE && TornadoVMMasterPlan.PREFILL_BATCH_SIZE > 1) {
+            throw new UnsupportedOperationException("Batch prefill/decode on CPU not yet implemented for Qwen2/Deepseek-R1-Distill-Qwen");
+        }
+        if (WITH_PREFILL_DECODE) {
+            throw new UnsupportedOperationException("Prefill/decode on CPU not yet implemented for Qwen2/Deepseek-R1-Distill-Qwen");
+        }
         return InferenceEngine.generateTokensQwen3(this, state, startPosition, promptTokens, stopTokens, maxTokens, sampler, echo, onTokenGenerated);
     }
 
     @Override
     public List<Integer> generateTokensGPU(State state, int startPosition, List<Integer> promptTokens, Set<Integer> stopTokens, int maxTokens, Sampler sampler, boolean echo,
             IntConsumer onTokenGenerated, TornadoVMMasterPlan tornadoVMPlan) {
+        if (WITH_PREFILL_DECODE && TornadoVMMasterPlan.PREFILL_BATCH_SIZE > 1) {
+            throw new UnsupportedOperationException("Batch prefill/decode on GPU not yet implemented for Qwen2/Deepseek-R1-Distill-Qwen");
+        }
+        if (WITH_PREFILL_DECODE) {
+            throw new UnsupportedOperationException("Prefill/decode on GPU not yet implemented for Qwen2/Deepseek-R1-Distill-Qwen");
+        }
         return InferenceEngine.generateTokensGPUQwen3(this, state, startPosition, promptTokens, stopTokens, maxTokens, sampler, echo, onTokenGenerated, tornadoVMPlan);
     }
 }
