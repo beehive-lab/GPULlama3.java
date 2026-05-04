@@ -25,26 +25,26 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * GPU execution plan for single-token prefill/decode separation.
+ * GPU execution plan for sequential (single-token) prefill/decode separation.
  *
- * <p>Uses dedicated layer classes that carry correct cross-graph
- * {@code consumeFromDevice} source names for both CUDA-graph and interpreter
- * (no-CUDA-graph) mode.  All graphs are owned by this plan and built from scratch —
- * no reuse of the standard execution path.</p>
+ * <p>A single {@link TornadoExecutionPlan} holds all graphs so that the KV cache
+ * ({@code wrapKeyCache}, {@code wrapValueCache}) is allocated once and remains on
+ * device across both phases.  Prefill and decode reuse the same N layer graphs;
+ * only the logits graph is skipped during prefill.</p>
  *
  * <p>Graph layout (N+2 graphs total):</p>
  * <pre>
- *   [0]      decodeActivation   single-token FP16 → FP32; KV-cache allocated on first execution
- *   [1..N]   layer_0..layer_N-1 transformer layers (attention + FFN)
- *   [N+1]    logits             final RMSNorm + wcls matmul
+ *   [0]      decodeActivation    single-token FP16 → FP32; KV-cache allocated on first execution
+ *   [1..N]   layer_0..layer_N-1  transformer layers (attention + FFN)
+ *   [N+1]    logits              final RMSNorm + wcls matmul
  * </pre>
  *
- * <p>Two distinct forward passes:</p>
+ * <p>Two forward passes:</p>
  * <ul>
- *   <li>{@link #tornadoVMForwardPrefill} — runs graphs 0..N, skips logits.
- *       KV cache is populated for each prompt token; logits are discarded.</li>
+ *   <li>{@link #tornadoVMForwardPrefill} — graphs 0..N (activation + layers), logits skipped.
+ *       Called once per prompt token; populates the KV cache.</li>
  *   <li>{@link #tornadoVMForwardDecode} — full pass including logits.
- *       Called for each generated token.</li>
+ *       Called once per generated token; returns logits for sampling.</li>
  * </ul>
  */
 public class TornadoVMMasterPlanWithPrefillDecode implements TornadoVMMasterPlan {

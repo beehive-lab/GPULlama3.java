@@ -29,19 +29,24 @@ import java.util.List;
 /**
  * GPU execution plan for batched prefill + single-token decode.
  *
- * <p>A single {@link TornadoExecutionPlan} holds all graphs so that the KV cache
- * ({@code wrapKeyCache}, {@code wrapValueCache}) is shared on device via
- * {@code persistOnDevice}/{@code consumeFromDevice}.  Two separate plans would
- * allocate independent device buffers and lose the prefill KV state.</p>
+ * <p>A single {@link TornadoExecutionPlan} holds all {@link TaskGraph} for
+ * batched prefill and single-token decode phases with the following structure:</p>.
  *
- * <p>Graph layout (2N+3 graphs total):</p>
+ * <p>TaskGraph layout (2N+3 TaskGraphs total):</p>
  * <pre>
- *   [0]         batch activation     B×dim FP16 → FP32
- *   [1..N]      batch layer graphs   B tokens, all transformer ops
- *   [N+1]       decode activation    single-token FP16 → FP32 + KV-cache pass-through
- *   [N+2..2N+1] decode layer graphs  single-token, standard kernels
+ *   [0]         prefill batch activation       B×dim FP16 → FP32
+ *   [1..N]      prefill batch layer graphs     B tokens, all transformer ops
+ *   [N+1]       decode activation              single-token FP16 → FP32 + KV-cache pass-through
+ *   [N+2..2N+1] decode layer graphs            single-token, standard kernels
  *   [2N+2]      logits graph
  * </pre>
+ *
+ * <p>
+ * Incorporating cross-phase {@link TaskGraph}s withing a single {@link TornadoExecutionPlan}
+ * is necessary to enable KV cache ({@code wrapKeyCache}, {@code wrapValueCache}) sharing
+ * across prefill and decode phases. The KV cache pointers are chained across {@link TaskGraph}s
+ * via the {@code persistOnDevice}/{@code consumeFromDevice} API within the {@link TornadoExecutionPlan}.
+ * </p>
  *
  * <p>KV cache pointer chain across phases:</p>
  * <pre>

@@ -8,18 +8,23 @@ import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 /**
  * Common contract for all TornadoVM GPU execution plans.
  *
- * <p>Two concrete implementations exist:</p>
+ * <p>Three concrete implementations exist:</p>
  * <ul>
- *   <li>{@link TornadoVMMasterPlanStandard} — single-token forward pass; used for the
- *       baseline GPU path and Phase 2 sequential prefill/decode.</li>
- *   <li>{@link TornadoVMMasterPlanWithBatchPrefillDecode} — unified plan for Phase 4 batched
- *       prefill + single-token decode within one {@code TornadoExecutionPlan}.</li>
+ *   <li>{@link TornadoVMMasterPlanStandard} — baseline single-token forward pass
+ *       (preprocessing + N layers + logits).</li>
+ *   <li>{@link TornadoVMMasterPlanWithPrefillDecode} — sequential prefill/decode separation;
+ *       reuses the same N layer graphs for both phases, skipping logits during prefill.</li>
+ *   <li>{@link TornadoVMMasterPlanWithBatchPrefillDecode} — batched prefill + single-token
+ *       decode; holds 2N+3 graphs in one plan to keep the KV cache on device across phases.</li>
  * </ul>
  *
- * <p>The {@link #initializeTornadoVMPlan} factory selects the appropriate implementation
- * based on {@code llama.prefillBatchSize}: if {@code > 1}, returns a
- * {@link TornadoVMMasterPlanWithBatchPrefillDecode}; otherwise returns a
- * {@link TornadoVMMasterPlanStandard}.</p>
+ * <p>The {@link #initializeTornadoVMPlan} factory selects the implementation based on
+ * {@code llama.withPrefillDecode} and {@code llama.prefillBatchSize}:</p>
+ * <ul>
+ *   <li>{@code withPrefillDecode=false} → {@link TornadoVMMasterPlanStandard}</li>
+ *   <li>{@code withPrefillDecode=true}, {@code prefillBatchSize=1} → {@link TornadoVMMasterPlanWithPrefillDecode}</li>
+ *   <li>{@code withPrefillDecode=true}, {@code prefillBatchSize>1} → {@link TornadoVMMasterPlanWithBatchPrefillDecode}</li>
+ * </ul>
  */
 public interface TornadoVMMasterPlan {
 

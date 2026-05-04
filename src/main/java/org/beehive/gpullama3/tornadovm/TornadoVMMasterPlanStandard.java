@@ -14,8 +14,8 @@ import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
  * Standard (single-token) GPU execution plan.
  *
  * <p>Processes one token at a time through preprocessing + N transformer layers +
- * logits projection.  Used for both the baseline GPU path and the Phase 2
- * sequential prefill/decode path.</p>
+ * logits projection.
+ * </p>
  */
 public class TornadoVMMasterPlanStandard implements TornadoVMMasterPlan {
 
