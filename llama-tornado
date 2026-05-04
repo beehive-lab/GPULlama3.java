@@ -523,17 +523,14 @@ def create_parser() -> argparse.ArgumentParser:
             "N>1: batched prefill processing N tokens per chunk (llama.prefillBatchSize=N)."
         ),
     )
-    prefill_group.add_argument(
+
+    # Advanced CUDA features
+    advanced_cuda_features_group = parser.add_argument_group("Advanced CUDA Features")
+    advanced_cuda_features_group.add_argument(
         "--cuda-graphs",
         dest="cuda_graphs",
         action="store_true",
-        help="Enable CUDA graph capture/replay (llama.cudaGraphs=true); PTX backend only",
-    )
-    prefill_group.add_argument(
-        "--no-cuda-graphs",
-        dest="no_cuda_graphs",
-        action="store_true",
-        help="Disable CUDA graph capture/replay (llama.cudaGraphs=false); no-op, disabled by default",
+        help="Enable CUDA graph capture/replay (llama.cudaGraphs=true); PTX backend only.",
     )
 
     # Advanced options
