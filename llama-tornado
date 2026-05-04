@@ -499,17 +499,13 @@ def create_parser() -> argparse.ArgumentParser:
         help="Execute the command after showing it (use with --show-command)",
     )
 
-    # Prefill/Decode optimization
-    prefill_group = parser.add_argument_group("Prefill/Decode Optimization")
+    # Prefill-Decode optimizations
+    prefill_group = parser.add_argument_group("Prefill-Decode Optimizations")
     prefill_group.add_argument(
         "--with-prefill-decode",
         dest="with_prefill_decode",
         action="store_true",
-        help=(
-            "Enable prefill/decode separation. "
-            "Alone: sequential prefill (skip logits) + standard decode. "
-            "With --batch-prefill-size N (N>1): batched GPU prefill via TornadoVMMasterPlanWithBatchPrefillDecode."
-        ),
+        help="Enable single-token prefill decode",
     )
     prefill_group.add_argument(
         "--batch-prefill-size",
@@ -518,9 +514,7 @@ def create_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="N",
         help=(
-            "Prefill chunk size (requires --with-prefill-decode). "
-            "N=1: sequential prefill (same as --with-prefill-decode alone). "
-            "N>1: batched prefill processing N tokens per chunk (llama.prefillBatchSize=N)."
+            "Enable batching in prefill when --with-prefill-decode is active and N>1. "
         ),
     )
 
