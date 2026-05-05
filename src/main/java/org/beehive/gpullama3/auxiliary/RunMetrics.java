@@ -120,9 +120,11 @@ public final class RunMetrics {
         if (Boolean.parseBoolean(System.getProperty("llama.EnableTimingForTornadoVMInit", "false"))
                 && m.tornadoPlanCreationNs > 0) {
             System.err.printf(
+                    "GGUF Model Load: %.2f ms%n" +
                     "Compilation & CodeGen: %.2f ms%n" +
                     "Warmup: %.2f ms%n" +
                     "Read-only weights Copy-in: %.2f ms%n",
+                    m.loadDurationNs          / 1_000_000.0,
                     m.tornadoPlanCreationNs   / 1_000_000.0,
                     m.tornadoJitNs            / 1_000_000.0,
                     m.readOnlyWeightsCopyInNs / 1_000_000.0);

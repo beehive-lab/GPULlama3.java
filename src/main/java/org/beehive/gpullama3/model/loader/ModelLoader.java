@@ -1,6 +1,7 @@
 package org.beehive.gpullama3.model.loader;
 
 import org.beehive.gpullama3.Options;
+import org.beehive.gpullama3.auxiliary.RunMetrics;
 import org.beehive.gpullama3.tensor.GGMLType;
 import org.beehive.gpullama3.tensor.GGUF;
 import org.beehive.gpullama3.tensor.*;
@@ -91,24 +92,24 @@ public abstract class ModelLoader {
         int contextLength = options.maxTokens();
         boolean useTornadovm = options.useTornadovm();
 
-        // initial load of metadata from gguf file
+        long start = System.nanoTime();
         GGUF gguf = GGUF.loadGGUFMetadata(ggufPath);
-        // detect model type
         ModelType modelType = detectModelType(gguf.getMetadata());
-        // model type-specific load
-        return modelType.loadModel(gguf.getFileChannel(), gguf, contextLength, useTornadovm);
+        Model model = modelType.loadModel(gguf.getFileChannel(), gguf, contextLength, useTornadovm);
+        RunMetrics.setLoadDuration(System.nanoTime() - start);
+        return model;
     }
 
     /**
      * For compatibility with langchain4j and quarkus.
      */
     public static Model loadModel(Path ggufPath, int contextLength, boolean loadWeights, boolean useTornadovm) throws IOException {
-        // initial load of metadata from gguf file
+        long start = System.nanoTime();
         GGUF gguf = GGUF.loadGGUFMetadata(ggufPath);
-        // detect model type
         ModelType modelType = detectModelType(gguf.getMetadata());
-        // model type-specific load
-        return modelType.loadModel(gguf.getFileChannel(), gguf, contextLength, useTornadovm);
+        Model model = modelType.loadModel(gguf.getFileChannel(), gguf, contextLength, useTornadovm);
+        RunMetrics.setLoadDuration(System.nanoTime() - start);
+        return model;
     }
 
     /**

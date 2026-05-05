@@ -35,9 +35,7 @@ public class LlamaApp {
      */
     static void main(String[] args) throws IOException {
         Options options = Options.parseOptions(args);
-        long loadStart = System.nanoTime();
         Model model = loadModel(options);
-        RunMetrics.setLoadDuration(System.nanoTime() - loadStart);
         Sampler sampler = createSampler(model, options);
 
         if (options.interactive()) {
