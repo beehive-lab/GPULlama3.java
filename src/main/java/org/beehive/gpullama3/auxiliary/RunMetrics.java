@@ -1,31 +1,46 @@
 package org.beehive.gpullama3.auxiliary;
 
+import org.beehive.gpullama3.auxiliary.metrics.GitHubMetricsRenderer;
+import org.beehive.gpullama3.auxiliary.metrics.HumanMetricsRenderer;
+import org.beehive.gpullama3.auxiliary.metrics.JsonMetricsRenderer;
+import org.beehive.gpullama3.auxiliary.metrics.MetricsRenderer;
+import org.beehive.gpullama3.auxiliary.metrics.RunMetricsSnapshot;
+
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
 /**
  * Singleton that accumulates fine-grained performance metrics across one inference run.
  *
  * <p>Metrics are set incrementally by different layers of the stack:</p>
  * <ul>
- *   <li>{@link #setLoadDuration} — called from {@code LlamaApp} around model file loading</li>
+ *   <li>{@link #setLoadDuration} — called from {@code ModelLoader}</li>
  *   <li>{@link #setTornadoMetrics} — called from TornadoVM plan constructors</li>
  *   <li>{@link #setInferenceMetrics} — called from InferenceEngine variants at end of generation</li>
  *   <li>{@link #setHasPrefillPhase} — called from prefill-decode engine variants</li>
  * </ul>
  *
- * <p>All durations are stored in nanoseconds. {@link #printMetrics()} prints throughput only:</p>
+ * <p>All durations are stored in nanoseconds. {@link #printMetrics()} builds an immutable
+ * {@link RunMetricsSnapshot}, selects a {@link MetricsRenderer}, and writes to the configured sink.</p>
+ *
+ * <p>Configurable via system properties:</p>
  * <ul>
- *   <li>Standard engine: {@code Total: X tok/s}</li>
- *   <li>Prefill-decode engines: {@code Prefill: X tok/s | Decode: Y tok/s | Total: Z tok/s}</li>
+ *   <li>{@code llama.metrics.format} — {@code human} (default) | {@code json} | {@code github}</li>
+ *   <li>{@code llama.metrics.output} — {@code stderr} (default) | {@code stdout} | {@code file}</li>
+ *   <li>{@code llama.metrics.file}   — target path when {@code output=file}</li>
  * </ul>
  */
 public final class RunMetrics {
 
     // ── Core metrics (nanoseconds) ────────────────────────────────────────────
-    private long totalDurationNs;
-    private long loadDurationNs;
-    private int  promptEvalCount;
-    private long promptEvalDurationNs;
-    private int  evalCount;
-    private long evalDurationNs;
+    private long    totalDurationNs;
+    private long    loadDurationNs;
+    private int     promptEvalCount;
+    private long    promptEvalDurationNs;
+    private int     evalCount;
+    private long    evalDurationNs;
     private boolean hasPrefillPhase;
 
     // ── TornadoVM-specific metrics (nanoseconds) ──────────────────────────────
@@ -53,9 +68,9 @@ public final class RunMetrics {
      * @param weightCopyNs    first-execution weight upload ({@code forceCopyInReadOnlyData()})
      */
     public static void setTornadoMetrics(long planCreationNs, long jitNs, long weightCopyNs) {
-        INSTANCE.tornadoPlanCreationNs    = planCreationNs;
-        INSTANCE.tornadoJitNs             = jitNs;
-        INSTANCE.readOnlyWeightsCopyInNs  = weightCopyNs;
+        INSTANCE.tornadoPlanCreationNs   = planCreationNs;
+        INSTANCE.tornadoJitNs            = jitNs;
+        INSTANCE.readOnlyWeightsCopyInNs = weightCopyNs;
     }
 
     /**
@@ -86,49 +101,57 @@ public final class RunMetrics {
         INSTANCE.hasPrefillPhase = value;
     }
 
+    // ── Snapshot ──────────────────────────────────────────────────────────────
+
+    /** Returns an immutable snapshot of all currently collected metrics. */
+    public static RunMetricsSnapshot snapshot() {
+        RunMetrics m = INSTANCE;
+        return RunMetricsSnapshot.of(
+                m.totalDurationNs,      m.loadDurationNs,
+                m.promptEvalCount,      m.promptEvalDurationNs,
+                m.evalCount,            m.evalDurationNs,
+                m.hasPrefillPhase,
+                m.tornadoPlanCreationNs, m.tornadoJitNs,
+                m.readOnlyWeightsCopyInNs);
+    }
+
     // ── Output ────────────────────────────────────────────────────────────────
 
-    /** Prints throughput metrics to {@code stderr}, and TornadoVM init metrics when enabled. */
+    /**
+     * Builds a snapshot, selects a renderer based on {@code llama.metrics.format},
+     * and writes the result to the sink configured by {@code llama.metrics.output}.
+     */
     public static void printMetrics() {
-        RunMetrics m = INSTANCE;
+        RunMetricsSnapshot snap = snapshot();
 
-        int    totalTokens = m.promptEvalCount + m.evalCount;
-        double totalSecs   = m.totalDurationNs / 1e9;
-        double totalRate   = totalSecs > 0 ? totalTokens / totalSecs : 0;
+        MetricsRenderer renderer = switch (System.getProperty("llama.metrics.format", "human").toLowerCase()) {
+            case "json"   -> new JsonMetricsRenderer();
+            case "github" -> new GitHubMetricsRenderer();
+            default       -> new HumanMetricsRenderer();
+        };
 
-        System.err.println();
-        System.err.println("==== Performance Metrics ====");
-        if (m.hasPrefillPhase) {
-            double prefillSecs = m.promptEvalDurationNs / 1e9;
-            double decodeSecs  = m.evalDurationNs / 1e9;
-            double prefillRate = (prefillSecs > 0 && m.promptEvalCount > 0)
-                    ? m.promptEvalCount / prefillSecs : 0;
-            double decodeRate  = (decodeSecs > 0 && m.evalCount > 0)
-                    ? m.evalCount / decodeSecs : 0;
-            System.err.printf(
-                    "Total achieved tok/s: %.2f. Tokens: %d, seconds: %.2f%n" +
-                    "¬Prefill achieved tok/s: %.2f. Tokens: %d, seconds: %.2f%n" +
-                    "¬Decode achieved tok/s: %.2f. Tokens: %d, seconds: %.2f%n",
-                    totalRate, totalTokens, totalSecs,
-                    prefillRate, m.promptEvalCount, prefillSecs,
-                    decodeRate,  m.evalCount,       decodeSecs);
-        } else {
-            System.err.printf("achieved tok/s: %.2f. Tokens: %d, seconds: %.2f%n",
-                    totalRate, totalTokens, totalSecs);
+        String rendered = renderer.render(snap);
+
+        switch (System.getProperty("llama.metrics.output", "stderr").toLowerCase()) {
+            case "stdout" -> System.out.print(rendered);
+            case "file"   -> writeToFile(rendered);
+            default       -> System.err.print(rendered);
         }
+    }
 
-        if (Boolean.parseBoolean(System.getProperty("llama.EnableTimingForTornadoVMInit", "false"))
-                && m.tornadoPlanCreationNs > 0) {
-            System.err.printf(
-                    "GGUF Model Load: %.2f ms%n" +
-                    "Compilation & CodeGen: %.2f ms%n" +
-                    "Warmup: %.2f ms%n" +
-                    "Read-only weights Copy-in: %.2f ms%n",
-                    m.loadDurationNs          / 1_000_000.0,
-                    m.tornadoPlanCreationNs   / 1_000_000.0,
-                    m.tornadoJitNs            / 1_000_000.0,
-                    m.readOnlyWeightsCopyInNs / 1_000_000.0);
+    private static void writeToFile(String content) {
+        String filePath = System.getProperty("llama.metrics.file");
+        if (filePath == null || filePath.isBlank()) {
+            throw new IllegalStateException(
+                    "llama.metrics.output=file requires llama.metrics.file to be set");
         }
-        System.err.println();
+        Path path = Path.of(filePath);
+        try {
+            Path parent = path.getParent();
+            if (parent != null) Files.createDirectories(parent);
+            Files.writeString(path, content);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to write metrics to " + filePath, e);
+        }
     }
 }
