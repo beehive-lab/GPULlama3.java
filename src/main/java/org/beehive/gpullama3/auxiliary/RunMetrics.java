@@ -29,8 +29,9 @@ public final class RunMetrics {
     private boolean hasPrefillPhase;
 
     // ── TornadoVM-specific metrics (nanoseconds) ──────────────────────────────
-    private long tornadoCompileDurationNs;
-    private long tornadoWarmupDurationNs;
+    private long tornadoPlanCreationNs;
+    private long tornadoJitNs;
+    private long readOnlyWeightsCopyInNs;
 
     // ── Singleton ─────────────────────────────────────────────────────────────
     private static final RunMetrics INSTANCE = new RunMetrics();
@@ -47,12 +48,14 @@ public final class RunMetrics {
     /**
      * Records TornadoVM-specific initialisation durations.
      *
-     * @param compileNs plan-graph construction + JIT compilation ({@code withPreCompilation()})
-     * @param warmupNs  first-execution weight upload ({@code forceCopyInReadOnlyData()})
+     * @param planCreationNs  task-graph construction ({@code createExecutionPlan()})
+     * @param jitNs           JIT compilation ({@code withPreCompilation()})
+     * @param weightCopyNs    first-execution weight upload ({@code forceCopyInReadOnlyData()})
      */
-    public static void setTornadoMetrics(long compileNs, long warmupNs) {
-        INSTANCE.tornadoCompileDurationNs = compileNs;
-        INSTANCE.tornadoWarmupDurationNs  = warmupNs;
+    public static void setTornadoMetrics(long planCreationNs, long jitNs, long weightCopyNs) {
+        INSTANCE.tornadoPlanCreationNs    = planCreationNs;
+        INSTANCE.tornadoJitNs             = jitNs;
+        INSTANCE.readOnlyWeightsCopyInNs  = weightCopyNs;
     }
 
     /**
@@ -85,13 +88,13 @@ public final class RunMetrics {
 
     // ── Output ────────────────────────────────────────────────────────────────
 
-    /** Prints throughput metrics to {@code stderr}. */
+    /** Prints throughput metrics to {@code stderr}, and TornadoVM init metrics when enabled. */
     public static void printMetrics() {
         RunMetrics m = INSTANCE;
 
-        int    totalTokens  = m.promptEvalCount + m.evalCount;
-        double totalSecs    = m.totalDurationNs / 1e9;
-        double totalRate    = totalSecs > 0 ? totalTokens / totalSecs : 0;
+        int    totalTokens = m.promptEvalCount + m.evalCount;
+        double totalSecs   = m.totalDurationNs / 1e9;
+        double totalRate   = totalSecs > 0 ? totalTokens / totalSecs : 0;
 
         System.err.println();
         System.err.println("==== Performance Metrics ====");
@@ -112,6 +115,17 @@ public final class RunMetrics {
         } else {
             System.err.printf("achieved tok/s: %.2f. Tokens: %d, seconds: %.2f%n",
                     totalRate, totalTokens, totalSecs);
+        }
+
+        if (Boolean.parseBoolean(System.getProperty("llama.EnableTimingForTornadoVMInit", "false"))
+                && m.tornadoPlanCreationNs > 0) {
+            System.err.printf(
+                    "Compilation & CodeGen: %.2f ms%n" +
+                    "Warmup: %.2f ms%n" +
+                    "Read-only weights Copy-in: %.2f ms%n",
+                    m.tornadoPlanCreationNs   / 1_000_000.0,
+                    m.tornadoJitNs            / 1_000_000.0,
+                    m.readOnlyWeightsCopyInNs / 1_000_000.0);
         }
         System.err.println();
     }

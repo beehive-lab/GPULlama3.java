@@ -85,17 +85,7 @@ public class TornadoVMMasterPlanWithPrefillDecode implements TornadoVMMasterPlan
         forceCopyInReadOnlyData();
         long copyTime = System.nanoTime();
 
-        RunMetrics.setTornadoMetrics(warmupTime - startTime, copyTime - warmupTime);
-
-        if (ENABLE_TORNADOVM_INIT_TIME) {
-            System.err.printf("TornadoVM GPU single-token prefill/decode execution plan creation: %.2f ms\n",
-                    (planCreationTime - startTime) / 1_000_000.0);
-            System.err.printf("Java to GPU JIT compiler warmup: %.2f ms\n",
-                    (warmupTime - planCreationTime) / 1_000_000.0);
-            System.err.printf("Transfer read-only weights to GPU: %.2f ms\n",
-                    (copyTime - warmupTime) / 1_000_000.0);
-            System.err.printf("Finished TornadoVM initialization...\n \n");
-        }
+        RunMetrics.setTornadoMetrics(planCreationTime - startTime, warmupTime - planCreationTime, copyTime - warmupTime);
     }
 
     // ── Activation graph ─────────────────────────────────────────────────────
