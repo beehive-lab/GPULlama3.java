@@ -94,6 +94,11 @@ jobs:
           tornado --version
           ./mvnw clean package -DskipTests
       - name: FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Standard
+        env:
+          JAVA_TOOL_OPTIONS: >-
+            -Dllama.metrics.format=github
+            -Dllama.metrics.output=file
+            -Dllama.metrics.file=${{ runner.temp }}/metrics-${{ matrix.backend.name }}-standard.md
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
@@ -101,6 +106,11 @@ jobs:
             --model $MODELS_DIR/Llama-3.2-1B-Instruct-F16.gguf \
             --prompt "Say hello"
       - name: FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Prefill-Decode
+        env:
+          JAVA_TOOL_OPTIONS: >-
+            -Dllama.metrics.format=github
+            -Dllama.metrics.output=file
+            -Dllama.metrics.file=${{ runner.temp }}/metrics-${{ matrix.backend.name }}-prefill-decode.md
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
@@ -109,6 +119,11 @@ jobs:
             --prompt "Say hello" \
             --with-prefill-decode
       - name: FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Batch-Prefill-Decode
+        env:
+          JAVA_TOOL_OPTIONS: >-
+            -Dllama.metrics.format=github
+            -Dllama.metrics.output=file
+            -Dllama.metrics.file=${{ runner.temp }}/metrics-${{ matrix.backend.name }}-batch-prefill-decode.md
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
@@ -227,4 +242,14 @@ jobs:
           ./llama-tornado --gpu --${{ matrix.backend.name }} \
             --model /$MODELS_DIR/granite-4.0-1b-Q8_0.gguf \
             --prompt "Say hello"
+      - name: Publish performance summary
+        if: always()
+        run: |
+          echo "## Llama-3.2-1B FP16 — ${{ matrix.backend.name }}" >> $GITHUB_STEP_SUMMARY
+          echo "### Standard" >> $GITHUB_STEP_SUMMARY
+          cat ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-standard.md >> $GITHUB_STEP_SUMMARY
+          echo "### Prefill-Decode" >> $GITHUB_STEP_SUMMARY
+          cat ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-prefill-decode.md >> $GITHUB_STEP_SUMMARY
+          echo "### Batch-Prefill-Decode" >> $GITHUB_STEP_SUMMARY
+          cat ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-batch-prefill-decode.md >> $GITHUB_STEP_SUMMARY
 
