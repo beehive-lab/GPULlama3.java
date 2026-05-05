@@ -1,6 +1,6 @@
 package org.beehive.gpullama3.inference;
 
-import org.beehive.gpullama3.auxiliary.LastRunMetrics;
+import org.beehive.gpullama3.auxiliary.RunMetrics;
 import org.beehive.gpullama3.inference.sampler.Sampler;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.model.Configuration;
@@ -132,10 +132,9 @@ public final class InferenceEngine {
 
         // Calculate and print performance metrics
         long endNanos = System.nanoTime();
-        double totalTimeSeconds = (endNanos - startNanos) / 1_000_000_000.0;
-        int totalTokens = promptIndex + generatedTokens.size();
-
-        LastRunMetrics.setMetrics(totalTokens, totalTimeSeconds);
+        long decodeStart = inferenceStartNanos > 0 ? inferenceStartNanos : endNanos;
+        RunMetrics.setInferenceMetrics(promptIndex, decodeStart - startNanos,
+                generatedTokens.size(), endNanos - decodeStart, endNanos - startNanos);
 
         return generatedTokens;
     }
@@ -213,10 +212,9 @@ public final class InferenceEngine {
 
         // Calculate and print performance metrics
         long endNanos = System.nanoTime();
-        double totalTimeSeconds = (endNanos - startNanos) / 1_000_000_000.0;
-        int totalTokens = promptIndex + generatedTokens.size();
-
-        LastRunMetrics.setMetrics(totalTokens, totalTimeSeconds);
+        long decodeStart = inferenceStartNanos > 0 ? inferenceStartNanos : endNanos;
+        RunMetrics.setInferenceMetrics(promptIndex, decodeStart - startNanos,
+                generatedTokens.size(), endNanos - decodeStart, endNanos - startNanos);
 
         return generatedTokens;
     }
@@ -225,6 +223,7 @@ public final class InferenceEngine {
             IntConsumer onTokenGenerated) {
 
         long startNanos = System.nanoTime();
+        long inferenceStartNanos = 0;
         if (maxTokens < 0 || model.configuration().contextLength() < maxTokens) {
             maxTokens = model.configuration().contextLength();
         }
@@ -245,6 +244,9 @@ public final class InferenceEngine {
                     System.err.print(Tokenizer.replaceControlCharacters(model.tokenizer().decode(List.of(nextToken))));
                 }
             } else {
+                if (inferenceStartNanos == 0) {
+                    inferenceStartNanos = System.nanoTime();
+                }
                 nextToken = sampler.sampleToken(state.logits);
                 if (echo) {
                     // log inferred token
@@ -266,10 +268,9 @@ public final class InferenceEngine {
 
         // Calculate and print performance metrics
         long endNanos = System.nanoTime();
-        double totalTimeSeconds = (endNanos - startNanos) / 1_000_000_000.0;
-        int totalTokens = promptIndex + generatedTokens.size();
-
-        LastRunMetrics.setMetrics(totalTokens, totalTimeSeconds);
+        long decodeStart = inferenceStartNanos > 0 ? inferenceStartNanos : endNanos;
+        RunMetrics.setInferenceMetrics(promptIndex, decodeStart - startNanos,
+                generatedTokens.size(), endNanos - decodeStart, endNanos - startNanos);
 
         return generatedTokens;
 
@@ -356,11 +357,9 @@ public final class InferenceEngine {
 
         // === Performance Metrics ===
         long endNanos = System.nanoTime();
-        double totalSeconds = (endNanos - startNanos) / 1_000_000_000.0;
-        int totalTokens = promptIndex + generatedTokens.size();
-
-        // Set metrics for tokens achieved
-        LastRunMetrics.setMetrics(totalTokens, totalSeconds);
+        long decodeStart = inferenceStartNanos > 0 ? inferenceStartNanos : endNanos;
+        RunMetrics.setInferenceMetrics(promptIndex, decodeStart - startNanos,
+                generatedTokens.size(), endNanos - decodeStart, endNanos - startNanos);
 
         return generatedTokens;
     }
@@ -449,10 +448,9 @@ public final class InferenceEngine {
 
         // Calculate and print performance metrics
         long endNanos = System.nanoTime();
-        double totalTimeSeconds = (endNanos - startNanos) / 1_000_000_000.0;
-        int totalTokens = promptIndex + generatedTokens.size();
-
-        LastRunMetrics.setMetrics(totalTokens, totalTimeSeconds);
+        long decodeStart = inferenceStartNanos > 0 ? inferenceStartNanos : endNanos;
+        RunMetrics.setInferenceMetrics(promptIndex, decodeStart - startNanos,
+                generatedTokens.size(), endNanos - decodeStart, endNanos - startNanos);
 
         return generatedTokens;
     }
@@ -524,10 +522,9 @@ public final class InferenceEngine {
 
         // Calculate and print performance metrics
         long endNanos = System.nanoTime();
-        double totalTimeSeconds = (endNanos - startNanos) / 1_000_000_000.0;
-        int totalTokens = promptIndex + generatedTokens.size();
-
-        LastRunMetrics.setMetrics(totalTokens, totalTimeSeconds);
+        long decodeStart = inferenceStartNanos > 0 ? inferenceStartNanos : endNanos;
+        RunMetrics.setInferenceMetrics(promptIndex, decodeStart - startNanos,
+                generatedTokens.size(), endNanos - decodeStart, endNanos - startNanos);
 
         return generatedTokens;
     }
@@ -591,10 +588,9 @@ public final class InferenceEngine {
         }
 
         long endNanos = System.nanoTime();
-        double totalTimeSeconds = (endNanos - startNanos) / 1_000_000_000.0;
-        int totalTokens = promptIndex + generatedTokens.size();
-
-        LastRunMetrics.setMetrics(totalTokens, totalTimeSeconds);
+        long decodeStart = inferenceStartNanos > 0 ? inferenceStartNanos : endNanos;
+        RunMetrics.setInferenceMetrics(promptIndex, decodeStart - startNanos,
+                generatedTokens.size(), endNanos - decodeStart, endNanos - startNanos);
 
         return generatedTokens;
     }
@@ -658,10 +654,9 @@ public final class InferenceEngine {
         }
 
         long endNanos = System.nanoTime();
-        double totalTimeSeconds = (endNanos - startNanos) / 1_000_000_000.0;
-        int totalTokens = promptIndex + generatedTokens.size();
-
-        LastRunMetrics.setMetrics(totalTokens, totalTimeSeconds);
+        long decodeStart = inferenceStartNanos > 0 ? inferenceStartNanos : endNanos;
+        RunMetrics.setInferenceMetrics(promptIndex, decodeStart - startNanos,
+                generatedTokens.size(), endNanos - decodeStart, endNanos - startNanos);
 
         return generatedTokens;
     }

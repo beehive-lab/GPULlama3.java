@@ -1,5 +1,6 @@
 package org.beehive.gpullama3.tornadovm;
 
+import org.beehive.gpullama3.auxiliary.RunMetrics;
 import org.beehive.gpullama3.inference.state.LlamaState;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.tensor.GGMLType;
@@ -74,10 +75,6 @@ public class TornadoVMMasterPlanWithBatchPrefillDecode implements TornadoVMMaste
 
     // ── Construction ─────────────────────────────────────────────────────────
     TornadoVMMasterPlanWithBatchPrefillDecode(State initialState, Model model) {
-        long startTime = System.nanoTime();
-        long planCreationTime = 0;
-        long warmupTime = 0;
-
         if (ENABLE_TORNADOVM_INIT_TIME) {
             System.err.println("\nStarting TornadoVM initialization...");
         }
@@ -88,25 +85,23 @@ public class TornadoVMMasterPlanWithBatchPrefillDecode implements TornadoVMMaste
         this.batchSize = PREFILL_BATCH_SIZE;
         this.N         = config.numberOfLayers();
         this.gridScheduler  = new GridScheduler();
-        this.executionPlan  = createExecutionPlan();
 
-        if (ENABLE_TORNADOVM_INIT_TIME) {
-            planCreationTime = System.nanoTime();
-            System.err.printf("TornadoVM GPU batched prefill/decode execution plan creation: %.2f ms\n", (planCreationTime - startTime) / 1_000_000.0);
-        }
+        long startTime = System.nanoTime();
+        this.executionPlan  = createExecutionPlan();
+        long planCreationTime = System.nanoTime();
 
         if (CUDA_GRAPHS) executionPlan.withAllGraphs().withCUDAGraph();
         executionPlan.withPreCompilation();
-
-        if (ENABLE_TORNADOVM_INIT_TIME) {
-            warmupTime = System.nanoTime();
-            System.err.printf("Java to GPU JIT compiler warmup: %.2f ms\n", (warmupTime - planCreationTime) / 1_000_000.0);
-        }
+        long warmupTime = System.nanoTime();
 
         forceCopyInReadOnlyData();
+        long copyTime = System.nanoTime();
+
+        RunMetrics.setTornadoMetrics(warmupTime - startTime, copyTime - warmupTime);
 
         if (ENABLE_TORNADOVM_INIT_TIME) {
-            long copyTime = System.nanoTime();
+            System.err.printf("TornadoVM GPU batched prefill/decode execution plan creation: %.2f ms\n", (planCreationTime - startTime) / 1_000_000.0);
+            System.err.printf("Java to GPU JIT compiler warmup: %.2f ms\n", (warmupTime - planCreationTime) / 1_000_000.0);
             System.err.printf("Transfer read-only weights to GPU: %.2f ms\n", (copyTime - warmupTime) / 1_000_000.0);
             System.err.printf("Finished TornadoVM initialization...\n \n");
         }

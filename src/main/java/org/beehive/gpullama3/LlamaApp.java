@@ -1,6 +1,6 @@
 package org.beehive.gpullama3;
 
-import org.beehive.gpullama3.auxiliary.LastRunMetrics;
+import org.beehive.gpullama3.auxiliary.RunMetrics;
 import org.beehive.gpullama3.inference.sampler.Sampler;
 import org.beehive.gpullama3.model.Model;
 
@@ -18,7 +18,7 @@ public class LlamaApp {
         String response = model.runInstructOnce(sampler, options);
         System.out.println(response);
         if (SHOW_PERF_INTERACTIVE) {
-            LastRunMetrics.printMetrics();
+            RunMetrics.printMetrics();
         }
     }
 
@@ -35,7 +35,9 @@ public class LlamaApp {
      */
     static void main(String[] args) throws IOException {
         Options options = Options.parseOptions(args);
+        long loadStart = System.nanoTime();
         Model model = loadModel(options);
+        RunMetrics.setLoadDuration(System.nanoTime() - loadStart);
         Sampler sampler = createSampler(model, options);
 
         if (options.interactive()) {
