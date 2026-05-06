@@ -19,7 +19,6 @@
 package org.beehive.gpullama3.cli;
 
 import org.beehive.gpullama3.Options;
-import org.beehive.gpullama3.auxiliary.LastRunMetrics;
 import org.beehive.gpullama3.inference.sampler.Sampler;
 import org.beehive.gpullama3.model.Model;
 

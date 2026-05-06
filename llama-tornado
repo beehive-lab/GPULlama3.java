@@ -96,8 +96,6 @@ class LlamaRunner:
 
         if args.cuda_graphs:
             cmd.append("-Dllama.cudaGraphs=true")
-        elif args.no_cuda_graphs:
-            cmd.append("-Dllama.cudaGraphs=false")
 
         # Debug options
         debug_config = []

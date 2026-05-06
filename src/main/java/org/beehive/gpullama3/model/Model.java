@@ -1,7 +1,7 @@
 package org.beehive.gpullama3.model;
 
 import org.beehive.gpullama3.Options;
-import org.beehive.gpullama3.auxiliary.LastRunMetrics;
+import org.beehive.gpullama3.auxiliary.RunMetrics;
 import org.beehive.gpullama3.inference.sampler.Sampler;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.Weights;
@@ -165,7 +165,7 @@ public interface Model {
 
                 // Optionally print performance metrics after each response
                 if (SHOW_PERF_INTERACTIVE) {
-                    LastRunMetrics.printMetrics();
+                    RunMetrics.printMetrics();
                 }
             }
         } finally {

@@ -1,6 +1,6 @@
 package org.beehive.gpullama3.inference;
 
-import org.beehive.gpullama3.auxiliary.LastRunMetrics;
+import org.beehive.gpullama3.auxiliary.RunMetrics;
 import org.beehive.gpullama3.inference.sampler.Sampler;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.model.Configuration;
@@ -75,6 +75,7 @@ public final class InferenceEngineWithPrefillDecode {
         }
 
         state.latestToken = currentToken;
+        long decodeStartNanos = System.nanoTime();
 
         // ── Decode ────────────────────────────────────────────────────────────
         while (pos < actualMaxTokens) {
@@ -102,8 +103,9 @@ public final class InferenceEngineWithPrefillDecode {
         }
 
         long endNanos = System.nanoTime();
-        int totalTokens = promptTokens.size() + generatedTokens.size();
-        LastRunMetrics.setMetrics(totalTokens, (endNanos - startNanos) / 1_000_000_000.0);
+        RunMetrics.setInferenceMetrics(promptTokens.size(), decodeStartNanos - startNanos,
+                generatedTokens.size(), endNanos - decodeStartNanos, endNanos - startNanos);
+        RunMetrics.setHasPrefillPhase(true);
 
         return generatedTokens;
     }
@@ -153,6 +155,7 @@ public final class InferenceEngineWithPrefillDecode {
         }
 
         state.latestToken = currentToken;
+        long decodeStartNanos = System.nanoTime();
 
         // ── Decode (GPU, with logits) ─────────────────────────────────────────
         while (pos < actualMaxTokens) {
@@ -180,8 +183,9 @@ public final class InferenceEngineWithPrefillDecode {
         }
 
         long endNanos = System.nanoTime();
-        int totalTokens = promptTokens.size() + generatedTokens.size();
-        LastRunMetrics.setMetrics(totalTokens, (endNanos - startNanos) / 1_000_000_000.0);
+        RunMetrics.setInferenceMetrics(promptTokens.size(), decodeStartNanos - startNanos,
+                generatedTokens.size(), endNanos - decodeStartNanos, endNanos - startNanos);
+        RunMetrics.setHasPrefillPhase(true);
 
         return generatedTokens;
     }
