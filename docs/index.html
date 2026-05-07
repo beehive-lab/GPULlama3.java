@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GPULlama3 Performance History</title>
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #0d1117;
+      color: #e6edf3;
+      padding: 2rem;
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 1.5rem; color: #e6edf3; }
+    .controls {
+      display: flex;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+      margin-bottom: 1.5rem;
+      background: #161b22;
+      padding: 1rem 1.25rem;
+      border-radius: 8px;
+      border: 1px solid #30363d;
+    }
+    .control-group label {
+      display: block;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #8b949e;
+      margin-bottom: 0.35rem;
+    }
+    select {
+      padding: 0.4rem 0.6rem;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      background: #21262d;
+      color: #e6edf3;
+      cursor: pointer;
+      min-width: 160px;
+    }
+    select option { background: #21262d; }
+    #chart {
+      background: #161b22;
+      border-radius: 8px;
+      border: 1px solid #30363d;
+      padding: 1rem;
+      min-height: 720px;
+    }
+    #empty {
+      display: none;
+      background: #161b22;
+      border-radius: 8px;
+      border: 1px solid #30363d;
+      padding: 3rem;
+      text-align: center;
+      color: #8b949e;
+      font-size: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>GPULlama3 — Performance History</h1>
+
+  <div class="controls">
+    <div class="control-group">
+      <label>Model</label>
+      <select id="model"><option value="all">All</option></select>
+    </div>
+    <div class="control-group">
+      <label>Quantization</label>
+      <select id="quantization"><option value="all">All</option></select>
+    </div>
+    <div class="control-group">
+      <label>Backend</label>
+      <select id="backend"><option value="all">All</option></select>
+    </div>
+    <div class="control-group">
+      <label>Configuration</label>
+      <select id="configuration"><option value="all">All</option></select>
+    </div>
+  </div>
+
+  <div id="chart"></div>
+  <div id="empty">No performance history available yet.</div>
+
+  <script>
+    const METRICS = [
+      { key: 'total_rate',       label: 'Total tok/s',   yaxis: 'y',  domain: [0.70, 1.00] },
+      { key: 'prompt_eval_rate', label: 'Prefill tok/s', yaxis: 'y2', domain: [0.36, 0.64] },
+      { key: 'eval_rate',        label: 'Decode tok/s',  yaxis: 'y3', domain: [0.00, 0.30] },
+    ];
+
+    const DARK = {
+      plot:   '#0d1117',
+      paper:  '#161b22',
+      grid:   '#21262d',
+      text:   '#e6edf3',
+      subhed: '#8b949e',
+    };
+
+    async function loadHistory() {
+      const resp = await fetch('perf-history.jsonl');
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const text = await resp.text();
+      return text.trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
+    }
+
+    function populateSelect(id, values) {
+      const sel = document.getElementById(id);
+      const existing = new Set([...sel.options].map(o => o.value));
+      for (const v of [...values].sort()) {
+        if (!existing.has(v)) {
+          const opt = document.createElement('option');
+          opt.value = v; opt.textContent = v;
+          sel.appendChild(opt);
+        }
+      }
+    }
+
+    function traceName(r, modelFilter, quantFilter) {
+      const parts = [];
+      if (modelFilter === 'all') parts.push(r.model);
+      if (quantFilter === 'all') parts.push(r.quantization);
+      parts.push(`${r.configuration} (${r.backend})`);
+      return parts.join(' — ');
+    }
+
+    function render(data) {
+      const modelFilter = document.getElementById('model').value;
+      const quantFilter = document.getElementById('quantization').value;
+      const backFilter  = document.getElementById('backend').value;
+      const confFilter  = document.getElementById('configuration').value;
+
+      const filtered = data.filter(r =>
+        (modelFilter === 'all' || r.model         === modelFilter) &&
+        (quantFilter === 'all' || r.quantization  === quantFilter) &&
+        (backFilter  === 'all' || r.backend       === backFilter)  &&
+        (confFilter  === 'all' || r.configuration === confFilter)
+      );
+
+      const groups = {};
+      for (const r of filtered) {
+        const key = `${r.model}|${r.quantization}|${r.configuration}|${r.backend}`;
+        if (!groups[key]) groups[key] = { rows: [], rep: r };
+        groups[key].rows.push(r);
+      }
+
+      const traces = [];
+      for (const [groupKey, { rows, rep }] of Object.entries(groups)) {
+        const name = traceName(rep, modelFilter, quantFilter);
+        METRICS.forEach((m, mi) => {
+          traces.push({
+            type: 'scatter',
+            mode: 'lines+markers',
+            name,
+            legendgroup: groupKey,
+            showlegend: mi === 0,
+            xaxis: 'x',
+            yaxis: m.yaxis,
+            x: rows.map(r => r.timestamp),
+            y: rows.map(r => r[m.key]),
+            customdata: rows.map(r => [r.run_id, r.run_number]),
+            text: rows.map(r => {
+              const dt = new Date(r.timestamp);
+              const date = dt.toISOString().slice(0, 10);
+              const time = dt.toISOString().slice(11, 16) + ' UTC';
+              const runLabel = r.run_number ? `run #${r.run_number}` : '';
+              return (
+                `<b>${r[m.key]?.toFixed(2)} tok/s</b><br>` +
+                `${m.label}<br>` +
+                `${date} ${time}<br>` +
+                `commit: ${r.short_commit || '—'}<br>` +
+                `model: ${r.model} ${r.quantization}<br>` +
+                `config: ${r.configuration} / ${r.backend}` +
+                (runLabel ? `<br>${runLabel}` : '')
+              );
+            }),
+            hovertemplate: '%{text}<extra>%{fullData.name}</extra>',
+            marker: { size: 7 },
+          });
+        });
+      }
+
+      const annotations = METRICS.map(m => ({
+        text: `<b>${m.label}</b>`,
+        xref: 'paper', yref: 'paper',
+        x: 0, y: m.domain[1] + 0.015,
+        xanchor: 'left', yanchor: 'bottom',
+        showarrow: false,
+        font: { size: 11, color: DARK.subhed },
+      }));
+
+      const yAxisBase = {
+        rangemode: 'tozero',
+        gridcolor: DARK.grid,
+        tickfont:  { color: DARK.text },
+        titlefont: { color: DARK.text },
+        zerolinecolor: DARK.grid,
+      };
+
+      Plotly.react('chart', traces, {
+        xaxis: {
+          title: 'Run date', type: 'date', anchor: 'y3',
+          gridcolor: DARK.grid,
+          tickfont:  { color: DARK.text },
+          titlefont: { color: DARK.text },
+          zerolinecolor: DARK.grid,
+        },
+        yaxis:  { ...yAxisBase, domain: METRICS[0].domain },
+        yaxis2: { ...yAxisBase, domain: METRICS[1].domain, anchor: 'x' },
+        yaxis3: { ...yAxisBase, domain: METRICS[2].domain, anchor: 'x' },
+        annotations,
+        plot_bgcolor:  DARK.plot,
+        paper_bgcolor: DARK.paper,
+        font:   { color: DARK.text },
+        legend: { orientation: 'h', y: -0.12, font: { color: DARK.text }, bgcolor: 'rgba(0,0,0,0)' },
+        margin: { t: 30, b: 80, l: 60, r: 20 },
+        hovermode: 'closest',
+      }, { responsive: true });
+    }
+
+    async function main() {
+      let data;
+      try {
+        data = await loadHistory();
+      } catch (e) {
+        document.getElementById('chart').style.display = 'none';
+        document.getElementById('empty').style.display = 'block';
+        return;
+      }
+
+      if (!data.length) {
+        document.getElementById('chart').style.display = 'none';
+        document.getElementById('empty').style.display = 'block';
+        return;
+      }
+
+      populateSelect('model',         new Set(data.map(r => r.model)));
+      populateSelect('quantization',  new Set(data.map(r => r.quantization)));
+      populateSelect('backend',       new Set(data.map(r => r.backend)));
+      populateSelect('configuration', new Set(data.map(r => r.configuration)));
+
+      const rerender = () => render(data);
+      ['model', 'quantization', 'backend', 'configuration']
+        .forEach(id => document.getElementById(id).addEventListener('change', rerender));
+
+      render(data);
+
+      document.getElementById('chart').on('plotly_click', function(evt) {
+        const [runId] = evt.points[0]?.customdata ?? [];
+        if (runId) {
+          window.open(
+            `https://github.com/beehive-lab/GPULlama3.java/actions/runs/${runId}`,
+            '_blank'
+          );
+        }
+      });
+    }
+
+    main();
+  </script>
+</body>
+</html>
