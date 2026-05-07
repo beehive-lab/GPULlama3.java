@@ -96,9 +96,9 @@ jobs:
       - name: FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Standard
         env:
           JAVA_TOOL_OPTIONS: >-
-            -Dllama.metrics.format=github
+            -Dllama.metrics.format=json
             -Dllama.metrics.output=file
-            -Dllama.metrics.file=${{ runner.temp }}/metrics-${{ matrix.backend.name }}-standard.md
+            -Dllama.metrics.file=${{ runner.temp }}/metrics-${{ matrix.backend.name }}-standard.json
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
@@ -108,9 +108,9 @@ jobs:
       - name: FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Prefill-Decode
         env:
           JAVA_TOOL_OPTIONS: >-
-            -Dllama.metrics.format=github
+            -Dllama.metrics.format=json
             -Dllama.metrics.output=file
-            -Dllama.metrics.file=${{ runner.temp }}/metrics-${{ matrix.backend.name }}-prefill-decode.md
+            -Dllama.metrics.file=${{ runner.temp }}/metrics-${{ matrix.backend.name }}-prefill-decode.json
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
@@ -121,9 +121,9 @@ jobs:
       - name: FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Batch-Prefill-Decode
         env:
           JAVA_TOOL_OPTIONS: >-
-            -Dllama.metrics.format=github
+            -Dllama.metrics.format=json
             -Dllama.metrics.output=file
-            -Dllama.metrics.file=${{ runner.temp }}/metrics-${{ matrix.backend.name }}-batch-prefill-decode.md
+            -Dllama.metrics.file=${{ runner.temp }}/metrics-${{ matrix.backend.name }}-batch-prefill-decode.json
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
