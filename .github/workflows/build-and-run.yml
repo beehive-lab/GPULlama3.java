@@ -13,6 +13,8 @@ env:
   LLAMA_ROOT: ${{ github.workspace }}
   GRAAL_JARS: /opt/graalJars
   MODELS_DIR: /opt/models
+  # History file committed back to the repo on push to main
+  PERF_HISTORY_FILE: docs/perf-history.jsonl
 
 jobs:
   code-quality:
@@ -243,30 +245,7 @@ jobs:
             --model /$MODELS_DIR/granite-4.0-1b-Q8_0.gguf \
             --prompt "Say hello"
 
-      - name: Publish summary and record history
-        if: always()
-        run: |
-          HISTORY_ARG=""
-          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
-            HISTORY_ARG="--history docs/perf-history.jsonl"
-          fi
-          echo "## Llama-3.2-1B-Instruct F16 — ${{ matrix.backend.name }}" >> $GITHUB_STEP_SUMMARY
-          python3 scripts/process_metrics.py \
-            --metrics     ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-standard.json:standard \
-            --metrics     ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-prefill-decode.json:prefill-decode \
-            --metrics     ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-batch-prefill-decode.json:batch-prefill-decode \
-            --backend     ${{ matrix.backend.name }} \
-            --model       Llama-3.2-1B-Instruct \
-            --quantization F16 \
-            --commit      ${{ github.sha }} \
-            --branch      ${{ github.ref_name }} \
-            --run-id      ${{ github.run_id }} \
-            --run-number  ${{ github.run_number }} \
-            --run-attempt ${{ github.run_attempt }} \
-            --workflow    "${{ github.workflow }}" \
-            $HISTORY_ARG \
-            >> $GITHUB_STEP_SUMMARY
-
+      # ── Upload metrics for the publish job ────────────────────────────────────
       - name: Upload metrics artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -275,18 +254,49 @@ jobs:
           path: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-*.json
           if-no-files-found: warn
 
+  # ── Separate job: collect all matrix metrics and update history ───────────────
+  publish-performance-history:
+    if: |
+      github.repository == 'beehive-lab/GPULlama3.java' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main'
+    runs-on: [self-hosted]
+    needs: build-and-run
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout GPULlama3
+        uses: actions/checkout@v4
+
+      - name: Download metrics artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: metrics-*-${{ github.run_id }}
+          path: ${{ runner.temp }}/metrics-artifacts
+          merge-multiple: true
+
+      - name: Append to performance history
+        run: |
+          python3 scripts/process_metrics.py \
+            --metrics-dir "${{ runner.temp }}/metrics-artifacts" \
+            --commit       "${{ github.sha }}" \
+            --branch       "${{ github.ref_name }}" \
+            --run-id       "${{ github.run_id }}" \
+            --run-number   "${{ github.run_number }}" \
+            --run-attempt  "${{ github.run_attempt }}" \
+            --workflow     "${{ github.workflow }}" \
+            --history      "$PERF_HISTORY_FILE"
+
       - name: Commit performance history
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/perf-history.jsonl
+          git add "$PERF_HISTORY_FILE"
           git diff --cached --quiet && echo "No history changes to commit" && exit 0
-          git commit -m "perf: record ${{ matrix.backend.name }} run ${{ github.run_id }} @ ${GITHUB_SHA::8}"
+          git commit -m "perf: record run #${{ github.run_number }} @ ${GITHUB_SHA::8}"
           for attempt in 1 2 3; do
             git pull --rebase origin main && git push && break || {
               [ $attempt -lt 3 ] && { echo "Attempt $attempt failed, retrying in $((attempt * 5))s..."; sleep $((attempt * 5)); } \
                                  || { echo "::error::Failed to push after 3 attempts"; exit 1; }
             }
           done
-
