@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main ]
   pull_request:
-    branches: [ main ]  
+    branches: [ main ]
     types: [opened, synchronize, reopened]
 
 env:
@@ -53,20 +53,22 @@ jobs:
           git clone --depth 1 --branch master \
             https://github.com/beehive-lab/TornadoVM.git \
             $TORNADO_ROOT
+
       - name: Set up Python venv for TornadoVM
         run: |
           python3 -m venv $TORNADO_ROOT/venv
           source $TORNADO_ROOT/venv/bin/activate
           python --version
+
       - name: Build TornadoVM
         run: |
           cd $TORNADO_ROOT
           mkdir -p graalJars && cp $GRAAL_JARS/* graalJars/
           source venv/bin/activate
           echo "=== Building TornadoVM ==="
-          
+
           make BACKEND=${{ matrix.backend.name }}
-          
+
           echo "=== Searching for TornadoVM SDK directory ==="
           SDK_DIR=$(find dist -type d -maxdepth 3 -path "*/tornadovm-*-${{ matrix.backend.name }}" | head -n 1)
           if [ -z "$SDK_DIR" ]; then
@@ -76,7 +78,7 @@ jobs:
           fi
           FULL_SDK="${PWD}/${SDK_DIR}"
           echo "Detected TornadoVM SDK: $FULL_SDK"
-          
+
           # Export for current shell session
           export TORNADOVM_HOME="$FULL_SDK"
           export PATH="$FULL_SDK/bin:$JAVA_HOME/bin:$PATH"
@@ -84,10 +86,11 @@ jobs:
           # Save for subsequent steps
           echo "TORNADOVM_HOME=$FULL_SDK" >> $GITHUB_ENV
           echo "PATH=$PATH" >> $GITHUB_ENV
-          
+
           echo "=== Checking tornado CLI ==="
           which tornado || { echo "::error::tornado not in PATH"; exit 1; }
           tornado --devices
+
       - name: Build GPULlama3.java
         run: |
           cd ${{ github.workspace }}
@@ -95,6 +98,7 @@ jobs:
           export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
           tornado --version
           ./mvnw clean package -DskipTests
+
       - name: FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Standard
         env:
           JAVA_TOOL_OPTIONS: >-
