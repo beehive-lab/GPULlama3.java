@@ -536,12 +536,10 @@ jobs:
   publish-performance-history:
     # Guard: only commit history on real pushes to main, not on PRs or forks.
     # Prevents duplicate entries from PR runs and avoids push-permission errors on forks.
-    # Full guard (restore after testing):
-#    if: |
-#      github.repository == 'beehive-lab/GPULlama3.java' &&
-#      github.event_name == 'push' &&
-#      github.ref == 'refs/heads/main'
-    if: github.repository == 'beehive-lab/GPULlama3.java'
+    if: >-
+      github.repository == 'beehive-lab/GPULlama3.java' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main'
     runs-on: [self-hosted]
     needs: build-and-run
     timeout-minutes: 15
