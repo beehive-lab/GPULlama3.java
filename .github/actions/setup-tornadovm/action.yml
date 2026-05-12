@@ -1,0 +1,57 @@
+name: Setup TornadoVM
+description: Clone, build, and configure TornadoVM; exports TORNADOVM_HOME and updates PATH for all subsequent steps.
+
+inputs:
+  backend:
+    description: 'TornadoVM backend to build (opencl or ptx)'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Clone TornadoVM master
+      shell: bash
+      run: |
+        git clone --depth 1 --branch master \
+          https://github.com/beehive-lab/TornadoVM.git \
+          $TORNADO_ROOT
+
+    - name: Set up Python venv for TornadoVM
+      shell: bash
+      run: |
+        python3 -m venv $TORNADO_ROOT/venv
+        source $TORNADO_ROOT/venv/bin/activate
+        python --version
+
+    - name: Build TornadoVM
+      shell: bash
+      run: |
+        cd $TORNADO_ROOT
+        mkdir -p graalJars && cp $GRAAL_JARS/* graalJars/
+        source venv/bin/activate
+        echo "=== Building TornadoVM ==="
+
+        make BACKEND=${{ inputs.backend }}
+
+        echo "=== Searching for TornadoVM SDK directory ==="
+        SDK_DIR=$(find dist -type d -maxdepth 3 -path "*/tornadovm-*-${{ inputs.backend }}" | head -n 1)
+        if [ -z "$SDK_DIR" ]; then
+          echo "::error::Could not locate TornadoVM SDK directory!"
+          find dist -maxdepth 5 -type d
+          exit 1
+        fi
+        FULL_SDK="${PWD}/${SDK_DIR}"
+        echo "Detected TornadoVM SDK: $FULL_SDK"
+
+        # Export for current shell session
+        export TORNADOVM_HOME="$FULL_SDK"
+        export PATH="$FULL_SDK/bin:$JAVA_HOME/bin:$PATH"
+
+        # Save for subsequent steps
+        echo "TORNADOVM_HOME=$FULL_SDK" >> $GITHUB_ENV
+        echo "$FULL_SDK/bin" >> $GITHUB_PATH
+        echo "$JAVA_HOME/bin" >> $GITHUB_PATH
+
+        echo "=== Checking tornado CLI ==="
+        which tornado || { echo "::error::tornado not in PATH"; exit 1; }
+        tornado --devices
