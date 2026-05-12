@@ -146,7 +146,8 @@ jobs:
                 -Dquarkus.http.port=$QUARKUS_PORT \
                 -jar target/quarkus-app/quarkus-run.jar &
           APP_PID=$!
-          
+          echo "APP_PID=$APP_PID" >> $GITHUB_ENV
+
           if [ -z "$APP_PID" ]; then
             echo "ERROR: Failed to start Quarkus application"
             exit 1
