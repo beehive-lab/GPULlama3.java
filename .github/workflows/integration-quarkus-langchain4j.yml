@@ -108,7 +108,7 @@ jobs:
       - name: Clone Quarkus LangChain4j
         run: |
           cd ${{ github.workspace }}
-          git clone https://github.com/quarkiverse/quarkus-langchain4j.git
+          git clone --depth 1 https://github.com/quarkiverse/quarkus-langchain4j.git
 
       # Step 4: Build Quarkus LangChain4j with current GPULlama3.java
       - name: Build Quarkus LangChain4j
