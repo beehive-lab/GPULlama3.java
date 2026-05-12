@@ -136,11 +136,7 @@ public class GraniteLoader extends AbstractModelLoader<Granite, GraniteConfigura
                                                  Pair<float[], float[]> ropeFreqs,
                                                  GGMLTensorEntry tokenEmbeddings,
                                                  GGMLTensorEntry outputWeight) {
-            GGMLType ggmlType = outputWeight.ggmlType();
-
-            if (TornadoVMMasterPlan.ENABLE_TORNADOVM_INIT_TIME) {
-                System.out.println("Loading model weights in TornadoVM format (loading " + ggmlType + ")");
-            }
+            GGMLType ggmlType = effectiveGpuWeightType(outputWeight.ggmlType());
 
             // Validate supported types
             if (ggmlType != GGMLType.F16 && ggmlType != GGMLType.Q8_0) {
