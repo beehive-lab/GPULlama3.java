@@ -47,8 +47,30 @@ jobs:
               core.setOutput('is_help', 'false');
               }
 
-      - name: Get PR SHA
+      - name: Check commenter permissions
+        id: check_permission
         if: steps.help.outputs.is_help != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: perm } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              username: context.payload.comment.user.login
+            });
+            const authorized = ['write', 'admin'].includes(perm.permission);
+            if (!authorized) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: `@${context.payload.comment.user.login} You need write permission to trigger workflow reruns.`
+              });
+            }
+            core.setOutput('authorized', authorized ? 'true' : 'false');
+
+      - name: Get PR SHA
+        if: steps.help.outputs.is_help != 'true' && steps.check_permission.outputs.authorized == 'true'
         id: pr
         uses: actions/github-script@v7
         with:
@@ -64,7 +86,7 @@ jobs:
             console.log(`PR head ref: ${pr.head.ref}`);
 
       - name: Add reaction to comment
-        if: steps.help.outputs.is_help != 'true'
+        if: steps.help.outputs.is_help != 'true' && steps.check_permission.outputs.authorized == 'true'
         uses: actions/github-script@v7
         with:
           script: |
@@ -76,7 +98,7 @@ jobs:
             });
 
       - name: Post start comment
-        if: steps.help.outputs.is_help != 'true'
+        if: steps.help.outputs.is_help != 'true' && steps.check_permission.outputs.authorized == 'true'
         uses: actions/github-script@v7
         with:
           script: |
@@ -92,7 +114,7 @@ jobs:
             });
 
       - name: Rerun failed workflows
-        if: steps.help.outputs.is_help != 'true'
+        if: steps.help.outputs.is_help != 'true' && steps.check_permission.outputs.authorized == 'true'
         uses: actions/github-script@v7
         with:
           script: |
@@ -167,7 +189,7 @@ jobs:
             console.log(`Reran ${rerunCount} workflow(s)`);
 
       - name: Post completion comment
-        if: always() && steps.help.outputs.is_help != 'true'
+        if: always() && steps.help.outputs.is_help != 'true' && steps.check_permission.outputs.authorized == 'true'
         uses: actions/github-script@v7
         with:
           script: |
