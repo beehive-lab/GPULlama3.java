@@ -1,5 +1,5 @@
 name: Setup TornadoVM
-description: Clone, build, and configure TornadoVM; exports TORNADOVM_HOME and updates PATH for all subsequent steps.
+description: Clone (or restore from cache), build, and configure TornadoVM. Exports TORNADOVM_HOME and updates PATH for all subsequent steps.
 
 inputs:
   backend:
@@ -9,7 +9,29 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Get TornadoVM HEAD SHA
+      id: tornado_sha
+      shell: bash
+      run: |
+        SHA=$(git ls-remote https://github.com/beehive-lab/TornadoVM HEAD | cut -f1)
+        echo "sha=$SHA" >> $GITHUB_OUTPUT
+
+    # actions/cache `path:` is an expression — it cannot access the calling
+    # workflow's env vars via ${{ env.* }}, so we resolve TORNADO_ROOT here.
+    - name: Resolve TORNADO_ROOT for cache path
+      id: paths
+      shell: bash
+      run: echo "tornado_root=$TORNADO_ROOT" >> $GITHUB_OUTPUT
+
+    - name: Restore TornadoVM cache
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ steps.paths.outputs.tornado_root }}
+        key: tornadovm-${{ inputs.backend }}-${{ steps.tornado_sha.outputs.sha }}
+
     - name: Clone TornadoVM master
+      if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       run: |
         git clone --depth 1 --branch master \
@@ -17,6 +39,7 @@ runs:
           $TORNADO_ROOT
 
     - name: Set up Python venv for TornadoVM
+      if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       run: |
         python3 -m venv $TORNADO_ROOT/venv
@@ -24,16 +47,29 @@ runs:
         python --version
 
     - name: Build TornadoVM
+      if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       run: |
         cd $TORNADO_ROOT
         mkdir -p graalJars && cp $GRAAL_JARS/* graalJars/
         source venv/bin/activate
         echo "=== Building TornadoVM ==="
-
         make BACKEND=${{ inputs.backend }}
 
-        echo "=== Searching for TornadoVM SDK directory ==="
+        echo "=== Verifying TornadoVM SDK directory ==="
+        SDK_DIR=$(find dist -type d -maxdepth 3 -path "*/tornadovm-*-${{ inputs.backend }}" | head -n 1)
+        if [ -z "$SDK_DIR" ]; then
+          echo "::error::Could not locate TornadoVM SDK directory!"
+          find dist -maxdepth 5 -type d
+          exit 1
+        fi
+
+    # Runs on both cache hit and miss — sets TORNADOVM_HOME and PATH for all
+    # subsequent steps in the calling workflow.
+    - name: Configure TornadoVM environment
+      shell: bash
+      run: |
+        cd $TORNADO_ROOT
         SDK_DIR=$(find dist -type d -maxdepth 3 -path "*/tornadovm-*-${{ inputs.backend }}" | head -n 1)
         if [ -z "$SDK_DIR" ]; then
           echo "::error::Could not locate TornadoVM SDK directory!"
