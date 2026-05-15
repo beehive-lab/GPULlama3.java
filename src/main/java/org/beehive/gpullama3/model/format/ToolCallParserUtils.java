@@ -33,7 +33,7 @@ public final class ToolCallParserUtils {
         int idx = responseText.indexOf("<|python_tag|>");
         if (idx != -1) {
             String json = responseText.substring(idx + "<|python_tag|>".length()).strip();
-            return parseLlamaJson(json);
+            return parseToolCallJson(json);
         }
 
         // 2. LLaMA 3.2 format: <tool_call>...</tool_call>
@@ -41,29 +41,29 @@ public final class ToolCallParserUtils {
         int tcEnd   = responseText.lastIndexOf("</tool_call>");
         if (tcStart != -1 && tcEnd != -1 && tcEnd > tcStart) {
             String json = responseText.substring(tcStart + "<tool_call>".length(), tcEnd).strip();
-            return parseLlamaJson(json);
+            return parseToolCallJson(json);
         }
         // 2b. Unclosed <tool_call> — model stopped (eot_id / eom_id) before writing the closing tag
         if (tcStart != -1 && tcEnd == -1) {
             String json = responseText.substring(tcStart + "<tool_call>".length()).strip();
-            return parseLlamaJson(json);
+            return parseToolCallJson(json);
         }
 
         // 3. Fallback: raw JSON, possibly inside markdown code fences
         String stripped = stripMarkdownFences(responseText.strip());
         if (stripped.startsWith("{")) {
-            return parseLlamaJson(stripped);
+            return parseToolCallJson(stripped);
         }
 
         return Optional.empty();
     }
 
     /**
-     * Parses a LLaMA-style tool call JSON object.
+     * Parses a tool call JSON object extracted from a {@code <tool_call>} block or raw JSON.
      * Accepts {@code {"name":…,"parameters":{…}}}, {@code {"function":…,"parameters":{…}}},
-     * and {@code {"name":…,"arguments":{…}}}.
+     * and {@code {"name":…,"arguments":{…}}} — covering both LLaMA and Qwen3 variants.
      */
-    private static Optional<ToolCallExtract> parseLlamaJson(String json) {
+    private static Optional<ToolCallExtract> parseToolCallJson(String json) {
         String name = extractStringValue(json, "name");
         if (name == null) {
             name = extractStringValue(json, "function");
@@ -92,7 +92,7 @@ public final class ToolCallParserUtils {
         // <|python_tag|> (Llama 3.1) — single call by definition
         int pythonIdx = responseText.indexOf("<|python_tag|>");
         if (pythonIdx != -1) {
-            parseLlamaJson(responseText.substring(pythonIdx + "<|python_tag|>".length()).strip())
+            parseToolCallJson(responseText.substring(pythonIdx + "<|python_tag|>".length()).strip())
                     .ifPresent(calls::add);
             return calls;
         }
@@ -112,7 +112,7 @@ public final class ToolCallParserUtils {
                 json = responseText.substring(start + "<tool_call>".length()).strip();
                 searchFrom = responseText.length();
             }
-            parseLlamaJson(json).ifPresent(calls::add);
+            parseToolCallJson(json).ifPresent(calls::add);
             if (end == -1) break;
         }
 
@@ -120,7 +120,7 @@ public final class ToolCallParserUtils {
         if (calls.isEmpty()) {
             String stripped = stripMarkdownFences(responseText.strip());
             if (stripped.startsWith("{")) {
-                parseLlamaJson(stripped).ifPresent(calls::add);
+                parseToolCallJson(stripped).ifPresent(calls::add);
             }
         }
 
@@ -166,7 +166,7 @@ public final class ToolCallParserUtils {
      * Tolerates whitespace around {@code :} and correctly skips escaped quotes ({@code \"})
      * inside the value, so multi-line code strings with embedded {@code "} are returned intact.
      */
-    public static String extractStringValue(String json, String key) {
+    private static String extractStringValue(String json, String key) {
         String marker = "\"" + key + "\"";
         int markerIdx = json.indexOf(marker);
         if (markerIdx == -1) return null;
@@ -196,7 +196,7 @@ public final class ToolCallParserUtils {
      * Array brackets {@code […]} are tracked so that {@code {}/{}} characters inside
      * array elements do not affect the outer brace depth counter.
      */
-    public static String extractNestedObject(String json, String key) {
+    private static String extractNestedObject(String json, String key) {
         String marker = "\"" + key + "\"";
         int markerIdx = json.indexOf(marker);
         if (markerIdx == -1) return null;
