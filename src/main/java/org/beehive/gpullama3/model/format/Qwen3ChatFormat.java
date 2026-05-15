@@ -128,6 +128,16 @@ public class Qwen3ChatFormat implements ChatFormat {
         return stopTokens;
     }
 
+    @Override
+    public double defaultTemperature() {
+        return 0.8;
+    }
+
+    @Override
+    public double defaultTopP() {
+        return 0.9;
+    }
+
     // ── Tool calling ──────────────────────────────────────────────────────────
 
     @Override

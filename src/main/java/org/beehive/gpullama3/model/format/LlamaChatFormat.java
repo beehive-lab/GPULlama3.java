@@ -75,6 +75,16 @@ public class LlamaChatFormat implements ChatFormat {
         return tokens;
     }
 
+    @Override
+    public double defaultTemperature() {
+        return 0.3;
+    }
+
+    @Override
+    public double defaultTopP() {
+        return 0.95;
+    }
+
     // ── Tool calling ──────────────────────────────────────────────────────────
 
     @Override
