@@ -14,8 +14,6 @@ public final class ToolCallParserUtils {
 
     private ToolCallParserUtils() {}
 
-    // ── Llama ─────────────────────────────────────────────────────────────────
-
     /**
      * Extracts a single tool call from a model response text.
      *
@@ -76,7 +74,7 @@ public final class ToolCallParserUtils {
         return Optional.of(new ToolCallExtract(name, argsJson));
     }
 
-    // ── Batch extraction ──────────────────────────────────────────────────────
+    // Batch extraction
 
     /**
      * Extracts ALL tool calls from a response that may contain multiple
@@ -126,7 +124,7 @@ public final class ToolCallParserUtils {
         return calls;
     }
 
-    // ── Shared helpers ────────────────────────────────────────────────────────
+    // Shared helpers
 
     /** Strips surrounding markdown code fences (```…```) if present. */
     public static String stripMarkdownFences(String text) {
