@@ -122,7 +122,13 @@ public interface Sampler {
     }
 
     static Sampler createSampler(Model model, Options options) {
-        return selectSampler(model.configuration().vocabularySize(), options.temperature(), options.topp(), options.seed());
+        float temperature = Float.isNaN(options.temperature())
+                ? (float) model.chatFormat().defaultTemperature()
+                : options.temperature();
+        float topp = Float.isNaN(options.topp())
+                ? (float) model.chatFormat().defaultTopP()
+                : options.topp();
+        return selectSampler(model.configuration().vocabularySize(), temperature, topp, options.seed());
     }
 
     /**

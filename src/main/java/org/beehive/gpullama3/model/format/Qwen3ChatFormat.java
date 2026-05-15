@@ -14,7 +14,6 @@ public class Qwen3ChatFormat implements ChatFormat {
     protected final int endHeader;
     protected final int endOfTurn;
     protected final int endOfText;
-    protected final int endOfMessage;
     protected final int endOfTextFim;
     protected final int imStart; // beginOfText
     protected final int imEnd; // endOfText
@@ -28,13 +27,12 @@ public class Qwen3ChatFormat implements ChatFormat {
         this.tokenizer = tokenizer;
         this.chatTokens = chatTokens;
         Map<String, Integer> specialTokens = tokenizer.getSpecialTokens();
-        this.beginOfText = specialTokens.getOrDefault("", -1);
+        this.beginOfText = -1; // Qwen3 has no BOS token; getBeginOfText() falls back to startHeader
         this.startHeader = specialTokens.getOrDefault(chatTokens.tStartHeader(), -1);
         this.endHeader = specialTokens.getOrDefault(chatTokens.tEndHeader(), -1);
         this.endOfTurn = specialTokens.getOrDefault(chatTokens.tEndOfTurn(), -1);
         this.endOfText = specialTokens.getOrDefault(chatTokens.tEndOfText(), -1);
         this.endOfTextFim = specialTokens.getOrDefault(chatTokens.tEndOfTextFim(), -1);
-        this.endOfMessage = specialTokens.getOrDefault("", -1); // Use default value if key not found
 
         this.imStart = startHeader;
         this.imEnd = endHeader;
@@ -128,5 +126,111 @@ public class Qwen3ChatFormat implements ChatFormat {
         }
 
         return stopTokens;
+    }
+
+    @Override
+    public double defaultTemperature() {
+        return 0.8;
+    }
+
+    @Override
+    public double defaultTopP() {
+        return 0.9;
+    }
+
+    // ── Tool calling ──────────────────────────────────────────────────────────
+
+    @Override
+    public boolean supportsToolCalling() {
+        return true;
+    }
+
+    /**
+     * Qwen3 tool calling system prompt suffix.
+     * Appended to the system message; instructs the model to wrap tool calls in
+     * {@code <tool_call>…</tool_call>} XML tags.
+     */
+    @Override
+    public String toolSystemPromptSuffix(String toolsJson) {
+        return "\n\n# Tools\n\n"
+                + "You may call one or more functions to assist with the user query.\n\n"
+                + "You are provided with function signatures within <tools></tools> XML tags:\n"
+                + "<tools>\n"
+                + toolsJson
+                + "\n</tools>\n\n"
+                + "For each function call, return a json object with function name and arguments "
+                + "within <tool_call></tool_call> XML tags:\n"
+                + "<tool_call>\n"
+                + "{\"name\": <function-name>, \"arguments\": <args-json-object>}\n"
+                + "</tool_call>";
+    }
+
+    /**
+     * Re-encodes a prior assistant tool-call turn for multi-turn history.
+     * Format: {@code <|im_start|>assistant\n<tool_call>\nJSON\n</tool_call><|im_end|>}
+     */
+    @Override
+    public List<Integer> encodeToolCallAssistantTurn(ToolCallExtract toolCall) {
+        List<Integer> tokens = new ArrayList<>();
+        tokens.add(imStart);
+        tokens.addAll(tokenizer.encodeOrdinaryAsList("assistant\n"));
+        String json = "{\"name\":\"" + toolCall.name() + "\",\"arguments\":" + toolCall.argumentsJson() + "}";
+        tokens.addAll(tokenizer.encodeOrdinaryAsList("<tool_call>\n" + json + "\n</tool_call>"));
+        if (imEnd != -1) {
+            tokens.add(imEnd);
+        }
+        return tokens;
+    }
+
+    /**
+     * Encodes multiple tool calls as a single assistant turn: one {@code <|im_start|>assistant}
+     * header, all {@code <tool_call>} blocks concatenated, then {@code <|im_end|>}.
+     * For a single call, delegates to the existing single-call method.
+     */
+    @Override
+    public List<Integer> encodeToolCallAssistantTurn(List<ToolCallExtract> toolCalls) {
+        if (toolCalls.isEmpty()) return List.of();
+        if (toolCalls.size() == 1) return encodeToolCallAssistantTurn(toolCalls.get(0));
+        List<Integer> tokens = new ArrayList<>();
+        tokens.add(imStart);
+        tokens.addAll(tokenizer.encodeOrdinaryAsList("assistant\n"));
+        for (ToolCallExtract tc : toolCalls) {
+            String json = "{\"name\":\"" + tc.name() + "\",\"arguments\":" + tc.argumentsJson() + "}";
+            tokens.addAll(tokenizer.encodeOrdinaryAsList("<tool_call>\n" + json + "\n</tool_call>"));
+        }
+        if (imEnd != -1) {
+            tokens.add(imEnd);
+        }
+        return tokens;
+    }
+
+    /**
+     * Encodes a tool result using the Qwen3 "tool" role.
+     * Format: {@code <|im_start|>tool\nresult<|im_end|>}
+     */
+    @Override
+    public List<Integer> encodeToolResultTurn(String toolCallId, String toolName, String result) {
+        List<Integer> tokens = new ArrayList<>();
+        tokens.add(imStart);
+        tokens.addAll(tokenizer.encodeOrdinaryAsList("tool\n"));
+        tokens.addAll(tokenizer.encodeOrdinaryAsList(result));
+        if (imEnd != -1) {
+            tokens.add(imEnd);
+        }
+        return tokens;
+    }
+
+    /**
+     * Detects a tool call enclosed in {@code <tool_call>…</tool_call>} tags.
+     * Delegates to {@link ToolCallParserUtils#parseToolCallResponse}.
+     */
+    @Override
+    public Optional<ToolCallExtract> extractToolCall(String responseText) {
+        return ToolCallParserUtils.parseToolCallResponse(responseText);
+    }
+
+    @Override
+    public List<ToolCallExtract> extractAllToolCalls(String responseText) {
+        return ToolCallParserUtils.parseAllToolCalls(responseText);
     }
 }

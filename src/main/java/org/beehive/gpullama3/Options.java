@@ -11,8 +11,8 @@ public record Options(Path modelPath, String prompt, String systemPrompt, String
 
     public Options {
         require(interactive || prompt != null, "Missing argument: --prompt is required in --instruct mode e.g. --prompt \"Why is the sky blue?\"");
-        require(0 <= temperature, "Invalid argument: --temperature must be non-negative");
-        require(0 <= topp && topp <= 1, "Invalid argument: --top-p must be within [0, 1]");
+        require(Float.isNaN(temperature) || 0 <= temperature, "Invalid argument: --temperature must be non-negative");
+        require(Float.isNaN(topp) || 0 <= topp && topp <= 1, "Invalid argument: --top-p must be within [0, 1]");
         require(batchPrefillSize >= 1, "Invalid argument: --batch-prefill-size must be >= 1");
         require(batchPrefillSize == 1 || withPrefillDecode, "Invalid argument: --batch-prefill-size requires --with-prefill-decode");
         // Publish to system properties so TornadoVMMasterPlan and Llama read the right values
@@ -44,8 +44,8 @@ public record Options(Path modelPath, String prompt, String systemPrompt, String
         out.println("  --prompt, -p <string>         input prompt");
         out.println("  --system-prompt, -sp <string> (optional) system prompt (Llama models)");
         out.println("  --suffix <string>             suffix for fill-in-the-middle request (Codestral)");
-        out.println("  --temperature, -temp <float>  temperature in [0,inf], default 0.1");
-        out.println("  --top-p <float>               p value in top-p (nucleus) sampling in [0,1] default 0.95");
+        out.println("  --temperature, -temp <float>  temperature in [0,inf], default: auto-detected from model family");
+        out.println("  --top-p <float>               p value in top-p (nucleus) sampling in [0,1], default: auto-detected from model family");
         out.println("  --seed <long>                 random seed, default System.nanoTime()");
         out.println("  --max-tokens, -n <int>        number of steps to run for < 0 = limited by context length, default " + DEFAULT_MAX_TOKENS);
         out.println("  --stream <boolean>            print tokens during generation; may cause encoding artifacts for non ASCII text, default true");
@@ -59,8 +59,8 @@ public record Options(Path modelPath, String prompt, String systemPrompt, String
         String prompt = "Tell me a story with Java"; // Hardcoded for testing
         String systemPrompt = null;
         String suffix = null;
-        float temperature = 0.1f;
-        float topp = 0.95f;
+        float temperature = Float.NaN; // resolved from model family after loading
+        float topp = Float.NaN;        // resolved from model family after loading
         Path modelPath = null;
         long seed = System.nanoTime();
         int maxTokens = DEFAULT_MAX_TOKENS;
@@ -76,8 +76,8 @@ public record Options(Path modelPath, String prompt, String systemPrompt, String
         String prompt = "Tell me a story with Java"; // Hardcoded for testing
         String systemPrompt = null;
         String suffix = null;
-        float temperature = 0.1f;
-        float topp = 0.95f;
+        float temperature = Float.NaN; // resolved from model family after loading
+        float topp = Float.NaN;        // resolved from model family after loading
         Path modelPath = null;
         long seed = System.nanoTime();
         int maxTokens = DEFAULT_MAX_TOKENS;
