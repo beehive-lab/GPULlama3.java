@@ -173,6 +173,28 @@ public class Qwen3ChatFormat implements ChatFormat {
     }
 
     /**
+     * Encodes multiple tool calls as a single assistant turn: one {@code <|im_start|>assistant}
+     * header, all {@code <tool_call>} blocks concatenated, then {@code <|im_end|>}.
+     * For a single call, delegates to the existing single-call method.
+     */
+    @Override
+    public List<Integer> encodeToolCallAssistantTurn(List<ToolCallExtract> toolCalls) {
+        if (toolCalls.isEmpty()) return List.of();
+        if (toolCalls.size() == 1) return encodeToolCallAssistantTurn(toolCalls.get(0));
+        List<Integer> tokens = new ArrayList<>();
+        tokens.add(imStart);
+        tokens.addAll(tokenizer.encodeOrdinaryAsList("assistant\n"));
+        for (ToolCallExtract tc : toolCalls) {
+            String json = "{\"name\":\"" + tc.name() + "\",\"arguments\":" + tc.argumentsJson() + "}";
+            tokens.addAll(tokenizer.encodeOrdinaryAsList("<tool_call>\n" + json + "\n</tool_call>"));
+        }
+        if (imEnd != -1) {
+            tokens.add(imEnd);
+        }
+        return tokens;
+    }
+
+    /**
      * Encodes a tool result using the Qwen3 "tool" role.
      * Format: {@code <|im_start|>tool\nresult<|im_end|>}
      */

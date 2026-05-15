@@ -163,6 +163,24 @@ public class LlamaChatFormat implements ChatFormat {
     }
 
     /**
+     * Encodes multiple tool calls as a single assistant turn using {@code <tool_call>} blocks.
+     * For a single call, delegates to the existing single-call method (preserving the
+     * {@code <|python_tag|>} prefix on LLaMA 3.1).
+     */
+    @Override
+    public List<Integer> encodeToolCallAssistantTurn(List<ToolCallExtract> toolCalls) {
+        if (toolCalls.isEmpty()) return List.of();
+        if (toolCalls.size() == 1) return encodeToolCallAssistantTurn(toolCalls.get(0));
+        List<Integer> tokens = new ArrayList<>(encodeHeader(new Message(Role.ASSISTANT, "")));
+        for (ToolCallExtract tc : toolCalls) {
+            String json = "{\"name\": \"" + tc.name() + "\", \"parameters\": " + tc.argumentsJson() + "}";
+            tokens.addAll(tokenizer.encodeAsList("<tool_call>\n" + json + "\n</tool_call>\n"));
+        }
+        tokens.add(endOfMessage != -1 ? endOfMessage : endOfTurn);
+        return tokens;
+    }
+
+    /**
      * Detects a tool call in the decoded response text.
      * Supports LLaMA 3.1 (native {@code <|python_tag|>} + {@code "parameters"} key),
      * LLaMA 3.2 ({@code "arguments"} key, tag often absent), and a raw-JSON fallback

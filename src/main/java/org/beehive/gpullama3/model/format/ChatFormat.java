@@ -7,6 +7,7 @@ import org.beehive.gpullama3.tokenizer.MistralTokenizer;
 import org.beehive.gpullama3.tokenizer.Phi3Tokenizer;
 import org.beehive.gpullama3.tokenizer.Qwen3Tokenizer;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -105,6 +106,27 @@ public interface ChatFormat {
      */
     default List<Integer> encodeToolCallAssistantTurn(ToolCallExtract toolCall) {
         throw new UnsupportedOperationException("Tool calling not supported for: " + getClass().getSimpleName());
+    }
+
+    /**
+     * Re-encodes a prior assistant turn that contained one or more tool calls as a
+     * <em>single</em> assistant message. Implementations must emit all calls inside one
+     * header/footer pair so the model does not see spurious assistant turn boundaries.
+     *
+     * <p>The default delegates to {@link #encodeToolCallAssistantTurn(ToolCallExtract)}
+     * for single-element lists and naively concatenates individual encodings for larger
+     * lists — formats that support batch tool calls should override this method.
+     *
+     * @param toolCalls the ordered list of tool calls from a single assistant turn
+     */
+    default List<Integer> encodeToolCallAssistantTurn(List<ToolCallExtract> toolCalls) {
+        if (toolCalls.isEmpty()) return List.of();
+        if (toolCalls.size() == 1) return encodeToolCallAssistantTurn(toolCalls.get(0));
+        List<Integer> tokens = new ArrayList<>();
+        for (ToolCallExtract tc : toolCalls) {
+            tokens.addAll(encodeToolCallAssistantTurn(tc));
+        }
+        return tokens;
     }
 
     /**
