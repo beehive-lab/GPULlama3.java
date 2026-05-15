@@ -38,6 +38,16 @@ public interface ChatFormat {
     Set<Integer> getStopTokens();
 
     /**
+     * Returns {@code true} when this chat format supports tool calling.
+     * Formats that implement tool-calling methods must override this to return {@code true}.
+     * Callers should check this before passing tool specifications to avoid hitting the
+     * default {@link UnsupportedOperationException} deep inside a format method.
+     */
+    default boolean supportsToolCalling() {
+        return false;
+    }
+
+    /**
      * Returns plain text to append to the system message content when tools are available.
      * Used by formats that inject tool definitions into the <em>system</em> message.
      *
