@@ -163,9 +163,11 @@ public class LlamaChatFormat implements ChatFormat {
     }
 
     /**
-     * Encodes multiple tool calls as a single assistant turn using {@code <tool_call>} blocks.
+     * Encodes multiple tool calls as a single assistant turn.
      * For a single call, delegates to the existing single-call method (preserving the
      * {@code <|python_tag|>} prefix on LLaMA 3.1).
+     * For multiple calls, LLaMA 3.1 prefixes each with {@code <|python_tag|>};
+     * LLaMA 3.2 (no python_tag) uses {@code <tool_call>} blocks.
      */
     @Override
     public List<Integer> encodeToolCallAssistantTurn(List<ToolCallExtract> toolCalls) {
@@ -174,7 +176,12 @@ public class LlamaChatFormat implements ChatFormat {
         List<Integer> tokens = new ArrayList<>(encodeHeader(new Message(Role.ASSISTANT, "")));
         for (ToolCallExtract tc : toolCalls) {
             String json = "{\"name\": \"" + tc.name() + "\", \"parameters\": " + tc.argumentsJson() + "}";
-            tokens.addAll(tokenizer.encodeAsList("<tool_call>\n" + json + "\n</tool_call>\n"));
+            if (pythonTag != -1) {
+                tokens.add(pythonTag);
+                tokens.addAll(tokenizer.encodeAsList(json + "\n"));
+            } else {
+                tokens.addAll(tokenizer.encodeAsList("<tool_call>\n" + json + "\n</tool_call>\n"));
+            }
         }
         tokens.add(endOfMessage != -1 ? endOfMessage : endOfTurn);
         return tokens;
@@ -184,11 +191,11 @@ public class LlamaChatFormat implements ChatFormat {
      * Detects a tool call in the decoded response text.
      * Supports LLaMA 3.1 (native {@code <|python_tag|>} + {@code "parameters"} key),
      * LLaMA 3.2 ({@code "arguments"} key, tag often absent), and a raw-JSON fallback
-     * for smaller models. Delegates to {@link ToolCallParserUtils#parseLlamaResponse}.
+     * for smaller models. Delegates to {@link ToolCallParserUtils#parseToolCallResponse}.
      */
     @Override
     public Optional<ToolCallExtract> extractToolCall(String responseText) {
-        return ToolCallParserUtils.parseLlamaResponse(responseText);
+        return ToolCallParserUtils.parseToolCallResponse(responseText);
     }
 
     @Override

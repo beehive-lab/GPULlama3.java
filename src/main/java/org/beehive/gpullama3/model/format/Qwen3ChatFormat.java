@@ -212,11 +212,11 @@ public class Qwen3ChatFormat implements ChatFormat {
 
     /**
      * Detects a tool call enclosed in {@code <tool_call>…</tool_call>} tags.
-     * Delegates to {@link ToolCallParserUtils#parseQwen3Response}.
+     * Delegates to {@link ToolCallParserUtils#parseToolCallResponse}.
      */
     @Override
     public Optional<ToolCallExtract> extractToolCall(String responseText) {
-        return ToolCallParserUtils.parseQwen3Response(responseText);
+        return ToolCallParserUtils.parseToolCallResponse(responseText);
     }
 
     @Override
