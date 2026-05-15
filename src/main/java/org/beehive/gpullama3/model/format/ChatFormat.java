@@ -163,6 +163,22 @@ public interface ChatFormat {
     }
 
     /**
+     * Returns the recommended default temperature for this chat format.
+     * Used when the caller has not explicitly configured a temperature.
+     */
+    default double defaultTemperature() {
+        return 0.7;
+    }
+
+    /**
+     * Returns the recommended default top-p for this chat format.
+     * Used when the caller has not explicitly configured a top-p value.
+     */
+    default double defaultTopP() {
+        return 0.9;
+    }
+
+    /**
      * Stop tokens to use when tool calling is enabled.
      * Some models (LLaMA 3.1+) use a different end-of-turn token ({@code <|eom_id|>})
      * when emitting a tool call instead of a regular response.
