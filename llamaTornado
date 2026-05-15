@@ -17,8 +17,7 @@ record Config(
     boolean printBytecodes, boolean threads, boolean printKernel,
     boolean fullDump, boolean verboseInit,
     boolean showCommand, boolean executeAfterShow,
-    String openclFlags, int maxWaitEvents, boolean verbose,
-    boolean toolDemo
+    String openclFlags, int maxWaitEvents, boolean verbose
 ) {}
 
 Config parseArgs(String[] args) {
@@ -52,7 +51,6 @@ Config parseArgs(String[] args) {
     String openclFlags = "-cl-denorms-are-zero -cl-no-signed-zeros -cl-finite-math-only";
     int maxWaitEvents = 32000;
     boolean verbose = false;
-    boolean toolDemo = false;
 
     for (int i = 0; i < args.length; i++) {
         switch (args[i]) {
@@ -88,7 +86,6 @@ Config parseArgs(String[] args) {
             case "--opencl-flags" -> openclFlags = args[++i];
             case "--max-wait-events" -> maxWaitEvents = Integer.parseInt(args[++i]);
             case "--verbose", "-v" -> verbose = true;
-            case "--tool-demo" -> toolDemo = true;
             default -> {
                 System.err.println("Unknown option: " + args[i]);
                 System.exit(1);
@@ -114,8 +111,7 @@ Config parseArgs(String[] args) {
     return new Config(modelPath, prompt, systemPrompt, temperature, topP, seed, maxTokens,
             stream, echo, interactive, instruct, useGpu, backend, gpuMemory, heapMin, heapMax, directMemory,
             debug, profiler, profilerDumpDir, printBytecodes, threads, printKernel, fullDump,
-            verboseInit, showCommand, executeAfterShow, openclFlags, maxWaitEvents, verbose,
-            toolDemo);
+            verboseInit, showCommand, executeAfterShow, openclFlags, maxWaitEvents, verbose);
 }
 
 String parseAndScale(String memoryValue, int multiplier) {
@@ -173,7 +169,6 @@ void printUsage() {
               --show-command          Display the full Java command
               --execute-after-show    Execute after showing command
               --verbose, -v           Verbose output
-              --tool-demo             Run the tool calling demo
 
               -help                   Show this help
               -version                Show version
@@ -286,10 +281,7 @@ List<String> buildCommand(Config cfg, String javaHome, String tornadoSdk, String
         }
     }
 
-    var mainClass = cfg.toolDemo()
-            ? "org.beehive.gpullama3.ToolCallingDemo"
-            : "org.beehive.gpullama3.LlamaApp";
-    cmd.addAll(List.of("-cp", findLlamaJar(llamaRoot), mainClass));
+    cmd.addAll(List.of("-cp", findLlamaJar(llamaRoot), "org.beehive.gpullama3.LlamaApp"));
 
     // LLaMA arguments
     cmd.addAll(List.of(
@@ -306,7 +298,6 @@ List<String> buildCommand(Config cfg, String javaHome, String tornadoSdk, String
     if (cfg.systemPrompt() != null) cmd.addAll(List.of("-sp", cfg.systemPrompt()));
     if (cfg.interactive()) cmd.add("--interactive");
     else if (cfg.instruct()) cmd.add("--instruct");
-    // --tool-demo is handled by main class selection above, not passed to Java
 
     return cmd;
 }
