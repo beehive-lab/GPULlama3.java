@@ -87,7 +87,7 @@ public final class ToolCallParserUtils {
      * Returns an empty list when the response contains no tool calls.
      */
     public static List<ToolCallExtract> parseAllToolCalls(String responseText) {
-        List<ToolCallExtract> calls = new java.util.ArrayList<>();
+        List<ToolCallExtract> calls = new ArrayList<>();
 
         // <|python_tag|> (Llama 3.1) — single call by definition
         int pythonIdx = responseText.indexOf("<|python_tag|>");
@@ -193,6 +193,8 @@ public final class ToolCallParserUtils {
     /**
      * Extracts the JSON object value for {@code "key": {…}} using brace-counting.
      * Handles nested objects and tolerates whitespace around {@code :}.
+     * Array brackets {@code […]} are tracked so that {@code {}/{}} characters inside
+     * array elements do not affect the outer brace depth counter.
      */
     public static String extractNestedObject(String json, String key) {
         String marker = "\"" + key + "\"";
@@ -203,10 +205,13 @@ public final class ToolCallParserUtils {
         int braceStart = json.indexOf('{', colonIdx + 1);
         if (braceStart == -1) return null;
         int depth = 0;
+        int arrayDepth = 0;
         for (int i = braceStart; i < json.length(); i++) {
             char c = json.charAt(i);
-            if (c == '{') depth++;
-            else if (c == '}') {
+            if (c == '[') arrayDepth++;
+            else if (c == ']') arrayDepth--;
+            else if (arrayDepth == 0 && c == '{') depth++;
+            else if (arrayDepth == 0 && c == '}') {
                 if (--depth == 0) return json.substring(braceStart, i + 1);
             }
         }

@@ -14,7 +14,6 @@ public class Qwen3ChatFormat implements ChatFormat {
     protected final int endHeader;
     protected final int endOfTurn;
     protected final int endOfText;
-    protected final int endOfMessage;
     protected final int endOfTextFim;
     protected final int imStart; // beginOfText
     protected final int imEnd; // endOfText
@@ -28,13 +27,12 @@ public class Qwen3ChatFormat implements ChatFormat {
         this.tokenizer = tokenizer;
         this.chatTokens = chatTokens;
         Map<String, Integer> specialTokens = tokenizer.getSpecialTokens();
-        this.beginOfText = specialTokens.getOrDefault("", -1);
+        this.beginOfText = -1; // Qwen3 has no BOS token; getBeginOfText() falls back to startHeader
         this.startHeader = specialTokens.getOrDefault(chatTokens.tStartHeader(), -1);
         this.endHeader = specialTokens.getOrDefault(chatTokens.tEndHeader(), -1);
         this.endOfTurn = specialTokens.getOrDefault(chatTokens.tEndOfTurn(), -1);
         this.endOfText = specialTokens.getOrDefault(chatTokens.tEndOfText(), -1);
         this.endOfTextFim = specialTokens.getOrDefault(chatTokens.tEndOfTextFim(), -1);
-        this.endOfMessage = specialTokens.getOrDefault("", -1); // Use default value if key not found
 
         this.imStart = startHeader;
         this.imEnd = endHeader;
@@ -131,6 +129,11 @@ public class Qwen3ChatFormat implements ChatFormat {
     }
 
     // ── Tool calling ──────────────────────────────────────────────────────────
+
+    @Override
+    public boolean supportsToolCalling() {
+        return true;
+    }
 
     /**
      * Qwen3 tool calling system prompt suffix.

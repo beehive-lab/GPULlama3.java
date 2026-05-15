@@ -77,6 +77,11 @@ public class LlamaChatFormat implements ChatFormat {
 
     // ── Tool calling ──────────────────────────────────────────────────────────
 
+    @Override
+    public boolean supportsToolCalling() {
+        return true;
+    }
+
     /**
      * Llama 3.2 Instruct injects tool definitions into the <em>first user message</em>
      * (the GGUF-embedded chat template has {@code tools_in_user_message = true} by default).
