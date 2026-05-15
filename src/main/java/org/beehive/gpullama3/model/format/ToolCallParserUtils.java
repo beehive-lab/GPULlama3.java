@@ -17,18 +17,17 @@ public final class ToolCallParserUtils {
     // ── Llama ─────────────────────────────────────────────────────────────────
 
     /**
-     * Extracts a tool call from a LLaMA 3.1 or 3.2 model response.
+     * Extracts a single tool call from a model response text.
      *
-     * Recognised formats:
-     *  1. {@code <|python_tag|>{"name":…,"parameters":{…}}} — LLaMA 3.1 native, also accepted by 3.2
-     *  2. Raw JSON with {@code "arguments"} key instead of {@code "parameters"} — LLaMA 3.2 instruction format
-     *  3. Raw JSON object optionally inside markdown code fences — fallback for models that
-     *     follow system-prompt instructions but omit the special-token prefix
+     * Recognised formats (in priority order):
+     *  1. {@code <|python_tag|>{…}} — LLaMA 3.1 native
+     *  2. {@code <tool_call>…</tool_call>} — LLaMA 3.2 and Qwen3 (closed or unclosed)
+     *  3. Raw JSON object optionally inside markdown code fences — fallback
      *
-     * Both {@code "parameters"} and {@code "arguments"} are tried so a single implementation
-     * handles the 3.1 and 3.2 variants transparently.
+     * Both {@code "parameters"} and {@code "arguments"} are tried as the argument key,
+     * covering LLaMA 3.1/3.2 and Qwen3 variants transparently.
      */
-    public static Optional<ToolCallExtract> parseLlamaResponse(String responseText) {
+    public static Optional<ToolCallExtract> parseToolCallResponse(String responseText) {
         // 1. Native LLaMA 3.1 format: <|python_tag|>{...}
         int idx = responseText.indexOf("<|python_tag|>");
         if (idx != -1) {
@@ -77,7 +76,7 @@ public final class ToolCallParserUtils {
         return Optional.of(new ToolCallExtract(name, argsJson));
     }
 
-    // ── Qwen3 ─────────────────────────────────────────────────────────────────
+    // ── Batch extraction ──────────────────────────────────────────────────────
 
     /**
      * Extracts ALL tool calls from a response that may contain multiple
@@ -125,28 +124,6 @@ public final class ToolCallParserUtils {
         }
 
         return calls;
-    }
-
-    /**
-     * Extracts a tool call enclosed in {@code <tool_call>…</tool_call>} tags
-     * as produced by Qwen3 models.
-     */
-    public static Optional<ToolCallExtract> parseQwen3Response(String responseText) {
-        int start = responseText.indexOf("<tool_call>");
-        int end   = responseText.lastIndexOf("</tool_call>");
-        if (start == -1) return Optional.empty();
-
-        String json = (end != -1 && end > start)
-                ? responseText.substring(start + "<tool_call>".length(), end).strip()
-                : responseText.substring(start + "<tool_call>".length()).strip();
-
-        String name = extractStringValue(json, "name");
-        if (name == null) return Optional.empty();
-
-        String argsJson = extractNestedObject(json, "arguments");
-        if (argsJson == null) argsJson = "{}";
-
-        return Optional.of(new ToolCallExtract(name, argsJson));
     }
 
     // ── Shared helpers ────────────────────────────────────────────────────────
