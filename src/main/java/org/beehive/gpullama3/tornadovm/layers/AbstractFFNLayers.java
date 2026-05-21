@@ -16,6 +16,9 @@ import java.util.stream.IntStream;
  */
 public abstract class AbstractFFNLayers<W extends Weights, C extends Configuration> extends AbstractLayer {
 
+    protected static final boolean DEBUG_KERNEL_SIZES = Boolean.getBoolean("llama.debugKernelSizes");
+    protected static final String ATTENTION_KERNEL = System.getProperty("llama.attentionKernel", "v1");
+
     /**
      * List of TornadoVM {@link ImmutableTaskGraph}s, one per FFN layer.
      * Build by {@link #setupFFNLayers()}.

@@ -51,6 +51,7 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers<Qwen3TornadoWeights, Q
 
     @Override
     public GridScheduler updateGridScheduler(GridScheduler gridScheduler) {
+        debugPrintKernelSizes();
         WorkerGrid rmsNormWorker = WorkerGridFactory.createRmsNormWorker(config.dim(), state.localSize);
         WorkerGrid ropeWorker = WorkerGridFactory.createRoPEWorker(config.numberOfHeads(), nEmbdHead);
         // Parallel attention worker
@@ -281,21 +282,24 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers<Qwen3TornadoWeights, Q
                 layerIndex,                   // layer index for cache offset
                 config.contextLength()); // max sequence length
 
-        // Flash Attention
-        unifiedLayer.task("attention",
-                TransformerComputeKernelsLayered::processHeadsFlashAttention,
-                context,
-                qwen3State.wrapQ,             // query vectors
-                qwen3State.wrapKeyCache,      // key cache
-                qwen3State.wrapValueCache,    // value cache
-                qwen3State.wrapXb,            // output: attention result
-                config.numberOfHeads(),  // nHeads
-                nEmbdHead,                    // headSize
-                nEmbdGqa,                     // kvDim
-                gqa,                          // kvMul (nHeads / nHeadKv)
-                qwen3State.positionHolder,    // position
-                layerIndex,                   // layer index
-                config.contextLength()); // context length
+        // Flash Attention — kernel selected via -Dllama.attentionKernel=v1|opt|optv2
+        switch (ATTENTION_KERNEL) {
+            case "opt" -> unifiedLayer.task("attention",
+                    TransformerComputeKernelsLayered::processHeadsFlashAttentionOpt,
+                    context, qwen3State.wrapQ, qwen3State.wrapKeyCache, qwen3State.wrapValueCache,
+                    qwen3State.wrapXb, config.numberOfHeads(), nEmbdHead, nEmbdGqa, gqa,
+                    qwen3State.positionHolder, layerIndex, config.contextLength());
+            case "optv2" -> unifiedLayer.task("attention",
+                    TransformerComputeKernelsLayered::processHeadsFlashAttentionOptV2,
+                    context, qwen3State.wrapQ, qwen3State.wrapKeyCache, qwen3State.wrapValueCache,
+                    qwen3State.wrapXb, config.numberOfHeads(), nEmbdHead, nEmbdGqa, gqa,
+                    qwen3State.positionHolder, layerIndex, config.contextLength());
+            default -> unifiedLayer.task("attention",
+                    TransformerComputeKernelsLayered::processHeadsFlashAttention,
+                    context, qwen3State.wrapQ, qwen3State.wrapKeyCache, qwen3State.wrapValueCache,
+                    qwen3State.wrapXb, config.numberOfHeads(), nEmbdHead, nEmbdGqa, gqa,
+                    qwen3State.positionHolder, layerIndex, config.contextLength());
+        }
 
         // Output Projection with Residual
         unifiedLayer.task("attn_output_proj",
@@ -361,6 +365,64 @@ public class Qwen3FP16FFNLayers extends AbstractFFNLayers<Qwen3TornadoWeights, Q
         return unifiedLayer;
     }
     // @formatter:on
+
+    private void debugPrintKernelSizes() {
+        if (!DEBUG_KERNEL_SIZES) return;
+        int dim = config.dim();
+        int hiddenDim = config.hiddenDim();
+        int nHeads = config.numberOfHeads();
+        int nKVHeads = config.numberOfKeyValueHeads();
+        int headDim = nEmbdHead;
+        int lws = LOCAL_WORK_GROUP_SIZE_ALLOC;
+        int rmsLws = state.localSize;
+        int qDim = nEmbdHeadK * nHeads;
+        int kvDim = nEmbdGqa;
+        int fusedQKVRows = qDim + 2 * kvDim;
+        int attLws = WorkerGridFactory.findOptimalLocalSize(headDim);
+
+        System.out.println();
+        System.out.println("=== Qwen3 FP16 Kernel Size Report ===");
+        System.out.printf("  backend=%s  layers=%d%n", schedulerType, config.numberOfLayers());
+        System.out.printf("  dim=%d  hiddenDim=%d  nHeads=%d  nKVHeads=%d  headDim=%d  gqa=%d%n",
+                dim, hiddenDim, nHeads, nKVHeads, headDim, gqa);
+        System.out.printf("  qDim=%d  kvDim=%d  fusedQKVRows=%d%n", qDim, kvDim, fusedQKVRows);
+        System.out.println();
+        System.out.printf("  %-26s global=%-12d local=%-6d groups=%d%n",
+                "attn_rms_reduce:", dim, rmsLws, dim / rmsLws);
+        System.out.printf("  %-26s global=%-12d local=%-6d groups=%d%n",
+                "attn_rms_qkv_proj:", fusedQKVRows * lws, lws, fusedQKVRows);
+        System.out.printf("  %-26s global=%-12d local=%-6d groups=%d%n",
+                "qk_rmsnorm:", (nHeads + nKVHeads) * headDim, headDim, nHeads + nKVHeads);
+        System.out.printf("  %-26s global=(%d,%d)  local=(8,1)%n",
+                "rope_and_kv_cache:", nHeads, headDim / 2);
+        System.out.printf("  %-26s global=%-12d local=%-6d groups=%d%n",
+                "attention:", nHeads * attLws, attLws, nHeads);
+        System.out.printf("  %-26s global=%-12d local=%-6d groups=%d%n",
+                "attn_output_proj:", dim * lws, lws, dim);
+        System.out.printf("  %-26s global=%-12d local=%-6d groups=%d%n",
+                "ffn_rms_reduce:", dim, rmsLws, dim / rmsLws);
+        System.out.printf("  %-26s global=%-12d local=%-6d groups=%d%n",
+                "rms_ffn_gate_up:", hiddenDim * lws, lws, hiddenDim);
+        System.out.printf("  %-26s global=%-12d local=%-6d groups=%d%n",
+                "ffn_down_proj:", dim * lws, lws, dim);
+        System.out.println();
+        System.out.printf("  Dominant by WG count: rms_ffn_gate_up=%d  ffn_down_proj=%d  attn_output_proj=%d  attn_rms_qkv_proj=%d%n",
+                hiddenDim, dim, dim, fusedQKVRows);
+        System.out.println();
+        System.out.print("  Valid GEMV LWS (power-of-2): ");
+        for (int s : new int[]{32, 64, 128, 256}) System.out.printf("%d ", s);
+        System.out.println("(all safe for FP16)");
+        System.out.print("  Valid RMS  LWS (dim % lws == 0): ");
+        for (int s = 32; s <= 512; s *= 2) {
+            if (dim % s == 0) System.out.printf("%d ", s);
+        }
+        if (dim % rmsLws != 0) {
+            System.out.printf("%n  [WARN] current rmsLws=%d does not divide dim=%d -- RMS norm results will be incorrect", rmsLws, dim);
+        }
+        System.out.println();
+        System.out.println("======================================");
+        System.out.println();
+    }
 
     /**
      * Configure data transfers for first and subsequent layers

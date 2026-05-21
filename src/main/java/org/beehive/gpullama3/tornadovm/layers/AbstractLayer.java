@@ -13,7 +13,7 @@ import uk.ac.manchester.tornado.api.TaskGraph;
 public abstract class AbstractLayer {
 
     /** Common constants used in tasks & worker-grid sizing. */
-    protected static final int LOCAL_WORK_GROUP_SIZE_ALLOC = 32;
+    protected static final int LOCAL_WORK_GROUP_SIZE_ALLOC = Integer.getInteger("llama.localWorkGroupSize", 32);
     protected static final int THREAD_SCALE_FOR_LOGITS = 8;
 
     protected final Weights weights;
