@@ -49,10 +49,12 @@ jobs:
         shell: bash
         run: |
           source "$HOME/.sdkman/bin/sdkman-init.sh"
-          
-          if ! sdk list java | grep -q "installed.*$JAVA_VERSION"; then
+
+          # install Java with sdkman, if not already installed 
+          if ! sdk list java | grep -q "$JAVA_VERSION"; then
             sdk install java "$JAVA_VERSION"
           fi
+
           sdk use java "$JAVA_VERSION"
 
           echo "JAVA_HOME=$HOME/.sdkman/candidates/java/current" >> $GITHUB_ENV
@@ -283,6 +285,7 @@ jobs:
       github.repository == 'beehive-lab/GPULlama3.java' &&
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main'
+
     runs-on: [self-hosted]
     needs: build-and-run
     timeout-minutes: 15
@@ -302,24 +305,36 @@ jobs:
         run: |
           python3 scripts/process_metrics.py \
             --metrics-dir "${{ runner.temp }}/metrics-artifacts" \
-            --commit       "${{ github.sha }}" \
-            --branch       "${{ github.ref_name }}" \
-            --run-id       "${{ github.run_id }}" \
-            --run-number   "${{ github.run_number }}" \
-            --run-attempt  "${{ github.run_attempt }}" \
-            --workflow     "${{ github.workflow }}" \
-            --history      "$PERF_HISTORY_FILE"
+            --commit "${{ github.sha }}" \
+            --branch "${{ github.ref_name }}" \
+            --run-id "${{ github.run_id }}" \
+            --run-number "${{ github.run_number }}" \
+            --run-attempt "${{ github.run_attempt }}" \
+            --workflow "${{ github.workflow }}" \
+            --history "$PERF_HISTORY_FILE"
 
       - name: Commit performance history
         run: |
-          git config user.name  "github-actions[bot]"
+          SHORT_SHA=$(echo "${GITHUB_SHA}" | cut -c1-8)
+
+          git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
           git add "$PERF_HISTORY_FILE"
-          git diff --cached --quiet && echo "No history changes to commit" && exit 0
-          git commit -m "perf: record run #${{ github.run_number }} @ ${GITHUB_SHA::8}"
+
+          git diff --cached --quiet && \
+            echo "No history changes to commit" && exit 0
+
+          git commit -m "perf: record run #${{ github.run_number }} @ ${SHORT_SHA}"
+
           for attempt in 1 2 3; do
             git pull --rebase origin main && git push && break || {
-              [ $attempt -lt 3 ] && { echo "Attempt $attempt failed, retrying in $((attempt * 5))s..."; sleep $((attempt * 5)); } \
-                                 || { echo "::error::Failed to push after 3 attempts"; exit 1; }
+              if [ $attempt -lt 3 ]; then
+                echo "Attempt $attempt failed, retrying in $((attempt * 5))s..."
+                sleep $((attempt * 5))
+              else
+                echo "::error::Failed to push after 3 attempts"
+                exit 1
+              fi
             }
           done

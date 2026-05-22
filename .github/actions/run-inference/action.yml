@@ -40,6 +40,7 @@ runs:
           -Dllama.metrics.format=json
           -Dllama.metrics.output=file
           -Dllama.metrics.file=${{ inputs.metrics_file }}
+        METRICS_FILE: ${{ inputs.metrics_file }}
       run: |
         # Run inference and emit raw metrics JSON via JAVA_TOOL_OPTIONS
         ./llama-tornado --gpu --${{ inputs.backend }} \
@@ -48,7 +49,7 @@ runs:
           ${{ inputs.flags }}
 
         # Write metadata sidecar so process_metrics.py can identify each metrics file
-        SIDECAR="${{ inputs.metrics_file }%.json}.meta.json"
+        SIDECAR="${METRICS_FILE%.json}.meta.json"
         python3 scripts/write_metrics_sidecar.py \
           --out "$SIDECAR" \
           backend="${{ inputs.backend }}" \

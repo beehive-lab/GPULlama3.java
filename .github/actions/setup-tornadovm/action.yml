@@ -91,3 +91,10 @@ runs:
         echo "=== Checking tornado CLI ==="
         which tornado || { echo "::error::tornado not in PATH"; exit 1; }
         tornado --devices
+
+    - name: Save TornadoVM cache
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ steps.paths.outputs.tornado_root }}
+        key: tornadovm-${{ inputs.backend }}-${{ steps.tornado_sha.outputs.sha }}
