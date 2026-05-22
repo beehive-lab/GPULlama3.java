@@ -22,7 +22,7 @@ on:
 
 env:
   JAVA_VERSION: 21.0.2-open
-  TORNADO_ROOT: ${{ github.workspace }}/GPULlama3.java/external/tornadovm
+  TORNADO_BASE_ROOT: ${{ github.workspace }}/GPULlama3.java/external
   GRAAL_JARS: /opt/graalJars
   QUARKUS_PORT: 8081
 
@@ -57,6 +57,8 @@ jobs:
       # Step 1: Clone and build TornadoVM
       - name: Setup TornadoVM
         uses: ./.github/actions/setup-tornadovm
+        env:
+          TORNADO_ROOT: ${{ env.TORNADO_BASE_ROOT }}/tornadovm-${{ matrix.backend.name }}
         with:
           backend: ${{ matrix.backend.name }}
 

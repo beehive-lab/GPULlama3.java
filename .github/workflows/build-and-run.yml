@@ -9,7 +9,7 @@ on:
 
 env:
   JAVA_VERSION: 21.0.2-open
-  TORNADO_ROOT: ${{ github.workspace }}/GPULlama3.java/external/tornadovm
+  TORNADO_BASE_ROOT: ${{ github.workspace }}/GPULlama3.java/external
   LLAMA_ROOT: ${{ github.workspace }}
   GRAAL_JARS: /opt/graalJars
   MODELS_DIR: /opt/models
@@ -65,6 +65,8 @@ jobs:
 
       - name: Setup TornadoVM
         uses: ./.github/actions/setup-tornadovm
+        env:
+          TORNADO_ROOT: ${{ env.TORNADO_BASE_ROOT }}/tornadovm-${{ matrix.backend.name }}
         with:
           backend: ${{ matrix.backend.name }}
 
