@@ -25,7 +25,7 @@ runs:
 
     - name: Restore TornadoVM cache
       id: cache
-      uses: actions/cache@v4
+      uses: actions/cache/restore@v4
       with:
         path: ${{ steps.paths.outputs.tornado_root }}
         key: tornadovm-${{ inputs.backend }}-${{ steps.tornado_sha.outputs.sha }}
