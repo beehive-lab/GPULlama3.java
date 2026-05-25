@@ -39,20 +39,10 @@ jobs:
           - name: ptx
 
     steps:
-      - name: Set up Java with SDKMAN
-        shell: bash
-        run: |
-          source "$HOME/.sdkman/bin/sdkman-init.sh"
-          
-          if ! sdk list java | grep -q "installed.*$JAVA_VERSION"; then
-            sdk install java "$JAVA_VERSION"
-          fi
-          sdk use java "$JAVA_VERSION"
-          
-          echo "JAVA_HOME=$HOME/.sdkman/candidates/java/current" >> $GITHUB_ENV
-          echo "$HOME/.sdkman/candidates/java/current/bin" >> $GITHUB_PATH
-          
-          java -version
+      - name: Set up Java
+        uses: ./.github/actions/setup-java
+        with:
+          java_version: ${{ env.JAVA_VERSION }}
 
       # Step 1: Clone and build TornadoVM
       - name: Setup TornadoVM

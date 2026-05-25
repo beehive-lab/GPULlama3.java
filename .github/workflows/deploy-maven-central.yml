@@ -31,19 +31,18 @@ jobs:
       matrix:
         jdk:
           - name: jdk21
-            java_home: /opt/jenkins/jdks/graal-23.1.0/jdk-21.0.3
+            java_version: 21.0.2-open
           - name: jdk25
-            java_home: /opt/jenkins/jdks/jdk-25.0.2
-    env:
-      JAVA_HOME: ${{ matrix.jdk.java_home }}
+            java_version: 25.0.2-open
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup environment
-        run: |
-          echo "$JAVA_HOME/bin" >> $GITHUB_PATH
+      - name: Set up Java
+        uses: ./.github/actions/setup-java
+        with:
+          java_version: ${{ matrix.jdk.java_version }}
 
       - name: Configure Maven settings
         run: |

@@ -45,25 +45,13 @@ jobs:
           - name: ptx
 
     steps:
-      - name: Set up Java with SDKMAN
-        shell: bash
-        run: |
-          source "$HOME/.sdkman/bin/sdkman-init.sh"
-
-          # install Java with sdkman, if not already installed 
-          if ! sdk list java | grep -q "$JAVA_VERSION"; then
-            sdk install java "$JAVA_VERSION"
-          fi
-
-          sdk use java "$JAVA_VERSION"
-
-          echo "JAVA_HOME=$HOME/.sdkman/candidates/java/current" >> $GITHUB_ENV
-          echo "$HOME/.sdkman/candidates/java/current/bin" >> $GITHUB_PATH
-
-          java -version
-
       - name: Checkout GPULlama3
         uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: ./.github/actions/setup-java
+        with:
+          java_version: ${{ env.JAVA_VERSION }}
 
       - name: Setup TornadoVM
         uses: ./.github/actions/setup-tornadovm
