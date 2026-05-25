@@ -9,10 +9,9 @@ on:
 
 env:
   JAVA_VERSION: 21.0.2-open
-  TORNADO_BASE_ROOT: ${{ github.workspace }}/GPULlama3.java/external
-  LLAMA_ROOT: ${{ github.workspace }}
   GRAAL_JARS: /opt/graalJars
   MODELS_DIR: /opt/models
+  QUARKUS_PORT: 8081
   # History file committed back to the repo on push to main
   PERF_HISTORY_FILE: docs/perf-history.jsonl
 
@@ -31,12 +30,69 @@ jobs:
           cd ${{ github.workspace }}
           # ./mvnw -T12C -Pspotless spotless:check
 
-  build-and-run:
+  # Build: TornadoVM → GPULlama3 → Quarkus LangChain4j
+  # max-parallel: 1 ensures the opencl and ptx variants run sequentially so
+  # there are no workspace conflicts between matrix jobs.
+  build:
     if: github.repository == 'beehive-lab/GPULlama3.java'
     runs-on: [self-hosted]
     needs: code-quality
     timeout-minutes: 30
+    strategy:
+      fail-fast: true
+      max-parallel: 1
+      matrix:
+        backend:
+          - name: opencl
+          - name: ptx
 
+    steps:
+      - name: Checkout GPULlama3
+        uses: actions/checkout@v4
+        with:
+          clean: false
+
+      - name: Set up Java
+        uses: ./.github/actions/setup-java
+        with:
+          java_version: ${{ env.JAVA_VERSION }}
+
+      - name: Setup TornadoVM
+        uses: ./.github/actions/setup-tornadovm
+        env:
+          TORNADO_ROOT: ${{ runner.tool_cache }}/tornadovm/tornadovm-${{ matrix.backend.name }}
+        with:
+          backend: ${{ matrix.backend.name }}
+
+      - name: Build GPULlama3.java
+        run: |
+          tornado --version
+          # Strip any pre-existing -SNAPSHOT suffix before appending, making this step idempotent
+          # across sequential matrix variants (ptx runs after opencl on the same workspace).
+          BASE_VERSION=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout | sed 's/-SNAPSHOT$//')
+          GPULLAMA3_VERSION="${BASE_VERSION}-SNAPSHOT"
+          echo "GPULlama3 version: $GPULLAMA3_VERSION"
+          ./mvnw versions:set -DnewVersion=$GPULLAMA3_VERSION
+          ./mvnw clean install -DskipTests
+          echo "GPULLAMA3_VERSION=$GPULLAMA3_VERSION" >> $GITHUB_ENV
+
+      - name: Clone Quarkus LangChain4j
+        run: |
+          rm -rf quarkus-langchain4j
+          git clone --depth 1 https://github.com/quarkiverse/quarkus-langchain4j.git
+
+      - name: Build Quarkus LangChain4j
+        run: |
+          cd ${{ github.workspace }}/quarkus-langchain4j
+          sed -i 's/<gpu-llama3\.version>.*<\/gpu-llama3\.version>/<gpu-llama3.version>'$GPULLAMA3_VERSION'<\/gpu-llama3.version>/' pom.xml
+          # -Dtornado activates the TornadoVM profile; -am builds only the gpu-llama3 module + deps
+          mvn clean install -pl integration-tests/gpu-llama3 -am -DskipTests -Dtornado
+
+  standalone-inference:
+    if: github.repository == 'beehive-lab/GPULlama3.java'
+    runs-on: [self-hosted]
+    needs: build
+    timeout-minutes: 30
     strategy:
       fail-fast: true
       matrix:
@@ -47,6 +103,8 @@ jobs:
     steps:
       - name: Checkout GPULlama3
         uses: actions/checkout@v4
+        with:
+          clean: false
 
       - name: Set up Java
         uses: ./.github/actions/setup-java
@@ -56,18 +114,12 @@ jobs:
       - name: Setup TornadoVM
         uses: ./.github/actions/setup-tornadovm
         env:
-          TORNADO_ROOT: ${{ env.TORNADO_BASE_ROOT }}/tornadovm-${{ matrix.backend.name }}
+          TORNADO_ROOT: ${{ runner.tool_cache }}/tornadovm/tornadovm-${{ matrix.backend.name }}
         with:
           backend: ${{ matrix.backend.name }}
 
-      - name: Build GPULlama3.java
-        run: |
-          cd ${{ github.workspace }}
-          echo "Using TORNADOVM_HOME=$TORNADOVM_HOME"
-          tornado --version
-          ./mvnw clean package -DskipTests
-
-      # ── Llama-3.2-1B: standard + prefill-decode variants, all backends ──────────
+      # Test standalone mode per model family and quantization
+      # Note: variants can be represented with matrices
       - name: FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Standard
         uses: ./.github/actions/run-inference
         with:
@@ -100,12 +152,12 @@ jobs:
           flags: --with-prefill-decode --batch-prefill-size 32
           metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-llama-1b-f16-batch-prefill-decode.json
 
-      # ── PTX-only: CUDA-graph variants ────────────────────────────────────────
+      # PTX-only: CUDA-graph variants
       - name: PTX - FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Prefill-Decode-CUDA-Graphs
         if: matrix.backend.name == 'ptx'
         uses: ./.github/actions/run-inference
         with:
-          backend: ptx
+          backend: ${{ matrix.backend.name }}
           model_file: Llama-3.2-1B-Instruct-F16.gguf
           model: Llama-3.2-1B-Instruct
           quantization: F16
@@ -117,7 +169,7 @@ jobs:
         if: matrix.backend.name == 'ptx'
         uses: ./.github/actions/run-inference
         with:
-          backend: ptx
+          backend: ${{ matrix.backend.name }}
           model_file: Llama-3.2-1B-Instruct-F16.gguf
           model: Llama-3.2-1B-Instruct
           quantization: F16
@@ -125,7 +177,6 @@ jobs:
           flags: --with-prefill-decode --batch-prefill-size 32 --cuda-graphs
           metrics_file: ${{ runner.temp }}/metrics-ptx-llama-1b-f16-batch-prefill-decode-cuda-graphs.json
 
-      # ── Additional models — standard inference, all backends ─────────────────
       - name: FP16 - Run Qwen3-4B-f16.gguf
         uses: ./.github/actions/run-inference
         with:
@@ -256,7 +307,7 @@ jobs:
           configuration: standard
           metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-granite-4-0-1b-q8-standard.json
 
-      # ── Upload metrics for the publish job ────────────────────────────────────
+      # Upload metrics for the publish job
       - name: Upload metrics artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -265,7 +316,102 @@ jobs:
           path: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-*.json
           if-no-files-found: warn
 
-  # ── Separate job: collect all matrix metrics and update history ───────────────
+  # Test integration with Quarkus-langchain4j
+  quarkus-langchain4j-integration:
+    if: github.repository == 'beehive-lab/GPULlama3.java'
+    runs-on: [self-hosted]
+    needs: build
+    timeout-minutes: 10
+    strategy:
+      fail-fast: true
+      matrix:
+        backend:
+          - name: opencl
+          - name: ptx
+
+    steps:
+      - name: Checkout GPULlama3
+        uses: actions/checkout@v4
+        with:
+          clean: false
+
+      - name: Set up Java
+        uses: ./.github/actions/setup-java
+        with:
+          java_version: ${{ env.JAVA_VERSION }}
+
+      - name: Setup TornadoVM
+        uses: ./.github/actions/setup-tornadovm
+        env:
+          TORNADO_ROOT: ${{ runner.tool_cache }}/tornadovm/tornadovm-${{ matrix.backend.name }}
+        with:
+          backend: ${{ matrix.backend.name }}
+
+      - name: Verify GPULlama3 Dependency
+        run: |
+          cd ${{ github.workspace }}/quarkus-langchain4j/integration-tests/gpu-llama3
+          mvn dependency:tree | grep "io.github.beehive-lab:gpu-llama3"
+
+      - name: Start Quarkus Application
+        run: |
+          cd ${{ github.workspace }}/quarkus-langchain4j/integration-tests/gpu-llama3
+          java  @"$TORNADOVM_HOME/tornado-argfile" \
+                -Dtornado.device.memory=8GB \
+                -Dquarkus.http.port=$QUARKUS_PORT \
+                -jar target/quarkus-app/quarkus-run.jar &
+          APP_PID=$!
+          echo "APP_PID=$APP_PID" >> $GITHUB_ENV
+          for i in {1..30}; do
+            if curl -s http://localhost:$QUARKUS_PORT/q/health > /dev/null 2>&1; then
+              echo "Application ready after ${i} seconds"
+              break
+            elif [ $i -eq 30 ]; then
+              echo "::error::Application failed to start within 30 seconds"
+              kill $APP_PID || true
+              exit 1
+            else
+              [ $((i % 5)) -eq 0 ] && echo "Still waiting... (${i}s)"
+              sleep 1
+            fi
+          done
+
+      - name: Trigger Blocking Endpoint
+        run: |
+          for attempt in 1 2 3; do
+            echo "Attempt $attempt of 3 for blocking endpoint..."
+            HTTP_RESPONSE=$(curl -s -w "%{http_code}" http://localhost:$QUARKUS_PORT/chat/blocking)
+            HTTP_CODE="${HTTP_RESPONSE: -3}"
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "SUCCESS: HTTP $HTTP_CODE"
+              echo "Response body: ${HTTP_RESPONSE%???}"
+              break
+            fi
+            echo "Failed: HTTP $HTTP_CODE"
+            [ $attempt -lt 3 ] && sleep 2
+            [ $attempt -eq 3 ] && { echo "::error::Blocking endpoint failed after 3 attempts"; exit 1; }
+          done
+
+      - name: Trigger Streaming Endpoint
+        run: |
+          for attempt in 1 2 3; do
+            echo "Attempt $attempt of 3 for streaming endpoint..."
+            HTTP_CODE=$(timeout 10s curl -s -o /dev/null -w "%{http_code}" http://localhost:$QUARKUS_PORT/chat/streaming)
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "SUCCESS: HTTP $HTTP_CODE"
+              break
+            fi
+            echo "Failed: HTTP $HTTP_CODE"
+            [ $attempt -lt 3 ] && sleep 2
+            [ $attempt -eq 3 ] && { echo "::error::Streaming endpoint failed after 3 attempts"; exit 1; }
+          done
+
+      - name: Cleanup & Shutdown
+        if: always()
+        run: |
+          kill $APP_PID || true
+          wait $APP_PID 2>/dev/null || true
+
+  # Collect all matrix metrics and update history
   publish-performance-history:
     # Guard: only commit history on real pushes to main, not on PRs or forks.
     # Prevents duplicate entries from PR runs and avoids push-permission errors on forks.
@@ -275,7 +421,7 @@ jobs:
       github.ref == 'refs/heads/main'
 
     runs-on: [self-hosted]
-    needs: build-and-run
+    needs: standalone-inference
     timeout-minutes: 15
 
     steps:
