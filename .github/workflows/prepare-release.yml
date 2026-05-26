@@ -20,6 +20,7 @@ on:
 env:
   VERSION: ${{ inputs.version }}
   PREV_VERSION: ${{ inputs.previous_version }}
+  JAVA_VERSION: 21.0.2-open
 
 jobs:
   prepare-release:
@@ -29,8 +30,6 @@ jobs:
       contents: write
       pull-requests: write
     timeout-minutes: 15
-    env:
-      JAVA_HOME: /opt/jenkins/jdks/graal-23.1.0/jdk-21.0.3
 
     steps:
       - name: Validate version format
@@ -48,9 +47,10 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup environment
-        run: |
-          echo "$JAVA_HOME/bin" >> $GITHUB_PATH
+      - name: Set up Java
+        uses: ./.github/actions/setup-java
+        with:
+          java_version: ${{ env.JAVA_VERSION }}
 
       - name: Configure Git
         run: |

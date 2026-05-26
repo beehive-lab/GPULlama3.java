@@ -1,0 +1,22 @@
+name: Setup Java
+description: Install and activate a JDK via SDKMAN. Exports JAVA_HOME and updates PATH.
+
+inputs:
+  java_version:
+    description: 'SDKMAN Java version identifier (e.g. 21.0.2-open)'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Java with SDKMAN
+      shell: bash
+      run: |
+        source "$HOME/.sdkman/bin/sdkman-init.sh"
+        if ! sdk list java | grep -q "${{ inputs.java_version }}"; then
+          sdk install java "${{ inputs.java_version }}"
+        fi
+        sdk use java "${{ inputs.java_version }}"
+        echo "JAVA_HOME=$HOME/.sdkman/candidates/java/current" >> $GITHUB_ENV
+        echo "$HOME/.sdkman/candidates/java/current/bin" >> $GITHUB_PATH
+        java -version
