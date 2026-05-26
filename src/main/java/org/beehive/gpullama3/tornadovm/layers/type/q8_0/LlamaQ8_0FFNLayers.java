@@ -113,7 +113,12 @@ public class LlamaQ8_0FFNLayers extends AbstractFFNLayers<LlamaTornadoWeights, L
         TaskGraph unifiedLayer = new TaskGraph(layerTaskGraphName);
 
         // === Data Setup ===
-        unifiedLayer.consumeFromDevice(state.wrapX);
+        String wrapXSrc = predecessorGraphName(layerIndex);
+        if (wrapXSrc != null) {
+            unifiedLayer.consumeFromDevice(wrapXSrc, state.wrapX);
+        } else {
+            unifiedLayer.consumeFromDevice(state.wrapX);
+        }
         unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
                 // Copy-in weights per layer for batched-layered layout (Q8 format)
                 weights.rms_att_weightLayered[layerIndex].asFloatArray(),
@@ -222,6 +227,10 @@ public class LlamaQ8_0FFNLayers extends AbstractFFNLayers<LlamaTornadoWeights, L
         unifiedLayer.persistOnDevice(state.wrapX);
 
         return unifiedLayer;
+    }
+
+    protected String predecessorGraphName(int layerIndex) {
+        return null;
     }
 
     protected TaskGraph configureLayerDataTransfers(TaskGraph unifiedLayer, int layerIndex) {

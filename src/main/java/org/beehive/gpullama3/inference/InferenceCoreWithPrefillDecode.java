@@ -153,9 +153,13 @@ public final class InferenceCoreWithPrefillDecode {
                 MemorySegment.copy(tokenEmbeddings, (long) token * configuration.dim() * bytes,
                         state.embeddingX.getSegment(), 0, (long) configuration.dim() * bytes);
             }
-            case Q8_0 -> throw new UnsupportedOperationException(
-                    // TODO Phase 4: implement Q8_0 GPU batched prefill kernels
-                    "GPU prefill/decode path not yet implemented for Q8_0 weights");
+            case Q8_0 -> {
+                MemorySegment tokenEmbeddings = weights.getTokenEmbeddingTable().asByteArray().getSegment();
+                int blocksPerToken = (configuration.dim() + 31) / 32;
+                long bytesPerToken = (long) blocksPerToken * 34;
+                MemorySegment.copy(tokenEmbeddings, (long) token * bytesPerToken,
+                        state.embeddingX.getSegment(), 0, bytesPerToken);
+            }
             default -> throw new IllegalArgumentException("Unsupported weight type: " + weights.getWeightType());
         }
 

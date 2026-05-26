@@ -5,6 +5,7 @@ import uk.ac.manchester.tornado.api.math.TornadoMath;
 import uk.ac.manchester.tornado.api.types.HalfFloat;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
 
 /**
@@ -453,6 +454,231 @@ public final class TransformerBatchPrefillKernels {
         float result3 = localSum[0];
 
         // SiLU(W1·x) × (W3·x)
+        if (localId == 0) {
+            float silu = result1 / (1.0f + TornadoMath.exp(-result1));
+            wrapHbBatch.set(batchIdx * hiddenDim + rowIdx, silu * result3);
+        }
+    }
+
+    // ── Q8_0 Batch Kernels ───────────────────────────────────────────────────
+
+    /**
+     * No-op kernel for Q8_0 batch activation graph.
+     * The host fills wrapXBatch with dequantized FP32 embeddings before execution.
+     * Worker: 1 global thread.
+     */
+    public static void batchPassthrough(KernelContext context, FloatArray wrapXBatch) {
+        if (context.globalIdx == 0) {
+            wrapXBatch.set(0, wrapXBatch.get(0));
+        }
+    }
+
+    /**
+     * Applies RMS normalization to FP32 — Q8_0 variant.
+     * Writes normalized FP32 to wrapXbBatch (reused as xb intermediate before QKV).
+     * Worker: B*dim global threads, localSize=256.
+     */
+    public static void batchedRmsApplyFP32(KernelContext context,
+                                            FloatArray wrapXbBatch,
+                                            FloatArray wrapXBatch,
+                                            FloatArray rmsWeights,
+                                            FloatArray attnScaleBatch,
+                                            int dim) {
+        int gid = context.globalIdx;
+        int b   = gid / dim;
+        int i   = gid % dim;
+        wrapXbBatch.set(gid, rmsWeights.get(i) * attnScaleBatch.get(b) * wrapXBatch.get(gid));
+    }
+
+    /**
+     * Fused batched QKV projection with Q8_0 weight dequantization.
+     * Input wrapXbBatch is FP32 (written by batchedRmsApplyFP32).
+     * groupIdx = batchIdx * (dim + 2*kvDim) + rowIdx.
+     * Worker: B*(dim+2*kvDim) workgroups × localWorkGroupSize threads.
+     */
+    public static void batchedFusedQKVMatmulQ8(KernelContext context,
+                                                FloatArray wrapXbBatch,
+                                                FloatArray wrapQBatch,
+                                                FloatArray wrapKBatch,
+                                                FloatArray wrapVBatch,
+                                                ByteArray wq,
+                                                ByteArray wk,
+                                                ByteArray wv,
+                                                int dim, int kvDim,
+                                                int localWorkGroupSize) {
+        int groupId   = context.groupIdx;
+        int localId   = context.localIdx;
+        int totalRows = dim + 2 * kvDim;
+        int batchIdx  = groupId / totalRows;
+        int rowIdx    = groupId % totalRows;
+        int inputOff  = batchIdx * dim;
+
+        int blockSize        = 32;
+        int Q8_0_BLOCK_BYTES = 34;
+        int blocksPerRow     = (dim + blockSize - 1) / blockSize;
+
+        float[] localSum = context.allocateFloatLocalArray(localWorkGroupSize);
+
+        if (rowIdx < dim) {
+            int rowBlockOffset = rowIdx * blocksPerRow;
+            float partial = 0.0f;
+            for (int j = localId; j < dim; j += localWorkGroupSize) {
+                int blockByteOffset = (rowBlockOffset + j / blockSize) * Q8_0_BLOCK_BYTES;
+                float scale = wq.getHalfFloat(blockByteOffset).getFloat32();
+                float quant = wq.get(blockByteOffset + 2 + j % blockSize);
+                partial += quant * scale * wrapXbBatch.get(inputOff + j);
+            }
+            localSum[localId] = partial;
+            context.localBarrier();
+            for (int s = localWorkGroupSize / 2; s > 0; s >>= 1) {
+                if (localId < s) localSum[localId] += localSum[localId + s];
+                context.localBarrier();
+            }
+            if (localId == 0) wrapQBatch.set(batchIdx * dim + rowIdx, localSum[0]);
+
+        } else if (rowIdx < dim + kvDim) {
+            int kRow           = rowIdx - dim;
+            int rowBlockOffset = kRow * blocksPerRow;
+            float partial = 0.0f;
+            for (int j = localId; j < dim; j += localWorkGroupSize) {
+                int blockByteOffset = (rowBlockOffset + j / blockSize) * Q8_0_BLOCK_BYTES;
+                float scale = wk.getHalfFloat(blockByteOffset).getFloat32();
+                float quant = wk.get(blockByteOffset + 2 + j % blockSize);
+                partial += quant * scale * wrapXbBatch.get(inputOff + j);
+            }
+            localSum[localId] = partial;
+            context.localBarrier();
+            for (int s = localWorkGroupSize / 2; s > 0; s >>= 1) {
+                if (localId < s) localSum[localId] += localSum[localId + s];
+                context.localBarrier();
+            }
+            if (localId == 0) wrapKBatch.set(batchIdx * kvDim + kRow, localSum[0]);
+
+        } else {
+            int vRow           = rowIdx - dim - kvDim;
+            int rowBlockOffset = vRow * blocksPerRow;
+            float partial = 0.0f;
+            for (int j = localId; j < dim; j += localWorkGroupSize) {
+                int blockByteOffset = (rowBlockOffset + j / blockSize) * Q8_0_BLOCK_BYTES;
+                float scale = wv.getHalfFloat(blockByteOffset).getFloat32();
+                float quant = wv.get(blockByteOffset + 2 + j % blockSize);
+                partial += quant * scale * wrapXbBatch.get(inputOff + j);
+            }
+            localSum[localId] = partial;
+            context.localBarrier();
+            for (int s = localWorkGroupSize / 2; s > 0; s >>= 1) {
+                if (localId < s) localSum[localId] += localSum[localId + s];
+                context.localBarrier();
+            }
+            if (localId == 0) wrapVBatch.set(batchIdx * kvDim + vRow, localSum[0]);
+        }
+    }
+
+    /**
+     * Batched matrix-vector multiply with residual add (Q8_0 weights).
+     * Used for attention output (Wo) and FFN down (W2) projections.
+     * groupIdx = batchIdx * d + rowIdx.
+     * Worker: B*d workgroups × localWorkGroupSize threads.
+     */
+    public static void batchedMatVecWithResidualQ8(KernelContext context,
+                                                    FloatArray inputBatch,
+                                                    FloatArray outputBatch,
+                                                    ByteArray w,
+                                                    int n, int d,
+                                                    int localWorkGroupSize) {
+        int groupId  = context.groupIdx;
+        int localId  = context.localIdx;
+        int batchIdx = groupId / d;
+        int rowIdx   = groupId % d;
+
+        int blockSize        = 32;
+        int Q8_0_BLOCK_BYTES = 34;
+        int blocksPerRow     = (n + blockSize - 1) / blockSize;
+        int rowBlockOffset   = rowIdx * blocksPerRow;
+        int inputOff         = batchIdx * n;
+
+        float[] localSum = context.allocateFloatLocalArray(localWorkGroupSize);
+
+        float partial = 0.0f;
+        for (int j = localId; j < n; j += localWorkGroupSize) {
+            int blockByteOffset = (rowBlockOffset + j / blockSize) * Q8_0_BLOCK_BYTES;
+            float scale = w.getHalfFloat(blockByteOffset).getFloat32();
+            float quant = w.get(blockByteOffset + 2 + j % blockSize);
+            partial += quant * scale * inputBatch.get(inputOff + j);
+        }
+        localSum[localId] = partial;
+        context.localBarrier();
+        for (int s = localWorkGroupSize / 2; s > 0; s >>= 1) {
+            if (localId < s) localSum[localId] += localSum[localId + s];
+            context.localBarrier();
+        }
+        if (localId == 0) {
+            int outIdx = batchIdx * d + rowIdx;
+            outputBatch.set(outIdx, outputBatch.get(outIdx) + localSum[0]);
+        }
+    }
+
+    /**
+     * Batched fused RMS-apply + W1/W3 gate-up projections + SiLU + GLU (Q8_0 weights).
+     * groupIdx = batchIdx * hiddenDim + rowIdx.
+     * Worker: B*hiddenDim workgroups × localWorkGroupSize threads.
+     */
+    public static void batchedFusedRmsNormFFNGateUpQ8(KernelContext context,
+                                                        FloatArray wrapXBatch,
+                                                        FloatArray wrapHbBatch,
+                                                        FloatArray rmsFFNWeights,
+                                                        FloatArray ffnScaleBatch,
+                                                        ByteArray w1,
+                                                        ByteArray w3,
+                                                        int dim, int hiddenDim,
+                                                        int localWorkGroupSize) {
+        int groupId  = context.groupIdx;
+        int localId  = context.localIdx;
+        int batchIdx = groupId / hiddenDim;
+        int rowIdx   = groupId % hiddenDim;
+
+        float scale  = ffnScaleBatch.get(batchIdx);
+        int inputOff = batchIdx * dim;
+
+        int blockSize        = 32;
+        int Q8_0_BLOCK_BYTES = 34;
+        int blocksPerRow     = (dim + blockSize - 1) / blockSize;
+        int rowBlockOffset   = rowIdx * blocksPerRow;
+
+        float[] localSum = context.allocateFloatLocalArray(localWorkGroupSize);
+
+        float sum1 = 0.0f;
+        for (int j = localId; j < dim; j += localWorkGroupSize) {
+            int blockByteOffset = (rowBlockOffset + j / blockSize) * Q8_0_BLOCK_BYTES;
+            float w1Scale = w1.getHalfFloat(blockByteOffset).getFloat32();
+            float w1Quant = w1.get(blockByteOffset + 2 + j % blockSize);
+            float normed  = rmsFFNWeights.get(j) * scale * wrapXBatch.get(inputOff + j);
+            sum1 += w1Quant * w1Scale * normed;
+        }
+        localSum[localId] = sum1;
+        context.localBarrier();
+        for (int s = localWorkGroupSize / 2; s > 0; s >>= 1) {
+            if (localId < s) localSum[localId] += localSum[localId + s];
+            context.localBarrier();
+        }
+        float result1 = localSum[0];
+
+        float sum3 = 0.0f;
+        for (int j = localId; j < dim; j += localWorkGroupSize) {
+            int blockByteOffset = (rowBlockOffset + j / blockSize) * Q8_0_BLOCK_BYTES;
+            float w3Scale = w3.getHalfFloat(blockByteOffset).getFloat32();
+            float w3Quant = w3.get(blockByteOffset + 2 + j % blockSize);
+            float normed  = rmsFFNWeights.get(j) * scale * wrapXBatch.get(inputOff + j);
+            sum3 += w3Quant * w3Scale * normed;
+        }
+        localSum[localId] = sum3;
+        context.localBarrier();
+        for (int s = localWorkGroupSize / 2; s > 0; s >>= 1) {
+            if (localId < s) localSum[localId] += localSum[localId + s];
+            context.localBarrier();
+        }
+        float result3 = localSum[0];
+
         if (localId == 0) {
             float silu = result1 / (1.0f + TornadoMath.exp(-result1));
             wrapHbBatch.set(batchIdx * hiddenDim + rowIdx, silu * result3);

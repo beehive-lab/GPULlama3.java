@@ -11,8 +11,13 @@ import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernels;
 import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
 import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerDetectionService;
 import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
+import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
+import org.beehive.gpullama3.tornadovm.layers.AbstractLogitsLayer;
 import org.beehive.gpullama3.tornadovm.layers.type.fp16.decode.LlamaFP16FFNLayersPrefillDecode;
 import org.beehive.gpullama3.tornadovm.layers.type.fp16.decode.LogitsFP16LayerDecode;
+import org.beehive.gpullama3.tornadovm.layers.type.q8_0.decode.LlamaQ8_0FFNLayersPrefillDecode;
+import org.beehive.gpullama3.tornadovm.layers.type.q8_0.decode.LogitsQ8_0LayerDecode;
+import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.KernelContext;
@@ -98,7 +103,14 @@ public class TornadoVMMasterPlanWithPrefillDecode implements TornadoVMMasterPlan
      * The KV cache is <em>not</em> managed here — it is allocated on the first forward pass
      * by decode layer 0 via {@code FIRST_EXECUTION}.</p>
      */
-    private TaskGraph buildActivationGraph(KernelContext ctx) {
+    private TaskGraph buildActivationGraph(KernelContext ctx, GGMLType weightType) {
+        if (weightType == GGMLType.Q8_0) {
+            return new TaskGraph("decodeActivation")
+                    .transferToDevice(DataTransferMode.EVERY_EXECUTION, state.embeddingX)
+                    .task("updateX", TransformerComputeKernels::convertQ8_0toFP32,
+                            ctx, (ByteArray) state.embeddingX, state.wrapX)
+                    .persistOnDevice(state.wrapX);
+        }
         return new TaskGraph("decodeActivation")
                 .transferToDevice(DataTransferMode.EVERY_EXECUTION, state.embeddingX)
                 .task("updateX", TransformerComputeKernels::convertFP16toFP32,
@@ -107,21 +119,11 @@ public class TornadoVMMasterPlanWithPrefillDecode implements TornadoVMMasterPlan
     }
 
     // ── Plan construction ─────────────────────────────────────────────────────
-    /**
-     * Creates the {@link TornadoExecutionPlan} for forward pass with *prefill/decode separation*.
-     * Prefill is token-by-token but does not compute logits.
-     *
-     * TODO: support Q8_0 weights
-     * To implement this, consult how {@link TornadoVMMasterPlanStandard} uses the {@link QuantizationPlannerFactory}
-     */
     @Override
     public TornadoExecutionPlan createExecutionPlan() {
         GGMLType weightType = model.weights().getWeightType();
-        switch (weightType) {
-            case F16 -> { /* supported — continue below */ }
-            case Q8_0 -> throw new UnsupportedOperationException(
-                    "Prefill/decode GPU path not yet implemented for Q8_0 weights");
-            default -> throw new UnsupportedOperationException(
+        if (weightType != GGMLType.F16 && weightType != GGMLType.Q8_0) {
+            throw new UnsupportedOperationException(
                     "Prefill/decode GPU path not supported for weight type: " + weightType);
         }
 
@@ -132,24 +134,29 @@ public class TornadoVMMasterPlanWithPrefillDecode implements TornadoVMMasterPlan
 
         // [0] Activation ──────────────────────────────────────────────────────
         KernelContext actCtx = new KernelContext();
-        all.add(buildActivationGraph(actCtx).snapshot());
+        all.add(buildActivationGraph(actCtx, weightType).snapshot());
         gridScheduler.addWorkerGrid("decodeActivation.updateX",
                 WorkerGridFactory.genericWorker(config.dim(), 128));
 
         // [1..N] Decode layer graphs ──────────────────────────────────────────
-        // Layer 0: FIRST_EXECUTION for KV cache + consumeFromDevice("decodeActivation", wrapX).
-        // Layers 1+: consumeFromDevice with explicit predecessor names for interpreter mode.
-        LlamaFP16FFNLayersPrefillDecode decodeLayers =
-                new LlamaFP16FFNLayersPrefillDecode("decode", state, weights, config, schedulerType);
+        AbstractFFNLayers<LlamaTornadoWeights, LlamaConfiguration> decodeLayers;
+        if (weightType == GGMLType.F16) {
+            decodeLayers = new LlamaFP16FFNLayersPrefillDecode("decode", state, weights, config, schedulerType);
+        } else {
+            decodeLayers = new LlamaQ8_0FFNLayersPrefillDecode("decode", state, weights, config, schedulerType);
+        }
         all.addAll(decodeLayers.getFFNLayerImmutableTaskGraphs());
         decodeLayers.updateGridScheduler(gridScheduler);
 
         // [N+1] Logits ────────────────────────────────────────────────────────
-        // LogitsFP16LayerDecode re-persists the KV cache so the pointer survives
-        // the logits → layer_0 KV-cache FIRST_EXECUTION boundary across decode tokens.
-        LogitsFP16LayerDecode logitsLayer = new LogitsFP16LayerDecode(
-                "logits", state, weights, config,
-                decodeLayers.getLastFFNLayerTaskGraphID(), schedulerType);
+        AbstractLogitsLayer logitsLayer;
+        if (weightType == GGMLType.F16) {
+            logitsLayer = new LogitsFP16LayerDecode("logits", state, weights, config,
+                    decodeLayers.getLastFFNLayerTaskGraphID(), schedulerType);
+        } else {
+            logitsLayer = new LogitsQ8_0LayerDecode("logits", state, weights, config,
+                    decodeLayers.getLastFFNLayerTaskGraphID(), schedulerType);
+        }
         all.add(logitsLayer.getImmutableTaskGraph());
         logitsLayer.updateGridScheduler(gridScheduler);
 

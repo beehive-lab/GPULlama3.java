@@ -22,12 +22,16 @@ public class LogitsQ8_0Layer extends AbstractLogitsLayer {
         super(name, state, weights, config, lastTaskGraphID, schedulerType);
     }
 
+    protected void configureAdditionalConsumes(TaskGraph logits) {}
+    protected void configureAdditionalPersists(TaskGraph logits) {}
+
     // @formatter:off
     @Override
     protected TaskGraph setupLogitsTaskGraph(TornadoWeights weights, Configuration config) {
         var logits = new TaskGraph("logits");
 
         // === Data Setup ===
+        configureAdditionalConsumes(logits);
         logits.consumeFromDevice(lastTaskGraphID, state.wrapX);
         logits.transferToDevice(DataTransferMode.EVERY_EXECUTION, state.tempLogits);
         logits.transferToDevice(DataTransferMode.FIRST_EXECUTION,
@@ -74,6 +78,7 @@ public class LogitsQ8_0Layer extends AbstractLogitsLayer {
                 LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS);
 
         logits.transferToHost(DataTransferMode.EVERY_EXECUTION, state.wrapLogits);
+        configureAdditionalPersists(logits);
         return logits;
     }
     // @formatter:on

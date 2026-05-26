@@ -7,13 +7,20 @@ import org.beehive.gpullama3.tensor.GGMLType;
 import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.model.llama.LlamaConfiguration;
+import org.beehive.gpullama3.tornadovm.kernels.TransformerBatchPrefillKernels;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernels;
 import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
 import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerDetectionService;
 import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
+import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
+import org.beehive.gpullama3.tornadovm.layers.AbstractLogitsLayer;
 import org.beehive.gpullama3.tornadovm.layers.type.fp16.decode.LlamaFP16FFNLayersDecode;
 import org.beehive.gpullama3.tornadovm.layers.type.fp16.prefill.LlamaFP16LayersBatchPrefill;
 import org.beehive.gpullama3.tornadovm.layers.type.fp16.decode.LogitsFP16LayerDecode;
+import org.beehive.gpullama3.tornadovm.layers.type.q8_0.decode.LlamaQ8_0FFNLayersDecode;
+import org.beehive.gpullama3.tornadovm.layers.type.q8_0.decode.LogitsQ8_0LayerDecode;
+import org.beehive.gpullama3.tornadovm.layers.type.q8_0.prefill.LlamaQ8_0LayersBatchPrefill;
+import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.KernelContext;
@@ -102,7 +109,7 @@ public class TornadoVMMasterPlanWithBatchPrefillDecode implements TornadoVMMaste
 
     // ── Batch Prefill Activation graphs ─────────────────────────────────────────────────────
 
-    /** Graph 0: B×dim FP16 embeddings → FP32 wrapXBatch. */
+    /** Graph 0 (FP16): B×dim FP16 embeddings → FP32 wrapXBatch. */
     private TaskGraph buildBatchPrefillActivationGraph(KernelContext ctx) {
         return new TaskGraph("prefillActivation")
                 .transferToDevice(DataTransferMode.FIRST_EXECUTION, ctx, state.wrapXBatch)
@@ -112,8 +119,17 @@ public class TornadoVMMasterPlanWithBatchPrefillDecode implements TornadoVMMaste
                 .persistOnDevice(state.wrapXBatch);
     }
 
+    /** Graph 0 (Q8_0): wrapXBatch pre-filled with FP32 by host; upload and persist. */
+    private TaskGraph buildQ8_0BatchPrefillActivationGraph(KernelContext ctx) {
+        return new TaskGraph("prefillActivation")
+                .transferToDevice(DataTransferMode.EVERY_EXECUTION, state.wrapXBatch)
+                .task("batchPassthrough", TransformerBatchPrefillKernels::batchPassthrough,
+                        ctx, state.wrapXBatch)
+                .persistOnDevice(state.wrapXBatch);
+    }
+
     /**
-     * Graph N+1: single-token FP16 → FP32.
+     * Graph N+1: single-token embedding → FP32 wrapX, with KV-cache pass-through.
      *
      * <p>Receives the KV-cache device pointer from batch layer N via
      * {@code consumeFromDevice}, then re-emits it via {@code persistOnDevice} so
@@ -121,73 +137,86 @@ public class TornadoVMMasterPlanWithBatchPrefillDecode implements TornadoVMMaste
      * Both halves of the chain are required; without the re-persist the pointer is
      * not forwarded in interpreter (non-CUDA-graph) mode.</p>
      */
-    private TaskGraph buildDecodeActivationGraph(KernelContext ctx, String lastBatchLayerID) {
-        return new TaskGraph("decodeActivation")
-                .consumeFromDevice(lastBatchLayerID, state.wrapKeyCache, state.wrapValueCache)   // KV pass-through
-                .transferToDevice(DataTransferMode.EVERY_EXECUTION, state.embeddingX)
-                .task("updateX",
-                        TransformerComputeKernels::convertFP16toFP32,
-                        ctx, (HalfFloatArray) state.embeddingX, state.wrapX)
-                // wrapX persisted for decode layer 0; wrapKeyCache/wrapValueCache
-                // re-persisted so updatePersistedObjectState() propagates the device
-                // pointer to decode layer 0's consumeFromDevice without CUDA graphs.
-                .persistOnDevice(state.wrapX, state.wrapKeyCache, state.wrapValueCache);
+    private TaskGraph buildDecodeActivationGraph(KernelContext ctx, String lastBatchLayerID,
+                                                  GGMLType weightType) {
+        TaskGraph tg = new TaskGraph("decodeActivation")
+                .consumeFromDevice(lastBatchLayerID, state.wrapKeyCache, state.wrapValueCache)
+                .transferToDevice(DataTransferMode.EVERY_EXECUTION, state.embeddingX);
+        if (weightType == GGMLType.Q8_0) {
+            tg.task("updateX", TransformerComputeKernels::convertQ8_0toFP32,
+                    ctx, (ByteArray) state.embeddingX, state.wrapX);
+        } else {
+            tg.task("updateX", TransformerComputeKernels::convertFP16toFP32,
+                    ctx, (HalfFloatArray) state.embeddingX, state.wrapX);
+        }
+        return tg.persistOnDevice(state.wrapX, state.wrapKeyCache, state.wrapValueCache);
     }
 
-    /**
-     * Creates the {@link TornadoExecutionPlan} for forward pass with *prefill in batches and separated decode*.
-     *
-     * TODO: support Q8_0 weights
-     * To implement this, consult how {@link TornadoVMMasterPlanStandard} uses the {@link QuantizationPlannerFactory}
-     */
     @Override
     public TornadoExecutionPlan createExecutionPlan() {
         GGMLType weightType = model.weights().getWeightType();
-        switch (weightType) {
-            case F16 -> { /* supported — continue below */ }
-            case Q8_0 -> throw new UnsupportedOperationException(
-                    "Batched prefill/decode GPU path not yet implemented for Q8_0 weights");
-            default -> throw new UnsupportedOperationException(
+        if (weightType != GGMLType.F16 && weightType != GGMLType.Q8_0) {
+            throw new UnsupportedOperationException(
                     "Batched prefill/decode GPU path not supported for weight type: " + weightType);
         }
 
         LlamaTornadoWeights weights       = (LlamaTornadoWeights) model.weights();
         SchedulerType       schedulerType = SchedulerDetectionService.determineSchedulerType(model);
+        List<ImmutableTaskGraph> all      = new ArrayList<>(2 * N + 3);
 
-        List<ImmutableTaskGraph> all       = new ArrayList<>(2 * N + 3);
-
-        // [0] Batch prefill activation ────────────────────────────────────────────────
+        // [0] Batch prefill activation ────────────────────────────────────────
         KernelContext batchActCtx = new KernelContext();
-        all.add(buildBatchPrefillActivationGraph(batchActCtx).snapshot());
-        gridScheduler.addWorkerGrid("prefillActivation.updateX",
-                WorkerGridFactory.genericWorker(batchSize * config.dim(), 128));
+        if (weightType == GGMLType.F16) {
+            all.add(buildBatchPrefillActivationGraph(batchActCtx).snapshot());
+            gridScheduler.addWorkerGrid("prefillActivation.updateX",
+                    WorkerGridFactory.genericWorker(batchSize * config.dim(), 128));
+        } else {
+            all.add(buildQ8_0BatchPrefillActivationGraph(batchActCtx).snapshot());
+            gridScheduler.addWorkerGrid("prefillActivation.batchPassthrough",
+                    WorkerGridFactory.genericWorker(1, 1));
+        }
 
-        // [1..N] Batch prefill layer graphs ───────────────────────────────────────────
-        LlamaFP16LayersBatchPrefill batchLayers =
-                new LlamaFP16LayersBatchPrefill(state, weights, config, batchSize);
-        all.addAll(batchLayers.getLayerImmutableTaskGraphs());
-        batchLayers.updateGridScheduler(gridScheduler);
+        // [1..N] Batch prefill layer graphs ───────────────────────────────────
+        String lastBatchLayerID;
+        if (weightType == GGMLType.F16) {
+            LlamaFP16LayersBatchPrefill batchLayers =
+                    new LlamaFP16LayersBatchPrefill(state, weights, config, batchSize);
+            all.addAll(batchLayers.getLayerImmutableTaskGraphs());
+            batchLayers.updateGridScheduler(gridScheduler);
+            lastBatchLayerID = batchLayers.getLastLayerTaskGraphID();
+        } else {
+            LlamaQ8_0LayersBatchPrefill batchLayers =
+                    new LlamaQ8_0LayersBatchPrefill(state, weights, config, batchSize);
+            all.addAll(batchLayers.getLayerImmutableTaskGraphs());
+            batchLayers.updateGridScheduler(gridScheduler);
+            lastBatchLayerID = batchLayers.getLastLayerTaskGraphID();
+        }
 
         // [N+1] Decode activation (with KV-cache pass-through) ────────────────
         KernelContext decodeActCtx = new KernelContext();
-        all.add(buildDecodeActivationGraph(decodeActCtx, batchLayers.getLastLayerTaskGraphID()).snapshot());
+        all.add(buildDecodeActivationGraph(decodeActCtx, lastBatchLayerID, weightType).snapshot());
         gridScheduler.addWorkerGrid("decodeActivation.updateX",
                 WorkerGridFactory.genericWorker(config.dim(), 128));
 
-        // [N+2..2N+1] Decode layer graphs  ────────────────────────────────────
-        // Layer 0 uses consumeFromDevice for KV cache (no FIRST_EXECUTION upload).
-        LlamaFP16FFNLayersDecode decodeLayers =
-                new LlamaFP16FFNLayersDecode(
-                        "decode", state, weights, config, schedulerType);
+        // [N+2..2N+1] Decode layer graphs ─────────────────────────────────────
+        AbstractFFNLayers<LlamaTornadoWeights, LlamaConfiguration> decodeLayers;
+        if (weightType == GGMLType.F16) {
+            decodeLayers = new LlamaFP16FFNLayersDecode("decode", state, weights, config, schedulerType);
+        } else {
+            decodeLayers = new LlamaQ8_0FFNLayersDecode("decode", state, weights, config, schedulerType);
+        }
         all.addAll(decodeLayers.getFFNLayerImmutableTaskGraphs());
         decodeLayers.updateGridScheduler(gridScheduler);
 
         // [2N+2] Logits ───────────────────────────────────────────────────────
-        // LogitsFP16LayerDecode extends LogitsFP16Layer: adds consumeFromDevice(wrapKeyCache)
-        // at the start of the graph and persistOnDevice(wrapKeyCache) at the end, so the
-        // KV-cache pointer survives the logits → decode-activation boundary across tokens.
-        LogitsFP16LayerDecode logitsLayer = new LogitsFP16LayerDecode("logits", state, weights, config,
-                decodeLayers.getLastFFNLayerTaskGraphID(), schedulerType);
+        AbstractLogitsLayer logitsLayer;
+        if (weightType == GGMLType.F16) {
+            logitsLayer = new LogitsFP16LayerDecode("logits", state, weights, config,
+                    decodeLayers.getLastFFNLayerTaskGraphID(), schedulerType);
+        } else {
+            logitsLayer = new LogitsQ8_0LayerDecode("logits", state, weights, config,
+                    decodeLayers.getLastFFNLayerTaskGraphID(), schedulerType);
+        }
         all.add(logitsLayer.getImmutableTaskGraph());
         logitsLayer.updateGridScheduler(gridScheduler);
 
@@ -222,15 +251,32 @@ public class TornadoVMMasterPlanWithBatchPrefillDecode implements TornadoVMMaste
      */
     public void tornadoVMForwardBatchPrefill(int[] tokenIds, int startPos, Model model, int chunkSize) {
         LlamaTornadoWeights weights = (LlamaTornadoWeights) model.weights();
-        MemorySegment embTable = weights.getTokenEmbeddingTable().asHalfFloatArray().getSegment();
-        int bytes = Short.BYTES;
-        int dim   = config.dim();
+        int dim = config.dim();
 
-        // Copy B embeddings into embeddingXBatch
-        for (int b = 0; b < chunkSize; b++) {
-            MemorySegment.copy(embTable, (long) tokenIds[b] * dim * bytes,
-                    state.embeddingXBatch.getSegment(), (long) b * dim * bytes,
-                    (long) dim * bytes);
+        if (weights.getWeightType() == GGMLType.Q8_0) {
+            // CPU dequantizes Q8_0 embeddings into wrapXBatch (FP32)
+            ByteArray embTable  = weights.getTokenEmbeddingTable().asByteArray();
+            int blockSize        = 32;
+            int Q8_0_BLOCK_BYTES = 34;
+            int blocksPerRow     = (dim + blockSize - 1) / blockSize;
+            for (int b = 0; b < chunkSize; b++) {
+                int tokenId = tokenIds[b];
+                for (int j = 0; j < dim; j++) {
+                    int blockByteOffset = (tokenId * blocksPerRow + j / blockSize) * Q8_0_BLOCK_BYTES;
+                    float scale = embTable.getHalfFloat(blockByteOffset).getFloat32();
+                    float quant = embTable.get(blockByteOffset + 2 + j % blockSize);
+                    state.wrapXBatch.set(b * dim + j, quant * scale);
+                }
+            }
+        } else {
+            // FP16: copy raw half-float bytes into embeddingXBatch
+            MemorySegment embTable = weights.getTokenEmbeddingTable().asHalfFloatArray().getSegment();
+            int bytes = Short.BYTES;
+            for (int b = 0; b < chunkSize; b++) {
+                MemorySegment.copy(embTable, (long) tokenIds[b] * dim * bytes,
+                        state.embeddingXBatch.getSegment(), (long) b * dim * bytes,
+                        (long) dim * bytes);
+            }
         }
         state.batchStartPosHolder.set(0, startPos);
 
@@ -258,12 +304,19 @@ public class TornadoVMMasterPlanWithBatchPrefillDecode implements TornadoVMMaste
      */
     public FloatArray tornadoVMForwardDecode(int token, int position, Model model) {
         LlamaTornadoWeights weights = (LlamaTornadoWeights) model.weights();
-        MemorySegment embTable = weights.getTokenEmbeddingTable().asHalfFloatArray().getSegment();
-        int bytes = Short.BYTES;
-        int dim   = config.dim();
+        int dim = config.dim();
 
-        MemorySegment.copy(embTable, (long) token * dim * bytes,
-                state.embeddingX.getSegment(), 0L, (long) dim * bytes);
+        if (weights.getWeightType() == GGMLType.Q8_0) {
+            ByteArray embTable   = weights.getTokenEmbeddingTable().asByteArray();
+            int blocksPerRow     = (dim + 31) / 32;
+            long bytesPerToken   = (long) blocksPerRow * 34;
+            MemorySegment.copy(embTable.getSegment(), (long) token * bytesPerToken,
+                    state.embeddingX.getSegment(), 0L, bytesPerToken);
+        } else {
+            MemorySegment embTable = weights.getTokenEmbeddingTable().asHalfFloatArray().getSegment();
+            MemorySegment.copy(embTable, (long) token * dim * Short.BYTES,
+                    state.embeddingX.getSegment(), 0L, (long) dim * Short.BYTES);
+        }
 
         state.positionHolder.set(0, position);
         state.temp.clear();
