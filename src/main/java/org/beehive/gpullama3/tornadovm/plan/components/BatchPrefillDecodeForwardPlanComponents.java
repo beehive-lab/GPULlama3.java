@@ -1,6 +1,6 @@
 package org.beehive.gpullama3.tornadovm.plan.components;
 
-import org.beehive.gpullama3.tornadovm.layers.ActivationGraph;
+import org.beehive.gpullama3.tornadovm.layers.ActivationTaskGraph;
 import org.beehive.gpullama3.tornadovm.layers.BatchPrefillTransformerLayerTaskGraphs;
 import org.beehive.gpullama3.tornadovm.layers.TransformerLayerTaskGraphs;
 
@@ -13,9 +13,9 @@ import org.beehive.gpullama3.tornadovm.layers.TransformerLayerTaskGraphs;
  */
 public interface BatchPrefillDecodeForwardPlanComponents extends PrefillDecodeForwardPlanComponents {
 
-    ActivationGraph batchPrefillActivation(int batchSize);
+    ActivationTaskGraph batchPrefillActivation(int batchSize);
 
-    ActivationGraph batchDecodeActivation(String lastBatchLayerId);
+    ActivationTaskGraph batchDecodeActivation(String lastBatchLayerId);
 
     TransformerLayerTaskGraphs batchDecodeLayers();
 

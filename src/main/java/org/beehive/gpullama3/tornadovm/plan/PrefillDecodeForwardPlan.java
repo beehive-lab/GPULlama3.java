@@ -2,7 +2,7 @@ package org.beehive.gpullama3.tornadovm.plan;
 
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.tornadovm.layers.AbstractLogitsLayer;
-import org.beehive.gpullama3.tornadovm.layers.ActivationGraph;
+import org.beehive.gpullama3.tornadovm.layers.ActivationTaskGraph;
 import org.beehive.gpullama3.tornadovm.layers.TransformerLayerTaskGraphs;
 import org.beehive.gpullama3.tornadovm.plan.components.PrefillDecodeForwardPlanComponents;
 import org.beehive.gpullama3.tornadovm.plan.layout.PrefillDecodeForwardTaskGraphLayout;
@@ -36,7 +36,7 @@ public class PrefillDecodeForwardPlan extends ForwardPlan {
         List<ImmutableTaskGraph> all = new ArrayList<>(N + 2);
         GridScheduler scheduler = new GridScheduler();
 
-        ActivationGraph act = components.decodeActivation();
+        ActivationTaskGraph act = components.decodeActivation();
         all.add(act.getImmutableTaskGraph());
         act.updateGridScheduler(scheduler);
 

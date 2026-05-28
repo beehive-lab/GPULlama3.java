@@ -6,7 +6,7 @@ import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.model.llama.LlamaConfiguration;
 import org.beehive.gpullama3.tornadovm.layers.AbstractLogitsLayer;
 import org.beehive.gpullama3.tornadovm.layers.Activation;
-import org.beehive.gpullama3.tornadovm.layers.ActivationGraph;
+import org.beehive.gpullama3.tornadovm.layers.ActivationTaskGraph;
 import org.beehive.gpullama3.tornadovm.layers.BatchPrefillTransformerLayerTaskGraphs;
 import org.beehive.gpullama3.tornadovm.layers.TransformerLayerTaskGraphs;
 import org.beehive.gpullama3.tornadovm.layers.type.q8_0.LlamaQ8_0FFNLayers;
@@ -50,19 +50,19 @@ public class LlamaQ8_0PlanComponents implements BatchPrefillDecodeForwardPlanCom
 
     // ── Activations ───────────────────────────────────────────────────────────
 
-    @Override public ActivationGraph standardActivation() {
+    @Override public ActivationTaskGraph standardActivation() {
         return new Activation("activationUpdate", state, weights, config);
     }
 
-    @Override public ActivationGraph decodeActivation() {
+    @Override public ActivationTaskGraph decodeActivation() {
         return new Activation("decodeActivation", state, weights, config);
     }
 
-    @Override public ActivationGraph batchPrefillActivation(int batchSize) {
+    @Override public ActivationTaskGraph batchPrefillActivation(int batchSize) {
         return new BatchPrefillActivation(state, config, batchSize, true);
     }
 
-    @Override public ActivationGraph batchDecodeActivation(String lastBatchLayerId) {
+    @Override public ActivationTaskGraph batchDecodeActivation(String lastBatchLayerId) {
         return new BatchDecodeActivation(state, config, lastBatchLayerId, true);
     }
 

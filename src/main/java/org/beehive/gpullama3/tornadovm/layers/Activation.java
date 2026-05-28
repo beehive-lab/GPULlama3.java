@@ -13,7 +13,7 @@ import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 
-public class Activation extends AbstractLayer implements ActivationGraph {
+public class Activation extends AbstractLayer implements ActivationTaskGraph {
     private final TaskGraph activationTaskGraph;
 
     public Activation(String name, State state, Weights weights, Configuration config) {

@@ -3,7 +3,7 @@ package org.beehive.gpullama3.tornadovm.plan.components.activation;
 import org.beehive.gpullama3.inference.state.LlamaState;
 import org.beehive.gpullama3.model.llama.LlamaConfiguration;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernels;
-import org.beehive.gpullama3.tornadovm.layers.ActivationGraph;
+import org.beehive.gpullama3.tornadovm.layers.ActivationTaskGraph;
 import org.beehive.gpullama3.tornadovm.scheduling.WorkerGridFactory;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
@@ -21,7 +21,7 @@ import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
  * converts the single-token embedding to FP32, then re-persists the KV cache so
  * that decode layer 0 can consume it.</p>
  */
-public class BatchDecodeActivation implements ActivationGraph {
+public class BatchDecodeActivation implements ActivationTaskGraph {
 
     private final ImmutableTaskGraph itg;
     private final int dim;

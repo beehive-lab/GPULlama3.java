@@ -6,7 +6,7 @@ import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.model.mistral.MistralConfiguration;
 import org.beehive.gpullama3.tornadovm.layers.AbstractLogitsLayer;
 import org.beehive.gpullama3.tornadovm.layers.Activation;
-import org.beehive.gpullama3.tornadovm.layers.ActivationGraph;
+import org.beehive.gpullama3.tornadovm.layers.ActivationTaskGraph;
 import org.beehive.gpullama3.tornadovm.layers.TransformerLayerTaskGraphs;
 import org.beehive.gpullama3.tornadovm.layers.type.q8_0.LogitsQ8_0Layer;
 import org.beehive.gpullama3.tornadovm.layers.type.q8_0.MistralQ8_0FFNLayers;
@@ -28,7 +28,7 @@ public class MistralQ8_0PlanComponents implements SingleTokenForwardPlanComponen
         this.schedulerType = SchedulerDetectionService.determineSchedulerType(model);
     }
 
-    @Override public ActivationGraph standardActivation() {
+    @Override public ActivationTaskGraph standardActivation() {
         return new Activation("activationUpdate", state, weights, config);
     }
 

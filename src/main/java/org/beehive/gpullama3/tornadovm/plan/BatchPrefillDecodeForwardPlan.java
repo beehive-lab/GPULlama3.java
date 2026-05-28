@@ -2,7 +2,7 @@ package org.beehive.gpullama3.tornadovm.plan;
 
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.tornadovm.layers.AbstractLogitsLayer;
-import org.beehive.gpullama3.tornadovm.layers.ActivationGraph;
+import org.beehive.gpullama3.tornadovm.layers.ActivationTaskGraph;
 import org.beehive.gpullama3.tornadovm.layers.BatchPrefillTransformerLayerTaskGraphs;
 import org.beehive.gpullama3.tornadovm.layers.TransformerLayerTaskGraphs;
 import org.beehive.gpullama3.tornadovm.plan.components.BatchPrefillDecodeForwardPlanComponents;
@@ -42,7 +42,7 @@ public class BatchPrefillDecodeForwardPlan extends ForwardPlan {
         List<ImmutableTaskGraph> all = new ArrayList<>(2 * N + 3);
         GridScheduler scheduler = new GridScheduler();
 
-        ActivationGraph batchAct = components.batchPrefillActivation(batchSize);
+        ActivationTaskGraph batchAct = components.batchPrefillActivation(batchSize);
         all.add(batchAct.getImmutableTaskGraph());
         batchAct.updateGridScheduler(scheduler);
 
@@ -50,7 +50,7 @@ public class BatchPrefillDecodeForwardPlan extends ForwardPlan {
         all.addAll(batchLayers.getLayerImmutableTaskGraphs());
         batchLayers.updateGridScheduler(scheduler);
 
-        ActivationGraph decodeAct = components.batchDecodeActivation(batchLayers.getLastLayerTaskGraphID());
+        ActivationTaskGraph decodeAct = components.batchDecodeActivation(batchLayers.getLastLayerTaskGraphID());
         all.add(decodeAct.getImmutableTaskGraph());
         decodeAct.updateGridScheduler(scheduler);
 

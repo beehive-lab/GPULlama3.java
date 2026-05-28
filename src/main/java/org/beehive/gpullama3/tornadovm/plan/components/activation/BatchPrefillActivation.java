@@ -4,7 +4,7 @@ import org.beehive.gpullama3.inference.state.LlamaState;
 import org.beehive.gpullama3.model.llama.LlamaConfiguration;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerBatchPrefillKernels;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernels;
-import org.beehive.gpullama3.tornadovm.layers.ActivationGraph;
+import org.beehive.gpullama3.tornadovm.layers.ActivationTaskGraph;
 import org.beehive.gpullama3.tornadovm.scheduling.WorkerGridFactory;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
@@ -22,7 +22,7 @@ import uk.ac.manchester.tornado.api.enums.DataTransferMode;
  *       and runs a no-op {@code batchPassthrough} so TornadoVM has at least one task.</li>
  * </ul>
  */
-public class BatchPrefillActivation implements ActivationGraph {
+public class BatchPrefillActivation implements ActivationTaskGraph {
 
     private final ImmutableTaskGraph itg;
     private final boolean isQ8;

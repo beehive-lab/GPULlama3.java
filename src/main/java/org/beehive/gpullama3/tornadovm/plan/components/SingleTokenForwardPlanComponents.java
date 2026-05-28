@@ -1,7 +1,7 @@
 package org.beehive.gpullama3.tornadovm.plan.components;
 
 import org.beehive.gpullama3.tornadovm.layers.AbstractLogitsLayer;
-import org.beehive.gpullama3.tornadovm.layers.ActivationGraph;
+import org.beehive.gpullama3.tornadovm.layers.ActivationTaskGraph;
 import org.beehive.gpullama3.tornadovm.layers.TransformerLayerTaskGraphs;
 
 /**
@@ -13,7 +13,7 @@ import org.beehive.gpullama3.tornadovm.layers.TransformerLayerTaskGraphs;
  */
 public interface SingleTokenForwardPlanComponents {
 
-    ActivationGraph standardActivation();
+    ActivationTaskGraph standardActivation();
 
     TransformerLayerTaskGraphs standardLayers();
 

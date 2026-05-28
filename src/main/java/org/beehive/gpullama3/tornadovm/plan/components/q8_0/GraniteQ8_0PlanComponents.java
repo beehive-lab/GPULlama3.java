@@ -6,7 +6,7 @@ import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.model.granite.GraniteConfiguration;
 import org.beehive.gpullama3.tornadovm.layers.AbstractLogitsLayer;
 import org.beehive.gpullama3.tornadovm.layers.ActivationGranite;
-import org.beehive.gpullama3.tornadovm.layers.ActivationGraph;
+import org.beehive.gpullama3.tornadovm.layers.ActivationTaskGraph;
 import org.beehive.gpullama3.tornadovm.layers.TransformerLayerTaskGraphs;
 import org.beehive.gpullama3.tornadovm.layers.type.q8_0.GraniteQ8_0FFNLayers;
 import org.beehive.gpullama3.tornadovm.layers.type.q8_0.LogitsGraniteQ8_0Layer;
@@ -28,7 +28,7 @@ public class GraniteQ8_0PlanComponents implements SingleTokenForwardPlanComponen
         this.schedulerType = SchedulerDetectionService.determineSchedulerType(model);
     }
 
-    @Override public ActivationGraph standardActivation() {
+    @Override public ActivationTaskGraph standardActivation() {
         return new ActivationGranite("activationUpdate", state, weights, config);
     }
 
