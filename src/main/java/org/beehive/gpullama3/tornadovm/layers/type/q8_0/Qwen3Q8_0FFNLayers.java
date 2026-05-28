@@ -14,7 +14,7 @@ import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
 /**
- * Qwen3Q8_0FFNLayers: Q8_0-quantized FFN layers for Qwen3 with Group Query Attention (GQA) support.
+ * Qwen3Q8_0FFNLayers: Q8_0 transformer-layer task graphs for Qwen3 with Group Query Attention (GQA) support.
  *
  * Key Differences from Qwen3FP16FFNLayers:
  * - Uses Q8_0-quantized weights (getQuants() and getScales())

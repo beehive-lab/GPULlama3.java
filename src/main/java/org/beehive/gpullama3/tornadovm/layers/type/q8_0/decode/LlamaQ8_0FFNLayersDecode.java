@@ -9,7 +9,7 @@ import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
 /**
- * Decode FFN layers for the unified batched prefill-decode plan
+ * Decode transformer-layer task graphs for the unified batched prefill-decode plan
  * ({@link org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanBatchPrefillDecode}).
  *
  * <p>Layer 0 consumes the KV cache from device (passed through by the decode activation

@@ -9,7 +9,7 @@ import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
 /**
- * Decode FFN layers of the unified batched prefill-decode plan
+ * Decode transformer-layer task graphs of the unified batched prefill-decode plan
  * ({@link org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanBatchPrefillDecode}).
  *
  * <p>Overrides data-transfer declarations so that all cross-graph boundaries use

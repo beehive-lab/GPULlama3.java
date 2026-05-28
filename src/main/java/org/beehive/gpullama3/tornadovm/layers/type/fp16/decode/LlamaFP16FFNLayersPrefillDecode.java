@@ -9,7 +9,7 @@ import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
 /**
- * Decode FFN layers for the single-token prefill/decode plan
+ * Decode transformer-layer task graphs for the single-token prefill/decode plan
  * ({@link org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanPrefillDecode}).
  *
  * <p>Combines two concerns:</p>
