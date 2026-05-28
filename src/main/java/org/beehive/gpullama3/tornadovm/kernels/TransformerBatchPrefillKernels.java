@@ -15,7 +15,7 @@ import uk.ac.manchester.tornado.api.types.arrays.IntArray;
  * Batch tensors are flat: element [b][i] lives at index {@code b*stride + i}.
  * Worker-grid sizes are scaled by {@code batchSize} vs the single-token kernels.</p>
  *
- * <p>These kernels are meant to be registered in {@link TornadoVMMasterPlanWithPrefillDecode}
+ * <p>These kernels are meant to be registered in {@link TornadoVMMasterPlanBatchPrefillDecode}
  * batch task graphs; they are NOT invoked directly.</p>
  */
 public final class TransformerBatchPrefillKernels {

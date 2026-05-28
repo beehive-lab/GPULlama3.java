@@ -3,13 +3,13 @@ package org.beehive.gpullama3.tornadovm.layers.type.fp16.decode;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.Weights;
 import org.beehive.gpullama3.model.Configuration;
-import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
+import org.beehive.gpullama3.tornadovm.scheduling.SchedulerType;
 import org.beehive.gpullama3.tornadovm.layers.type.fp16.LogitsFP16Layer;
 import uk.ac.manchester.tornado.api.TaskGraph;
 
 /**
  * Logits layer of the unified batched prefill-decode plan
- *  * ({@link org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanWithBatchPrefillDecode}).
+ *  * ({@link org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanBatchPrefillDecode}).
  *
  * <p>Extends {@link LogitsFP16Layer} with KV-cache pass-through so the device
  * pointers for {@code wrapKeyCache} and {@code wrapValueCache} survive the

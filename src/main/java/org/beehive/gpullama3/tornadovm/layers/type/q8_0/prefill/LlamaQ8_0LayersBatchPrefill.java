@@ -4,7 +4,8 @@ import org.beehive.gpullama3.inference.state.LlamaState;
 import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
 import org.beehive.gpullama3.model.llama.LlamaConfiguration;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerBatchPrefillKernels;
-import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
+import org.beehive.gpullama3.tornadovm.scheduling.WorkerGridFactory;
+import org.beehive.gpullama3.tornadovm.layers.BatchPrefillTransformerLayerTaskGraphs;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.KernelContext;
@@ -30,7 +31,7 @@ import java.util.stream.IntStream;
  *   <li>Weight matrices are {@code ByteArray} (Q8_0 format).</li>
  * </ul>
  */
-public class LlamaQ8_0LayersBatchPrefill {
+public class LlamaQ8_0LayersBatchPrefill implements BatchPrefillTransformerLayerTaskGraphs {
 
     static final int LOCAL_WORK_GROUP_SIZE = 32;
 

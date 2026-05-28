@@ -7,7 +7,7 @@ import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.tokenizer.Tokenizer;
 import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlan;
-import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanWithPrefillDecode;
+import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanPrefillDecode;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -135,8 +135,8 @@ public final class InferenceEngineWithPrefillDecode {
         int actualMaxTokens = (maxTokens < 0 || config.contextLength() < maxTokens)
                 ? config.contextLength() : maxTokens;
 
-        TornadoVMMasterPlanWithPrefillDecode prefillPlan =
-                (TornadoVMMasterPlanWithPrefillDecode) tornadoVMPlan;
+        TornadoVMMasterPlanPrefillDecode prefillPlan =
+                (TornadoVMMasterPlanPrefillDecode) tornadoVMPlan;
 
         List<Integer> generatedTokens = new ArrayList<>();
 

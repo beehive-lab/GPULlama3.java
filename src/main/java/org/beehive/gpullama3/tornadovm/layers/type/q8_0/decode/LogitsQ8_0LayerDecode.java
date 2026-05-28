@@ -3,7 +3,7 @@ package org.beehive.gpullama3.tornadovm.layers.type.q8_0.decode;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.Weights;
 import org.beehive.gpullama3.model.Configuration;
-import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
+import org.beehive.gpullama3.tornadovm.scheduling.SchedulerType;
 import org.beehive.gpullama3.tornadovm.layers.type.q8_0.LogitsQ8_0Layer;
 import uk.ac.manchester.tornado.api.TaskGraph;
 

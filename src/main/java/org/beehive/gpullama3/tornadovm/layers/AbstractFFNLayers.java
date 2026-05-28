@@ -3,7 +3,7 @@ package org.beehive.gpullama3.tornadovm.layers;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.Weights;
 import org.beehive.gpullama3.model.Configuration;
-import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
+import org.beehive.gpullama3.tornadovm.scheduling.SchedulerType;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TaskGraph;
 
@@ -14,7 +14,7 @@ import java.util.stream.IntStream;
  * Abstract base class for all FFN (Feed-Forward Network) layer implementations.
  * Extended by model and quantization-specific subclasses that provide specific implementations.
  */
-public abstract class AbstractFFNLayers<W extends Weights, C extends Configuration> extends AbstractLayer {
+public abstract class AbstractFFNLayers<W extends Weights, C extends Configuration> extends AbstractLayer implements TransformerLayerTaskGraphs {
 
     /**
      * List of TornadoVM {@link ImmutableTaskGraph}s, one per FFN layer.

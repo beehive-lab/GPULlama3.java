@@ -7,7 +7,7 @@ import org.beehive.gpullama3.inference.weights.tornado.TornadoWeights;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.tensor.standard.FloatTensor;
-import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanWithPrefillDecode;
+import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanPrefillDecode;
 
 import java.lang.foreign.MemorySegment;
 
@@ -131,7 +131,7 @@ public final class InferenceCoreWithPrefillDecode {
      *
      * <p>Copies the token embedding into {@code state.embeddingX} (same as
      * {@link InferenceCore#forwardTornadoVM}) then delegates to
-     * {@link TornadoVMMasterPlanWithPrefillDecode#tornadoVMForwardPrefill},
+     * {@link TornadoVMMasterPlanPrefillDecode#tornadoVMForwardPrefill},
      * which executes preprocessing + layer graphs but skips the logits graph.</p>
      *
      * @param model       the LLaMA model (must carry {@link TornadoWeights}, FP16 only)
@@ -142,7 +142,7 @@ public final class InferenceCoreWithPrefillDecode {
      * @throws UnsupportedOperationException if the model uses Q8_0 weights
      */
     public static void forwardTornadoVMPrefill(Model model, State state, int token, int position,
-            TornadoVMMasterPlanWithPrefillDecode prefillPlan) {
+            TornadoVMMasterPlanPrefillDecode prefillPlan) {
         final Configuration configuration = model.configuration();
         final TornadoWeights weights = (TornadoWeights) model.weights();
 

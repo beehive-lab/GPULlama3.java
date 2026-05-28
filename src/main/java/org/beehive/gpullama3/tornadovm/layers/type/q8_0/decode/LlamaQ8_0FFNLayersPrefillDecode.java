@@ -3,13 +3,13 @@ package org.beehive.gpullama3.tornadovm.layers.type.q8_0.decode;
 import org.beehive.gpullama3.inference.state.LlamaState;
 import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
 import org.beehive.gpullama3.model.llama.LlamaConfiguration;
-import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
+import org.beehive.gpullama3.tornadovm.scheduling.SchedulerType;
 import org.beehive.gpullama3.tornadovm.layers.type.q8_0.LlamaQ8_0FFNLayers;
 import uk.ac.manchester.tornado.api.TaskGraph;
 
 /**
  * Decode FFN layers for the single-token prefill/decode plan
- * ({@link org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanWithPrefillDecode}).
+ * ({@link org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanPrefillDecode}).
  *
  * <p>Layer 0 delegates to {@link LlamaQ8_0FFNLayers#configureLayerDataTransfers} which
  * includes {@code FIRST_EXECUTION} for {@code wrapKeyCache} and {@code wrapValueCache},

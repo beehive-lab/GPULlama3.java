@@ -7,7 +7,7 @@ import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
 import org.beehive.gpullama3.tensor.standard.FloatTensor;
-import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanWithBatchPrefillDecode;
+import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanBatchPrefillDecode;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
 /**
@@ -21,9 +21,9 @@ import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
  *       prompt tokens in one pass using batch matmul, avoiding redundant weight
  *       traversals. Only the KV cache is populated; logits are intentionally omitted.</li>
  *   <li>{@link #batchForwardTornadoVMPrefill} — GPU batch prefill: delegates the chunk
- *       to {@link TornadoVMMasterPlanWithBatchPrefillDecode#tornadoVMForwardBatchPrefill}.</li>
+ *       to {@link TornadoVMMasterPlanBatchPrefillDecode#tornadoVMForwardBatchPrefill}.</li>
  *   <li>{@link #forwardTornadoVMDecode} — GPU decode: delegates a single decode step to
- *       {@link TornadoVMMasterPlanWithBatchPrefillDecode#tornadoVMForwardDecode}, which
+ *       {@link TornadoVMMasterPlanBatchPrefillDecode#tornadoVMForwardDecode}, which
  *       handles the embedding copy and runs the full decode + logits graphs.</li>
  * </ul>
  */
@@ -165,7 +165,7 @@ public final class InferenceCoreBatchPrefillDecode {
      * GPU batched prefill forward pass (Phase 4).
      *
      * <p>Delegates the full chunk to
-     * {@link TornadoVMMasterPlanWithBatchPrefillDecode#tornadoVMForwardBatchPrefill},
+     * {@link TornadoVMMasterPlanBatchPrefillDecode#tornadoVMForwardBatchPrefill},
      * which handles embedding lookup and GPU execution internally.</p>
      *
      * @param model     the LLaMA model
@@ -175,7 +175,7 @@ public final class InferenceCoreBatchPrefillDecode {
      * @param plan      the batched prefill/decode GPU plan
      */
     public static void batchForwardTornadoVMPrefill(Model model, int[] tokens, int startPos, int chunkSize,
-            TornadoVMMasterPlanWithBatchPrefillDecode plan) {
+            TornadoVMMasterPlanBatchPrefillDecode plan) {
         plan.tornadoVMForwardBatchPrefill(tokens, startPos, model, chunkSize);
     }
 
@@ -183,7 +183,7 @@ public final class InferenceCoreBatchPrefillDecode {
      * GPU decode forward pass (Phase 4).
      *
      * <p>Delegates a single-token decode step to
-     * {@link TornadoVMMasterPlanWithBatchPrefillDecode#tornadoVMForwardDecode},
+     * {@link TornadoVMMasterPlanBatchPrefillDecode#tornadoVMForwardDecode},
      * which copies the token embedding and runs the decode + logits graphs.</p>
      *
      * @param model    the LLaMA model
@@ -193,7 +193,7 @@ public final class InferenceCoreBatchPrefillDecode {
      * @return logits array for token sampling
      */
     public static FloatArray forwardTornadoVMDecode(Model model, int token, int position,
-            TornadoVMMasterPlanWithBatchPrefillDecode plan) {
+            TornadoVMMasterPlanBatchPrefillDecode plan) {
         return plan.tornadoVMForwardDecode(token, position, model);
     }
 }
