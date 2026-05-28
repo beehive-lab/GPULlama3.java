@@ -4,7 +4,7 @@ import org.beehive.gpullama3.inference.state.Phi3State;
 import org.beehive.gpullama3.inference.weights.tornado.Phi3TornadoWeights;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.model.phi3.Phi3Configuration;
-import org.beehive.gpullama3.tornadovm.layers.AbstractLogitsLayer;
+import org.beehive.gpullama3.tornadovm.layers.AbstractLogitsTaskGraph;
 import org.beehive.gpullama3.tornadovm.layers.Activation;
 import org.beehive.gpullama3.tornadovm.layers.ActivationTaskGraph;
 import org.beehive.gpullama3.tornadovm.layers.TransformerLayerTaskGraphs;
@@ -36,7 +36,7 @@ public class Phi3FP16PlanComponents implements SingleTokenForwardPlanComponents 
         return new Phi3FP16FFNLayers("phi3FFN", state, weights, config, schedulerType);
     }
 
-    @Override public AbstractLogitsLayer standardLogits(String previousGraphId) {
+    @Override public AbstractLogitsTaskGraph standardLogits(String previousGraphId) {
         return new LogitsFP16Layer("logits", state, weights, config, previousGraphId, schedulerType);
     }
 }

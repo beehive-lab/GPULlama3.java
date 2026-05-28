@@ -4,7 +4,7 @@ import org.beehive.gpullama3.inference.state.Qwen3State;
 import org.beehive.gpullama3.inference.weights.tornado.Qwen3TornadoWeights;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.model.qwen3.Qwen3Configuration;
-import org.beehive.gpullama3.tornadovm.layers.AbstractLogitsLayer;
+import org.beehive.gpullama3.tornadovm.layers.AbstractLogitsTaskGraph;
 import org.beehive.gpullama3.tornadovm.layers.Activation;
 import org.beehive.gpullama3.tornadovm.layers.ActivationTaskGraph;
 import org.beehive.gpullama3.tornadovm.layers.TransformerLayerTaskGraphs;
@@ -36,7 +36,7 @@ public class Qwen3FP16PlanComponents implements SingleTokenForwardPlanComponents
         return new Qwen3FP16FFNLayers("qwen3FFN", state, weights, config, schedulerType);
     }
 
-    @Override public AbstractLogitsLayer standardLogits(String previousGraphId) {
+    @Override public AbstractLogitsTaskGraph standardLogits(String previousGraphId) {
         return new LogitsFP16Layer("logits", state, weights, config, previousGraphId, schedulerType);
     }
 }

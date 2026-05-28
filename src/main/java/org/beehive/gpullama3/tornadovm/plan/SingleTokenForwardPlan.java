@@ -1,7 +1,7 @@
 package org.beehive.gpullama3.tornadovm.plan;
 
 import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.tornadovm.layers.AbstractLogitsLayer;
+import org.beehive.gpullama3.tornadovm.layers.AbstractLogitsTaskGraph;
 import org.beehive.gpullama3.tornadovm.layers.ActivationTaskGraph;
 import org.beehive.gpullama3.tornadovm.layers.TransformerLayerTaskGraphs;
 import org.beehive.gpullama3.tornadovm.plan.components.SingleTokenForwardPlanComponents;
@@ -41,7 +41,7 @@ public class SingleTokenForwardPlan extends ForwardPlan {
         all.addAll(layers.getFFNLayerImmutableTaskGraphs());
         layers.updateGridScheduler(scheduler);
 
-        AbstractLogitsLayer logits = components.standardLogits(layers.getLastFFNLayerTaskGraphID());
+        AbstractLogitsTaskGraph logits = components.standardLogits(layers.getLastFFNLayerTaskGraphID());
         all.add(logits.getImmutableTaskGraph());
         logits.updateGridScheduler(scheduler);
 

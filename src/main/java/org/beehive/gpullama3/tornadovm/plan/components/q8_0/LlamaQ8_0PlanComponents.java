@@ -4,7 +4,7 @@ import org.beehive.gpullama3.inference.state.LlamaState;
 import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.model.llama.LlamaConfiguration;
-import org.beehive.gpullama3.tornadovm.layers.AbstractLogitsLayer;
+import org.beehive.gpullama3.tornadovm.layers.AbstractLogitsTaskGraph;
 import org.beehive.gpullama3.tornadovm.layers.Activation;
 import org.beehive.gpullama3.tornadovm.layers.ActivationTaskGraph;
 import org.beehive.gpullama3.tornadovm.layers.BatchPrefillTransformerLayerTaskGraphs;
@@ -86,11 +86,11 @@ public class LlamaQ8_0PlanComponents implements BatchPrefillDecodeForwardPlanCom
 
     // ── Logits layers ─────────────────────────────────────────────────────────
 
-    @Override public AbstractLogitsLayer standardLogits(String previousGraphId) {
+    @Override public AbstractLogitsTaskGraph standardLogits(String previousGraphId) {
         return new LogitsQ8_0Layer("logits", state, weights, config, previousGraphId, schedulerType);
     }
 
-    @Override public AbstractLogitsLayer decodeLogits(String previousGraphId) {
+    @Override public AbstractLogitsTaskGraph decodeLogits(String previousGraphId) {
         return new LogitsQ8_0LayerDecode("logits", state, weights, config, previousGraphId, schedulerType);
     }
 

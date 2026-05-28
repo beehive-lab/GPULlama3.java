@@ -7,7 +7,7 @@ import org.beehive.gpullama3.tornadovm.kernels.Qwen3Kernels;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
 import org.beehive.gpullama3.tornadovm.scheduling.WorkerGridFactory;
 import org.beehive.gpullama3.tornadovm.scheduling.SchedulerType;
-import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
+import org.beehive.gpullama3.tornadovm.layers.AbstractTransformerLayerTaskGraphs;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
@@ -25,7 +25,7 @@ import uk.ac.manchester.tornado.api.enums.DataTransferMode;
  * Works directly with Qwen3State to access and mutate Qwen3-specific state fields
  * like tempQcur and tempKcur.
  */
-public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers<Qwen3TornadoWeights, Qwen3Configuration> {
+public class Qwen3Q8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3TornadoWeights, Qwen3Configuration> {
 
     // Typed reference to Qwen3-specific state
     private final Qwen3State qwen3State;

@@ -9,20 +9,20 @@ import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TaskGraph;
 
 /**
- * Abstract base for all logits layers (final vocabulary projection step).
+ * Abstract base for all logits task graphs (final vocabulary projection step).
  *
  * Holds the shared fields and calls the protected buildLogitsTaskGraph() hook once
  * during construction. Subclasses implement buildLogitsTaskGraph() to define the
  * quantization-specific task sequence; Granite variants override it to swap in
  * their scaled kernel.
  */
-public abstract class AbstractLogitsLayer extends AbstractLayer {
+public abstract class AbstractLogitsTaskGraph extends AbstractLayer {
 
     protected final String lastTaskGraphID;
     protected final SchedulerType schedulerType;
     private final TaskGraph logitsTaskGraph;
 
-    protected AbstractLogitsLayer(String name, State state, Weights weights, Configuration config,
+    protected AbstractLogitsTaskGraph(String name, State state, Weights weights, Configuration config,
             String lastTaskGraphID, SchedulerType schedulerType) {
         super(name, state, weights, config);
         this.lastTaskGraphID = lastTaskGraphID;

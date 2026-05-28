@@ -4,7 +4,7 @@ import org.beehive.gpullama3.inference.state.GraniteState;
 import org.beehive.gpullama3.inference.weights.tornado.GraniteTornadoWeights;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.model.granite.GraniteConfiguration;
-import org.beehive.gpullama3.tornadovm.layers.AbstractLogitsLayer;
+import org.beehive.gpullama3.tornadovm.layers.AbstractLogitsTaskGraph;
 import org.beehive.gpullama3.tornadovm.layers.ActivationGranite;
 import org.beehive.gpullama3.tornadovm.layers.ActivationTaskGraph;
 import org.beehive.gpullama3.tornadovm.layers.TransformerLayerTaskGraphs;
@@ -36,7 +36,7 @@ public class GraniteQ8_0PlanComponents implements SingleTokenForwardPlanComponen
         return new GraniteQ8_0FFNLayers("graniteFFN", state, weights, config, schedulerType);
     }
 
-    @Override public AbstractLogitsLayer standardLogits(String previousGraphId) {
+    @Override public AbstractLogitsTaskGraph standardLogits(String previousGraphId) {
         return new LogitsGraniteQ8_0Layer("logits", state, weights, config, previousGraphId, schedulerType);
     }
 }

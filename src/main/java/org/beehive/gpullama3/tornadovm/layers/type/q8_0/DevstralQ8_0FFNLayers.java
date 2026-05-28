@@ -6,7 +6,7 @@ import org.beehive.gpullama3.model.devstral.DevstralConfiguration;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
 import org.beehive.gpullama3.tornadovm.scheduling.WorkerGridFactory;
 import org.beehive.gpullama3.tornadovm.scheduling.SchedulerType;
-import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
+import org.beehive.gpullama3.tornadovm.layers.AbstractTransformerLayerTaskGraphs;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
@@ -16,7 +16,7 @@ import uk.ac.manchester.tornado.api.enums.DataTransferMode;
  * Q8_0 FFN layers for Devstral 2 models.
  * Uses precomputed RoPE frequencies (YaRN scaling) instead of on-the-fly computation.
  */
-public class DevstralQ8_0FFNLayers extends AbstractFFNLayers<LlamaTornadoWeights, DevstralConfiguration> {
+public class DevstralQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<LlamaTornadoWeights, DevstralConfiguration> {
 
     public DevstralQ8_0FFNLayers(String taskGraphName, State state, LlamaTornadoWeights weights, DevstralConfiguration config, SchedulerType schedulerType) {
         super(taskGraphName, state, weights, config, schedulerType);

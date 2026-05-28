@@ -1,7 +1,7 @@
 package org.beehive.gpullama3.tornadovm.plan;
 
 import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.tornadovm.layers.AbstractLogitsLayer;
+import org.beehive.gpullama3.tornadovm.layers.AbstractLogitsTaskGraph;
 import org.beehive.gpullama3.tornadovm.layers.ActivationTaskGraph;
 import org.beehive.gpullama3.tornadovm.layers.BatchPrefillTransformerLayerTaskGraphs;
 import org.beehive.gpullama3.tornadovm.layers.TransformerLayerTaskGraphs;
@@ -58,7 +58,7 @@ public class BatchPrefillDecodeForwardPlan extends ForwardPlan {
         all.addAll(decodeLayers.getFFNLayerImmutableTaskGraphs());
         decodeLayers.updateGridScheduler(scheduler);
 
-        AbstractLogitsLayer logits = components.decodeLogits(decodeLayers.getLastFFNLayerTaskGraphID());
+        AbstractLogitsTaskGraph logits = components.decodeLogits(decodeLayers.getLastFFNLayerTaskGraphID());
         all.add(logits.getImmutableTaskGraph());
         logits.updateGridScheduler(scheduler);
 

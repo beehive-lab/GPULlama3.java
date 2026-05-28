@@ -7,13 +7,13 @@ import org.beehive.gpullama3.tornadovm.kernels.GraniteKernels;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
 import org.beehive.gpullama3.tornadovm.scheduling.WorkerGridFactory;
 import org.beehive.gpullama3.tornadovm.scheduling.SchedulerType;
-import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
+import org.beehive.gpullama3.tornadovm.layers.AbstractTransformerLayerTaskGraphs;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
-public class GraniteQ8_0FFNLayers extends AbstractFFNLayers<GraniteTornadoWeights, GraniteConfiguration> {
+public class GraniteQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<GraniteTornadoWeights, GraniteConfiguration> {
 
     public GraniteQ8_0FFNLayers(String taskGraphName, GraniteState state, GraniteTornadoWeights weights, GraniteConfiguration config, SchedulerType schedulerType) {
         super(taskGraphName, state, weights, config, schedulerType);

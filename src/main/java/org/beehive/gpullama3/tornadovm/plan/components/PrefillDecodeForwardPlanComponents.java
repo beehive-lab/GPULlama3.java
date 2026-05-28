@@ -1,6 +1,6 @@
 package org.beehive.gpullama3.tornadovm.plan.components;
 
-import org.beehive.gpullama3.tornadovm.layers.AbstractLogitsLayer;
+import org.beehive.gpullama3.tornadovm.layers.AbstractLogitsTaskGraph;
 import org.beehive.gpullama3.tornadovm.layers.ActivationTaskGraph;
 import org.beehive.gpullama3.tornadovm.layers.TransformerLayerTaskGraphs;
 
@@ -16,5 +16,5 @@ public interface PrefillDecodeForwardPlanComponents extends SingleTokenForwardPl
 
     TransformerLayerTaskGraphs prefillDecodeLayers();
 
-    AbstractLogitsLayer decodeLogits(String previousGraphId);
+    AbstractLogitsTaskGraph decodeLogits(String previousGraphId);
 }

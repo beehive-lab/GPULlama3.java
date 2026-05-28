@@ -11,14 +11,14 @@ import java.util.List;
 import java.util.stream.IntStream;
 
 /**
- * Abstract base class for all FFN (Feed-Forward Network) layer implementations.
+ * Abstract base class for all transformer-layer task graph implementations.
  * Extended by model and quantization-specific subclasses that provide specific implementations.
  */
-public abstract class AbstractFFNLayers<W extends Weights, C extends Configuration> extends AbstractLayer implements TransformerLayerTaskGraphs {
+public abstract class AbstractTransformerLayerTaskGraphs<W extends Weights, C extends Configuration> extends AbstractLayer implements TransformerLayerTaskGraphs {
 
     /**
-     * List of TornadoVM {@link ImmutableTaskGraph}s, one per FFN layer.
-     * Build by {@link #setupFFNLayers()}.
+     * List of TornadoVM {@link ImmutableTaskGraph}s, one per transformer layer.
+     * Built by {@link #setupFFNLayers()}.
      */
     private List<ImmutableTaskGraph> ffnLayerITGs;
     protected final W weights;
@@ -27,7 +27,7 @@ public abstract class AbstractFFNLayers<W extends Weights, C extends Configurati
     protected String lastFFNLayerTaskGraphID;
     protected final SchedulerType schedulerType;
 
-    protected AbstractFFNLayers(String taskGraphName, State state, W weights, C config, SchedulerType schedulerType) {
+    protected AbstractTransformerLayerTaskGraphs(String taskGraphName, State state, W weights, C config, SchedulerType schedulerType) {
         super(taskGraphName, state, weights, config);
         this.weights = weights;
         this.config = config;
@@ -37,7 +37,7 @@ public abstract class AbstractFFNLayers<W extends Weights, C extends Configurati
     }
 
     /**
-     * Creates the {@link ImmutableTaskGraph} list for each FFN layer.
+     * Creates the {@link ImmutableTaskGraph} list for each transformer layer.
      */
     protected void setupFFNLayers() {
         int numLayers = config.numberOfLayers();
@@ -48,8 +48,8 @@ public abstract class AbstractFFNLayers<W extends Weights, C extends Configurati
     }
 
     /**
-     * Creates the TaskGraph for a specific FFN layer and produces the {@link ImmutableTaskGraph}.
-     * In addition, it stores the TaskGraph ID of the last FFN layer for use by the {@link AbstractLogitsLayer}.
+     * Creates the task graph for a specific transformer layer and produces the {@link ImmutableTaskGraph}.
+     * In addition, it stores the task graph ID of the last layer for use by the {@link AbstractLogitsTaskGraph}.
      */
     private ImmutableTaskGraph setupFFNLayer(int layerIndex) {
         TaskGraph tg = createFFNLayerTaskGraph(layerIndex);
@@ -62,7 +62,7 @@ public abstract class AbstractFFNLayers<W extends Weights, C extends Configurati
     }
 
     /**
-     * Model and quantization-specific implementation of the FFN layer task graph.
+     * Model and quantization-specific implementation of the transformer-layer task graph.
      */
     protected abstract TaskGraph createFFNLayerTaskGraph(int layerIndex);
 
@@ -71,8 +71,8 @@ public abstract class AbstractFFNLayers<W extends Weights, C extends Configurati
     }
 
     /**
-     * Returns the TaskGraph ID of the last FFN layer.
-     * Used by the logits layer to chain its consumeFromDevice call.
+     * Returns the task graph ID of the last transformer layer.
+     * Used by the logits task graph to chain its consumeFromDevice call.
      */
     public String getLastFFNLayerTaskGraphID() {
         return lastFFNLayerTaskGraphID;

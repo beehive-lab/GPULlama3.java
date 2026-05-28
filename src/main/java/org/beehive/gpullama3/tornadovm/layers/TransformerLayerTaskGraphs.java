@@ -8,7 +8,7 @@ import java.util.List;
 /**
  * Interface for a group of N transformer-layer {@link uk.ac.manchester.tornado.api.TaskGraph} (standard or prefill-decode variants).
  *
- * <p>Implemented by {@link AbstractFFNLayers} and its subclasses.</p>
+ * <p>Implemented by {@link AbstractTransformerLayerTaskGraphs} and its subclasses.</p>
  */
 public interface TransformerLayerTaskGraphs {
     List<ImmutableTaskGraph> getFFNLayerImmutableTaskGraphs();

@@ -7,7 +7,7 @@ import org.beehive.gpullama3.tornadovm.kernels.Phi3Kernels;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
 import org.beehive.gpullama3.tornadovm.scheduling.WorkerGridFactory;
 import org.beehive.gpullama3.tornadovm.scheduling.SchedulerType;
-import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
+import org.beehive.gpullama3.tornadovm.layers.AbstractTransformerLayerTaskGraphs;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
@@ -22,7 +22,7 @@ import uk.ac.manchester.tornado.api.enums.DataTransferMode;
  *
  * Works directly with Phi3State to access and mutate Phi3-specific state fields.
  */
-public class Phi3FP16FFNLayers extends AbstractFFNLayers<Phi3TornadoWeights, Phi3Configuration> {
+public class Phi3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Phi3TornadoWeights, Phi3Configuration> {
 
     // Typed references to Phi3-specific state and config
     private final Phi3State phi3State;
