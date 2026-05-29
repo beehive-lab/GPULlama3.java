@@ -12,7 +12,7 @@ record Config(
     double temperature, double topP, long seed, int maxTokens,
     boolean stream, boolean echo, boolean interactive, boolean instruct,
     boolean useGpu, Backend backend, String gpuMemory,
-    String heapMin, String heapMax,
+    String heapMin, String heapMax, String directMemory,
     boolean debug, boolean profiler, String profilerDumpDir,
     boolean printBytecodes, boolean threads, boolean printKernel,
     boolean fullDump, boolean verboseInit,
@@ -37,6 +37,7 @@ Config parseArgs(String[] args) {
     String gpuMemory = "14GB";
     String heapMin = "20g";
     String heapMax = "20g";
+    String directMemory = null;
     boolean debug = false;
     boolean profiler = false;
     String profilerDumpDir = null;
@@ -71,6 +72,7 @@ Config parseArgs(String[] args) {
             case "--gpu-memory" -> gpuMemory = args[++i];
             case "--heap-min" -> heapMin = args[++i];
             case "--heap-max" -> heapMax = args[++i];
+            case "--direct-memory" -> directMemory = args[++i];
             case "--debug" -> debug = true;
             case "--profiler" -> profiler = true;
             case "--profiler-dump-dir" -> profilerDumpDir = args[++i];
@@ -101,10 +103,25 @@ Config parseArgs(String[] args) {
         profilerDumpDir = System.getenv("LLAMA_ROOT") + "/profiler-log.json";
     }
 
+    // Default direct memory to 3x heap to accommodate K-quant dequantization
+    if (directMemory == null) {
+        directMemory = parseAndScale(heapMax, 3);
+    }
+
     return new Config(modelPath, prompt, systemPrompt, temperature, topP, seed, maxTokens,
-            stream, echo, interactive, instruct, useGpu, backend, gpuMemory, heapMin, heapMax,
+            stream, echo, interactive, instruct, useGpu, backend, gpuMemory, heapMin, heapMax, directMemory,
             debug, profiler, profilerDumpDir, printBytecodes, threads, printKernel, fullDump,
             verboseInit, showCommand, executeAfterShow, openclFlags, maxWaitEvents, verbose);
+}
+
+String parseAndScale(String memoryValue, int multiplier) {
+    var matcher = java.util.regex.Pattern.compile("(\\d+)([gGmM]?)").matcher(memoryValue);
+    if (matcher.matches()) {
+        long value = Long.parseLong(matcher.group(1)) * multiplier;
+        String suffix = matcher.group(2).isEmpty() ? "" : matcher.group(2);
+        return value + suffix;
+    }
+    return memoryValue;
 }
 
 void printUsage() {
@@ -138,6 +155,7 @@ void printUsage() {
               --gpu-memory <val>      GPU memory allocation (default: 14GB)
               --heap-min <val>        Min JVM heap (default: 20g)
               --heap-max <val>        Max JVM heap (default: 20g)
+              --direct-memory <val>   Max direct buffer memory (default: 3x heap-max)
 
             Debug:
               --debug                 Enable debug output
@@ -195,6 +213,7 @@ List<String> buildCommand(Config cfg, String javaHome, String tornadoSdk, String
         "-XX:+EnableJVMCI",
         "-Xms" + cfg.heapMin(),
         "-Xmx" + cfg.heapMax(),
+        "-XX:MaxDirectMemorySize=" + cfg.directMemory(),
         "--enable-preview",
         "-Djava.library.path=" + tornadoSdk + "/lib",
         "-Djdk.module.showModuleResolution=false",
