@@ -77,9 +77,10 @@ public class TornadoVMMasterPlanBatchPrefillDecode implements TornadoVMMasterPla
 
     @Override
     public void forceCopyInReadOnlyData() {
-        state.resetBatchActivationBuffers();
         state.wrapX.clear();
         state.positionHolder.init(0);
+        state.wrapXBatch.clear();
+        state.batchStartPosHolder.init(0);
 
         for (int i = 0; i <= taskGraphLayout.logitsIdx(); i++) {
             var g = executionPlan.withGraph(i)

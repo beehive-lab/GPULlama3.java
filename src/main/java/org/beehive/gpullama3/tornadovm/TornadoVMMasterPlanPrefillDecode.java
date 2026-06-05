@@ -85,7 +85,8 @@ public class TornadoVMMasterPlanPrefillDecode implements TornadoVMMasterPlan {
     /** Runs all graphs once to trigger FIRST_EXECUTION uploads and warm up CUDA graphs. */
     @Override
     public void forceCopyInReadOnlyData() {
-        state.resetActivationBuffers();
+        state.wrapX.clear();
+        state.positionHolder.init(0);
 
         for (int i = 0; i <= taskGraphLayout.logitsIdx(); i++) {
             var g = executionPlan.withGraph(i)

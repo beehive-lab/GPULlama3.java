@@ -90,7 +90,8 @@ public class TornadoVMMasterPlanSingleToken implements TornadoVMMasterPlan {
 
     @Override
     public void forceCopyInReadOnlyData() {
-        state.resetActivationBuffers();
+        state.wrapX.clear();
+        state.positionHolder.init(0);
 
         executionPlan.withGraph(taskGraphLayout.activationIdx()).withGridScheduler(tornadoVMForwardPlan.getGridScheduler()).execute();
 
