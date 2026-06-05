@@ -62,7 +62,7 @@ public class TornadoVMMasterPlanSingleToken implements TornadoVMMasterPlan {
     }
 
     @Override
-    public FloatArray tornadoVMExecuteForward(int position) {
+    public FloatArray tornadoVMForwardDecode(int position) {
         // @formatter:off
         var preGraph = executionPlan.withGraph(taskGraphLayout.activationIdx())
                 .withGridScheduler(tornadoVMForwardPlan.getGridScheduler());

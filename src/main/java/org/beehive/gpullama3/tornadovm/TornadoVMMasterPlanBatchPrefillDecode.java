@@ -146,12 +146,6 @@ public class TornadoVMMasterPlanBatchPrefillDecode implements TornadoVMMasterPla
     }
 
     @Override
-    public FloatArray tornadoVMExecuteForward(int position) {
-        throw new UnsupportedOperationException(
-                "Use tornadoVMForwardBatchPrefill / tornadoVMForwardDecode for batch plan");
-    }
-
-    @Override
     public void freeTornadoExecutionPlan() {
         executionPlan.freeDeviceMemory();
     }

@@ -814,7 +814,7 @@ public final class InferenceCore {
             default -> throw new IllegalArgumentException("Unsupported weight type: " + weights.getWeightType());
         }
 
-        return tornadoVMMasterPlan.tornadoVMExecuteForward(position);
+        return tornadoVMMasterPlan.tornadoVMForwardDecode(position);
     }
 
 }

@@ -76,7 +76,7 @@ public interface TornadoVMMasterPlan {
 
     void forceCopyInReadOnlyData();
 
-    FloatArray tornadoVMExecuteForward(int position);
+    FloatArray tornadoVMForwardDecode(int position);
 
     /** Releases all device memory held by this plan. */
     void freeTornadoExecutionPlan();

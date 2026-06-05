@@ -127,12 +127,8 @@ public class TornadoVMMasterPlanPrefillDecode implements TornadoVMMasterPlan {
      * @param position sequence position being processed
      * @return logits array for token sampling
      */
-    public FloatArray tornadoVMForwardDecode(int position) {
-        return tornadoVMExecuteForward(position);
-    }
-
     @Override
-    public FloatArray tornadoVMExecuteForward(int position) {
+    public FloatArray tornadoVMForwardDecode(int position) {
         var act = executionPlan.withGraph(taskGraphLayout.activationIdx())
                 .withGridScheduler(prefillDecodeForwardPlan.getGridScheduler());
         if (CUDA_GRAPHS) act.withCUDAGraph();
