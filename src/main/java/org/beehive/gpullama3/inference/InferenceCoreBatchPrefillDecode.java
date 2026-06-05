@@ -1,7 +1,6 @@
 package org.beehive.gpullama3.inference;
 
 import org.beehive.gpullama3.auxiliary.Parallel;
-import org.beehive.gpullama3.inference.state.LlamaState;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.standard.StandardWeights;
 import org.beehive.gpullama3.inference.weights.tornado.TornadoWeights;
@@ -174,7 +173,7 @@ public final class InferenceCoreBatchPrefillDecode {
      * then delegates graph execution to the plan.</p>
      *
      * @param model     the LLaMA model
-     * @param state     mutable inference state (must be a {@link LlamaState})
+     * @param state     mutable inference state
      * @param tokens    token ids for this chunk
      * @param startPos  sequence position of {@code tokens[0]}
      * @param chunkSize number of tokens in this chunk
@@ -184,9 +183,8 @@ public final class InferenceCoreBatchPrefillDecode {
             int chunkSize, TornadoVMMasterPlanBatchPrefillDecode plan) {
         final Configuration config = model.configuration();
         final TornadoWeights weights = (TornadoWeights) model.weights();
-        final LlamaState llamaState = (LlamaState) state;
 
-        llamaState.batchStartPosHolder.set(0, startPos);
+        state.batchStartPosHolder.set(0, startPos);
 
         switch (weights.getWeightType()) {
             case F16 -> {
@@ -194,7 +192,7 @@ public final class InferenceCoreBatchPrefillDecode {
                 long dimBytes = (long) config.dim() * Short.BYTES;
                 for (int b = 0; b < chunkSize; b++) {
                     MemorySegment.copy(embTable, (long) tokens[b] * dimBytes,
-                            llamaState.embeddingXBatch.getSegment(), (long) b * dimBytes, dimBytes);
+                            state.embeddingXBatch.getSegment(), (long) b * dimBytes, dimBytes);
                 }
             }
             case Q8_0 -> {
@@ -207,7 +205,7 @@ public final class InferenceCoreBatchPrefillDecode {
                         int blockByteOffset = (tokenId * blocksPerRow + j / Q8_0_BLOCK_SIZE) * Q8_0_BLOCK_BYTES;
                         float scale = embTable.getHalfFloat(blockByteOffset).getFloat32();
                         float quant = embTable.get(blockByteOffset + 2 + j % Q8_0_BLOCK_SIZE);
-                        llamaState.wrapXBatch.set(b * dim + j, quant * scale);
+                        state.wrapXBatch.set(b * dim + j, quant * scale);
                     }
                 }
             }

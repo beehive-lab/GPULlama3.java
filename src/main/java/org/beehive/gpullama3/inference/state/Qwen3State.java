@@ -98,9 +98,4 @@ public final class Qwen3State extends State {
 
         return fields;
     }
-
-    @Override
-    public void resetBatchActivationBuffers() {
-        throw new UnsupportedOperationException("Not implemented for Qwen3State.");
-    }
 }
