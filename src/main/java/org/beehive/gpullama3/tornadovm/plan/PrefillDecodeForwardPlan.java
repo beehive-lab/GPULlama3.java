@@ -17,9 +17,9 @@ import java.util.List;
  *
  * <p>Graph layout:</p>
  * <pre>
- *   [0]      decodeActivation
- *   [1..N]   decode transformer layers
- *   [N+1]    logits
+ *   [0]      activation   ← prefillDecodeActivation()
+ *   [1..N]   layers       ← prefillDecodeTransformerLayers()
+ *   [N+1]    logits       ← decodeLogits(String)
  * </pre>
  *
  * <p>During prefill, the master plan executes graphs 0..N (skipping logits).
@@ -36,11 +36,11 @@ public class PrefillDecodeForwardPlan extends ForwardPlan {
         List<ImmutableTaskGraph> all = new ArrayList<>(N + 2);
         GridScheduler scheduler = new GridScheduler();
 
-        ActivationTaskGraph act = components.decodeActivation();
+        ActivationTaskGraph act = components.prefillDecodeActivation();
         all.add(act.getImmutableTaskGraph());
         act.updateGridScheduler(scheduler);
 
-        TransformerLayerTaskGraphs layers = components.prefillDecodeLayers();
+        TransformerLayerTaskGraphs layers = components.prefillDecodeTransformerLayers();
         all.addAll(layers.getFFNLayerImmutableTaskGraphs());
         layers.updateGridScheduler(scheduler);
 

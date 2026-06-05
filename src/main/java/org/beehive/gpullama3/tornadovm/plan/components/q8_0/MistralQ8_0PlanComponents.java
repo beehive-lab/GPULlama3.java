@@ -28,15 +28,15 @@ public class MistralQ8_0PlanComponents implements SingleTokenForwardPlanComponen
         this.schedulerType = SchedulerDetectionService.determineSchedulerType(model);
     }
 
-    @Override public ActivationTaskGraph standardActivation() {
+    @Override public ActivationTaskGraph singleTokenActivation() {
         return new Activation("activationUpdate", state, weights, config);
     }
 
-    @Override public TransformerLayerTaskGraphs standardLayers() {
+    @Override public TransformerLayerTaskGraphs singleTokenTransformerLayers() {
         return new MistralQ8_0FFNLayers("mistralFFN", state, weights, config, schedulerType);
     }
 
-    @Override public AbstractLogitsTaskGraph standardLogits(String previousGraphId) {
+    @Override public AbstractLogitsTaskGraph singleTokenLogits(String previousGraphId) {
         return new LogitsQ8_0Layer("logits", state, weights, config, previousGraphId, schedulerType);
     }
 }

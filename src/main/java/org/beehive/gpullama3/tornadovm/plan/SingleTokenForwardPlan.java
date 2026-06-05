@@ -17,9 +17,9 @@ import java.util.List;
  *
  * <p>Graph layout:</p>
  * <pre>
- *   [0]      activation
- *   [1..N]   transformer layers
- *   [N+1]    logits
+ *   [0]      activation   ← singleTokenActivation()
+ *   [1..N]   layers       ← singleTokenTransformerLayers()
+ *   [N+1]    logits       ← singleTokenLogits(String)
  * </pre>
  */
 public class SingleTokenForwardPlan extends ForwardPlan {
@@ -33,15 +33,15 @@ public class SingleTokenForwardPlan extends ForwardPlan {
         List<ImmutableTaskGraph> all = new ArrayList<>(N + 2);
         GridScheduler scheduler = new GridScheduler();
 
-        ActivationTaskGraph act = components.standardActivation();
+        ActivationTaskGraph act = components.singleTokenActivation();
         all.add(act.getImmutableTaskGraph());
         act.updateGridScheduler(scheduler);
 
-        TransformerLayerTaskGraphs layers = components.standardLayers();
+        TransformerLayerTaskGraphs layers = components.singleTokenTransformerLayers();
         all.addAll(layers.getFFNLayerImmutableTaskGraphs());
         layers.updateGridScheduler(scheduler);
 
-        AbstractLogitsTaskGraph logits = components.standardLogits(layers.getLastFFNLayerTaskGraphID());
+        AbstractLogitsTaskGraph logits = components.singleTokenLogits(layers.getLastFFNLayerTaskGraphID());
         all.add(logits.getImmutableTaskGraph());
         logits.updateGridScheduler(scheduler);
 

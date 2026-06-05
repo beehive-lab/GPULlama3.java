@@ -43,11 +43,11 @@ public class LlamaFP16PlanComponents implements BatchPrefillDecodeForwardPlanCom
 
     // ── Activations ───────────────────────────────────────────────────────────
 
-    @Override public ActivationTaskGraph standardActivation() {
+    @Override public ActivationTaskGraph singleTokenActivation() {
         return new Activation("activationUpdate", state, weights, config);
     }
 
-    @Override public ActivationTaskGraph decodeActivation() {
+    @Override public ActivationTaskGraph prefillDecodeActivation() {
         return new Activation("decodeActivation", state, weights, config);
     }
 
@@ -61,25 +61,25 @@ public class LlamaFP16PlanComponents implements BatchPrefillDecodeForwardPlanCom
 
     // ── Transformer layer task graphs ──────────────────────────────────────────────────────
 
-    @Override public TransformerLayerTaskGraphs standardLayers() {
+    @Override public TransformerLayerTaskGraphs singleTokenTransformerLayers() {
         return new LlamaFP16FFNLayers("llamaFFN", state, weights, config, schedulerType);
     }
 
-    @Override public TransformerLayerTaskGraphs prefillDecodeLayers() {
+    @Override public TransformerLayerTaskGraphs prefillDecodeTransformerLayers() {
         return new LlamaFP16FFNLayersPrefillDecode("decode", state, weights, config, schedulerType);
     }
 
-    @Override public TransformerLayerTaskGraphs batchDecodeLayers() {
+    @Override public TransformerLayerTaskGraphs batchDecodeTransformerLayers() {
         return new LlamaFP16FFNLayersDecode("decode", state, weights, config, schedulerType);
     }
 
-    @Override public BatchPrefillTransformerLayerTaskGraphs batchPrefillLayers(int batchSize) {
+    @Override public BatchPrefillTransformerLayerTaskGraphs batchPrefillTransformerLayers(int batchSize) {
         return new LlamaFP16LayersBatchPrefill(state, weights, config, batchSize);
     }
 
     // ── Logits layers ─────────────────────────────────────────────────────────
 
-    @Override public AbstractLogitsTaskGraph standardLogits(String previousGraphId) {
+    @Override public AbstractLogitsTaskGraph singleTokenLogits(String previousGraphId) {
         return new LogitsFP16Layer("logits", state, weights, config, previousGraphId, schedulerType);
     }
 

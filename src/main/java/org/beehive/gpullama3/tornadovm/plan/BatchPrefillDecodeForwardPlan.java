@@ -18,11 +18,11 @@ import java.util.List;
  *
  * <p>Graph layout:</p>
  * <pre>
- *   [0]         batchPrefillActivation
- *   [1..N]      batch-prefill transformer layers
- *   [N+1]       decodeActivation  (consumes + re-persists KV cache)
- *   [N+2..2N+1] decode transformer layers
- *   [2N+2]      logits
+ *   [0]         batch activation    ← batchPrefillActivation(int)
+ *   [1..N]      batch layers        ← batchPrefillTransformerLayers(int)
+ *   [N+1]       decode activation   ← batchDecodeActivation(String)
+ *   [N+2..2N+1] decode layers       ← batchDecodeTransformerLayers()
+ *   [2N+2]      logits              ← decodeLogits(String)
  * </pre>
  *
  * <p>During batch prefill, the master plan executes graphs 0..N.
@@ -43,7 +43,7 @@ public class BatchPrefillDecodeForwardPlan extends ForwardPlan {
         all.add(batchAct.getImmutableTaskGraph());
         batchAct.updateGridScheduler(scheduler);
 
-        BatchPrefillTransformerLayerTaskGraphs batchLayers = components.batchPrefillLayers(batchSize);
+        BatchPrefillTransformerLayerTaskGraphs batchLayers = components.batchPrefillTransformerLayers(batchSize);
         all.addAll(batchLayers.getLayerImmutableTaskGraphs());
         batchLayers.updateGridScheduler(scheduler);
 
@@ -51,7 +51,7 @@ public class BatchPrefillDecodeForwardPlan extends ForwardPlan {
         all.add(decodeAct.getImmutableTaskGraph());
         decodeAct.updateGridScheduler(scheduler);
 
-        TransformerLayerTaskGraphs decodeLayers = components.batchDecodeLayers();
+        TransformerLayerTaskGraphs decodeLayers = components.batchDecodeTransformerLayers();
         all.addAll(decodeLayers.getFFNLayerImmutableTaskGraphs());
         decodeLayers.updateGridScheduler(scheduler);
 
