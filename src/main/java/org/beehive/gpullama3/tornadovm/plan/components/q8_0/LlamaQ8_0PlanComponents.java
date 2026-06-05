@@ -16,14 +16,11 @@ import org.beehive.gpullama3.tornadovm.layers.type.q8_0.decode.LlamaQ8_0FFNLayer
 import org.beehive.gpullama3.tornadovm.layers.type.q8_0.decode.LogitsQ8_0LayerDecode;
 import org.beehive.gpullama3.tornadovm.layers.type.q8_0.prefill.LlamaQ8_0LayersBatchPrefill;
 import org.beehive.gpullama3.tornadovm.plan.components.BatchPrefillDecodeForwardPlanComponents;
-import org.beehive.gpullama3.tornadovm.plan.components.EmbeddingPreparer;
 import org.beehive.gpullama3.tornadovm.plan.components.activation.BatchDecodeActivation;
 import org.beehive.gpullama3.tornadovm.plan.components.activation.BatchPrefillActivation;
 import org.beehive.gpullama3.tornadovm.scheduling.SchedulerDetectionService;
 import org.beehive.gpullama3.tornadovm.scheduling.SchedulerType;
-import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 
-import java.lang.foreign.MemorySegment;
 
 /**
  * {@link BatchPrefillDecodeForwardPlanComponents} for Llama + Q8_0.
@@ -94,38 +91,4 @@ public class LlamaQ8_0PlanComponents implements BatchPrefillDecodeForwardPlanCom
         return new LogitsQ8_0LayerDecode("logits", state, weights, config, previousGraphId, schedulerType);
     }
 
-    // ── Embedding preparation ─────────────────────────────────────────────────
-
-    @Override public EmbeddingPreparer embeddingPreparer() {
-        ByteArray embTable = weights.getTokenEmbeddingTable().asByteArray();
-        int dim = config.dim();
-        int blocksPerRow = (dim + BLOCK_SIZE - 1) / BLOCK_SIZE;
-        long bytesPerToken = (long) blocksPerRow * Q8_0_BLOCK_BYTES;
-
-        return new EmbeddingPreparer() {
-            @Override
-            public void initBatchState() {
-                state.wrapXBatch.clear();
-                state.batchStartPosHolder.init(0);
-            }
-            @Override
-            public void copyBatchEmbeddings(int[] tokenIds, int startPos, int chunkSize) {
-                state.batchStartPosHolder.set(0, startPos);
-                for (int b = 0; b < chunkSize; b++) {
-                    int tokenId = tokenIds[b];
-                    for (int j = 0; j < dim; j++) {
-                        int blockByteOffset = (tokenId * blocksPerRow + j / BLOCK_SIZE) * Q8_0_BLOCK_BYTES;
-                        float scale = embTable.getHalfFloat(blockByteOffset).getFloat32();
-                        float quant = embTable.get(blockByteOffset + 2 + j % BLOCK_SIZE);
-                        state.wrapXBatch.set(b * dim + j, quant * scale);
-                    }
-                }
-            }
-            @Override
-            public void copyDecodeEmbedding(int token) {
-                MemorySegment.copy(embTable.getSegment(), token * bytesPerToken,
-                        state.embeddingX.getSegment(), 0L, bytesPerToken);
-            }
-        };
-    }
 }

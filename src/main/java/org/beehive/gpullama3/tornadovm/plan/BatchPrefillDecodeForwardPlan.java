@@ -6,7 +6,6 @@ import org.beehive.gpullama3.tornadovm.layers.ActivationTaskGraph;
 import org.beehive.gpullama3.tornadovm.layers.BatchPrefillTransformerLayerTaskGraphs;
 import org.beehive.gpullama3.tornadovm.layers.TransformerLayerTaskGraphs;
 import org.beehive.gpullama3.tornadovm.plan.components.BatchPrefillDecodeForwardPlanComponents;
-import org.beehive.gpullama3.tornadovm.plan.components.EmbeddingPreparer;
 import org.beehive.gpullama3.tornadovm.plan.layout.BatchPrefillDecodeForwardTaskGraphLayout;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
@@ -32,12 +31,10 @@ import java.util.List;
 public class BatchPrefillDecodeForwardPlan extends ForwardPlan {
 
     private final BatchPrefillDecodeForwardTaskGraphLayout taskGraphLayout;
-    private final EmbeddingPreparer embeddingPreparer;
 
     public BatchPrefillDecodeForwardPlan(Model model, BatchPrefillDecodeForwardPlanComponents components, int batchSize) {
         int N = model.configuration().numberOfLayers();
         this.taskGraphLayout = new BatchPrefillDecodeForwardTaskGraphLayout(N);
-        this.embeddingPreparer = components.embeddingPreparer();
 
         List<ImmutableTaskGraph> all = new ArrayList<>(2 * N + 3);
         GridScheduler scheduler = new GridScheduler();
@@ -67,9 +64,5 @@ public class BatchPrefillDecodeForwardPlan extends ForwardPlan {
 
     public BatchPrefillDecodeForwardTaskGraphLayout getTaskGraphLayout() {
         return taskGraphLayout;
-    }
-
-    public EmbeddingPreparer getEmbeddingPreparer() {
-        return embeddingPreparer;
     }
 }

@@ -21,5 +21,4 @@ public interface BatchPrefillDecodeForwardPlanComponents extends PrefillDecodeFo
 
     BatchPrefillTransformerLayerTaskGraphs batchPrefillLayers(int batchSize);
 
-    EmbeddingPreparer embeddingPreparer();
 }
