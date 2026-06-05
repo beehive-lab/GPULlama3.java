@@ -165,30 +165,6 @@ public abstract class State {
     // Abstract method - subclasses implement their specific allocation logic and sizes
     protected abstract StateFields createStateFields(Configuration config);
 
-//    /**
-//     * Resets activation buffers before {@linl TornadoVMMasterPlan#forceCopyInReadOnlyData()}
-//     */
-//    public void resetActivationBuffers() {
-//        if (wrapX == null) {
-//            throw new IllegalStateException(
-//                    "Activation buffers not allocated: misused resetActivationBuffers() or allocation error!");
-//        }
-//        wrapX.clear();
-//        positionHolder.init(0);
-//    }
-//
-//    /**
-//     * Resets batch-prefill activation buffers before a new batch plan warmup or prefill chunk.
-//     */
-//    public void resetBatchActivationBuffers() {
-//        if (wrapXBatch == null) {
-//            throw new IllegalStateException(
-//                    "Batch prefill buffers not allocated: misused resetBatchActivationBuffers() or allocation error!");
-//        }
-//        wrapXBatch.clear();
-//        batchStartPosHolder.init(0);
-//    }
-
     // Helper class to hold all the state fields during construction
     protected static class StateFields {
         public FloatTensor x, xb, xb2, hb, hb2, q, k, v, att, logits;
