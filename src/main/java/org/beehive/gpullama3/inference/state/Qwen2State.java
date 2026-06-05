@@ -73,4 +73,9 @@ public class Qwen2State extends State {
         return fields;
 
     }
+
+    @Override
+    public void resetBatchActivationBuffers() {
+        throw new UnsupportedOperationException("Not implemented for Qwen2State.");
+    }
 }

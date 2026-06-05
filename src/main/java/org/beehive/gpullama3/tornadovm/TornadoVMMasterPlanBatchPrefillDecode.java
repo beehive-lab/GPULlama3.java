@@ -1,7 +1,6 @@
 package org.beehive.gpullama3.tornadovm;
 
 import org.beehive.gpullama3.auxiliary.RunMetrics;
-import org.beehive.gpullama3.inference.state.LlamaState;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.Model;
@@ -78,9 +77,7 @@ public class TornadoVMMasterPlanBatchPrefillDecode implements TornadoVMMasterPla
 
     @Override
     public void forceCopyInReadOnlyData() {
-        LlamaState llamaState = (LlamaState) state;
-        llamaState.wrapXBatch.clear();
-        llamaState.batchStartPosHolder.init(0);
+        state.resetBatchActivationBuffers();
         state.wrapX.clear();
         state.positionHolder.init(0);
 

@@ -123,4 +123,10 @@ public final class LlamaState extends State {
 
         return fields;
     }
+
+    @Override
+    public void resetBatchActivationBuffers() {
+        wrapXBatch.clear();
+        batchStartPosHolder.init(0);
+    }
 }

@@ -80,4 +80,9 @@ public final class GraniteState extends State {
 
         return fields;
     }
+
+    @Override
+    public void resetBatchActivationBuffers() {
+        throw new UnsupportedOperationException("Not implemented for GraniteState.");
+    }
 }

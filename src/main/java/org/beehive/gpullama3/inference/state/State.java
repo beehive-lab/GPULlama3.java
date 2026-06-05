@@ -125,6 +125,11 @@ public abstract class State {
     // Abstract method - subclasses implement their specific allocation logic and sizes
     protected abstract StateFields createStateFields(Configuration config);
 
+    /**
+     * Resets batch-prefill activation buffers before a new batch plan warmup or prefill chunk.
+     */
+    public abstract void resetBatchActivationBuffers();
+
     // Helper class to hold all the state fields during construction
     protected static class StateFields {
         public FloatTensor x, xb, xb2, hb, hb2, q, k, v, att, logits;
