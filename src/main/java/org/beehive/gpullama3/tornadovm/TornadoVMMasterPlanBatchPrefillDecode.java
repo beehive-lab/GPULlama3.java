@@ -93,15 +93,9 @@ public class TornadoVMMasterPlanBatchPrefillDecode implements TornadoVMMasterPla
 
     /**
      * Batch prefill: runs graphs 0..N (activation + N layers), skips logits.
-     *
-     * @param tokenIds  token IDs for this chunk
-     * @param startPos  sequence position of tokenIds[0]
-     * @param model     model (unused — kept for API compatibility)
-     * @param chunkSize actual number of tokens in this chunk (≤ batchSize)
+     * Caller is responsible for copying batch embeddings into state before calling this.
      */
-    public void tornadoVMForwardBatchPrefill(int[] tokenIds, int startPos, Model model, int chunkSize) {
-        batchPrefillDecodeForwardPlan.getEmbeddingPreparer().copyBatchEmbeddings(tokenIds, startPos, chunkSize);
-
+    public void tornadoVMForwardBatchPrefill() {
         var batchAct = executionPlan.withGraph(taskGraphLayout.batchActivationIdx())
                 .withGridScheduler(batchPrefillDecodeForwardPlan.getGridScheduler());
         if (CUDA_GRAPHS) batchAct.withCUDAGraph();
@@ -117,14 +111,13 @@ public class TornadoVMMasterPlanBatchPrefillDecode implements TornadoVMMasterPla
 
     /**
      * Single-token decode: runs graphs N+1..2N+2 (activation + N layers + logits).
+     * Caller is responsible for copying the decode embedding into state before calling this.
      *
-     * @param token    token ID to process
      * @param position sequence position
-     * @param model    model (unused — kept for API compatibility)
      * @return logits array for sampling
      */
-    public FloatArray tornadoVMForwardDecode(int token, int position, Model model) {
-        batchPrefillDecodeForwardPlan.getEmbeddingPreparer().copyDecodeEmbedding(token);
+    @Override
+    public FloatArray tornadoVMForwardDecode(int position) {
         state.positionHolder.set(0, position);
         state.temp.clear();
         state.tempFFN.clear();

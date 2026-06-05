@@ -185,7 +185,7 @@ public final class InferenceEngineWithBatchPrefillDecode {
             int chunkSize = chunkEnd - chunkStart;
             int[] chunk   = Arrays.copyOfRange(prefillSeq, chunkStart, chunkEnd);
 
-            InferenceCoreBatchPrefillDecode.batchForwardTornadoVMPrefill(model, chunk, pos + chunkStart, chunkSize, plan);
+            InferenceCoreBatchPrefillDecode.batchForwardTornadoVMPrefill(model, state, chunk, pos + chunkStart, chunkSize, plan);
 
             if (echo) {
                 for (int b = 0; b < chunkSize; b++) {
@@ -203,7 +203,7 @@ public final class InferenceEngineWithBatchPrefillDecode {
 
         // ── Decode ────────────────────────────────────────────────────────────
         while (pos < actualMaxTokens) {
-            var logits = InferenceCoreBatchPrefillDecode.forwardTornadoVMDecode(model, currentToken, pos, plan);
+            var logits = InferenceCoreBatchPrefillDecode.forwardTornadoVMDecode(model, state, currentToken, pos, plan);
             int nextToken = sampler.sampleToken(logits);
 
             if (echo) {
