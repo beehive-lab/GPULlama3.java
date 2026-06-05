@@ -14,7 +14,7 @@ import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
 /**
- * Phi3FP16FFNLayers: FP16 transformer-layer task graphs for Phi3 with Group Query Attention (GQA) support.
+ * Phi3FP16FFNLayers: FP16 transformer-layer TaskGraphs for Phi3 with Group Query Attention (GQA) support.
  *
  * Key Differences from Qwen2/Qwen3: - Uses combined QKV matrix (wqkv) instead of separate Q, K, V matrices - Includes splitQKV task to separate combined buffer - Uses ropeRotationPhi3 kernel for
  * position embeddings - FFN uses single wUp matrix that outputs both Gate and Up (2 * hiddenDim) - Includes splitGateUpAndSiLU task for FFN activation - Uses wDown for final FFN projection - No Q, K,

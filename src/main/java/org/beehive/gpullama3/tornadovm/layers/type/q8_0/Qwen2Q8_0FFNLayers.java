@@ -17,7 +17,7 @@ import uk.ac.manchester.tornado.api.WorkerGrid2D;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
 /**
- * Qwen2Q8_0FFNLayers: Q8_0 transformer-layer task graphs for Qwen2 with Group Query Attention (GQA) support.
+ * Qwen2Q8_0FFNLayers: Q8_0 transformer-layer TaskGraphs for Qwen2 with Group Query Attention (GQA) support.
  *
  * Key Differences from Qwen2FP16FFNLayers:
  * - Uses Q8_0-quantized weights (getQuants() and getScales())

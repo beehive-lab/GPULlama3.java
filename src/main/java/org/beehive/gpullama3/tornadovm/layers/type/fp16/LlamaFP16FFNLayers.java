@@ -265,7 +265,7 @@ public class LlamaFP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Llama
     }
 
     /**
-     * Returns the name of the predecessor task graph from which {@code wrapX} should be consumed,
+     * Returns the name of the predecessor TaskGraph from which {@code wrapX} should be consumed,
      * or {@code null} to fall back to the no-arg form (source key = own graph name).
      *
      * <p>The no-arg form is safe in CUDA-graph mode (device pointers are frozen at capture time)

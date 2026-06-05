@@ -17,7 +17,7 @@ import java.util.List;
 import java.util.stream.IntStream;
 
 /**
- * Batched-prefill transformer-layer task graphs for the unified batched prefill-decode plan (Q8_0).
+ * Batched-prefill transformer-layer TaskGraphs for the unified batched prefill-decode plan (Q8_0).
  *
  * <p>Mirrors {@link org.beehive.gpullama3.tornadovm.layers.type.fp16.prefill.LlamaFP16LayersBatchPrefill}
  * but uses Q8_0 kernels with inline dequantization. Key differences from the FP16 path:</p>

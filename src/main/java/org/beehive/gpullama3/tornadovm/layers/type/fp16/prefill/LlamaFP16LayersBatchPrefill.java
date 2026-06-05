@@ -17,7 +17,7 @@ import java.util.List;
 import java.util.stream.IntStream;
 
 /**
- * Batched-prefill transformer-layer task graphs for the unified batched prefill-decode plan
+ * Batched-prefill transformer-layer TaskGraphs for the unified batched prefill-decode plan
  * ({@link org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanBatchPrefillDecode}).
  *
  * <p>One {@link ImmutableTaskGraph} per transformer layer, each processing

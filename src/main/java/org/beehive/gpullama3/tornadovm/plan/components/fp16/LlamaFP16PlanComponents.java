@@ -59,7 +59,7 @@ public class LlamaFP16PlanComponents implements BatchPrefillDecodeForwardPlanCom
         return new BatchDecodeActivation(state, config, lastBatchLayerId, false);
     }
 
-    // ── Transformer layer task graphs ──────────────────────────────────────────────────────
+    // ── Transformer layer TaskGraphs ──────────────────────────────────────────────────────
 
     @Override public TransformerLayerTaskGraphs singleTokenTransformerLayers() {
         return new LlamaFP16FFNLayers("llamaFFN", state, weights, config, schedulerType);

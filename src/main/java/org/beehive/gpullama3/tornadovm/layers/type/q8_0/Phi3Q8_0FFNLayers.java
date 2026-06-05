@@ -14,7 +14,7 @@ import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
 /**
- * Phi3Q8_0FFNLayers: Q8_0 transformer-layer task graphs for Phi3 with Group Query Attention (GQA) support.
+ * Phi3Q8_0FFNLayers: Q8_0 transformer-layer TaskGraphs for Phi3 with Group Query Attention (GQA) support.
  *
  * Key Differences from Phi3FP16FFNLayers: - Uses Q8_0-quantized weights (getQuants() and getScales()) - Same attention and RoPE kernels as FP16 version - 8-bit integer computations with
  * dequantization - 2x memory compression vs FP16 - Same combined QKV and gate/up FFN structure

@@ -8,7 +8,7 @@ import org.beehive.gpullama3.tornadovm.layers.type.q8_0.LlamaQ8_0FFNLayers;
 import uk.ac.manchester.tornado.api.TaskGraph;
 
 /**
- * Decode transformer-layer task graphs for the single-token prefill/decode plan
+ * Decode transformer-layer TaskGraphs for the single-token prefill/decode plan
  * ({@link org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanPrefillDecode}).
  *
  * <p>Layer 0 delegates to {@link LlamaQ8_0FFNLayers#configureLayerDataTransfers} which

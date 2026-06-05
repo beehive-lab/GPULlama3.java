@@ -15,7 +15,7 @@ import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 /**
  * GPU execution plan for batched prefill + single-token decode.
  *
- * <p>A single {@link TornadoExecutionPlan} holds all task graphs for
+ * <p>A single {@link TornadoExecutionPlan} holds all TaskGraphs for
  * batched prefill and single-token decode phases:</p>
  *
  * <p>TaskGraph layout (2N+3 TaskGraphs total):</p>

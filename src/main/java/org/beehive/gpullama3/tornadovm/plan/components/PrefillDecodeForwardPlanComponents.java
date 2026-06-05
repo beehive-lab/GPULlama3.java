@@ -16,7 +16,7 @@ import org.beehive.gpullama3.tornadovm.plan.PrefillDecodeForwardPlan;
  *    The components of this chain are represented by the following components:
  *    <ul>
  *      <li>{@link #prefillDecodeActivation()} — KV-cache-aware activation (graph 0)</li>
- *      <li>{@link #prefillDecodeTransformerLayers()} — N KV-cache-aware transformer layer task graphs (graphs 1..N)</li>
+ *      <li>{@link #prefillDecodeTransformerLayers()} — N KV-cache-aware transformer layer TaskGraphs (graphs 1..N)</li>
  *      <li>{@link #decodeLogits(String)} — final RMSNorm + vocabulary projection (graph N+1)</li>
  *    </ul>
  * </p>

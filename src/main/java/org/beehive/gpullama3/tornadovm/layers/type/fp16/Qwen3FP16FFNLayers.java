@@ -14,7 +14,7 @@ import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
 /**
- * Qwen3FP16FFNLayers: FP16 transformer-layer task graphs for Qwen3 with Group Query Attention (GQA) support.
+ * Qwen3FP16FFNLayers: FP16 transformer-layer TaskGraphs for Qwen3 with Group Query Attention (GQA) support.
  *
  * Key Differences from Llama: - Supports GQA with separate KV heads (nHeadKv) - Uses Qwen3Kernels for RMSNorm with parallel offset - Custom RoPE rotation for Qwen3 - Different attention computation
  * due to GQA structure

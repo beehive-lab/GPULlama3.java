@@ -14,7 +14,7 @@ import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
 /**
- * FP16 transformer-layer task graphs for Devstral 2 models.
+ * FP16 transformer-layer TaskGraphs for Devstral 2 models.
  * Uses precomputed RoPE frequencies (YaRN scaling) instead of on-the-fly computation.
  */
 public class DevstralFP16FFNLayers extends AbstractTransformerLayerTaskGraphs<LlamaTornadoWeights, DevstralConfiguration> {

@@ -8,7 +8,7 @@ import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.TaskGraph;
 
 /**
- * Abstract base class for activation, transformer-layer, and logits task graphs.
+ * Abstract base class for activation, transformer-layer, and logits TaskGraphs.
  */
 public abstract class AbstractLayer {
 

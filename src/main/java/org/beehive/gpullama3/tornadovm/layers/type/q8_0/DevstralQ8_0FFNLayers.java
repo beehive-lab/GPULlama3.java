@@ -13,7 +13,7 @@ import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
 /**
- * Q8_0 transformer-layer task graphs for Devstral 2 models.
+ * Q8_0 transformer-layer TaskGraphs for Devstral 2 models.
  * Uses precomputed RoPE frequencies (YaRN scaling) instead of on-the-fly computation.
  */
 public class DevstralQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<LlamaTornadoWeights, DevstralConfiguration> {

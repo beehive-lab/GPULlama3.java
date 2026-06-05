@@ -271,7 +271,7 @@ public class GraniteQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Gra
 
         WorkerGrid parallelAttentionWorker = WorkerGridFactory.createAttentionWorker(config.numberOfHeads(), config.headSize());
 
-        // === Per-Layer Grid Assignments (ordered by task graph flow) ===
+        // === Per-Layer Grid Assignments (ordered by TaskGraph flow) ===
         for (int i = 0; i < config.numberOfLayers(); i++) {
             // --- Attention Block ---
             // RMS Normalization

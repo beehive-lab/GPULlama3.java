@@ -16,7 +16,7 @@ import org.beehive.gpullama3.tornadovm.plan.SingleTokenForwardPlan;
  *    The components of this chain are represented by the following components:
  *    <ul>
  *      <li>{@link #singleTokenActivation()} — embedding lookup → FP32 activation (graph 0)</li>
- *      <li>{@link #singleTokenTransformerLayers()} — N transformer layer task graphs (graphs 1..N)</li>
+ *      <li>{@link #singleTokenTransformerLayers()} — N transformer layer TaskGraphs (graphs 1..N)</li>
  *      <li>{@link #singleTokenLogits(String)} — final RMSNorm + vocabulary projection (graph N+1)</li>
  *    </ul>
  * </p>
