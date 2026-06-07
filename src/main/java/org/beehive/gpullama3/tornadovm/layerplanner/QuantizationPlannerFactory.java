@@ -1,6 +1,7 @@
 package org.beehive.gpullama3.tornadovm.layerplanner;
 
 import org.beehive.gpullama3.inference.state.DevstralState;
+import org.beehive.gpullama3.inference.state.Gemma4State;
 import org.beehive.gpullama3.inference.state.GraniteState;
 import org.beehive.gpullama3.tensor.GGMLType;
 import org.beehive.gpullama3.inference.state.LlamaState;
@@ -10,6 +11,7 @@ import org.beehive.gpullama3.inference.state.Qwen3State;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.fp16.DevstralFP16LayerPlanner;
+import org.beehive.gpullama3.tornadovm.layerplanner.model.fp16.Gemma4FP16LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.fp16.GraniteFP16LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.fp16.LlamaFP16LayerPlanner;
 import org.beehive.gpullama3.tornadovm.layerplanner.model.fp16.MistralFP16LayerPlanner;
@@ -63,6 +65,7 @@ public class QuantizationPlannerFactory {
             case DEVSTRAL_2 -> new DevstralFP16LayerPlanner((DevstralState) state, model);
             case QWEN_2 -> new Qwen2FP16LayerPlanner((Qwen2State) state, model);
             case QWEN_3 -> new Qwen3FP16LayerPlanner((Qwen3State) state, model);
+            case GEMMA_4 -> new Gemma4FP16LayerPlanner((Gemma4State) state, model);
             case PHI_3 -> new Phi3FP16LayerPlanner((Phi3State) state, model);
             case GRANITE -> new GraniteFP16LayerPlanner((GraniteState) state, model);
             case DEEPSEEK_R1_DISTILL_QWEN -> new Qwen2FP16LayerPlanner((Qwen2State) state, model);
