@@ -9,6 +9,7 @@ import java.util.Locale;
 
 public class SchedulerDetectionService {
 
+    // @formatter:off
     public static SchedulerType determineSchedulerType(Model model) {
         TornadoRuntime tornadoRuntime = TornadoRuntimeProvider.getTornadoRuntime();
         String platformName = tornadoRuntime.getBackend(0)
@@ -23,4 +24,5 @@ public class SchedulerDetectionService {
 
         return (isNvidia && isNotMistral) ? SchedulerType.NVIDIA : SchedulerType.NON_NVIDIA;
     }
+    // @formatter:on
 }

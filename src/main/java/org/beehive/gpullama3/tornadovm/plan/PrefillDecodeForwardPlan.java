@@ -12,6 +12,7 @@ import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import java.util.ArrayList;
 import java.util.List;
 
+// @formatter:off
 /**
  * Topology plan for the N+2 prefill/decode forward pass.
  *
@@ -25,6 +26,7 @@ import java.util.List;
  * <p>During prefill, the master plan executes graphs 0..N (skipping logits).
  * During decode, all N+2 graphs run.</p>
  */
+// @formatter:on
 public class PrefillDecodeForwardPlan extends ForwardPlan {
 
     private final PrefillDecodeForwardTaskGraphLayout taskGraphLayout;

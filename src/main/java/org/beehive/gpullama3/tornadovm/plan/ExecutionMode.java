@@ -1,5 +1,6 @@
 package org.beehive.gpullama3.tornadovm.plan;
 
+// @formatter:off
 /**
  * Selects the GPU execution topology for a TornadoVM inference plan.
  *
@@ -14,3 +15,4 @@ public enum ExecutionMode {
     PREFILL_DECODE,
     BATCH_PREFILL_DECODE
 }
+// @formatter:on

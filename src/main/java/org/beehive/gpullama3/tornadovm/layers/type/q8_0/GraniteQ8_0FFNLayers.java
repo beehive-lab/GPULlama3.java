@@ -20,93 +20,7 @@ public class GraniteQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Gra
         setupFFNLayers();
     }
 
-    /**
-     * Transformer Layer Task Flow (LlamaQ8FFNLayers)
-     *
-     * ══════════════════════════════════════════════════════════════════════════════
-     *                              ATTENTION BLOCK
-     * ══════════════════════════════════════════════════════════════════════════════
-     *
-     *   wrapX (FP32)
-     *      │
-     *      ▼
-     *  ┌─────────────────┐
-     *  │ attn_rms_reduce │──▶ temp (partial sums)
-     *  └────────┬────────┘
-     *           │
-     *           ▼ (optional: NON_NVIDIA only)
-     *  ┌──────────────────┐
-     *  │ attn_rms_finalize│──▶ temp (final scale)
-     *  └────────┬─────────┘
-     *           │
-     *           ▼
-     *  ┌────────────────┐
-     *  │ attn_rms_apply │──▶ wrapXb (normalized, FP32)
-     *  └───────┬────────┘
-     *          │
-     *          ▼
-     *  ┌────────────────┐      ┌─────────────────────────────┐
-     *  │ qkv_projection │──────▶│ wrapQ, wrapK, wrapV (FP32) │
-     *  └───────┬────────┘      └─────────────────────────────┘
-     *          │
-     *          ▼
-     *  ┌───────────────────┐   ┌─────────────────────────────────────┐
-     *  │ rope_and_kv_cache │───▶│ Q,K rotated + KeyCache, ValueCache │
-     *  └─────────┬─────────┘   └─────────────────────────────────────┘
-     *            │
-     *            ▼
-     *  ┌───────────┐
-     *  │ attention │──▶ wrapXb (attention output)
-     *  └─────┬─────┘
-     *        │
-     *        ▼
-     *  ┌──────────────────┐
-     *  │ attn_output_proj │──▶ wrapX += Wo · wrapXb (residual connection)
-     *  └────────┬─────────┘
-     *           │
-     * ══════════╪═══════════════════════════════════════════════════════════════════
-     *           │                    FFN BLOCK
-     * ══════════╪═══════════════════════════════════════════════════════════════════
-     *           │
-     *           ▼
-     *  ┌────────────────┐
-     *  │ ffn_rms_reduce │──▶ tempFFN (partial sums)
-     *  └───────┬────────┘
-     *          │
-     *          ▼ (optional: NON_NVIDIA only)
-     *  ┌─────────────────┐
-     *  │ ffn_rms_finalize│──▶ tempFFN (final scale)
-     *  └────────┬────────┘
-     *           │
-     *           ▼
-     *  ┌─────────────────┐
-     *  │ rms_ffn_gate_up │──▶ wrapHb = SiLU(RMSNorm(x)·W1) ⊙ (RMSNorm(x)·W3)
-     *  └────────┬────────┘    (fully fused: RMS reduce/apply + W1/W3 matmuls + SiLU + GLU)
-     *           │
-     *           ▼
-     *  ┌──────────────┐
-     *  │ ffn_down_proj│──▶ wrapX += W2 · wrapHb (residual connection)
-     *  └──────┬───────┘
-     *         │
-     *         ▼
-     *     wrapX (FP32) ──▶ [next layer or logits]
-     *
-     * ══════════════════════════════════════════════════════════════════════════════
-     *
-     * Task Count: 9 tasks (7 if NVIDIA, skipping rms_finalize steps)
-     *
-     * Data Flow Summary:
-     *   Input:  wrapX (FP32) - hidden state from previous layer
-     *   Output: wrapX (FP32) - updated hidden state with residual connections
-     *
-     * Key Fusion Points:
-     *   • qkv_projection:   Fused Q/K/V matmuls with Q8 dequantization (3→1 kernel)
-     *   • rope_and_kv_cache: Fused RoPE rotation + cache write (2→1 kernel)
-     *   • rms_ffn_gate_up:  Fully fused RMS norm + W1/W3 matmuls + SiLU + GLU (5→1 kernel)
-     *
-     * Quantization: Q8_0 format (8-bit weights with block-wise scaling)
-     *
-     */
+    // @formatter:off
     @Override
     protected TaskGraph createFFNLayerTaskGraph(int layerIndex) {
         var layerTaskGraphName = "layer_" + layerIndex;
@@ -224,33 +138,43 @@ public class GraniteQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Gra
 
         return unifiedLayer;
     }
+    // @formatter:on
 
+    // @formatter:off
     protected TaskGraph configureLayerDataTransfers(TaskGraph unifiedLayer, int layerIndex) {
         // First layer: Transfer initial data to device (one-time transfer)
         if (layerIndex == 0) {
             // Transfer all attention-related data: query, key, value matrices and their caches
-            unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION,
-                    state.positionHolder,
-                    state.temp, state.tempFFN); //
-            unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION, //
-                    context,
-                    state.wrapXb, state.wrapXb2, //
-                    state.wrapQ, state.wrapK, state.wrapV, //
-                    state.wrapKeyCache, state.wrapValueCache, //
-                    state.wrapAtt, state.wrapHb); //
+            unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION, state.positionHolder,
+                                                                            state.temp,
+                                                                            state.tempFFN);
+            unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION, context,
+                                                                            state.wrapXb,
+                                                                            state.wrapXb2,
+                                                                            state.wrapQ,
+                                                                            state.wrapK,
+                                                                            state.wrapV,
+                                                                            state.wrapKeyCache,
+                                                                            state.wrapValueCache,
+                                                                            state.wrapAtt,
+                                                                            state.wrapHb);
         } else {
             // Subsequent layers: Consume data already on device from previous layer
-            unifiedLayer.consumeFromDevice(
-                    context,
-                    state.wrapXb, state.wrapXb2, //
-                    state.wrapQ, state.wrapK, state.wrapV, //
-                    state.wrapKeyCache, state.wrapValueCache, //
-                    state.wrapAtt, state.wrapHb, //
-                    state.positionHolder //
-            );
+            unifiedLayer.consumeFromDevice(context,
+                                           state.wrapXb,
+                                           state.wrapXb2,
+                                           state.wrapQ,
+                                           state.wrapK,
+                                           state.wrapV,
+                                           state.wrapKeyCache,
+                                           state.wrapValueCache,
+                                           state.wrapAtt,
+                                           state.wrapHb,
+                                           state.positionHolder);
         }
         return unifiedLayer;
     }
+    // @formatter:on
 
     @Override
     public GridScheduler updateGridScheduler(GridScheduler tornadoForwardScheduler) {
@@ -293,6 +217,7 @@ public class GraniteQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Gra
         return tornadoForwardScheduler;
     }
 
+    // @formatter:off
     private TaskGraph configureAttention(TaskGraph unifiedLayer, int layerIndex, GraniteConfiguration config) {
         if (schedulerType == SchedulerType.NVIDIA) {
             // Flash Attention (optimized for NVIDIA GPUs)
@@ -310,8 +235,7 @@ public class GraniteQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Gra
                     state.positionHolder,
                     layerIndex,
                     config.contextLength(),
-                    config.attentionScale()
-            );
+                    config.attentionScale());
         } else {
             // Standard parallel attention (for non-NVIDIA backends)
             return unifiedLayer.task("attention",
@@ -334,4 +258,3 @@ public class GraniteQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Gra
     }
     // @formatter:on
 }
-

@@ -28,15 +28,18 @@ public class Qwen3Q8_0PlanComponents implements SingleTokenForwardPlanComponents
         this.schedulerType = SchedulerDetectionService.determineSchedulerType(model);
     }
 
-    @Override public ActivationTaskGraph singleTokenActivation() {
+    @Override
+    public ActivationTaskGraph singleTokenActivation() {
         return new Activation("activationUpdate", state, weights, config);
     }
 
-    @Override public TransformerLayerTaskGraphs singleTokenTransformerLayers() {
+    @Override
+    public TransformerLayerTaskGraphs singleTokenTransformerLayers() {
         return new Qwen3Q8_0FFNLayers("qwen3FFN", state, weights, config, schedulerType);
     }
 
-    @Override public AbstractLogitsTaskGraph singleTokenLogits(String previousGraphId) {
+    @Override
+    public AbstractLogitsTaskGraph singleTokenLogits(String previousGraphId) {
         return new LogitsQ8_0Layer("logits", state, weights, config, previousGraphId, schedulerType);
     }
 }

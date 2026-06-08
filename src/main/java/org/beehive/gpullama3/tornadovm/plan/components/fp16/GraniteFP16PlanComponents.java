@@ -28,15 +28,18 @@ public class GraniteFP16PlanComponents implements SingleTokenForwardPlanComponen
         this.schedulerType = SchedulerDetectionService.determineSchedulerType(model);
     }
 
-    @Override public ActivationTaskGraph singleTokenActivation() {
+    @Override
+    public ActivationTaskGraph singleTokenActivation() {
         return new ActivationGranite("activationUpdate", state, weights, config);
     }
 
-    @Override public TransformerLayerTaskGraphs singleTokenTransformerLayers() {
+    @Override
+    public TransformerLayerTaskGraphs singleTokenTransformerLayers() {
         return new GraniteFP16FFNLayers("graniteFFN", state, weights, config, schedulerType);
     }
 
-    @Override public AbstractLogitsTaskGraph singleTokenLogits(String previousGraphId) {
+    @Override
+    public AbstractLogitsTaskGraph singleTokenLogits(String previousGraphId) {
         return new LogitsGraniteFP16Layer("logits", state, weights, config, previousGraphId, schedulerType);
     }
 }

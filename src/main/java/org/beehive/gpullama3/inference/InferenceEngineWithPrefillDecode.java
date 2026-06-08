@@ -21,13 +21,13 @@ import java.util.function.IntConsumer;
  *
  * <p>The split loop runs two phases:</p>
  * <ol>
- *   <li><b>Prefill</b> (positions 0..N-1): calls
- *       {@link InferenceCoreWithPrefillDecode#forwardJavaPrefill} for every
- *       prompt token. Vocabulary projection is skipped because these logits
- *       are discarded. KV cache is populated identically to the baseline.</li>
- *   <li><b>Decode</b> (position N onward): calls
- *       {@link InferenceCore#forwardJava} per generated token.
- *       Behaviour is identical to the baseline decode path.</li>
+ * <li><b>Prefill</b> (positions 0..N-1): calls
+ * {@link InferenceCoreWithPrefillDecode#forwardJavaPrefill} for every
+ * prompt token. Vocabulary projection is skipped because these logits
+ * are discarded. KV cache is populated identically to the baseline.</li>
+ * <li><b>Decode</b> (position N onward): calls
+ * {@link InferenceCore#forwardJava} per generated token.
+ * Behaviour is identical to the baseline decode path.</li>
  * </ol>
  *
  * <p>Activated by {@code -Dllama.withPrefillDecode=true} with
@@ -36,18 +36,24 @@ import java.util.function.IntConsumer;
  */
 public final class InferenceEngineWithPrefillDecode {
 
-    private InferenceEngineWithPrefillDecode() {}
+    private InferenceEngineWithPrefillDecode() {
+    }
 
     /**
      * LLaMA token generation with sequential prefill/decode separation (CPU, Phase 1).
      *
      * <p>Drop-in replacement for {@link InferenceEngine#generateTokensLlama}.</p>
      */
-    public static List<Integer> generateTokensLlama(
-            Model model, State state, int startPosition,
-            List<Integer> promptTokens, Set<Integer> stopTokens,
-            int maxTokens, Sampler sampler, boolean echo,
-            IntConsumer onTokenGenerated) {
+    // @formatter:off
+    public static List<Integer> generateTokensLlama(Model model,
+                                                    State state,
+                                                    int startPosition,
+                                                    List<Integer> promptTokens,
+                                                    Set<Integer> stopTokens,
+                                                    int maxTokens,
+                                                    Sampler sampler,
+                                                    boolean echo,
+                                                    IntConsumer onTokenGenerated) {
 
         long startNanos = System.nanoTime();
 
@@ -117,17 +123,22 @@ public final class InferenceEngineWithPrefillDecode {
      *
      * <p>Split loop:</p>
      * <ul>
-     *   <li><b>Prefill</b> (0..N-1): {@link InferenceCoreWithPrefillDecode#forwardTornadoVMPrefill}
-     *       — layer graphs execute, logits graph is skipped.</li>
-     *   <li><b>Decode</b> (N onward): {@link InferenceCore#forwardTornadoVM}
-     *       — identical to the baseline GPU decode path.</li>
+     * <li><b>Prefill</b> (0..N-1): {@link InferenceCoreWithPrefillDecode#forwardTornadoVMPrefill}
+     * — layer graphs execute, logits graph is skipped.</li>
+     * <li><b>Decode</b> (N onward): {@link InferenceCore#forwardTornadoVM}
+     * — identical to the baseline GPU decode path.</li>
      * </ul>
      */
-    public static List<Integer> generateTokensGPULlama(
-            Model model, State state, int startPosition,
-            List<Integer> promptTokens, Set<Integer> stopTokens,
-            int maxTokens, Sampler sampler, boolean echo,
-            IntConsumer onTokenGenerated, TornadoVMMasterPlan tornadoVMPlan) {
+    public static List<Integer> generateTokensGPULlama(Model model,
+                                                       State state,
+                                                       int startPosition,
+                                                       List<Integer> promptTokens,
+                                                       Set<Integer> stopTokens,
+                                                       int maxTokens,
+                                                       Sampler sampler,
+                                                       boolean echo,
+                                                       IntConsumer onTokenGenerated,
+                                                       TornadoVMMasterPlan tornadoVMPlan) {
 
         long startNanos = System.nanoTime();
 
@@ -135,8 +146,7 @@ public final class InferenceEngineWithPrefillDecode {
         int actualMaxTokens = (maxTokens < 0 || config.contextLength() < maxTokens)
                 ? config.contextLength() : maxTokens;
 
-        TornadoVMMasterPlanPrefillDecode prefillPlan =
-                (TornadoVMMasterPlanPrefillDecode) tornadoVMPlan;
+        TornadoVMMasterPlanPrefillDecode prefillPlan = (TornadoVMMasterPlanPrefillDecode) tornadoVMPlan;
 
         List<Integer> generatedTokens = new ArrayList<>();
 
@@ -189,4 +199,5 @@ public final class InferenceEngineWithPrefillDecode {
 
         return generatedTokens;
     }
+    // @formatter:on
 }

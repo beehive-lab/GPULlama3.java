@@ -97,6 +97,7 @@ public class Qwen3Q8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
     /**
      * Setup a single transformer layer for Qwen3 with GQA (Q8_0 quantized)
      */
+    // @formatter:off
     @Override
     protected TaskGraph createFFNLayerTaskGraph(int layerIndex) {
         var taskGraphName = "layer_" + layerIndex;
@@ -286,25 +287,35 @@ public class Qwen3Q8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
     protected TaskGraph configureLayerDataTransfers(TaskGraph unifiedLayer, int layerIndex) {
         if (layerIndex == 0) {
             // First layer: Transfer temporary buffers and QKV state every execution
-            unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION,
-                    qwen3State.positionHolder, qwen3State.temp, qwen3State.tempFFN);
-
-            Qwen3State qwen3State = (Qwen3State) state;
-            unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION,
-                    qwen3State.tempQcur, qwen3State.tempKcur);
-
+            unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION, qwen3State.positionHolder,
+                                                                            qwen3State.temp,
+                                                                            qwen3State.tempFFN);
+            unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION, qwen3State.tempQcur,
+                                                                            qwen3State.tempKcur);
             // First execution: allocate workspace buffers
-            unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION, //
-                    context, qwen3State.wrapXb, qwen3State.wrapXb2,  //
-                    qwen3State.wrapQ, qwen3State.wrapK, qwen3State.wrapV, //
-                    qwen3State.wrapKeyCache, qwen3State.wrapValueCache, //
-                    qwen3State.wrapAtt, qwen3State.wrapHb); //
+            unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION, context,
+                                                                            qwen3State.wrapXb,
+                                                                            qwen3State.wrapXb2,
+                                                                            qwen3State.wrapQ,
+                                                                            qwen3State.wrapK,
+                                                                            qwen3State.wrapV,
+                                                                            qwen3State.wrapKeyCache,
+                                                                            qwen3State.wrapValueCache,
+                                                                            qwen3State.wrapAtt,
+                                                                            qwen3State.wrapHb);
         } else {
             // Subsequent layers: Consume data from previous layer
-            unifiedLayer.consumeFromDevice(context, qwen3State.wrapXb, qwen3State.wrapXb2, //
-                    qwen3State.wrapQ, qwen3State.wrapK, qwen3State.wrapV, //
-                    qwen3State.wrapKeyCache, qwen3State.wrapValueCache, //
-                    qwen3State.wrapAtt, qwen3State.wrapHb, qwen3State.positionHolder); //
+            unifiedLayer.consumeFromDevice(context,
+                                           qwen3State.wrapXb,
+                                           qwen3State.wrapXb2,
+                                           qwen3State.wrapQ,
+                                           qwen3State.wrapK,
+                                           qwen3State.wrapV,
+                                           qwen3State.wrapKeyCache,
+                                           qwen3State.wrapValueCache,
+                                           qwen3State.wrapAtt,
+                                           qwen3State.wrapHb,
+                                           qwen3State.positionHolder);
 
             Qwen3State qwen3State = (Qwen3State) state;
             unifiedLayer.consumeFromDevice(qwen3State.tempQcur, qwen3State.tempKcur); //

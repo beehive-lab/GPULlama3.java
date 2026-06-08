@@ -1,5 +1,6 @@
 package org.beehive.gpullama3.tornadovm.plan.layout;
 
+// @formatter:off
 /**
  * Graph-index arithmetic for the N+2 single-token forward plan.
  *
@@ -15,3 +16,4 @@ public record SingleTokenForwardTaskGraphLayout(int N) {
     public int logitsIdx()      { return N + 1; }
     public int totalGraphs()    { return N + 2; }
 }
+// @formatter:on

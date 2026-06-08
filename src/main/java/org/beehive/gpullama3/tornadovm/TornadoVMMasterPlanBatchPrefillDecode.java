@@ -12,6 +12,7 @@ import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TornadoExecutionPlan;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
+// @formatter:off
 /**
  * GPU execution plan for batched prefill + single-token decode.
  *
@@ -27,10 +28,11 @@ import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
  *   [2N+2]      logits
  * </pre>
  */
+// @formatter:on
 public class TornadoVMMasterPlanBatchPrefillDecode implements TornadoVMMasterPlan {
 
-    private final State         state;
-    private final Model         model;
+    private final State state;
+    private final Model model;
     private final Configuration config;
 
     BatchPrefillDecodeForwardPlan batchPrefillDecodeForwardPlan;
@@ -43,15 +45,17 @@ public class TornadoVMMasterPlanBatchPrefillDecode implements TornadoVMMasterPla
             System.err.println("\nStarting TornadoVM initialization...");
         }
 
-        this.state  = initialState;
-        this.model  = model;
+        this.state = initialState;
+        this.model = model;
         this.config = model.configuration();
 
         long startTime = System.nanoTime();
         this.executionPlan = createExecutionPlan();
         long planCreationTime = System.nanoTime();
 
-        if (CUDA_GRAPHS) executionPlan.withAllGraphs().withCUDAGraph();
+        if (CUDA_GRAPHS) {
+            executionPlan.withAllGraphs().withCUDAGraph();
+        }
         executionPlan.withPreCompilation();
         long warmupTime = System.nanoTime();
 
@@ -66,8 +70,7 @@ public class TornadoVMMasterPlanBatchPrefillDecode implements TornadoVMMasterPla
     @Override
     public TornadoExecutionPlan createExecutionPlan() {
         GGMLType weightType = model.weights().getWeightType();
-        this.batchPrefillDecodeForwardPlan =
-                ForwardPlanFactory.createBatchPrefillDecode(weightType, state, model);
+        this.batchPrefillDecodeForwardPlan = ForwardPlanFactory.createBatchPrefillDecode(weightType, state, model);
         this.taskGraphLayout = batchPrefillDecodeForwardPlan.getTaskGraphLayout();
         var taskGraphs = batchPrefillDecodeForwardPlan.getImmutableTaskGraphs();
         return new TornadoExecutionPlan(taskGraphs.toArray(new ImmutableTaskGraph[0]));
@@ -75,6 +78,7 @@ public class TornadoVMMasterPlanBatchPrefillDecode implements TornadoVMMasterPla
 
     // ── Initialisation ────────────────────────────────────────────────────────
 
+    // @formatter:off
     @Override
     public void forceCopyInReadOnlyData() {
         state.wrapX.clear();
@@ -84,11 +88,14 @@ public class TornadoVMMasterPlanBatchPrefillDecode implements TornadoVMMasterPla
 
         for (int i = 0; i <= taskGraphLayout.logitsIdx(); i++) {
             var g = executionPlan.withGraph(i)
-                    .withGridScheduler(batchPrefillDecodeForwardPlan.getGridScheduler());
-            if (CUDA_GRAPHS) g.withCUDAGraph();
+                                 .withGridScheduler(batchPrefillDecodeForwardPlan.getGridScheduler());
+            if (CUDA_GRAPHS) {
+                g.withCUDAGraph();
+            }
             g.execute();
         }
     }
+    // @formatter:on
 
     // ── Forward passes ────────────────────────────────────────────────────────
 
@@ -96,27 +103,35 @@ public class TornadoVMMasterPlanBatchPrefillDecode implements TornadoVMMasterPla
      * Batch prefill: runs graphs 0..N (activation + N layers), skips logits.
      * Caller is responsible for copying batch embeddings into state before calling this.
      */
+    // @formatter:off
     public void tornadoVMForwardBatchPrefill() {
         var batchAct = executionPlan.withGraph(taskGraphLayout.batchActivationIdx())
-                .withGridScheduler(batchPrefillDecodeForwardPlan.getGridScheduler());
-        if (CUDA_GRAPHS) batchAct.withCUDAGraph();
+                                    .withGridScheduler(batchPrefillDecodeForwardPlan.getGridScheduler());
+        if (CUDA_GRAPHS) {
+            batchAct.withCUDAGraph();
+        }
         batchAct.execute();
 
         for (int l = 0; l < config.numberOfLayers(); l++) {
             var batchLayer = executionPlan.withGraph(taskGraphLayout.batchLayerIdx(l))
-                    .withGridScheduler(batchPrefillDecodeForwardPlan.getGridScheduler());
-            if (CUDA_GRAPHS) batchLayer.withCUDAGraph();
+                                          .withGridScheduler(batchPrefillDecodeForwardPlan.getGridScheduler());
+            if (CUDA_GRAPHS) {
+                batchLayer.withCUDAGraph();
+            }
             batchLayer.execute();
         }
     }
+    // @formatter:on
 
     /**
      * Single-token decode: runs graphs N+1..2N+2 (activation + N layers + logits).
      * Caller is responsible for copying the decode embedding into state before calling this.
      *
-     * @param position sequence position
+     * @param position
+     *     sequence position
      * @return logits array for sampling
      */
+    // @formatter:off
     @Override
     public FloatArray tornadoVMForwardDecode(int position) {
         state.positionHolder.set(0, position);
@@ -124,14 +139,18 @@ public class TornadoVMMasterPlanBatchPrefillDecode implements TornadoVMMasterPla
         state.tempFFN.clear();
 
         var decodeAct = executionPlan.withGraph(taskGraphLayout.decodeActivationIdx())
-                .withGridScheduler(batchPrefillDecodeForwardPlan.getGridScheduler());
-        if (CUDA_GRAPHS) decodeAct.withCUDAGraph();
+                                     .withGridScheduler(batchPrefillDecodeForwardPlan.getGridScheduler());
+        if (CUDA_GRAPHS) {
+            decodeAct.withCUDAGraph();
+        }
         decodeAct.execute();
 
         for (int l = 0; l < config.numberOfLayers(); l++) {
             var decodeLayer = executionPlan.withGraph(taskGraphLayout.decodeLayerIdx(l))
-                    .withGridScheduler(batchPrefillDecodeForwardPlan.getGridScheduler());
-            if (CUDA_GRAPHS) decodeLayer.withCUDAGraph();
+                                           .withGridScheduler(batchPrefillDecodeForwardPlan.getGridScheduler());
+            if (CUDA_GRAPHS) {
+                decodeLayer.withCUDAGraph();
+            }
             decodeLayer.execute();
         }
 
@@ -139,12 +158,15 @@ public class TornadoVMMasterPlanBatchPrefillDecode implements TornadoVMMasterPla
         state.wrapLogits.clear();
 
         var logits = executionPlan.withGraph(taskGraphLayout.logitsIdx())
-                .withGridScheduler(batchPrefillDecodeForwardPlan.getGridScheduler());
-        if (CUDA_GRAPHS) logits.withCUDAGraph();
+                                  .withGridScheduler(batchPrefillDecodeForwardPlan.getGridScheduler());
+        if (CUDA_GRAPHS) {
+            logits.withCUDAGraph();
+        }
         logits.execute();
 
         return state.wrapLogits;
     }
+    // @formatter:on
 
     @Override
     public void freeTornadoExecutionPlan() {

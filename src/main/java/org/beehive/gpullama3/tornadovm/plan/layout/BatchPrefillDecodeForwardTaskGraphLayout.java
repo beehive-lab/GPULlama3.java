@@ -1,5 +1,6 @@
 package org.beehive.gpullama3.tornadovm.plan.layout;
 
+// @formatter:off
 /**
  * Graph-index arithmetic for the 2N+3 batch-prefill/decode forward plan.
  *
@@ -19,3 +20,4 @@ public record BatchPrefillDecodeForwardTaskGraphLayout(int N) {
     public int logitsIdx()            { return 2 * N + 2; }
     public int totalGraphs()          { return 2 * N + 3; }
 }
+// @formatter:on

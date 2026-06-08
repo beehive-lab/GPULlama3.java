@@ -21,7 +21,6 @@ import org.beehive.gpullama3.tornadovm.plan.components.activation.BatchPrefillAc
 import org.beehive.gpullama3.tornadovm.scheduling.SchedulerDetectionService;
 import org.beehive.gpullama3.tornadovm.scheduling.SchedulerType;
 
-
 /**
  * {@link BatchPrefillDecodeForwardPlanComponents} for Llama + FP16.
  *
@@ -43,47 +42,57 @@ public class LlamaFP16PlanComponents implements BatchPrefillDecodeForwardPlanCom
 
     // ── Activations ───────────────────────────────────────────────────────────
 
-    @Override public ActivationTaskGraph singleTokenActivation() {
+    @Override
+    public ActivationTaskGraph singleTokenActivation() {
         return new Activation("activationUpdate", state, weights, config);
     }
 
-    @Override public ActivationTaskGraph prefillDecodeActivation() {
+    @Override
+    public ActivationTaskGraph prefillDecodeActivation() {
         return new Activation("decodeActivation", state, weights, config);
     }
 
-    @Override public ActivationTaskGraph batchPrefillActivation(int batchSize) {
+    @Override
+    public ActivationTaskGraph batchPrefillActivation(int batchSize) {
         return new BatchPrefillActivation(state, config, batchSize, false);
     }
 
-    @Override public ActivationTaskGraph batchDecodeActivation(String lastBatchLayerId) {
+    @Override
+    public ActivationTaskGraph batchDecodeActivation(String lastBatchLayerId) {
         return new BatchDecodeActivation(state, config, lastBatchLayerId, false);
     }
 
     // ── Transformer layer TaskGraphs ──────────────────────────────────────────────────────
 
-    @Override public TransformerLayerTaskGraphs singleTokenTransformerLayers() {
+    @Override
+    public TransformerLayerTaskGraphs singleTokenTransformerLayers() {
         return new LlamaFP16FFNLayers("llamaFFN", state, weights, config, schedulerType);
     }
 
-    @Override public TransformerLayerTaskGraphs prefillDecodeTransformerLayers() {
+    @Override
+    public TransformerLayerTaskGraphs prefillDecodeTransformerLayers() {
         return new LlamaFP16FFNLayersPrefillDecode("decode", state, weights, config, schedulerType);
     }
 
-    @Override public TransformerLayerTaskGraphs batchDecodeTransformerLayers() {
+    @Override
+    public TransformerLayerTaskGraphs batchDecodeTransformerLayers() {
         return new LlamaFP16FFNLayersDecode("decode", state, weights, config, schedulerType);
     }
 
-    @Override public BatchPrefillTransformerLayerTaskGraphs batchPrefillTransformerLayers(int batchSize) {
+    @Override
+    public BatchPrefillTransformerLayerTaskGraphs batchPrefillTransformerLayers(int batchSize) {
         return new LlamaFP16LayersBatchPrefill(state, weights, config, batchSize);
     }
 
     // ── Logits layers ─────────────────────────────────────────────────────────
 
-    @Override public AbstractLogitsTaskGraph singleTokenLogits(String previousGraphId) {
+    @Override
+    public AbstractLogitsTaskGraph singleTokenLogits(String previousGraphId) {
         return new LogitsFP16Layer("logits", state, weights, config, previousGraphId, schedulerType);
     }
 
-    @Override public AbstractLogitsTaskGraph decodeLogits(String previousGraphId) {
+    @Override
+    public AbstractLogitsTaskGraph decodeLogits(String previousGraphId) {
         return new LogitsFP16LayerDecode("logits", state, weights, config, previousGraphId, schedulerType);
     }
 

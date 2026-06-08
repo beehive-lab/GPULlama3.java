@@ -46,7 +46,6 @@ public class Qwen2Q8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen2
         ropeWorker.setGlobalWork(h, ic, 1);
         ropeWorker.setLocalWork(1, 1, 1);
 
-
         int configDimRowMajorGlobal = config.dim() * LOCAL_WORK_GROUP_SIZE_ALLOC;
         WorkerGrid configDimRowMajorGlobalWorker = new WorkerGrid1D(configDimRowMajorGlobal);
         configDimRowMajorGlobalWorker.setLocalWork(LOCAL_WORK_GROUP_SIZE_ALLOC, 1, 1);
@@ -107,9 +106,10 @@ public class Qwen2Q8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen2
     /**
      * Setup a single transformer layer for Qwen2 with Q8_0 quantization and GQA
      */
+    // @formatter:off
     @Override
     protected TaskGraph createFFNLayerTaskGraph(int layerIndex) {
-        TaskGraph  unifiedLayer = new TaskGraph("layer_" + layerIndex);
+        TaskGraph unifiedLayer = new TaskGraph("layer_" + layerIndex);
 
         unifiedLayer.consumeFromDevice(state.wrapX);
         unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
@@ -127,8 +127,7 @@ public class Qwen2Q8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen2
                 weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),
                 weights.w1Layered[layerIndex].asByteArray(),
                 weights.w2Layered[layerIndex].asByteArray(),
-                weights.w3Layered[layerIndex].asByteArray()
-        );
+                weights.w3Layered[layerIndex].asByteArray());
         unifiedLayer = configureLayerDataTransfers(unifiedLayer, layerIndex);
 
         // ═══════════════════════════════════════════════════════════════════════
@@ -273,29 +272,45 @@ public class Qwen2Q8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen2
         return unifiedLayer;
 
     }
+    // @formatter:on
 
     /**
      * Configure data transfers for first and subsequent layers
      */
+    // @formatter:off
     protected TaskGraph configureLayerDataTransfers(TaskGraph unifiedLayer, int layerIndex) {
         if (layerIndex == 0) {
             // First layer: Transfer temporary buffers and QKV state every execution
-            unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION,
-                    qwen2State.positionHolder, qwen2State.temp, qwen2State.tempFFN);
+            unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION, qwen2State.positionHolder,
+                                                                            qwen2State.temp,
+                                                                            qwen2State.tempFFN);
             // First execution: allocate workspace buffers
-            unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
-                    context, qwen2State.wrapXb, qwen2State.wrapXb2,
-                    qwen2State.wrapQ, qwen2State.wrapK, qwen2State.wrapV,
-                    qwen2State.wrapKeyCache, qwen2State.wrapValueCache,
-                    qwen2State.wrapAtt, qwen2State.wrapHb);
+            unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION, context,
+                                                                            qwen2State.wrapXb,
+                                                                            qwen2State.wrapXb2,
+                                                                            qwen2State.wrapQ,
+                                                                            qwen2State.wrapK,
+                                                                            qwen2State.wrapV,
+                                                                            qwen2State.wrapKeyCache,
+                                                                            qwen2State.wrapValueCache,
+                                                                            qwen2State.wrapAtt,
+                                                                            qwen2State.wrapHb);
         } else {
             // Subsequent layers: Consume data from previous layer
-            unifiedLayer.consumeFromDevice(context, qwen2State.wrapXb, qwen2State.wrapXb2,
-                    qwen2State.wrapQ, qwen2State.wrapK, qwen2State.wrapV,
-                    qwen2State.wrapKeyCache, qwen2State.wrapValueCache,
-                    qwen2State.wrapAtt, qwen2State.wrapHb, qwen2State.positionHolder);
+            unifiedLayer.consumeFromDevice(context,
+                                           qwen2State.wrapXb,
+                                           qwen2State.wrapXb2,
+                                           qwen2State.wrapQ,
+                                           qwen2State.wrapK,
+                                           qwen2State.wrapV,
+                                           qwen2State.wrapKeyCache,
+                                           qwen2State.wrapValueCache,
+                                           qwen2State.wrapAtt,
+                                           qwen2State.wrapHb,
+                                           qwen2State.positionHolder);
         }
         return unifiedLayer;
     }
+    // @formatter:on
 
 }

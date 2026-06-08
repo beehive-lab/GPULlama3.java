@@ -32,12 +32,10 @@ public class LogitsGraniteQ8_0Layer extends LogitsQ8_0Layer {
         // === Data Setup ===
         logits.consumeFromDevice(lastTaskGraphID, state.wrapX);
         logits.transferToDevice(DataTransferMode.EVERY_EXECUTION, state.tempLogits);
-        logits.transferToDevice(DataTransferMode.FIRST_EXECUTION,
-                context,
-                state.wrapLogits,
-                weights.wclsByteArray.asByteArray(),
-                weights.rms_final_weight_as_floatArray);
-
+        logits.transferToDevice(DataTransferMode.FIRST_EXECUTION, context,
+                                                                  state.wrapLogits,
+                                                                  weights.wclsByteArray.asByteArray(),
+                                                                  weights.rms_final_weight_as_floatArray);
         // === Final RMS Normalization ===
         logits.task("rms_reduce",
                 TransformerComputeKernels::reductionOneBlockWithLayer,

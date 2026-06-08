@@ -6,6 +6,7 @@ import org.beehive.gpullama3.tornadovm.layers.ActivationTaskGraph;
 import org.beehive.gpullama3.tornadovm.layers.TransformerLayerTaskGraphs;
 import org.beehive.gpullama3.tornadovm.plan.PrefillDecodeForwardPlan;
 
+// @formatter:off
 /**
  * The necessary components that any model+quantization combination
  * should implement to support *prefill-decode inference*.
@@ -24,6 +25,7 @@ import org.beehive.gpullama3.tornadovm.plan.PrefillDecodeForwardPlan;
  * Note: Consult also the {@link org.beehive.gpullama3.tornadovm.plan.layout.PrefillDecodeForwardTaskGraphLayout}
  *
  */
+// @formatter:on
 public interface PrefillDecodeForwardPlanComponents extends SingleTokenForwardPlanComponents {
 
     ActivationTaskGraph prefillDecodeActivation();

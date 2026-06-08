@@ -12,6 +12,7 @@ import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import java.util.ArrayList;
 import java.util.List;
 
+// @formatter:off
 /**
  * Topology plan for the N+2 single-token forward pass.
  *
@@ -22,6 +23,7 @@ import java.util.List;
  *   [N+1]    logits       ← singleTokenLogits(String)
  * </pre>
  */
+// @formatter:on
 public class SingleTokenForwardPlan extends ForwardPlan {
 
     private final SingleTokenForwardTaskGraphLayout taskGraphLayout;

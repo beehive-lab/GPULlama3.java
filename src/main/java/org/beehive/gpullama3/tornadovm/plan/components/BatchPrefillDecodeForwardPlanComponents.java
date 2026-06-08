@@ -6,6 +6,7 @@ import org.beehive.gpullama3.tornadovm.layers.BatchPrefillTransformerLayerTaskGr
 import org.beehive.gpullama3.tornadovm.layers.TransformerLayerTaskGraphs;
 import org.beehive.gpullama3.tornadovm.plan.BatchPrefillDecodeForwardPlan;
 
+// @formatter:off
 /**
  * The necessary components that any model+quantization combination
  * should implement to support *batch-prefill/decode inference*.
@@ -25,6 +26,7 @@ import org.beehive.gpullama3.tornadovm.plan.BatchPrefillDecodeForwardPlan;
  *
  * Note: Consult also the {@link org.beehive.gpullama3.tornadovm.plan.layout.BatchPrefillDecodeForwardTaskGraphLayout}
  */
+// @formatter:on
 public interface BatchPrefillDecodeForwardPlanComponents extends PrefillDecodeForwardPlanComponents {
 
     ActivationTaskGraph batchPrefillActivation(int batchSize);

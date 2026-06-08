@@ -5,6 +5,7 @@ import org.beehive.gpullama3.model.Model;
 import uk.ac.manchester.tornado.api.TornadoExecutionPlan;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
+// @formatter:off
 /**
  * Common contract for all TornadoVM GPU execution plans.
  *
@@ -67,6 +68,7 @@ public interface TornadoVMMasterPlan {
         model.setTornadoVMPlan(plan);
         return plan;
     }
+    // @formatter:on
 
     /**
      * Creates the appropriate {@link TornadoExecutionPlan} instance

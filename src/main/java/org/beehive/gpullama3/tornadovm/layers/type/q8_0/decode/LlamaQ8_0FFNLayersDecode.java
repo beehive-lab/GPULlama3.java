@@ -18,38 +18,53 @@ import uk.ac.manchester.tornado.api.enums.DataTransferMode;
  */
 public class LlamaQ8_0FFNLayersDecode extends LlamaQ8_0FFNLayers {
 
-    public LlamaQ8_0FFNLayersDecode(String taskGraph, LlamaState state,
-                                     LlamaTornadoWeights weights, LlamaConfiguration config,
-                                     SchedulerType schedulerType) {
+    // @formatter:off
+    public LlamaQ8_0FFNLayersDecode(String taskGraph,
+                                    LlamaState state,
+                                    LlamaTornadoWeights weights,
+                                    LlamaConfiguration config,
+                                    SchedulerType schedulerType) {
         super(taskGraph, state, weights, config, schedulerType);
     }
+    // @formatter:on
 
     @Override
     protected String predecessorGraphName(int layerIndex) {
         return (layerIndex == 0) ? "decodeActivation" : "layer_" + (layerIndex - 1);
     }
 
+    // @formatter:off
     @Override
     protected TaskGraph configureLayerDataTransfers(TaskGraph layer, int layerIndex) {
         if (layerIndex == 0) {
-            layer.transferToDevice(DataTransferMode.EVERY_EXECUTION,
-                    state.positionHolder, state.temp, state.tempFFN);
-            layer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
-                    context,
-                    state.wrapXb, state.wrapXb2,
-                    state.wrapQ, state.wrapK, state.wrapV,
-                    state.wrapAtt, state.wrapHb);
-            layer.consumeFromDevice("decodeActivation", state.wrapKeyCache, state.wrapValueCache);
+            layer.transferToDevice(DataTransferMode.EVERY_EXECUTION, state.positionHolder,
+                                                                     state.temp,
+                                                                     state.tempFFN);
+            layer.transferToDevice(DataTransferMode.FIRST_EXECUTION, context,
+                                                                     state.wrapXb,
+                                                                     state.wrapXb2,
+                                                                     state.wrapQ,
+                                                                     state.wrapK,
+                                                                     state.wrapV,
+                                                                     state.wrapAtt,
+                                                                     state.wrapHb);
+            layer.consumeFromDevice("decodeActivation", state.wrapKeyCache,
+                                                                           state.wrapValueCache);
         } else {
             String pred = "layer_" + (layerIndex - 1);
-            layer.consumeFromDevice(pred,
-                    context,
-                    state.wrapXb, state.wrapXb2,
-                    state.wrapQ, state.wrapK, state.wrapV,
-                    state.wrapKeyCache, state.wrapValueCache,
-                    state.wrapAtt, state.wrapHb,
-                    state.positionHolder);
+            layer.consumeFromDevice(pred, context,
+                                          state.wrapXb,
+                                          state.wrapXb2,
+                                          state.wrapQ,
+                                          state.wrapK,
+                                          state.wrapV,
+                                          state.wrapKeyCache,
+                                          state.wrapValueCache,
+                                          state.wrapAtt,
+                                          state.wrapHb,
+                                          state.positionHolder);
         }
         return layer;
     }
+    // @formatter:on
 }

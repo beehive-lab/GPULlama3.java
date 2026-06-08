@@ -25,7 +25,8 @@ import java.lang.foreign.MemorySegment;
  */
 public final class InferenceCoreWithPrefillDecode {
 
-    private InferenceCoreWithPrefillDecode() {}
+    private InferenceCoreWithPrefillDecode() {
+    }
 
     /**
      * Prefill-only forward pass for LLaMA (CPU, FP32 weights).
@@ -34,10 +35,14 @@ public final class InferenceCoreWithPrefillDecode {
      * RMSNorm and vocabulary projection are omitted. The KV cache is
      * populated correctly at {@code position}.</p>
      *
-     * @param model    the LLaMA model (must carry {@link StandardWeights})
-     * @param state    mutable inference state (KV cache, activations …)
-     * @param token    input token id
-     * @param position sequence position being processed
+     * @param model
+     *     the LLaMA model (must carry {@link StandardWeights})
+     * @param state
+     *     mutable inference state (KV cache, activations …)
+     * @param token
+     *     input token id
+     * @param position
+     *     sequence position being processed
      */
     public static void forwardJavaPrefill(Model model, State state, int token, int position) {
         final Configuration config = model.configuration();
@@ -134,15 +139,20 @@ public final class InferenceCoreWithPrefillDecode {
      * {@link TornadoVMMasterPlanPrefillDecode#tornadoVMForwardPrefill},
      * which executes preprocessing + layer graphs but skips the logits graph.</p>
      *
-     * @param model       the LLaMA model (must carry {@link TornadoWeights}, FP16 only)
-     * @param state       mutable inference state
-     * @param token       input token id
-     * @param position    sequence position being processed
-     * @param prefillPlan the prefill/decode plan wrapper
-     * @throws UnsupportedOperationException if the model uses Q8_0 weights
+     * @param model
+     *     the LLaMA model (must carry {@link TornadoWeights}, FP16 only)
+     * @param state
+     *     mutable inference state
+     * @param token
+     *     input token id
+     * @param position
+     *     sequence position being processed
+     * @param prefillPlan
+     *     the prefill/decode plan wrapper
+     * @throws UnsupportedOperationException
+     *     if the model uses Q8_0 weights
      */
-    public static void forwardTornadoVMPrefill(Model model, State state, int token, int position,
-            TornadoVMMasterPlanPrefillDecode prefillPlan) {
+    public static void forwardTornadoVMPrefill(Model model, State state, int token, int position, TornadoVMMasterPlanPrefillDecode prefillPlan) {
         final Configuration configuration = model.configuration();
         final TornadoWeights weights = (TornadoWeights) model.weights();
 
@@ -150,15 +160,13 @@ public final class InferenceCoreWithPrefillDecode {
             case F16 -> {
                 MemorySegment tokenEmbeddings = weights.getTokenEmbeddingTable().asHalfFloatArray().getSegment();
                 int bytes = Short.BYTES;
-                MemorySegment.copy(tokenEmbeddings, (long) token * configuration.dim() * bytes,
-                        state.embeddingX.getSegment(), 0, (long) configuration.dim() * bytes);
+                MemorySegment.copy(tokenEmbeddings, (long) token * configuration.dim() * bytes, state.embeddingX.getSegment(), 0, (long) configuration.dim() * bytes);
             }
             case Q8_0 -> {
                 MemorySegment tokenEmbeddings = weights.getTokenEmbeddingTable().asByteArray().getSegment();
                 int blocksPerToken = (configuration.dim() + 31) / 32;
                 long bytesPerToken = (long) blocksPerToken * 34;
-                MemorySegment.copy(tokenEmbeddings, (long) token * bytesPerToken,
-                        state.embeddingX.getSegment(), 0, bytesPerToken);
+                MemorySegment.copy(tokenEmbeddings, (long) token * bytesPerToken, state.embeddingX.getSegment(), 0, bytesPerToken);
             }
             default -> throw new IllegalArgumentException("Unsupported weight type: " + weights.getWeightType());
         }

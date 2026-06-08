@@ -28,15 +28,18 @@ public class Phi3FP16PlanComponents implements SingleTokenForwardPlanComponents 
         this.schedulerType = SchedulerDetectionService.determineSchedulerType(model);
     }
 
-    @Override public ActivationTaskGraph singleTokenActivation() {
+    @Override
+    public ActivationTaskGraph singleTokenActivation() {
         return new Activation("activationUpdate", state, weights, config);
     }
 
-    @Override public TransformerLayerTaskGraphs singleTokenTransformerLayers() {
+    @Override
+    public TransformerLayerTaskGraphs singleTokenTransformerLayers() {
         return new Phi3FP16FFNLayers("phi3FFN", state, weights, config, schedulerType);
     }
 
-    @Override public AbstractLogitsTaskGraph singleTokenLogits(String previousGraphId) {
+    @Override
+    public AbstractLogitsTaskGraph singleTokenLogits(String previousGraphId) {
         return new LogitsFP16Layer("logits", state, weights, config, previousGraphId, schedulerType);
     }
 }

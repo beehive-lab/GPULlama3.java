@@ -15,8 +15,8 @@ import uk.ac.manchester.tornado.api.types.arrays.IntArray;
  *
  * <p><b>Key Responsibilities:</b></p>
  * <ul>
- *   <li>Defines core structures to store and access model state data required for computation.</li>
- *   <li>Can be extended by model-specific state classes (e.g., {@link LlamaState}, {@link Qwen3State}).</li>
+ * <li>Defines core structures to store and access model state data required for computation.</li>
+ * <li>Can be extended by model-specific state classes (e.g., {@link LlamaState}, {@link Qwen3State}).</li>
  * </ul>
  *
  * <p><b>Usage:</b> Extend `State` to implement model-specific state configurations
@@ -74,17 +74,17 @@ public abstract class State {
     public HalfFloatArray wrapXFP16;
 
     // Batch-prefill buffers (allocated when llama.prefillBatchSize > 1)
-    public final HalfFloatArray embeddingXBatch;        // B × dim  (FP16 input)
-    public final FloatArray     wrapXBatch;             // B × dim  (live activations / Q8_0 dequant)
-    public final HalfFloatArray wrapXbFP16Batch;        // B × dim  (RMSNorm output, FP16)
-    public final FloatArray     wrapQBatch;             // B × dim
-    public final FloatArray     wrapKBatch;             // B × kvDim
-    public final FloatArray     wrapVBatch;             // B × kvDim
-    public final FloatArray     wrapXbBatch;            // B × dim  (attention output)
-    public final FloatArray     wrapHbBatch;            // B × hiddenDim
-    public final FloatArray     attnScaleBatch;         // B        (per-token RMS scale, attn)
-    public final FloatArray     ffnScaleBatch;          // B        (per-token RMS scale, FFN)
-    public final IntArray       batchStartPosHolder;    // 1      (start position of chunk)
+    public final HalfFloatArray embeddingXBatch;    // B × dim  (FP16 input)
+    public final FloatArray wrapXBatch;             // B × dim  (live activations / Q8_0 dequant)
+    public final HalfFloatArray wrapXbFP16Batch;    // B × dim  (RMSNorm output, FP16)
+    public final FloatArray wrapQBatch;             // B × dim
+    public final FloatArray wrapKBatch;             // B × kvDim
+    public final FloatArray wrapVBatch;             // B × kvDim
+    public final FloatArray wrapXbBatch;            // B × dim  (attention output)
+    public final FloatArray wrapHbBatch;            // B × hiddenDim
+    public final FloatArray attnScaleBatch;         // B        (per-token RMS scale, attn)
+    public final FloatArray ffnScaleBatch;          // B        (per-token RMS scale, FFN)
+    public final IntArray batchStartPosHolder;      // 1      (start position of chunk)
 
     protected State(Configuration config, int batchsize) {
         this.batchsize = batchsize;
@@ -136,28 +136,28 @@ public abstract class State {
         int gpuBatchSize = Integer.getInteger("llama.prefillBatchSize", 1);
         if (gpuBatchSize > 1) {
             int kvDim = (config.dim() * config.numberOfKeyValueHeads()) / config.numberOfHeads();
-            this.embeddingXBatch    = new HalfFloatArray(gpuBatchSize * config.dim());
-            this.wrapXBatch         = new FloatArray(gpuBatchSize * config.dim());
-            this.wrapXbFP16Batch    = new HalfFloatArray(gpuBatchSize * config.dim());
-            this.wrapQBatch         = new FloatArray(gpuBatchSize * config.dim());
-            this.wrapKBatch         = new FloatArray(gpuBatchSize * kvDim);
-            this.wrapVBatch         = new FloatArray(gpuBatchSize * kvDim);
-            this.wrapXbBatch        = new FloatArray(gpuBatchSize * config.dim());
-            this.wrapHbBatch        = new FloatArray(gpuBatchSize * config.hiddenDim());
-            this.attnScaleBatch     = new FloatArray(gpuBatchSize);
-            this.ffnScaleBatch      = new FloatArray(gpuBatchSize);
+            this.embeddingXBatch = new HalfFloatArray(gpuBatchSize * config.dim());
+            this.wrapXBatch = new FloatArray(gpuBatchSize * config.dim());
+            this.wrapXbFP16Batch = new HalfFloatArray(gpuBatchSize * config.dim());
+            this.wrapQBatch = new FloatArray(gpuBatchSize * config.dim());
+            this.wrapKBatch = new FloatArray(gpuBatchSize * kvDim);
+            this.wrapVBatch = new FloatArray(gpuBatchSize * kvDim);
+            this.wrapXbBatch = new FloatArray(gpuBatchSize * config.dim());
+            this.wrapHbBatch = new FloatArray(gpuBatchSize * config.hiddenDim());
+            this.attnScaleBatch = new FloatArray(gpuBatchSize);
+            this.ffnScaleBatch = new FloatArray(gpuBatchSize);
             this.batchStartPosHolder = new IntArray(1);
         } else {
-            this.embeddingXBatch    = null;
-            this.wrapXBatch         = null;
-            this.wrapXbFP16Batch    = null;
-            this.wrapQBatch         = null;
-            this.wrapKBatch         = null;
-            this.wrapVBatch         = null;
-            this.wrapXbBatch        = null;
-            this.wrapHbBatch        = null;
-            this.attnScaleBatch     = null;
-            this.ffnScaleBatch      = null;
+            this.embeddingXBatch = null;
+            this.wrapXBatch = null;
+            this.wrapXbFP16Batch = null;
+            this.wrapQBatch = null;
+            this.wrapKBatch = null;
+            this.wrapVBatch = null;
+            this.wrapXbBatch = null;
+            this.wrapHbBatch = null;
+            this.attnScaleBatch = null;
+            this.ffnScaleBatch = null;
             this.batchStartPosHolder = null;
         }
     }
@@ -186,6 +186,7 @@ public abstract class State {
             int q8BytesNeeded = blocksNeeded * Q8_0_BLOCK_BYTES;
             this.embeddingX = new ByteArray(q8BytesNeeded);
         }
+
         public HalfFloatArray wrapXFP16, wrapXbFP16;
     }
 

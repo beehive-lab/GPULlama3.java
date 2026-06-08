@@ -6,6 +6,7 @@ import org.beehive.gpullama3.tornadovm.layers.ActivationTaskGraph;
 import org.beehive.gpullama3.tornadovm.layers.TransformerLayerTaskGraphs;
 import org.beehive.gpullama3.tornadovm.plan.SingleTokenForwardPlan;
 
+// @formatter:off
 /**
  * The necessary components that any model+quantization combination
  * should implement to support *single-token inference*.
@@ -23,6 +24,7 @@ import org.beehive.gpullama3.tornadovm.plan.SingleTokenForwardPlan;
  *
  * Note: Consult also the {@link org.beehive.gpullama3.tornadovm.plan.layout.SingleTokenForwardTaskGraphLayout}
  */
+// @formatter:on
 public interface SingleTokenForwardPlanComponents {
 
     ActivationTaskGraph singleTokenActivation();

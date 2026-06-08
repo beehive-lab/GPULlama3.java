@@ -42,7 +42,9 @@ public class TornadoVMMasterPlanSingleToken implements TornadoVMMasterPlan {
         this.executionPlan = createExecutionPlan();
         long planCreationTime = System.nanoTime();
 
-        if (CUDA_GRAPHS) executionPlan.withAllGraphs().withCUDAGraph();
+        if (CUDA_GRAPHS) {
+            executionPlan.withAllGraphs().withCUDAGraph();
+        }
         executionPlan.withPreCompilation();
         long warmupTime = System.nanoTime();
 
@@ -61,12 +63,14 @@ public class TornadoVMMasterPlanSingleToken implements TornadoVMMasterPlan {
         return new TornadoExecutionPlan(taskGraphs.toArray(new ImmutableTaskGraph[0]));
     }
 
+    // @formatter:off
     @Override
     public FloatArray tornadoVMForwardDecode(int position) {
-        // @formatter:off
         var preGraph = executionPlan.withGraph(taskGraphLayout.activationIdx())
-                .withGridScheduler(tornadoVMForwardPlan.getGridScheduler());
-        if (CUDA_GRAPHS) preGraph.withCUDAGraph();
+                                    .withGridScheduler(tornadoVMForwardPlan.getGridScheduler());
+        if (CUDA_GRAPHS) {
+            preGraph.withCUDAGraph();
+        }
         preGraph.execute();
 
         state.positionHolder.set(0, position);
@@ -75,32 +79,43 @@ public class TornadoVMMasterPlanSingleToken implements TornadoVMMasterPlan {
 
         for (int layer = 0; layer < config.numberOfLayers(); layer++) {
             executionPlan.withGraph(taskGraphLayout.layerIdx(layer))
-                    .withGridScheduler(tornadoVMForwardPlan.getGridScheduler())
-                    .execute();
+                         .withGridScheduler(tornadoVMForwardPlan.getGridScheduler())
+                         .execute();
         }
         state.tempLogits.clear();
         state.wrapLogits.clear();
         var logitsGraph = executionPlan.withGraph(taskGraphLayout.logitsIdx())
-                .withGridScheduler(tornadoVMForwardPlan.getGridScheduler());
-        if (CUDA_GRAPHS) logitsGraph.withCUDAGraph();
+                                       .withGridScheduler(tornadoVMForwardPlan.getGridScheduler());
+        if (CUDA_GRAPHS) {
+            logitsGraph.withCUDAGraph();
+        }
         logitsGraph.execute();
-        // @formatter:on
+
         return state.wrapLogits;
     }
+    // @formatter:on
 
+    // @formatter:off
     @Override
     public void forceCopyInReadOnlyData() {
         state.wrapX.clear();
         state.positionHolder.init(0);
 
-        executionPlan.withGraph(taskGraphLayout.activationIdx()).withGridScheduler(tornadoVMForwardPlan.getGridScheduler()).execute();
+        executionPlan.withGraph(taskGraphLayout.activationIdx())
+                     .withGridScheduler(tornadoVMForwardPlan.getGridScheduler())
+                     .execute();
 
         for (int layer = 0; layer < config.numberOfLayers(); layer++) {
-            executionPlan.withGraph(taskGraphLayout.layerIdx(layer)).withGridScheduler(tornadoVMForwardPlan.getGridScheduler()).execute();
+            executionPlan.withGraph(taskGraphLayout.layerIdx(layer))
+                         .withGridScheduler(tornadoVMForwardPlan.getGridScheduler())
+                         .execute();
         }
 
-        executionPlan.withGraph(taskGraphLayout.logitsIdx()).withGridScheduler(tornadoVMForwardPlan.getGridScheduler()).execute();
+        executionPlan.withGraph(taskGraphLayout.logitsIdx())
+                     .withGridScheduler(tornadoVMForwardPlan.getGridScheduler())
+                     .execute();
     }
+    // @formatter:on
 
     @Override
     public void freeTornadoExecutionPlan() {

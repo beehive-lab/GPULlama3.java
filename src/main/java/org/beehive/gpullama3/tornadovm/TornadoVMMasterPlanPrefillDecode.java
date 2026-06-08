@@ -12,6 +12,7 @@ import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TornadoExecutionPlan;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
+// @formatter:off
 /**
  * GPU execution plan for sequential (single-token) prefill/decode separation.
  *
@@ -35,11 +36,12 @@ import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
  *       Called once per generated token; returns logits for sampling.</li>
  * </ul>
  */
+// @formatter:on
 public class TornadoVMMasterPlanPrefillDecode implements TornadoVMMasterPlan {
 
-    private final State            state;
-    private final Model            model;
-    private final Configuration    config;
+    private final State state;
+    private final Model model;
+    private final Configuration config;
 
     PrefillDecodeForwardPlan prefillDecodeForwardPlan;
     PrefillDecodeForwardTaskGraphLayout taskGraphLayout;
@@ -51,15 +53,17 @@ public class TornadoVMMasterPlanPrefillDecode implements TornadoVMMasterPlan {
             System.err.println("\nStarting TornadoVM initialization...");
         }
 
-        this.state  = state;
-        this.model  = model;
+        this.state = state;
+        this.model = model;
         this.config = model.configuration();
 
         long startTime = System.nanoTime();
         this.executionPlan = createExecutionPlan();
         long planCreationTime = System.nanoTime();
 
-        if (CUDA_GRAPHS) executionPlan.withAllGraphs().withCUDAGraph();
+        if (CUDA_GRAPHS) {
+            executionPlan.withAllGraphs().withCUDAGraph();
+        }
         executionPlan.withPreCompilation();
         long warmupTime = System.nanoTime();
 
@@ -83,6 +87,7 @@ public class TornadoVMMasterPlanPrefillDecode implements TornadoVMMasterPlan {
     // ── Initialisation ────────────────────────────────────────────────────────
 
     /** Runs all graphs once to trigger FIRST_EXECUTION uploads and warm up CUDA graphs. */
+    // @formatter:off
     @Override
     public void forceCopyInReadOnlyData() {
         state.wrapX.clear();
@@ -90,23 +95,30 @@ public class TornadoVMMasterPlanPrefillDecode implements TornadoVMMasterPlan {
 
         for (int i = 0; i <= taskGraphLayout.logitsIdx(); i++) {
             var g = executionPlan.withGraph(i)
-                    .withGridScheduler(prefillDecodeForwardPlan.getGridScheduler());
-            if (CUDA_GRAPHS) g.withCUDAGraph();
+                                 .withGridScheduler(prefillDecodeForwardPlan.getGridScheduler());
+            if (CUDA_GRAPHS) {
+                g.withCUDAGraph();
+            }
             g.execute();
         }
     }
+    // @formatter:on
 
     // ── Forward passes ────────────────────────────────────────────────────────
 
     /**
      * GPU prefill forward: activation + all transformer layers, logits skipped.
      *
-     * @param position sequence position being processed
+     * @param position
+     *     sequence position being processed
      */
+    // @formatter:off
     public void tornadoVMForwardPrefill(int position) {
         var act = executionPlan.withGraph(taskGraphLayout.activationIdx())
-                .withGridScheduler(prefillDecodeForwardPlan.getGridScheduler());
-        if (CUDA_GRAPHS) act.withCUDAGraph();
+                               .withGridScheduler(prefillDecodeForwardPlan.getGridScheduler());
+        if (CUDA_GRAPHS) {
+            act.withCUDAGraph();
+        }
         act.execute();
 
         state.positionHolder.set(0, position);
@@ -115,23 +127,30 @@ public class TornadoVMMasterPlanPrefillDecode implements TornadoVMMasterPlan {
 
         for (int layer = 0; layer < config.numberOfLayers(); layer++) {
             var l = executionPlan.withGraph(taskGraphLayout.layerIdx(layer))
-                    .withGridScheduler(prefillDecodeForwardPlan.getGridScheduler());
-            if (CUDA_GRAPHS) l.withCUDAGraph();
+                                 .withGridScheduler(prefillDecodeForwardPlan.getGridScheduler());
+            if (CUDA_GRAPHS) {
+                l.withCUDAGraph();
+            }
             l.execute();
         }
     }
+    // @formatter:on
 
     /**
      * GPU decode forward: full execution including logits.
      *
-     * @param position sequence position being processed
+     * @param position
+     *     sequence position being processed
      * @return logits array for token sampling
      */
+    // @formatter:off
     @Override
     public FloatArray tornadoVMForwardDecode(int position) {
         var act = executionPlan.withGraph(taskGraphLayout.activationIdx())
-                .withGridScheduler(prefillDecodeForwardPlan.getGridScheduler());
-        if (CUDA_GRAPHS) act.withCUDAGraph();
+                               .withGridScheduler(prefillDecodeForwardPlan.getGridScheduler());
+        if (CUDA_GRAPHS) {
+            act.withCUDAGraph();
+        }
         act.execute();
 
         state.positionHolder.set(0, position);
@@ -140,20 +159,25 @@ public class TornadoVMMasterPlanPrefillDecode implements TornadoVMMasterPlan {
 
         for (int layer = 0; layer < config.numberOfLayers(); layer++) {
             var l = executionPlan.withGraph(taskGraphLayout.layerIdx(layer))
-                    .withGridScheduler(prefillDecodeForwardPlan.getGridScheduler());
-            if (CUDA_GRAPHS) l.withCUDAGraph();
+                                 .withGridScheduler(prefillDecodeForwardPlan.getGridScheduler());
+            if (CUDA_GRAPHS) {
+                l.withCUDAGraph();
+            }
             l.execute();
         }
 
         state.tempLogits.clear();
         state.wrapLogits.clear();
         var logits = executionPlan.withGraph(taskGraphLayout.logitsIdx())
-                .withGridScheduler(prefillDecodeForwardPlan.getGridScheduler());
-        if (CUDA_GRAPHS) logits.withCUDAGraph();
+                                  .withGridScheduler(prefillDecodeForwardPlan.getGridScheduler());
+        if (CUDA_GRAPHS) {
+            logits.withCUDAGraph();
+        }
         logits.execute();
 
         return state.wrapLogits;
     }
+    // @formatter:on
 
     @Override
     public void freeTornadoExecutionPlan() {

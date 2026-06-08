@@ -17,13 +17,18 @@ import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
 public class LogitsQ8_0Layer extends AbstractLogitsTaskGraph {
 
+    // @formatter:off
     public LogitsQ8_0Layer(String name, State state, Weights weights, Configuration config,
             String lastTaskGraphID, SchedulerType schedulerType) {
         super(name, state, weights, config, lastTaskGraphID, schedulerType);
     }
+    // @formatter:on
 
-    protected void configureAdditionalConsumes(TaskGraph logits) {}
-    protected void configureAdditionalPersists(TaskGraph logits) {}
+    protected void configureAdditionalConsumes(TaskGraph logits) {
+    }
+
+    protected void configureAdditionalPersists(TaskGraph logits) {
+    }
 
     // @formatter:off
     @Override
@@ -34,12 +39,10 @@ public class LogitsQ8_0Layer extends AbstractLogitsTaskGraph {
         configureAdditionalConsumes(logits);
         logits.consumeFromDevice(lastTaskGraphID, state.wrapX);
         logits.transferToDevice(DataTransferMode.EVERY_EXECUTION, state.tempLogits);
-        logits.transferToDevice(DataTransferMode.FIRST_EXECUTION,
-                context,
-                state.wrapLogits,
-                weights.wclsByteArray.asByteArray(),
-                weights.rms_final_weight_as_floatArray);
-
+        logits.transferToDevice(DataTransferMode.FIRST_EXECUTION, context,
+                                                                  state.wrapLogits,
+                                                                  weights.wclsByteArray.asByteArray(),
+                                                                  weights.rms_final_weight_as_floatArray);
         // === Final RMS Normalization ===
         logits.task("rms_reduce",
                 TransformerComputeKernels::reductionOneBlockWithLayer,

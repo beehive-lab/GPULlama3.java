@@ -26,6 +26,7 @@ import org.beehive.gpullama3.tornadovm.plan.components.q8_0.Phi3Q8_0PlanComponen
 import org.beehive.gpullama3.tornadovm.plan.components.q8_0.Qwen2Q8_0PlanComponents;
 import org.beehive.gpullama3.tornadovm.plan.components.q8_0.Qwen3Q8_0PlanComponents;
 
+// @formatter:off
 /**
  * Factory for {@link ForwardPlan} instances.
  *
@@ -43,27 +44,32 @@ import org.beehive.gpullama3.tornadovm.plan.components.q8_0.Qwen3Q8_0PlanCompone
  *   <li>{@link #createBatchPrefillDecode} — returns {@link BatchPrefillDecodeForwardPlan}</li>
  * </ul>
  */
+// @formatter:on
 public class ForwardPlanFactory {
 
-    private ForwardPlanFactory() {}
+    private ForwardPlanFactory() {
+    }
 
     // ── Typed public API ──────────────────────────────────────────────────────
 
     public static SingleTokenForwardPlan createSingleToken(GGMLType quantization, State state, Model model) {
         ForwardPlan plan = create(quantization, ExecutionMode.STANDARD, state, model);
-        if (plan instanceof SingleTokenForwardPlan singleToken) return singleToken;
+        if (plan instanceof SingleTokenForwardPlan singleToken)
+            return singleToken;
         throw new IllegalStateException("Expected SingleTokenForwardPlan for STANDARD mode but got " + plan.getClass().getSimpleName());
     }
 
     public static PrefillDecodeForwardPlan createPrefillDecode(GGMLType quantization, State state, Model model) {
         ForwardPlan plan = create(quantization, ExecutionMode.PREFILL_DECODE, state, model);
-        if (plan instanceof PrefillDecodeForwardPlan prefillDecode) return prefillDecode;
+        if (plan instanceof PrefillDecodeForwardPlan prefillDecode)
+            return prefillDecode;
         throw new IllegalStateException("Expected PrefillDecodeForwardPlan for PREFILL_DECODE mode but got " + plan.getClass().getSimpleName());
     }
 
     public static BatchPrefillDecodeForwardPlan createBatchPrefillDecode(GGMLType quantization, State state, Model model) {
         ForwardPlan plan = create(quantization, ExecutionMode.BATCH_PREFILL_DECODE, state, model);
-        if (plan instanceof BatchPrefillDecodeForwardPlan batchPrefillDecode) return batchPrefillDecode;
+        if (plan instanceof BatchPrefillDecodeForwardPlan batchPrefillDecode)
+            return batchPrefillDecode;
         throw new IllegalStateException("Expected BatchPrefillDecodeForwardPlan for BATCH_PREFILL_DECODE mode but got " + plan.getClass().getSimpleName());
     }
 
@@ -71,11 +77,11 @@ public class ForwardPlanFactory {
 
     static ForwardPlan create(GGMLType quantization, ExecutionMode mode, State state, Model model) {
         return switch (quantization) {
-            case F16  -> createFP16Plan(mode, state, model);
+            case F16 -> createFP16Plan(mode, state, model);
             case Q8_0 -> createQ8_0Plan(mode, state, model);
-            case F32  -> throw new UnsupportedOperationException("F32 plans not yet implemented");
+            case F32 -> throw new UnsupportedOperationException("F32 plans not yet implemented");
             case Q4_0 -> throw new UnsupportedOperationException("Q4_0 plans not yet implemented");
-            default   -> throw new UnsupportedOperationException("Quantization not supported: " + quantization);
+            default -> throw new UnsupportedOperationException("Quantization not supported: " + quantization);
         };
     }
 
@@ -83,14 +89,14 @@ public class ForwardPlanFactory {
 
     private static ForwardPlan createFP16Plan(ExecutionMode mode, State state, Model model) {
         return switch (model.getModelType()) {
-            case LLAMA_3                  -> createLlamaFP16Plan(mode, (LlamaState)    state, model);
-            case MISTRAL                  -> createMistralFP16Plan(mode, (LlamaState)    state, model);
-            case DEVSTRAL_2               -> createDevstralFP16Plan(mode, (DevstralState) state, model);
-            case QWEN_2                   -> createQwen2FP16Plan(mode, (Qwen2State)    state, model);
-            case QWEN_3                   -> createQwen3FP16Plan(mode, (Qwen3State)    state, model);
-            case PHI_3                    -> createPhi3FP16Plan(mode, (Phi3State)     state, model);
-            case GRANITE                  -> createGraniteFP16Plan(mode, (GraniteState)  state, model);
-            case DEEPSEEK_R1_DISTILL_QWEN -> createQwen2FP16Plan(mode, (Qwen2State)    state, model);
+            case LLAMA_3 -> createLlamaFP16Plan(mode, (LlamaState) state, model);
+            case MISTRAL -> createMistralFP16Plan(mode, (LlamaState) state, model);
+            case DEVSTRAL_2 -> createDevstralFP16Plan(mode, (DevstralState) state, model);
+            case QWEN_2 -> createQwen2FP16Plan(mode, (Qwen2State) state, model);
+            case QWEN_3 -> createQwen3FP16Plan(mode, (Qwen3State) state, model);
+            case PHI_3 -> createPhi3FP16Plan(mode, (Phi3State) state, model);
+            case GRANITE -> createGraniteFP16Plan(mode, (GraniteState) state, model);
+            case DEEPSEEK_R1_DISTILL_QWEN -> createQwen2FP16Plan(mode, (Qwen2State) state, model);
             default -> throw new UnsupportedOperationException("F16 not supported for model: " + model.getModelType());
         };
     }
@@ -99,14 +105,14 @@ public class ForwardPlanFactory {
 
     private static ForwardPlan createQ8_0Plan(ExecutionMode mode, State state, Model model) {
         return switch (model.getModelType()) {
-            case LLAMA_3                  -> createLlamaQ8_0Plan(mode, (LlamaState)    state, model);
-            case MISTRAL                  -> createMistralQ8_0Plan(mode, (LlamaState)    state, model);
-            case DEVSTRAL_2               -> createDevstralQ8_0Plan(mode, (DevstralState) state, model);
-            case QWEN_2                   -> createQwen2Q8_0Plan(mode, (Qwen2State)    state, model);
-            case QWEN_3                   -> createQwen3Q8_0Plan(mode, (Qwen3State)    state, model);
-            case PHI_3                    -> createPhi3Q8_0Plan(mode, (Phi3State)     state, model);
-            case GRANITE                  -> createGraniteQ8_0Plan(mode, (GraniteState)  state, model);
-            case DEEPSEEK_R1_DISTILL_QWEN -> createQwen2Q8_0Plan(mode, (Qwen2State)    state, model);
+            case LLAMA_3 -> createLlamaQ8_0Plan(mode, (LlamaState) state, model);
+            case MISTRAL -> createMistralQ8_0Plan(mode, (LlamaState) state, model);
+            case DEVSTRAL_2 -> createDevstralQ8_0Plan(mode, (DevstralState) state, model);
+            case QWEN_2 -> createQwen2Q8_0Plan(mode, (Qwen2State) state, model);
+            case QWEN_3 -> createQwen3Q8_0Plan(mode, (Qwen3State) state, model);
+            case PHI_3 -> createPhi3Q8_0Plan(mode, (Phi3State) state, model);
+            case GRANITE -> createGraniteQ8_0Plan(mode, (GraniteState) state, model);
+            case DEEPSEEK_R1_DISTILL_QWEN -> createQwen2Q8_0Plan(mode, (Qwen2State) state, model);
             default -> throw new UnsupportedOperationException("Q8_0 not supported for model: " + model.getModelType());
         };
     }
@@ -116,8 +122,8 @@ public class ForwardPlanFactory {
     private static ForwardPlan createLlamaFP16Plan(ExecutionMode mode, LlamaState state, Model model) {
         BatchPrefillDecodeForwardPlanComponents components = new LlamaFP16PlanComponents(state, model);
         return switch (mode) {
-            case STANDARD             -> new SingleTokenForwardPlan(model, components);
-            case PREFILL_DECODE       -> new PrefillDecodeForwardPlan(model, components);
+            case STANDARD -> new SingleTokenForwardPlan(model, components);
+            case PREFILL_DECODE -> new PrefillDecodeForwardPlan(model, components);
             case BATCH_PREFILL_DECODE -> new BatchPrefillDecodeForwardPlan(model, components, TornadoVMMasterPlan.PREFILL_BATCH_SIZE);
         };
     }
@@ -125,8 +131,8 @@ public class ForwardPlanFactory {
     private static ForwardPlan createLlamaQ8_0Plan(ExecutionMode mode, LlamaState state, Model model) {
         BatchPrefillDecodeForwardPlanComponents components = new LlamaQ8_0PlanComponents(state, model);
         return switch (mode) {
-            case STANDARD             -> new SingleTokenForwardPlan(model, components);
-            case PREFILL_DECODE       -> new PrefillDecodeForwardPlan(model, components);
+            case STANDARD -> new SingleTokenForwardPlan(model, components);
+            case PREFILL_DECODE -> new PrefillDecodeForwardPlan(model, components);
             case BATCH_PREFILL_DECODE -> new BatchPrefillDecodeForwardPlan(model, components, TornadoVMMasterPlan.PREFILL_BATCH_SIZE);
         };
     }

@@ -3,36 +3,25 @@ package org.beehive.gpullama3.tornadovm.kernels;
 import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
 import uk.ac.manchester.tornado.api.types.HalfFloat;
+import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
-import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
 
 /**
- * GPU kernels for batched prefill (Phase 4).
+ * GPU kernels for batched prefill.
  *
  * <p>Each kernel processes {@code batchSize} tokens simultaneously.
  * Batch tensors are flat: element [b][i] lives at index {@code b*stride + i}.
  * Worker-grid sizes are scaled by {@code batchSize} vs the single-token kernels.</p>
  *
- * <p>These kernels are meant to be registered in {@link TornadoVMMasterPlanBatchPrefillDecode}
- * batch task graphs; they are NOT invoked directly.</p>
+ * <p>These kernels are meant to be registered in
+ * {@link org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanBatchPrefillDecode} TaskGraphs.</p>
  */
 public final class TransformerBatchPrefillKernels {
 
-    private TransformerBatchPrefillKernels() {}
-
-    // ── Activation ────────────────────────────────────────────────────────────
-
-    /**
-     * Converts B×dim FP16 token embeddings to FP32.
-     * Worker: B*dim global threads, localSize=128.
-     */
-    public static void batchEmbeddingToFP32(KernelContext context,
-                                             HalfFloatArray embeddingXBatch,
-                                             FloatArray wrapXBatch) {
-        int gid = context.globalIdx;
-        wrapXBatch.set(gid, embeddingXBatch.get(gid).getFloat32());
+    // @formatter:off
+    private TransformerBatchPrefillKernels() {
     }
 
     // ── RMS Norm (attention) ─────────────────────────────────────────────────
@@ -106,7 +95,7 @@ public final class TransformerBatchPrefillKernels {
         int localId = context.localIdx;
         int totalRows = dim + 2 * kvDim;
         int batchIdx = groupId / totalRows;
-        int rowIdx   = groupId % totalRows;
+        int rowIdx = groupId % totalRows;
         int inputOff = batchIdx * dim;
 
         float[] localSum = context.allocateFloatLocalArray(localWorkGroupSize);
@@ -120,10 +109,14 @@ public final class TransformerBatchPrefillKernels {
             localSum[localId] = partial;
             context.localBarrier();
             for (int s = localWorkGroupSize / 2; s > 0; s >>= 1) {
-                if (localId < s) localSum[localId] += localSum[localId + s];
+                if (localId < s) {
+                    localSum[localId] += localSum[localId + s];
+                }
                 context.localBarrier();
             }
-            if (localId == 0) wrapQBatch.set(batchIdx * dim + rowIdx, localSum[0]);
+            if (localId == 0) {
+                wrapQBatch.set(batchIdx * dim + rowIdx, localSum[0]);
+            }
 
         } else if (rowIdx < dim + kvDim) {
             int kRow = rowIdx - dim;
@@ -135,10 +128,14 @@ public final class TransformerBatchPrefillKernels {
             localSum[localId] = partial;
             context.localBarrier();
             for (int s = localWorkGroupSize / 2; s > 0; s >>= 1) {
-                if (localId < s) localSum[localId] += localSum[localId + s];
+                if (localId < s) {
+                    localSum[localId] += localSum[localId + s];
+                }
                 context.localBarrier();
             }
-            if (localId == 0) wrapKBatch.set(batchIdx * kvDim + kRow, localSum[0]);
+            if (localId == 0) {
+                wrapKBatch.set(batchIdx * kvDim + kRow, localSum[0]);
+            }
 
         } else {
             int vRow = rowIdx - dim - kvDim;
@@ -150,10 +147,14 @@ public final class TransformerBatchPrefillKernels {
             localSum[localId] = partial;
             context.localBarrier();
             for (int s = localWorkGroupSize / 2; s > 0; s >>= 1) {
-                if (localId < s) localSum[localId] += localSum[localId + s];
+                if (localId < s) {
+                    localSum[localId] += localSum[localId + s];
+                }
                 context.localBarrier();
             }
-            if (localId == 0) wrapVBatch.set(batchIdx * kvDim + vRow, localSum[0]);
+            if (localId == 0) {
+                wrapVBatch.set(batchIdx * kvDim + vRow, localSum[0]);
+            }
         }
     }
 
@@ -177,41 +178,41 @@ public final class TransformerBatchPrefillKernels {
                                                int kvDim, int headSize,
                                                int layerIndex, int contextLength, int dim) {
         int globalIdx = context.globalIdx;
-        int halfDim   = dim / 2;
-        int batchIdx  = globalIdx / halfDim;
-        int pairIdx   = globalIdx % halfDim;
-        int i         = pairIdx * 2;
+        int halfDim = dim / 2;
+        int batchIdx = globalIdx / halfDim;
+        int pairIdx = globalIdx % halfDim;
+        int i = pairIdx * 2;
 
-        int pos     = batchStartPosHolder.get(0) + batchIdx;
+        int pos = batchStartPosHolder.get(0) + batchIdx;
         int qOffset = batchIdx * dim;
         int kOffset = batchIdx * kvDim;
 
         if (i + 1 < dim) {
             int head_dim = i % headSize;
             float freq = 1.0f / TornadoMath.pow(50000.0f, head_dim / (float) headSize);
-            float val  = pos * freq;
-            float fcr  = TornadoMath.cos(val);
-            float fci  = TornadoMath.sin(val);
+            float val = pos * freq;
+            float fcr = TornadoMath.cos(val);
+            float fci = TornadoMath.sin(val);
 
             // Rotate Q
             float v0q = wrapQBatch.get(qOffset + i);
             float v1q = wrapQBatch.get(qOffset + i + 1);
-            wrapQBatch.set(qOffset + i,     v0q * fcr - v1q * fci);
+            wrapQBatch.set(qOffset + i, v0q * fcr - v1q * fci);
             wrapQBatch.set(qOffset + i + 1, v0q * fci + v1q * fcr);
 
             // Rotate K and write K,V to cache
             if (i + 1 < kvDim) {
-                float v0k    = wrapKBatch.get(kOffset + i);
-                float v1k    = wrapKBatch.get(kOffset + i + 1);
-                float rotK0  = v0k * fcr - v1k * fci;
-                float rotK1  = v0k * fci + v1k * fcr;
-                wrapKBatch.set(kOffset + i,     rotK0);
+                float v0k = wrapKBatch.get(kOffset + i);
+                float v1k = wrapKBatch.get(kOffset + i + 1);
+                float rotK0 = v0k * fcr - v1k * fci;
+                float rotK1 = v0k * fci + v1k * fcr;
+                wrapKBatch.set(kOffset + i, rotK0);
                 wrapKBatch.set(kOffset + i + 1, rotK1);
 
                 int cacheOff = layerIndex * contextLength * kvDim + pos * kvDim;
-                wrapKeyCache.set(cacheOff + i,     rotK0);
+                wrapKeyCache.set(cacheOff + i, rotK0);
                 wrapKeyCache.set(cacheOff + i + 1, rotK1);
-                wrapValueCache.set(cacheOff + i,     wrapVBatch.get(kOffset + i));
+                wrapValueCache.set(cacheOff + i, wrapVBatch.get(kOffset + i));
                 wrapValueCache.set(cacheOff + i + 1, wrapVBatch.get(kOffset + i + 1));
             }
         }
@@ -237,21 +238,21 @@ public final class TransformerBatchPrefillKernels {
                                               int nHeads, int headSize,
                                               int kvDim, int kvMul,
                                               int layerIndex, int contextLength, int dim) {
-        int tid      = context.localIdx;
-        int groupId  = context.groupIdx;
-        int localSz  = context.localGroupSizeX;
+        int tid = context.localIdx;
+        int groupId = context.groupIdx;
+        int localSz = context.localGroupSizeX;
 
-        int batchIdx  = groupId / nHeads;
-        int h         = groupId % nHeads;
-        int pos       = batchStartPosHolder.get(0) + batchIdx;
-        int loff      = layerIndex * contextLength * kvDim;
+        int batchIdx = groupId / nHeads;
+        int h = groupId % nHeads;
+        int pos = batchStartPosHolder.get(0) + batchIdx;
+        int loff = layerIndex * contextLength * kvDim;
         int kvHeadIdx = h / kvMul;
-        int BLOCK_C   = 16;
+        int BLOCK_C = 16;
 
-        float[] qShared   = context.allocateFloatLocalArray(headSize);
-        float[] kTile     = context.allocateFloatLocalArray(BLOCK_C * headSize);
-        float[] vTile     = context.allocateFloatLocalArray(BLOCK_C * headSize);
-        float[] sTile     = context.allocateFloatLocalArray(BLOCK_C);
+        float[] qShared = context.allocateFloatLocalArray(headSize);
+        float[] kTile = context.allocateFloatLocalArray(BLOCK_C * headSize);
+        float[] vTile = context.allocateFloatLocalArray(BLOCK_C * headSize);
+        float[] sTile = context.allocateFloatLocalArray(BLOCK_C);
         float[] maxHolder = context.allocateFloatLocalArray(1);
 
         // Load Q into shared memory
@@ -262,16 +263,18 @@ public final class TransformerBatchPrefillKernels {
         context.localBarrier();
 
         float maxScore = Float.NEGATIVE_INFINITY;
-        float sumExp   = 0.0f;
+        float sumExp = 0.0f;
         float[] output = new float[headSize];
-        for (int i = 0; i < headSize; i++) output[i] = 0.0f;
+        for (int i = 0; i < headSize; i++) {
+            output[i] = 0.0f;
+        }
 
         for (int tileC = 0; tileC <= pos; tileC += BLOCK_C) {
             int tileEnd = Math.min(tileC + BLOCK_C - 1, pos);
 
             // Load K/V tile
             for (int t = tileC + tid; t <= tileEnd; t += localSz) {
-                int tInTile  = t - tileC;
+                int tInTile = t - tileC;
                 int tileMOff = tInTile * headSize;
                 for (int d = 0; d < headSize; d++) {
                     int kvOff = loff + t * kvDim + kvHeadIdx * headSize + d;
@@ -295,9 +298,13 @@ public final class TransformerBatchPrefillKernels {
             // Tile max
             float tileMax = Float.NEGATIVE_INFINITY;
             for (int t = 0; t <= tileEnd - tileC; t++) {
-                if (sTile[t] > tileMax) tileMax = sTile[t];
+                if (sTile[t] > tileMax) {
+                    tileMax = sTile[t];
+                }
             }
-            if (tid == 0) maxHolder[0] = tileMax;
+            if (tid == 0) {
+                maxHolder[0] = tileMax;
+            }
             context.localBarrier();
             float curTileMax = maxHolder[0];
 
@@ -305,7 +312,9 @@ public final class TransformerBatchPrefillKernels {
             if (newMax != maxScore && maxScore != Float.NEGATIVE_INFINITY) {
                 float scale = TornadoMath.exp(maxScore - newMax);
                 sumExp *= scale;
-                for (int d = 0; d < headSize; d++) output[d] *= scale;
+                for (int d = 0; d < headSize; d++) {
+                    output[d] *= scale;
+                }
             }
             maxScore = newMax;
 
@@ -351,11 +360,11 @@ public final class TransformerBatchPrefillKernels {
         int groupId  = context.groupIdx;
         int localId  = context.localIdx;
         int batchIdx = groupId / d;
-        int rowIdx   = groupId % d;
+        int rowIdx = groupId % d;
 
         float[] localSum = context.allocateFloatLocalArray(localWorkGroupSize);
         int inputOff = batchIdx * n;
-        int rowOff   = rowIdx * n;
+        int rowOff = rowIdx * n;
 
         float partial = 0.0f;
         for (int j = localId; j < n; j += localWorkGroupSize) {
@@ -364,7 +373,9 @@ public final class TransformerBatchPrefillKernels {
         localSum[localId] = partial;
         context.localBarrier();
         for (int s = localWorkGroupSize / 2; s > 0; s >>= 1) {
-            if (localId < s) localSum[localId] += localSum[localId + s];
+            if (localId < s) {
+                localSum[localId] += localSum[localId + s];
+            }
             context.localBarrier();
         }
         if (localId == 0) {
@@ -383,7 +394,7 @@ public final class TransformerBatchPrefillKernels {
                                             FloatArray wrapXBatch,
                                             FloatArray ffnScaleBatch,
                                             int dim, float eps) {
-        int b    = context.globalIdx;
+        int b = context.globalIdx;
         int base = b * dim;
         float ss = 0.0f;
         for (int i = 0; i < dim; i++) {
@@ -414,14 +425,14 @@ public final class TransformerBatchPrefillKernels {
                                                       HalfFloatArray w3,
                                                       int dim, int hiddenDim,
                                                       int localWorkGroupSize) {
-        int groupId  = context.groupIdx;
-        int localId  = context.localIdx;
+        int groupId = context.groupIdx;
+        int localId = context.localIdx;
         int batchIdx = groupId / hiddenDim;
-        int rowIdx   = groupId % hiddenDim;
+        int rowIdx = groupId % hiddenDim;
 
-        float scale    = ffnScaleBatch.get(batchIdx);
-        int inputOff   = batchIdx * dim;
-        int rowOff     = rowIdx * dim;
+        float scale = ffnScaleBatch.get(batchIdx);
+        int inputOff = batchIdx * dim;
+        int rowOff = rowIdx * dim;
 
         float[] localSum = context.allocateFloatLocalArray(localWorkGroupSize);
 
@@ -434,7 +445,9 @@ public final class TransformerBatchPrefillKernels {
         localSum[localId] = sum1;
         context.localBarrier();
         for (int s = localWorkGroupSize / 2; s > 0; s >>= 1) {
-            if (localId < s) localSum[localId] += localSum[localId + s];
+            if (localId < s) {
+                localSum[localId] += localSum[localId + s];
+            }
             context.localBarrier();
         }
         float result1 = localSum[0];
@@ -448,7 +461,9 @@ public final class TransformerBatchPrefillKernels {
         localSum[localId] = sum3;
         context.localBarrier();
         for (int s = localWorkGroupSize / 2; s > 0; s >>= 1) {
-            if (localId < s) localSum[localId] += localSum[localId + s];
+            if (localId < s) {
+                localSum[localId] += localSum[localId + s];
+            }
             context.localBarrier();
         }
         float result3 = localSum[0];
@@ -485,8 +500,8 @@ public final class TransformerBatchPrefillKernels {
                                             FloatArray attnScaleBatch,
                                             int dim) {
         int gid = context.globalIdx;
-        int b   = gid / dim;
-        int i   = gid % dim;
+        int b = gid / dim;
+        int i = gid % dim;
         wrapXbBatch.set(gid, rmsWeights.get(i) * attnScaleBatch.get(b) * wrapXBatch.get(gid));
     }
 
@@ -506,16 +521,16 @@ public final class TransformerBatchPrefillKernels {
                                                 ByteArray wv,
                                                 int dim, int kvDim,
                                                 int localWorkGroupSize) {
-        int groupId   = context.groupIdx;
-        int localId   = context.localIdx;
+        int groupId = context.groupIdx;
+        int localId = context.localIdx;
         int totalRows = dim + 2 * kvDim;
-        int batchIdx  = groupId / totalRows;
-        int rowIdx    = groupId % totalRows;
-        int inputOff  = batchIdx * dim;
+        int batchIdx = groupId / totalRows;
+        int rowIdx = groupId % totalRows;
+        int inputOff = batchIdx * dim;
 
-        int blockSize        = 32;
+        int blockSize = 32;
         int Q8_0_BLOCK_BYTES = 34;
-        int blocksPerRow     = (dim + blockSize - 1) / blockSize;
+        int blocksPerRow = (dim + blockSize - 1) / blockSize;
 
         float[] localSum = context.allocateFloatLocalArray(localWorkGroupSize);
 
@@ -531,13 +546,17 @@ public final class TransformerBatchPrefillKernels {
             localSum[localId] = partial;
             context.localBarrier();
             for (int s = localWorkGroupSize / 2; s > 0; s >>= 1) {
-                if (localId < s) localSum[localId] += localSum[localId + s];
+                if (localId < s) {
+                    localSum[localId] += localSum[localId + s];
+                }
                 context.localBarrier();
             }
-            if (localId == 0) wrapQBatch.set(batchIdx * dim + rowIdx, localSum[0]);
+            if (localId == 0) {
+                wrapQBatch.set(batchIdx * dim + rowIdx, localSum[0]);
+            }
 
         } else if (rowIdx < dim + kvDim) {
-            int kRow           = rowIdx - dim;
+            int kRow = rowIdx - dim;
             int rowBlockOffset = kRow * blocksPerRow;
             float partial = 0.0f;
             for (int j = localId; j < dim; j += localWorkGroupSize) {
@@ -549,13 +568,17 @@ public final class TransformerBatchPrefillKernels {
             localSum[localId] = partial;
             context.localBarrier();
             for (int s = localWorkGroupSize / 2; s > 0; s >>= 1) {
-                if (localId < s) localSum[localId] += localSum[localId + s];
+                if (localId < s) {
+                    localSum[localId] += localSum[localId + s];
+                }
                 context.localBarrier();
             }
-            if (localId == 0) wrapKBatch.set(batchIdx * kvDim + kRow, localSum[0]);
+            if (localId == 0) {
+                wrapKBatch.set(batchIdx * kvDim + kRow, localSum[0]);
+            }
 
         } else {
-            int vRow           = rowIdx - dim - kvDim;
+            int vRow = rowIdx - dim - kvDim;
             int rowBlockOffset = vRow * blocksPerRow;
             float partial = 0.0f;
             for (int j = localId; j < dim; j += localWorkGroupSize) {
@@ -567,10 +590,14 @@ public final class TransformerBatchPrefillKernels {
             localSum[localId] = partial;
             context.localBarrier();
             for (int s = localWorkGroupSize / 2; s > 0; s >>= 1) {
-                if (localId < s) localSum[localId] += localSum[localId + s];
+                if (localId < s) {
+                    localSum[localId] += localSum[localId + s];
+                }
                 context.localBarrier();
             }
-            if (localId == 0) wrapVBatch.set(batchIdx * kvDim + vRow, localSum[0]);
+            if (localId == 0) {
+                wrapVBatch.set(batchIdx * kvDim + vRow, localSum[0]);
+            }
         }
     }
 
@@ -586,16 +613,16 @@ public final class TransformerBatchPrefillKernels {
                                                     ByteArray w,
                                                     int n, int d,
                                                     int localWorkGroupSize) {
-        int groupId  = context.groupIdx;
-        int localId  = context.localIdx;
+        int groupId = context.groupIdx;
+        int localId = context.localIdx;
         int batchIdx = groupId / d;
-        int rowIdx   = groupId % d;
+        int rowIdx = groupId % d;
 
-        int blockSize        = 32;
+        int blockSize = 32;
         int Q8_0_BLOCK_BYTES = 34;
-        int blocksPerRow     = (n + blockSize - 1) / blockSize;
-        int rowBlockOffset   = rowIdx * blocksPerRow;
-        int inputOff         = batchIdx * n;
+        int blocksPerRow = (n + blockSize - 1) / blockSize;
+        int rowBlockOffset = rowIdx * blocksPerRow;
+        int inputOff = batchIdx * n;
 
         float[] localSum = context.allocateFloatLocalArray(localWorkGroupSize);
 
@@ -609,7 +636,9 @@ public final class TransformerBatchPrefillKernels {
         localSum[localId] = partial;
         context.localBarrier();
         for (int s = localWorkGroupSize / 2; s > 0; s >>= 1) {
-            if (localId < s) localSum[localId] += localSum[localId + s];
+            if (localId < s) {
+                localSum[localId] += localSum[localId + s];
+            }
             context.localBarrier();
         }
         if (localId == 0) {
@@ -632,18 +661,18 @@ public final class TransformerBatchPrefillKernels {
                                                         ByteArray w3,
                                                         int dim, int hiddenDim,
                                                         int localWorkGroupSize) {
-        int groupId  = context.groupIdx;
-        int localId  = context.localIdx;
+        int groupId = context.groupIdx;
+        int localId = context.localIdx;
         int batchIdx = groupId / hiddenDim;
-        int rowIdx   = groupId % hiddenDim;
+        int rowIdx = groupId % hiddenDim;
 
-        float scale  = ffnScaleBatch.get(batchIdx);
+        float scale = ffnScaleBatch.get(batchIdx);
         int inputOff = batchIdx * dim;
 
-        int blockSize        = 32;
+        int blockSize = 32;
         int Q8_0_BLOCK_BYTES = 34;
-        int blocksPerRow     = (dim + blockSize - 1) / blockSize;
-        int rowBlockOffset   = rowIdx * blocksPerRow;
+        int blocksPerRow = (dim + blockSize - 1) / blockSize;
+        int rowBlockOffset = rowIdx * blocksPerRow;
 
         float[] localSum = context.allocateFloatLocalArray(localWorkGroupSize);
 
@@ -652,13 +681,15 @@ public final class TransformerBatchPrefillKernels {
             int blockByteOffset = (rowBlockOffset + j / blockSize) * Q8_0_BLOCK_BYTES;
             float w1Scale = w1.getHalfFloat(blockByteOffset).getFloat32();
             float w1Quant = w1.get(blockByteOffset + 2 + j % blockSize);
-            float normed  = rmsFFNWeights.get(j) * scale * wrapXBatch.get(inputOff + j);
+            float normed = rmsFFNWeights.get(j) * scale * wrapXBatch.get(inputOff + j);
             sum1 += w1Quant * w1Scale * normed;
         }
         localSum[localId] = sum1;
         context.localBarrier();
         for (int s = localWorkGroupSize / 2; s > 0; s >>= 1) {
-            if (localId < s) localSum[localId] += localSum[localId + s];
+            if (localId < s) {
+                localSum[localId] += localSum[localId + s];
+            }
             context.localBarrier();
         }
         float result1 = localSum[0];
@@ -668,13 +699,15 @@ public final class TransformerBatchPrefillKernels {
             int blockByteOffset = (rowBlockOffset + j / blockSize) * Q8_0_BLOCK_BYTES;
             float w3Scale = w3.getHalfFloat(blockByteOffset).getFloat32();
             float w3Quant = w3.get(blockByteOffset + 2 + j % blockSize);
-            float normed  = rmsFFNWeights.get(j) * scale * wrapXBatch.get(inputOff + j);
+            float normed = rmsFFNWeights.get(j) * scale * wrapXBatch.get(inputOff + j);
             sum3 += w3Quant * w3Scale * normed;
         }
         localSum[localId] = sum3;
         context.localBarrier();
         for (int s = localWorkGroupSize / 2; s > 0; s >>= 1) {
-            if (localId < s) localSum[localId] += localSum[localId + s];
+            if (localId < s) {
+                localSum[localId] += localSum[localId + s];
+            }
             context.localBarrier();
         }
         float result3 = localSum[0];
@@ -684,4 +717,6 @@ public final class TransformerBatchPrefillKernels {
             wrapHbBatch.set(batchIdx * hiddenDim + rowIdx, silu * result3);
         }
     }
+
+    // @formatter:on
 }

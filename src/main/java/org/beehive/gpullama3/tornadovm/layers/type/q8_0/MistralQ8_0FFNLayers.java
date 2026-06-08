@@ -14,10 +14,13 @@ import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
 public class MistralQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<LlamaTornadoWeights, MistralConfiguration> {
 
-    public MistralQ8_0FFNLayers(String taskGraphName, LlamaState state, LlamaTornadoWeights weights, MistralConfiguration config, SchedulerType schedulerType) {
+    // @formatter:off
+    public MistralQ8_0FFNLayers(String taskGraphName, LlamaState state, LlamaTornadoWeights weights,
+                                MistralConfiguration config, SchedulerType schedulerType) {
         super(taskGraphName, state, weights, config, schedulerType);
         setupFFNLayers();
     }
+    // @formatter:on
 
     // @formatter:off
     @Override
@@ -113,29 +116,42 @@ public class MistralQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Lla
 
         return unifiedLayer;
     }
+    // @formatter:on
 
+    // @formatter:off
     protected TaskGraph configureLayerDataTransfers(TaskGraph unifiedLayer, int layerIndex) {
         if (layerIndex == 0) {
-            unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION,
-                    state.positionHolder, state.temp, state.tempFFN);
-            unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
-                    context,
-                    state.wrapXb, state.wrapXb2,
-                    state.wrapQ, state.wrapK, state.wrapV,
-                    state.wrapKeyCache, state.wrapValueCache,
-                    state.wrapAtt, state.wrapHb);
+            unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION, state.positionHolder,
+                                                                            state.temp,
+                                                                            state.tempFFN);
+            unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION, context,
+                                                                            state.wrapXb,
+                                                                            state.wrapXb2,
+                                                                            state.wrapQ,
+                                                                            state.wrapK,
+                                                                            state.wrapV,
+                                                                            state.wrapKeyCache,
+                                                                            state.wrapValueCache,
+                                                                            state.wrapAtt,
+                                                                            state.wrapHb);
         } else {
-            unifiedLayer.consumeFromDevice(
-                    context,
-                    state.wrapXb, state.wrapXb2,
-                    state.wrapQ, state.wrapK, state.wrapV,
-                    state.wrapKeyCache, state.wrapValueCache,
-                    state.wrapAtt, state.wrapHb,
-                    state.positionHolder);
+            unifiedLayer.consumeFromDevice(context,
+                                           state.wrapXb,
+                                           state.wrapXb2,
+                                           state.wrapQ,
+                                           state.wrapK,
+                                           state.wrapV,
+                                           state.wrapKeyCache,
+                                           state.wrapValueCache,
+                                           state.wrapAtt,
+                                           state.wrapHb,
+                                           state.positionHolder);
         }
         return unifiedLayer;
     }
+    // @formatter:on
 
+    // @formatter:off
     @Override
     public GridScheduler updateGridScheduler(GridScheduler tornadoForwardScheduler) {
         WorkerGrid rmsNormWorker = WorkerGridFactory.createRmsNormWorker(config.dim(), 256);
@@ -166,7 +182,9 @@ public class MistralQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Lla
 
         return tornadoForwardScheduler;
     }
+    // @formatter:on
 
+    // @formatter:off
     private TaskGraph configureAttention(TaskGraph unifiedLayer, int layerIndex) {
         if (schedulerType == SchedulerType.NVIDIA) {
             return unifiedLayer.task("attention",

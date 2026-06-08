@@ -13,6 +13,7 @@ import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import java.util.ArrayList;
 import java.util.List;
 
+// @formatter:off
 /**
  * Topology plan for the 2N+3 batch-prefill/decode forward pass.
  *
@@ -28,6 +29,7 @@ import java.util.List;
  * <p>During batch prefill, the master plan executes graphs 0..N.
  * During decode, graphs N+1..2N+2 run.</p>
  */
+// @formatter:on
 public class BatchPrefillDecodeForwardPlan extends ForwardPlan {
 
     private final BatchPrefillDecodeForwardTaskGraphLayout taskGraphLayout;

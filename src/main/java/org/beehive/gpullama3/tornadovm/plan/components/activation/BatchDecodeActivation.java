@@ -26,27 +26,30 @@ public class BatchDecodeActivation implements ActivationTaskGraph {
     private final ImmutableTaskGraph itg;
     private final int dim;
 
-    public BatchDecodeActivation(LlamaState state, LlamaConfiguration config,
-                                 String lastBatchLayerId, boolean isQ8) {
+    public BatchDecodeActivation(LlamaState state, LlamaConfiguration config, String lastBatchLayerId, boolean isQ8) {
         this.dim = config.dim();
         KernelContext ctx = new KernelContext();
         this.itg = buildGraph(ctx, state, lastBatchLayerId, isQ8).snapshot();
     }
 
+    // @formatter:off
     private TaskGraph buildGraph(KernelContext ctx, LlamaState state,
                                  String lastBatchLayerId, boolean isQ8) {
         TaskGraph tg = new TaskGraph("decodeActivation")
                 .consumeFromDevice(lastBatchLayerId, state.wrapKeyCache, state.wrapValueCache)
                 .transferToDevice(DataTransferMode.EVERY_EXECUTION, state.embeddingX);
         if (isQ8) {
-            tg.task("updateX", TransformerComputeKernels::convertQ8_0toFP32,
-                    ctx, (ByteArray) state.embeddingX, state.wrapX);
+            tg.task("updateX", TransformerComputeKernels::convertQ8_0toFP32, ctx,
+                                                                                (ByteArray) state.embeddingX,
+                                                                                state.wrapX);
         } else {
-            tg.task("updateX", TransformerComputeKernels::convertFP16toFP32,
-                    ctx, (HalfFloatArray) state.embeddingX, state.wrapX);
+            tg.task("updateX", TransformerComputeKernels::convertFP16toFP32, ctx,
+                                                                                (HalfFloatArray) state.embeddingX,
+                                                                                state.wrapX);
         }
         return tg.persistOnDevice(state.wrapX, state.wrapKeyCache, state.wrapValueCache);
     }
+    // @formatter:on
 
     @Override
     public ImmutableTaskGraph getImmutableTaskGraph() {
@@ -55,8 +58,7 @@ public class BatchDecodeActivation implements ActivationTaskGraph {
 
     @Override
     public GridScheduler updateGridScheduler(GridScheduler scheduler) {
-        scheduler.addWorkerGrid("decodeActivation.updateX",
-                WorkerGridFactory.genericWorker(dim, 128));
+        scheduler.addWorkerGrid("decodeActivation.updateX", WorkerGridFactory.genericWorker(dim, 128));
         return scheduler;
     }
 }
