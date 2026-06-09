@@ -28,15 +28,6 @@ import java.lang.foreign.MemorySegment;
  * This class provides core computational operations such as RMS normalization and forward passes through model layers. It supports both CPU and GPU implementations.
  * </p>
  *
- * <p>
- * Specifically, it implements:
- * <ul>
- *   <li>{@code rmsnorm} – applies Root Mean Square Layer Normalization to input vectors</li>
- *   <li>{@code forwardJava} – executes a Forward pass for LLaMA and Mistral models on CPU</li>
- *   <li>{@code forwardJavaQwen3} – executes a Forward pass for Qwen3 models on CPU</li>
- *   <li>{@code forwardTornadoVM} – executes a Forward pass using TornadoVM for GPU acceleration</li>
- * </ul>
- * </p>
  */
 
 public final class InferenceCore {
@@ -643,10 +634,10 @@ public final class InferenceCore {
      * Granite uses the same transformer architecture as Llama but with maximal update parameterization (µP)
      * scaling factors applied at specific points:
      * <ul>
-     *   <li>Embedding scaling: multiply embeddings after lookup</li>
-     *   <li>Attention scaling: use custom multiplier instead of 1/sqrt(headDim)</li>
-     *   <li>Residual scaling: multiply residual connections</li>
-     *   <li>Logit scaling: divide logits by the scaling factor</li>
+     * <li>Embedding scaling: multiply embeddings after lookup</li>
+     * <li>Attention scaling: use custom multiplier instead of 1/sqrt(headDim)</li>
+     * <li>Residual scaling: multiply residual connections</li>
+     * <li>Logit scaling: divide logits by the scaling factor</li>
      * </ul>
      */
     public static FloatTensor forwardGranite(Model model, State state, int token, int position) {
@@ -771,8 +762,8 @@ public final class InferenceCore {
      *
      * <p>This method handles the first phase of processing a token through the transformer model:
      * <ol>
-     *   <li>Copies the token embedding from the model's embedding table to the state's buffer</li>
-     *   <li>Delegates the transformer layer processing to TornadoVM through the master plan</li>
+     * <li>Copies the token embedding from the model's embedding table to the state's buffer</li>
+     * <li>Delegates the transformer layer processing to TornadoVM through the master plan</li>
      * </ol>
      *
      * <p>The token embedding lookup happens on the CPU using {@link MemorySegment} operations,
@@ -780,15 +771,15 @@ public final class InferenceCore {
      * TornadoVM for improved performance.
      *
      * @param model
-     *         The Llama model containing weights and configuration parameters
+     *     The Llama model containing weights and configuration parameters
      * @param state
-     *         The current execution state holding input/output tensors and temporary buffers
+     *     The current execution state holding input/output tensors and temporary buffers
      * @param token
-     *         The input token ID to process
+     *     The input token ID to process
      * @param position
-     *         The position of this token in the sequence context window
+     *     The position of this token in the sequence context window
      * @param tornadoVMMasterPlan
-     *         The execution plan for TornadoVM acceleration
+     *     The execution plan for TornadoVM acceleration
      * @return FloatTensor containing the output logits for token prediction
      */
     public static FloatArray forwardTornadoVM(Model model, State state, int token, int position, TornadoVMMasterPlan tornadoVMMasterPlan) {
@@ -814,7 +805,7 @@ public final class InferenceCore {
             default -> throw new IllegalArgumentException("Unsupported weight type: " + weights.getWeightType());
         }
 
-        return tornadoVMMasterPlan.tornadoVMForwardExecuteLayered(position);
+        return tornadoVMMasterPlan.tornadoVMForwardDecode(position);
     }
 
 }

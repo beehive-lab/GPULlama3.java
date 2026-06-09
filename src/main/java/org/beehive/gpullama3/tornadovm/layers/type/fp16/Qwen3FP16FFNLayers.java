@@ -5,23 +5,23 @@ import org.beehive.gpullama3.inference.weights.tornado.Qwen3TornadoWeights;
 import org.beehive.gpullama3.model.qwen3.Qwen3Configuration;
 import org.beehive.gpullama3.tornadovm.kernels.Qwen3Kernels;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
-import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
-import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
-import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
+import org.beehive.gpullama3.tornadovm.scheduling.WorkerGridFactory;
+import org.beehive.gpullama3.tornadovm.scheduling.SchedulerType;
+import org.beehive.gpullama3.tornadovm.layers.AbstractTransformerLayerTaskGraphs;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
 /**
- * Qwen3FP16FFNLayers: FP16 FFN layers for Qwen3 with Group Query Attention (GQA) support.
+ * Qwen3FP16FFNLayers: FP16 transformer-layer TaskGraphs for Qwen3 with Group Query Attention (GQA) support.
  *
  * Key Differences from Llama: - Supports GQA with separate KV heads (nHeadKv) - Uses Qwen3Kernels for RMSNorm with parallel offset - Custom RoPE rotation for Qwen3 - Different attention computation
  * due to GQA structure
  *
  * Works directly with Qwen3State to access and mutate Qwen3-specific state fields like tempQcur and tempKcur.
  */
-public class Qwen3FP16FFNLayers extends AbstractFFNLayers<Qwen3TornadoWeights, Qwen3Configuration> {
+public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3TornadoWeights, Qwen3Configuration> {
 
     // Typed reference to Qwen3-specific state
     private final Qwen3State qwen3State;

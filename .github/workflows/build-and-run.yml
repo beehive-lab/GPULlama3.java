@@ -247,6 +247,107 @@ jobs:
           configuration: standard
           metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-llama-1b-q8-standard.json
 
+      - name: Q8 - Run Llama-3.2-1B-Instruct-Q8_0.gguf - Prefill-Decode
+        env:
+          JAVA_TOOL_OPTIONS: >-
+            -Dllama.metrics.format=json
+            -Dllama.metrics.output=file
+            -Dllama.metrics.file=${{ runner.temp }}/metrics-${{ matrix.backend.name }}-llama-1b-q8-prefill-decode.json
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
+          ./llama-tornado --gpu --${{ matrix.backend.name }} \
+            --model $MODELS_DIR/Llama-3.2-1B-Instruct-Q8_0.gguf \
+            --prompt "Say hello" \
+            --with-prefill-decode
+          python3 scripts/write_metrics_sidecar.py \
+            --out "${{ runner.temp }}/metrics-${{ matrix.backend.name }}-llama-1b-q8-prefill-decode.meta.json" \
+            backend="${{ matrix.backend.name }}" \
+            task=llama-inference \
+            model_file=Llama-3.2-1B-Instruct-Q8_0.gguf \
+            model=Llama-3.2-1B-Instruct \
+            quantization=Q8_0 \
+            configuration=prefill-decode \
+            "flags=--with-prefill-decode" \
+            prompt="Say hello"
+
+      - name: Q8 - Run Llama-3.2-1B-Instruct-Q8_0.gguf - Batch-Prefill-Decode
+        env:
+          JAVA_TOOL_OPTIONS: >-
+            -Dllama.metrics.format=json
+            -Dllama.metrics.output=file
+            -Dllama.metrics.file=${{ runner.temp }}/metrics-${{ matrix.backend.name }}-llama-1b-q8-batch-prefill-decode.json
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
+          ./llama-tornado --gpu --${{ matrix.backend.name }} \
+            --model $MODELS_DIR/Llama-3.2-1B-Instruct-Q8_0.gguf \
+            --prompt "Say hello" \
+            --with-prefill-decode --batch-prefill-size 32
+          python3 scripts/write_metrics_sidecar.py \
+            --out "${{ runner.temp }}/metrics-${{ matrix.backend.name }}-llama-1b-q8-batch-prefill-decode.meta.json" \
+            backend="${{ matrix.backend.name }}" \
+            task=llama-inference \
+            model_file=Llama-3.2-1B-Instruct-Q8_0.gguf \
+            model=Llama-3.2-1B-Instruct \
+            quantization=Q8_0 \
+            configuration=batch-prefill-decode \
+            "flags=--with-prefill-decode --batch-prefill-size 32" \
+            prompt="Say hello"
+
+      # ── PTX-only: CUDA-graph variants ────────────────────────────────────────
+      - name: PTX - Q8 - Run Llama-3.2-1B-Instruct-Q8_0.gguf - Prefill-Decode-CUDA-Graphs
+        if: matrix.backend.name == 'ptx'
+        env:
+          JAVA_TOOL_OPTIONS: >-
+            -Dllama.metrics.format=json
+            -Dllama.metrics.output=file
+            -Dllama.metrics.file=${{ runner.temp }}/metrics-ptx-llama-1b-q8-prefill-decode-cuda-graphs.json
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
+          ./llama-tornado --gpu --ptx \
+            --model $MODELS_DIR/Llama-3.2-1B-Instruct-Q8_0.gguf \
+            --prompt "Say hello" \
+            --with-prefill-decode \
+            --cuda-graphs
+          python3 scripts/write_metrics_sidecar.py \
+            --out "${{ runner.temp }}/metrics-ptx-llama-1b-q8-prefill-decode-cuda-graphs.meta.json" \
+            backend=ptx \
+            task=llama-inference \
+            model_file=Llama-3.2-1B-Instruct-Q8_0.gguf \
+            model=Llama-3.2-1B-Instruct \
+            quantization=Q8_0 \
+            configuration=prefill-decode-cuda-graphs \
+            "flags=--with-prefill-decode --cuda-graphs" \
+            prompt="Say hello"
+
+      - name: PTX - Q8 - Run Llama-3.2-1B-Instruct-Q8_0.gguf - Batch-Prefill-Decode-CUDA-Graphs
+        if: matrix.backend.name == 'ptx'
+        env:
+          JAVA_TOOL_OPTIONS: >-
+            -Dllama.metrics.format=json
+            -Dllama.metrics.output=file
+            -Dllama.metrics.file=${{ runner.temp }}/metrics-ptx-llama-1b-q8-batch-prefill-decode-cuda-graphs.json
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
+          ./llama-tornado --gpu --ptx \
+            --model $MODELS_DIR/Llama-3.2-1B-Instruct-Q8_0.gguf \
+            --prompt "Say hello" \
+            --with-prefill-decode --batch-prefill-size 32 \
+            --cuda-graphs
+          python3 scripts/write_metrics_sidecar.py \
+            --out "${{ runner.temp }}/metrics-ptx-llama-1b-q8-batch-prefill-decode-cuda-graphs.meta.json" \
+            backend=ptx \
+            task=llama-inference \
+            model_file=Llama-3.2-1B-Instruct-Q8_0.gguf \
+            model=Llama-3.2-1B-Instruct \
+            quantization=Q8_0 \
+            configuration=batch-prefill-decode-cuda-graphs \
+            "flags=--with-prefill-decode --batch-prefill-size 32 --cuda-graphs" \
+            prompt="Say hello"
+
       - name: Q8 - Run Qwen3-0.6B-Q8_0.gguf
         uses: ./.github/actions/run-inference
         with:

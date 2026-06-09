@@ -3,14 +3,14 @@ package org.beehive.gpullama3.tornadovm.layers.type.fp16.decode;
 import org.beehive.gpullama3.inference.state.LlamaState;
 import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
 import org.beehive.gpullama3.model.llama.LlamaConfiguration;
-import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
+import org.beehive.gpullama3.tornadovm.scheduling.SchedulerType;
 import org.beehive.gpullama3.tornadovm.layers.type.fp16.LlamaFP16FFNLayers;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
 /**
- * Decode FFN layers of the unified batched prefill-decode plan
- * ({@link org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanWithBatchPrefillDecode}).
+ * Decode transformer-layer TaskGraphs of the unified batched prefill-decode plan
+ * ({@link org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanBatchPrefillDecode}).
  *
  * <p>Overrides data-transfer declarations so that all cross-graph boundaries use
  * the explicit-source form of {@code consumeFromDevice}.  The no-arg form (used by

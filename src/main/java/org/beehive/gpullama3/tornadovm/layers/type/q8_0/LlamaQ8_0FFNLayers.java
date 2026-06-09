@@ -4,15 +4,15 @@ import org.beehive.gpullama3.inference.state.LlamaState;
 import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
 import org.beehive.gpullama3.model.llama.LlamaConfiguration;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
-import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
-import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
-import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
+import org.beehive.gpullama3.tornadovm.scheduling.WorkerGridFactory;
+import org.beehive.gpullama3.tornadovm.scheduling.SchedulerType;
+import org.beehive.gpullama3.tornadovm.layers.AbstractTransformerLayerTaskGraphs;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
-public class LlamaQ8_0FFNLayers extends AbstractFFNLayers<LlamaTornadoWeights, LlamaConfiguration> {
+public class LlamaQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<LlamaTornadoWeights, LlamaConfiguration> {
 
     public LlamaQ8_0FFNLayers(String taskGraphName, LlamaState state, LlamaTornadoWeights weights, LlamaConfiguration config, SchedulerType schedulerType) {
         super(taskGraphName, state, weights, config, schedulerType);
@@ -113,7 +113,12 @@ public class LlamaQ8_0FFNLayers extends AbstractFFNLayers<LlamaTornadoWeights, L
         TaskGraph unifiedLayer = new TaskGraph(layerTaskGraphName);
 
         // === Data Setup ===
-        unifiedLayer.consumeFromDevice(state.wrapX);
+        String wrapXSrc = predecessorGraphName(layerIndex);
+        if (wrapXSrc != null) {
+            unifiedLayer.consumeFromDevice(wrapXSrc, state.wrapX);
+        } else {
+            unifiedLayer.consumeFromDevice(state.wrapX);
+        }
         unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
                 // Copy-in weights per layer for batched-layered layout (Q8 format)
                 weights.rms_att_weightLayered[layerIndex].asFloatArray(),
@@ -224,6 +229,10 @@ public class LlamaQ8_0FFNLayers extends AbstractFFNLayers<LlamaTornadoWeights, L
         return unifiedLayer;
     }
 
+    protected String predecessorGraphName(int layerIndex) {
+        return null;
+    }
+
     protected TaskGraph configureLayerDataTransfers(TaskGraph unifiedLayer, int layerIndex) {
         // First layer: Transfer initial data to device (one-time transfer)
         if (layerIndex == 0) {
@@ -270,7 +279,7 @@ public class LlamaQ8_0FFNLayers extends AbstractFFNLayers<LlamaTornadoWeights, L
 
         WorkerGrid parallelAttentionWorker = WorkerGridFactory.createAttentionWorker(config.numberOfHeads(), config.headSize());
 
-        // === Per-Layer Grid Assignments (ordered by task graph flow) ===
+        // === Per-Layer Grid Assignments (ordered by TaskGraph flow) ===
         for (int i = 0; i < config.numberOfLayers(); i++) {
             // --- Attention Block ---
             // RMS Normalization

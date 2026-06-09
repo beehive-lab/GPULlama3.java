@@ -5,16 +5,16 @@ import org.beehive.gpullama3.inference.weights.tornado.Qwen3TornadoWeights;
 import org.beehive.gpullama3.model.qwen3.Qwen3Configuration;
 import org.beehive.gpullama3.tornadovm.kernels.Qwen3Kernels;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
-import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
-import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
-import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
+import org.beehive.gpullama3.tornadovm.scheduling.WorkerGridFactory;
+import org.beehive.gpullama3.tornadovm.scheduling.SchedulerType;
+import org.beehive.gpullama3.tornadovm.layers.AbstractTransformerLayerTaskGraphs;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
 /**
- * Qwen3Q8_0FFNLayers: Q8_0-quantized FFN layers for Qwen3 with Group Query Attention (GQA) support.
+ * Qwen3Q8_0FFNLayers: Q8_0 transformer-layer TaskGraphs for Qwen3 with Group Query Attention (GQA) support.
  *
  * Key Differences from Qwen3FP16FFNLayers:
  * - Uses Q8_0-quantized weights (getQuants() and getScales())
@@ -25,7 +25,7 @@ import uk.ac.manchester.tornado.api.enums.DataTransferMode;
  * Works directly with Qwen3State to access and mutate Qwen3-specific state fields
  * like tempQcur and tempKcur.
  */
-public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers<Qwen3TornadoWeights, Qwen3Configuration> {
+public class Qwen3Q8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3TornadoWeights, Qwen3Configuration> {
 
     // Typed reference to Qwen3-specific state
     private final Qwen3State qwen3State;
@@ -97,6 +97,7 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers<Qwen3TornadoWeights, Q
     /**
      * Setup a single transformer layer for Qwen3 with GQA (Q8_0 quantized)
      */
+    // @formatter:off
     @Override
     protected TaskGraph createFFNLayerTaskGraph(int layerIndex) {
         var taskGraphName = "layer_" + layerIndex;
@@ -286,25 +287,35 @@ public class Qwen3Q8_0FFNLayers extends AbstractFFNLayers<Qwen3TornadoWeights, Q
     protected TaskGraph configureLayerDataTransfers(TaskGraph unifiedLayer, int layerIndex) {
         if (layerIndex == 0) {
             // First layer: Transfer temporary buffers and QKV state every execution
-            unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION,
-                    qwen3State.positionHolder, qwen3State.temp, qwen3State.tempFFN);
-
-            Qwen3State qwen3State = (Qwen3State) state;
-            unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION,
-                    qwen3State.tempQcur, qwen3State.tempKcur);
-
+            unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION, qwen3State.positionHolder,
+                                                                            qwen3State.temp,
+                                                                            qwen3State.tempFFN);
+            unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION, qwen3State.tempQcur,
+                                                                            qwen3State.tempKcur);
             // First execution: allocate workspace buffers
-            unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION, //
-                    context, qwen3State.wrapXb, qwen3State.wrapXb2,  //
-                    qwen3State.wrapQ, qwen3State.wrapK, qwen3State.wrapV, //
-                    qwen3State.wrapKeyCache, qwen3State.wrapValueCache, //
-                    qwen3State.wrapAtt, qwen3State.wrapHb); //
+            unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION, context,
+                                                                            qwen3State.wrapXb,
+                                                                            qwen3State.wrapXb2,
+                                                                            qwen3State.wrapQ,
+                                                                            qwen3State.wrapK,
+                                                                            qwen3State.wrapV,
+                                                                            qwen3State.wrapKeyCache,
+                                                                            qwen3State.wrapValueCache,
+                                                                            qwen3State.wrapAtt,
+                                                                            qwen3State.wrapHb);
         } else {
             // Subsequent layers: Consume data from previous layer
-            unifiedLayer.consumeFromDevice(context, qwen3State.wrapXb, qwen3State.wrapXb2, //
-                    qwen3State.wrapQ, qwen3State.wrapK, qwen3State.wrapV, //
-                    qwen3State.wrapKeyCache, qwen3State.wrapValueCache, //
-                    qwen3State.wrapAtt, qwen3State.wrapHb, qwen3State.positionHolder); //
+            unifiedLayer.consumeFromDevice(context,
+                                           qwen3State.wrapXb,
+                                           qwen3State.wrapXb2,
+                                           qwen3State.wrapQ,
+                                           qwen3State.wrapK,
+                                           qwen3State.wrapV,
+                                           qwen3State.wrapKeyCache,
+                                           qwen3State.wrapValueCache,
+                                           qwen3State.wrapAtt,
+                                           qwen3State.wrapHb,
+                                           qwen3State.positionHolder);
 
             Qwen3State qwen3State = (Qwen3State) state;
             unifiedLayer.consumeFromDevice(qwen3State.tempQcur, qwen3State.tempKcur); //

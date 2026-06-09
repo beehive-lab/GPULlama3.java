@@ -3,12 +3,15 @@ package org.beehive.gpullama3.inference;
 import org.beehive.gpullama3.auxiliary.Parallel;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.standard.StandardWeights;
+import org.beehive.gpullama3.inference.weights.tornado.TornadoWeights;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
 import org.beehive.gpullama3.tensor.standard.FloatTensor;
-import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanWithBatchPrefillDecode;
+import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanBatchPrefillDecode;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+
+import java.lang.foreign.MemorySegment;
 
 /**
  * Low-level forward passes for the batched prefill/decode inference path (Phase 3/4).
@@ -17,19 +20,19 @@ import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
  *
  * <p>Provides three operations:</p>
  * <ul>
- *   <li>{@link #batchForwardJavaPrefill} — CPU batch prefill: processes a chunk of
- *       prompt tokens in one pass using batch matmul, avoiding redundant weight
- *       traversals. Only the KV cache is populated; logits are intentionally omitted.</li>
- *   <li>{@link #batchForwardTornadoVMPrefill} — GPU batch prefill: delegates the chunk
- *       to {@link TornadoVMMasterPlanWithBatchPrefillDecode#tornadoVMForwardBatchPrefill}.</li>
- *   <li>{@link #forwardTornadoVMDecode} — GPU decode: delegates a single decode step to
- *       {@link TornadoVMMasterPlanWithBatchPrefillDecode#tornadoVMForwardDecode}, which
- *       handles the embedding copy and runs the full decode + logits graphs.</li>
+ * <li>{@link #batchForwardJavaPrefill} — CPU batch prefill: processes a chunk of
+ * prompt tokens in one pass using batch matmul, avoiding redundant weight
+ * traversals. Only the KV cache is populated; logits are intentionally omitted.</li>
+ * <li>{@link #batchForwardTornadoVMPrefill} — GPU batch prefill: copies batch embeddings
+ * into device-visible state buffers then runs the batch activation + layer graphs.</li>
+ * <li>{@link #forwardTornadoVMDecode} — GPU decode: copies the decode token embedding
+ * then runs the decode activation + layer + logits graphs.</li>
  * </ul>
  */
 public final class InferenceCoreBatchPrefillDecode {
 
-    private InferenceCoreBatchPrefillDecode() {}
+    private InferenceCoreBatchPrefillDecode() {
+    }
 
     /**
      * CPU batched prefill forward pass for LLaMA (Phase 3).
@@ -45,11 +48,16 @@ public final class InferenceCoreBatchPrefillDecode {
      * <p>The logits layer is intentionally omitted — only the KV cache matters
      * for prefill positions.</p>
      *
-     * @param model     the LLaMA model (must carry {@link StandardWeights})
-     * @param state     mutable inference state (KV cache, att buffer …)
-     * @param tokens    input token ids, {@code tokens[b]} at position {@code startPos+b}
-     * @param startPos  sequence position of {@code tokens[0]}
-     * @param batchSize number of tokens in this chunk ({@code tokens.length})
+     * @param model
+     *     the LLaMA model (must carry {@link StandardWeights})
+     * @param state
+     *     mutable inference state (KV cache, att buffer …)
+     * @param tokens
+     *     input token ids, {@code tokens[b]} at position {@code startPos+b}
+     * @param startPos
+     *     sequence position of {@code tokens[0]}
+     * @param batchSize
+     *     number of tokens in this chunk ({@code tokens.length})
      */
     public static void batchForwardJavaPrefill(Model model, State state, int[] tokens, int startPos, int batchSize) {
         final Configuration config = model.configuration();
@@ -61,39 +69,37 @@ public final class InferenceCoreBatchPrefillDecode {
         float sqrtHeadSize = (float) Math.sqrt(headSize);
 
         // ── Batch activation tensors (allocated once per chunk) ───────────────
-        FloatTensor[] x   = new FloatTensor[batchSize];
-        FloatTensor[] xb  = new FloatTensor[batchSize];
+        FloatTensor[] x = new FloatTensor[batchSize];
+        FloatTensor[] xb = new FloatTensor[batchSize];
         FloatTensor[] xb2 = new FloatTensor[batchSize];
-        FloatTensor[] q   = new FloatTensor[batchSize];
-        FloatTensor[] k   = new FloatTensor[batchSize];
-        FloatTensor[] v   = new FloatTensor[batchSize];
-        FloatTensor[] hb  = new FloatTensor[batchSize];
+        FloatTensor[] q = new FloatTensor[batchSize];
+        FloatTensor[] k = new FloatTensor[batchSize];
+        FloatTensor[] v = new FloatTensor[batchSize];
+        FloatTensor[] hb = new FloatTensor[batchSize];
         FloatTensor[] hb2 = new FloatTensor[batchSize];
         for (int b = 0; b < batchSize; b++) {
-            x[b]   = ArrayFloatTensor.allocate(dim);
-            xb[b]  = ArrayFloatTensor.allocate(dim);
+            x[b] = ArrayFloatTensor.allocate(dim);
+            xb[b] = ArrayFloatTensor.allocate(dim);
             xb2[b] = ArrayFloatTensor.allocate(dim);
-            q[b]   = ArrayFloatTensor.allocate(dim);
-            k[b]   = ArrayFloatTensor.allocate(kvDim);
-            v[b]   = ArrayFloatTensor.allocate(kvDim);
-            hb[b]  = ArrayFloatTensor.allocate(config.hiddenDim());
+            q[b] = ArrayFloatTensor.allocate(dim);
+            k[b] = ArrayFloatTensor.allocate(kvDim);
+            v[b] = ArrayFloatTensor.allocate(kvDim);
+            hb[b] = ArrayFloatTensor.allocate(config.hiddenDim());
             hb2[b] = ArrayFloatTensor.allocate(config.hiddenDim());
         }
 
         // ── Token embeddings ──────────────────────────────────────────────────
-        Parallel.parallelFor(0, batchSize, b ->
-                weights.token_embedding_table.copyTo(tokens[b] * dim, x[b], 0, dim));
+        Parallel.parallelFor(0, batchSize, b -> weights.token_embedding_table.copyTo(tokens[b] * dim, x[b], 0, dim));
 
         // ── Transformer layers ────────────────────────────────────────────────
         for (int l = 0; l < config.numberOfLayers(); l++) {
             final int layer = l;
 
-            Parallel.parallelFor(0, batchSize, b ->
-                    InferenceCore.rmsnorm(xb[b], x[b], weights.rms_att_weight[layer], 0, dim, config.rmsNormEps()));
+            Parallel.parallelFor(0, batchSize, b -> InferenceCore.rmsnorm(xb[b], x[b], weights.rms_att_weight[layer], 0, dim, config.rmsNormEps()));
 
-            weights.wq[l].matmul(batchSize, xb, q,   dim,   dim);
-            weights.wk[l].matmul(batchSize, xb, k,   kvDim, dim);
-            weights.wv[l].matmul(batchSize, xb, v,   kvDim, dim);
+            weights.wq[l].matmul(batchSize, xb, q, dim, dim);
+            weights.wk[l].matmul(batchSize, xb, k, kvDim, dim);
+            weights.wv[l].matmul(batchSize, xb, v, kvDim, dim);
 
             Parallel.parallelFor(0, batchSize, b -> {
                 int pos = startPos + b;
@@ -106,19 +112,19 @@ public final class InferenceCoreBatchPrefillDecode {
                         FloatTensor vec = vv == 0 ? q[b] : k[b];
                         float v0 = vec.getFloat(i);
                         float v1 = vec.getFloat(i + 1);
-                        vec.setFloat(i,     v0 * fcr - v1 * fci);
+                        vec.setFloat(i, v0 * fcr - v1 * fci);
                         vec.setFloat(i + 1, v0 * fci + v1 * fcr);
                     }
                 }
-                k[b].copyTo(0, state.keyCache[layer],   pos * kvDim, kvDim);
-                v[b].copyTo(0, state.valueCache[layer],  pos * kvDim, kvDim);
+                k[b].copyTo(0, state.keyCache[layer], pos * kvDim, kvDim);
+                v[b].copyTo(0, state.valueCache[layer], pos * kvDim, kvDim);
             });
 
             for (int b = 0; b < batchSize; b++) {
-                final int pos_b  = startPos + b;
+                final int pos_b = startPos + b;
                 final int bFinal = b;
                 Parallel.parallelFor(0, config.numberOfHeads(), h -> {
-                    int qOffset   = h * headSize;
+                    int qOffset = h * headSize;
                     int attOffset = h * config.contextLength();
 
                     for (int t = 0; t <= pos_b; t++) {
@@ -145,7 +151,7 @@ public final class InferenceCoreBatchPrefillDecode {
                 InferenceCore.rmsnorm(xb[b], x[b], weights.rms_ffn_weight[layer], 0, dim, config.rmsNormEps());
             });
 
-            weights.w1[l].matmul(batchSize, xb, hb,  config.hiddenDim(), dim);
+            weights.w1[l].matmul(batchSize, xb, hb, config.hiddenDim(), dim);
             weights.w3[l].matmul(batchSize, xb, hb2, config.hiddenDim(), dim);
 
             Parallel.parallelFor(0, batchSize, b -> {
@@ -161,39 +167,98 @@ public final class InferenceCoreBatchPrefillDecode {
         // logits are not needed for any token in a prefill batch.
     }
 
+    private static final int Q8_0_BLOCK_SIZE = 32;
+    private static final int Q8_0_BLOCK_BYTES = 34;
+
     /**
      * GPU batched prefill forward pass (Phase 4).
      *
-     * <p>Delegates the full chunk to
-     * {@link TornadoVMMasterPlanWithBatchPrefillDecode#tornadoVMForwardBatchPrefill},
-     * which handles embedding lookup and GPU execution internally.</p>
+     * <p>Copies {@code chunkSize} token embeddings into device-visible state buffers,
+     * then delegates graph execution to the plan.</p>
      *
-     * @param model     the LLaMA model
-     * @param tokens    token ids for this chunk
-     * @param startPos  sequence position of {@code tokens[0]}
-     * @param chunkSize number of tokens in this chunk
-     * @param plan      the batched prefill/decode GPU plan
+     * @param model
+     *     the LLaMA model
+     * @param state
+     *     mutable inference state
+     * @param tokens
+     *     token ids for this chunk
+     * @param startPos
+     *     sequence position of {@code tokens[0]}
+     * @param chunkSize
+     *     number of tokens in this chunk
+     * @param plan
+     *     the batched prefill/decode GPU plan
      */
-    public static void batchForwardTornadoVMPrefill(Model model, int[] tokens, int startPos, int chunkSize,
-            TornadoVMMasterPlanWithBatchPrefillDecode plan) {
-        plan.tornadoVMForwardBatchPrefill(tokens, startPos, model, chunkSize);
+    public static void batchForwardTornadoVMPrefill(Model model, State state, int[] tokens, int startPos, int chunkSize, TornadoVMMasterPlanBatchPrefillDecode plan) {
+        final Configuration config = model.configuration();
+        final TornadoWeights weights = (TornadoWeights) model.weights();
+
+        state.batchStartPosHolder.set(0, startPos);
+
+        switch (weights.getWeightType()) {
+            case F16 -> {
+                MemorySegment embTable = weights.getTokenEmbeddingTable().asHalfFloatArray().getSegment();
+                long dimBytes = (long) config.dim() * Short.BYTES;
+                for (int b = 0; b < chunkSize; b++) {
+                    MemorySegment.copy(embTable, (long) tokens[b] * dimBytes, state.embeddingXBatch.getSegment(), (long) b * dimBytes, dimBytes);
+                }
+            }
+            case Q8_0 -> {
+                var embTable = weights.getTokenEmbeddingTable().asByteArray();
+                int dim = config.dim();
+                int blocksPerRow = (dim + Q8_0_BLOCK_SIZE - 1) / Q8_0_BLOCK_SIZE;
+                for (int b = 0; b < chunkSize; b++) {
+                    int tokenId = tokens[b];
+                    for (int j = 0; j < dim; j++) {
+                        int blockByteOffset = (tokenId * blocksPerRow + j / Q8_0_BLOCK_SIZE) * Q8_0_BLOCK_BYTES;
+                        float scale = embTable.getHalfFloat(blockByteOffset).getFloat32();
+                        float quant = embTable.get(blockByteOffset + 2 + j % Q8_0_BLOCK_SIZE);
+                        state.wrapXBatch.set(b * dim + j, quant * scale);
+                    }
+                }
+            }
+            default -> throw new IllegalArgumentException("Unsupported weight type: " + weights.getWeightType());
+        }
+
+        plan.tornadoVMForwardBatchPrefill();
     }
 
     /**
      * GPU decode forward pass (Phase 4).
      *
-     * <p>Delegates a single-token decode step to
-     * {@link TornadoVMMasterPlanWithBatchPrefillDecode#tornadoVMForwardDecode},
-     * which copies the token embedding and runs the decode + logits graphs.</p>
+     * <p>Copies the token embedding into device-visible state, then delegates
+     * graph execution to the plan.</p>
      *
-     * @param model    the LLaMA model
-     * @param token    current token id
-     * @param position sequence position
-     * @param plan     the batched prefill/decode GPU plan
+     * @param model
+     *     the LLaMA model
+     * @param state
+     *     mutable inference state
+     * @param token
+     *     current token id
+     * @param position
+     *     sequence position
+     * @param plan
+     *     the batched prefill/decode GPU plan
      * @return logits array for token sampling
      */
-    public static FloatArray forwardTornadoVMDecode(Model model, int token, int position,
-            TornadoVMMasterPlanWithBatchPrefillDecode plan) {
-        return plan.tornadoVMForwardDecode(token, position, model);
+    public static FloatArray forwardTornadoVMDecode(Model model, State state, int token, int position, TornadoVMMasterPlanBatchPrefillDecode plan) {
+        final Configuration config = model.configuration();
+        final TornadoWeights weights = (TornadoWeights) model.weights();
+
+        switch (weights.getWeightType()) {
+            case F16 -> {
+                MemorySegment embTable = weights.getTokenEmbeddingTable().asHalfFloatArray().getSegment();
+                MemorySegment.copy(embTable, (long) token * config.dim() * Short.BYTES, state.embeddingX.getSegment(), 0L, (long) config.dim() * Short.BYTES);
+            }
+            case Q8_0 -> {
+                MemorySegment embTable = weights.getTokenEmbeddingTable().asByteArray().getSegment();
+                int blocksPerToken = (config.dim() + Q8_0_BLOCK_SIZE - 1) / Q8_0_BLOCK_SIZE;
+                long bytesPerToken = (long) blocksPerToken * Q8_0_BLOCK_BYTES;
+                MemorySegment.copy(embTable, (long) token * bytesPerToken, state.embeddingX.getSegment(), 0L, bytesPerToken);
+            }
+            default -> throw new IllegalArgumentException("Unsupported weight type: " + weights.getWeightType());
+        }
+
+        return plan.tornadoVMForwardDecode(position);
     }
 }

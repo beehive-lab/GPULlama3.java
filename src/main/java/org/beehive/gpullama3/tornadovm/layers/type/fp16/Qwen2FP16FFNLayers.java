@@ -6,9 +6,9 @@ import org.beehive.gpullama3.model.qwen2.Qwen2Configuration;
 import org.beehive.gpullama3.tornadovm.kernels.Qwen2Kernels;
 import org.beehive.gpullama3.tornadovm.kernels.Qwen3Kernels;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
-import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
-import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
-import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
+import org.beehive.gpullama3.tornadovm.scheduling.WorkerGridFactory;
+import org.beehive.gpullama3.tornadovm.scheduling.SchedulerType;
+import org.beehive.gpullama3.tornadovm.layers.AbstractTransformerLayerTaskGraphs;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
@@ -17,7 +17,7 @@ import uk.ac.manchester.tornado.api.WorkerGrid2D;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
 /**
- * Qwen2FP16FFNLayers: FP16 FFN layers for Qwen2 with Group Query Attention (GQA) support.
+ * Qwen2FP16FFNLayers: FP16 transformer-layer TaskGraphs for Qwen2 with Group Query Attention (GQA) support.
  *
  * Key Differences from Qwen3: - No tempQcur/tempKcur fields in Qwen2State - Includes bias terms for Q, K, V projections - Standard GQA (no parallel offset RMSNorm) - Uses
  * Qwen2Kernels::processHeadsFlashAttention for attention computation - Uses Qwen3Kernels::ropeRotation for position embeddings - Simpler matrix dimensions (uses config.dim() and config.kvDim()
@@ -25,7 +25,7 @@ import uk.ac.manchester.tornado.api.enums.DataTransferMode;
  *
  * Works directly with Qwen2State to access and mutate Qwen2-specific state fields.
  */
-public class Qwen2FP16FFNLayers extends AbstractFFNLayers<Qwen2TornadoWeights, Qwen2Configuration> {
+public class Qwen2FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen2TornadoWeights, Qwen2Configuration> {
 
     // Typed reference to Qwen2-specific state
     private final Qwen2State qwen2State;

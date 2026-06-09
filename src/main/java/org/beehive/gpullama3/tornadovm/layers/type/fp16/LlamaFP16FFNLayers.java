@@ -5,15 +5,15 @@ import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
 import org.beehive.gpullama3.model.llama.LlamaConfiguration;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernels;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
-import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
-import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
-import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
+import org.beehive.gpullama3.tornadovm.scheduling.WorkerGridFactory;
+import org.beehive.gpullama3.tornadovm.scheduling.SchedulerType;
+import org.beehive.gpullama3.tornadovm.layers.AbstractTransformerLayerTaskGraphs;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
-public class LlamaFP16FFNLayers extends AbstractFFNLayers<LlamaTornadoWeights, LlamaConfiguration> {
+public class LlamaFP16FFNLayers extends AbstractTransformerLayerTaskGraphs<LlamaTornadoWeights, LlamaConfiguration> {
 
     public LlamaFP16FFNLayers(String taskGraph, State state, LlamaTornadoWeights weights, LlamaConfiguration config, SchedulerType schedulerType) {
         super(taskGraph, state, weights, config, schedulerType);
@@ -265,7 +265,7 @@ public class LlamaFP16FFNLayers extends AbstractFFNLayers<LlamaTornadoWeights, L
     }
 
     /**
-     * Returns the name of the predecessor task graph from which {@code wrapX} should be consumed,
+     * Returns the name of the predecessor TaskGraph from which {@code wrapX} should be consumed,
      * or {@code null} to fall back to the no-arg form (source key = own graph name).
      *
      * <p>The no-arg form is safe in CUDA-graph mode (device pointers are frozen at capture time)

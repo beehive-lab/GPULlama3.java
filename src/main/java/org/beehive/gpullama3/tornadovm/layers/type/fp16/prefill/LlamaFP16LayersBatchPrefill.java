@@ -4,7 +4,8 @@ import org.beehive.gpullama3.inference.state.LlamaState;
 import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
 import org.beehive.gpullama3.model.llama.LlamaConfiguration;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerBatchPrefillKernels;
-import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
+import org.beehive.gpullama3.tornadovm.scheduling.WorkerGridFactory;
+import org.beehive.gpullama3.tornadovm.layers.BatchPrefillTransformerLayerTaskGraphs;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.KernelContext;
@@ -16,8 +17,8 @@ import java.util.List;
 import java.util.stream.IntStream;
 
 /**
- * Prefill FFN layers with batching for the unified batched prefill-decode plan
- * ({@link org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanWithBatchPrefillDecode}).
+ * Batched-prefill transformer-layer TaskGraphs for the unified batched prefill-decode plan
+ * ({@link org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanBatchPrefillDecode}).
  *
  * <p>One {@link ImmutableTaskGraph} per transformer layer, each processing
  * {@code batchSize} tokens simultaneously via {@link TransformerBatchPrefillKernels}.</p>
@@ -25,7 +26,7 @@ import java.util.stream.IntStream;
  * <p>KV cache ({@code wrapKeyCache}, {@code wrapValueCache}) is persisted on device
  * after every layer so the subsequent single-token decode layers can consume it.</p>
  */
-public class LlamaFP16LayersBatchPrefill {
+public class LlamaFP16LayersBatchPrefill implements BatchPrefillTransformerLayerTaskGraphs {
 
     // Matches the local workgroup size used by the single-token kernels.
     static final int LOCAL_WORK_GROUP_SIZE = 32;
