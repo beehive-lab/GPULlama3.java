@@ -129,11 +129,7 @@ public class Qwen3ModelLoader extends AbstractModelLoader<Qwen3, Qwen3Configurat
     protected Weights createTornadoVMWeights(Map<String, GGMLTensorEntry> tensorEntries, Qwen3Configuration config,
                                              Pair<float[], float[]> ropeFreqs, GGMLTensorEntry tokenEmbeddings,
                                              GGMLTensorEntry outputWeight) {
-        if (TornadoVMMasterPlan.ENABLE_TORNADOVM_INIT_TIME) {
-            System.out.println("Loading model weights in TornadoVM format (loading " + outputWeight.ggmlType() + " -> " + GGMLType.F16 + ")");
-        }
-
-        GGMLType ggmlType = outputWeight.ggmlType();
+        GGMLType ggmlType = effectiveGpuWeightType(outputWeight.ggmlType());
 
         final int nl = config.numberOfLayers();
 

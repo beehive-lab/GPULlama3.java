@@ -1,0 +1,62 @@
+name: Run Inference
+description: Run one llama-tornado inference pass and write the metrics + sidecar files.
+
+inputs:
+  backend:
+    description: 'GPU backend (opencl or ptx)'
+    required: true
+  model_file:
+    description: 'Model filename inside $MODELS_DIR (e.g. Llama-3.2-1B-Instruct-F16.gguf)'
+    required: true
+  model:
+    description: 'Human-readable model name for the sidecar (e.g. Llama-3.2-1B-Instruct)'
+    required: true
+  quantization:
+    description: 'Quantization type (e.g. F16, Q8_0)'
+    required: true
+  configuration:
+    description: 'Configuration key for the sidecar (e.g. standard, prefill-decode)'
+    required: true
+  flags:
+    description: 'Extra CLI flags passed to llama-tornado (omit for standard run)'
+    required: false
+    default: ''
+  metrics_file:
+    description: 'Absolute path for the output metrics JSON file'
+    required: true
+  prompt:
+    description: 'Prompt to pass to the model'
+    required: false
+    default: 'Say hello'
+
+runs:
+  using: composite
+  steps:
+    - name: Run inference
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        JAVA_TOOL_OPTIONS: >-
+          -Dllama.metrics.format=json
+          -Dllama.metrics.output=file
+          -Dllama.metrics.file=${{ inputs.metrics_file }}
+        METRICS_FILE: ${{ inputs.metrics_file }}
+      run: |
+        # Run inference and emit raw metrics JSON via JAVA_TOOL_OPTIONS
+        ./llama-tornado --gpu --${{ inputs.backend }} \
+          --model $MODELS_DIR/${{ inputs.model_file }} \
+          --prompt "${{ inputs.prompt }}" \
+          ${{ inputs.flags }}
+
+        # Write metadata sidecar so process_metrics.py can identify each metrics file
+        SIDECAR="${METRICS_FILE%.json}.meta.json"
+        python3 scripts/write_metrics_sidecar.py \
+          --out "$SIDECAR" \
+          backend="${{ inputs.backend }}" \
+          task=llama-inference \
+          model_file=${{ inputs.model_file }} \
+          model=${{ inputs.model }} \
+          quantization=${{ inputs.quantization }} \
+          configuration=${{ inputs.configuration }} \
+          "flags=${{ inputs.flags }}" \
+          prompt="${{ inputs.prompt }}"
