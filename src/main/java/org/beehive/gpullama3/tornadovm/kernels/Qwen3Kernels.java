@@ -894,5 +894,325 @@ public class Qwen3Kernels {
             }
         }
     }
+
+    // ── Batch prefill kernels ────────────────────────────────────────────────
+
+    /**
+     * Batched fused Q/K/V projection for Qwen3 GQA (FP16 weights, FP16 input).
+     *
+     * <p>Like {@code TransformerBatchPrefillKernels.batchedFusedQKVMatmul} but uses
+     * separate {@code qDim} (Q output rows) and {@code kvDim} (K/V output rows).
+     * Row layout: [0, qDim) → Q; [qDim, qDim+kvDim) → K; [qDim+kvDim, qDim+2*kvDim) → V.
+     * Q output stride per batch = qDim; K/V output stride = kvDim.</p>
+     *
+     * Worker: B*(qDim+2*kvDim) workgroups × localWorkGroupSize threads.
+     */
+    public static void batchedFusedQKVMatmulFP16(
+            KernelContext context,
+            HalfFloatArray xbFP16Batch,
+            FloatArray wrapQBatch,
+            FloatArray wrapKBatch,
+            FloatArray wrapVBatch,
+            HalfFloatArray wq,
+            HalfFloatArray wk,
+            HalfFloatArray wv,
+            int inputDim,
+            int qDim,
+            int kvDim,
+            int localWorkGroupSize) {
+
+        int groupId = context.globalIdx / localWorkGroupSize;
+        int localId = context.localIdx;
+        int totalRows = qDim + 2 * kvDim;
+        int batchIdx = groupId / totalRows;
+        int rowIdx = groupId % totalRows;
+        int inputOff = batchIdx * inputDim;
+
+        float[] localSum = context.allocateFloatLocalArray(localWorkGroupSize);
+
+        if (rowIdx < qDim) {
+            int rowOff = rowIdx * inputDim;
+            float partial = 0.0f;
+            for (int j = localId; j < inputDim; j += localWorkGroupSize) {
+                partial += wq.get(rowOff + j).getFloat32() * xbFP16Batch.get(inputOff + j).getFloat32();
+            }
+            localSum[localId] = partial;
+            context.localBarrier();
+            for (int s = localWorkGroupSize / 2; s > 0; s >>= 1) {
+                if (localId < s) localSum[localId] += localSum[localId + s];
+                context.localBarrier();
+            }
+            if (localId == 0) wrapQBatch.set(batchIdx * qDim + rowIdx, localSum[0]);
+
+        } else if (rowIdx < qDim + kvDim) {
+            int kRow = rowIdx - qDim;
+            int rowOff = kRow * inputDim;
+            float partial = 0.0f;
+            for (int j = localId; j < inputDim; j += localWorkGroupSize) {
+                partial += wk.get(rowOff + j).getFloat32() * xbFP16Batch.get(inputOff + j).getFloat32();
+            }
+            localSum[localId] = partial;
+            context.localBarrier();
+            for (int s = localWorkGroupSize / 2; s > 0; s >>= 1) {
+                if (localId < s) localSum[localId] += localSum[localId + s];
+                context.localBarrier();
+            }
+            if (localId == 0) wrapKBatch.set(batchIdx * kvDim + kRow, localSum[0]);
+
+        } else {
+            int vRow = rowIdx - qDim - kvDim;
+            int rowOff = vRow * inputDim;
+            float partial = 0.0f;
+            for (int j = localId; j < inputDim; j += localWorkGroupSize) {
+                partial += wv.get(rowOff + j).getFloat32() * xbFP16Batch.get(inputOff + j).getFloat32();
+            }
+            localSum[localId] = partial;
+            context.localBarrier();
+            for (int s = localWorkGroupSize / 2; s > 0; s >>= 1) {
+                if (localId < s) localSum[localId] += localSum[localId + s];
+                context.localBarrier();
+            }
+            if (localId == 0) wrapVBatch.set(batchIdx * kvDim + vRow, localSum[0]);
+        }
+    }
+
+    /**
+     * Batched fused Q/K/V projection for Qwen3 GQA (Q8_0 weights, FP32 input).
+     *
+     * Worker: B*(qDim+2*kvDim) workgroups × localWorkGroupSize threads.
+     */
+    public static void batchedFusedQKVMatmulQ8_0(
+            KernelContext context,
+            FloatArray wrapXbBatch,
+            FloatArray wrapQBatch,
+            FloatArray wrapKBatch,
+            FloatArray wrapVBatch,
+            ByteArray wq,
+            ByteArray wk,
+            ByteArray wv,
+            int inputDim,
+            int qDim,
+            int kvDim,
+            int localWorkGroupSize) {
+
+        int groupId = context.globalIdx / localWorkGroupSize;
+        int localId = context.localIdx;
+        int totalRows = qDim + 2 * kvDim;
+        int batchIdx = groupId / totalRows;
+        int rowIdx = groupId % totalRows;
+        int inputOff = batchIdx * inputDim;
+
+        final int blockSize = 32;
+        final int Q8_0_BLOCK_BYTES = 34;
+
+        float[] localSum = context.allocateFloatLocalArray(localWorkGroupSize);
+
+        if (rowIdx < qDim) {
+            int blocksPerRow = (inputDim + blockSize - 1) / blockSize;
+            int rowBlockOff = rowIdx * blocksPerRow;
+            float partial = 0.0f;
+            for (int j = localId; j < inputDim; j += localWorkGroupSize) {
+                int blockIdx = j / blockSize;
+                int withinBlock = j % blockSize;
+                int blockByteOff = (rowBlockOff + blockIdx) * Q8_0_BLOCK_BYTES;
+                HalfFloat sc = wq.getHalfFloat(blockByteOff);
+                byte q8 = wq.get(blockByteOff + 2 + withinBlock);
+                partial += ((float) q8 * sc.getFloat32()) * wrapXbBatch.get(inputOff + j);
+            }
+            localSum[localId] = partial;
+            context.localBarrier();
+            for (int s = localWorkGroupSize / 2; s > 0; s >>= 1) {
+                if (localId < s) localSum[localId] += localSum[localId + s];
+                context.localBarrier();
+            }
+            if (localId == 0) wrapQBatch.set(batchIdx * qDim + rowIdx, localSum[0]);
+
+        } else if (rowIdx < qDim + kvDim) {
+            int kRow = rowIdx - qDim;
+            int blocksPerRow = (inputDim + blockSize - 1) / blockSize;
+            int rowBlockOff = kRow * blocksPerRow;
+            float partial = 0.0f;
+            for (int j = localId; j < inputDim; j += localWorkGroupSize) {
+                int blockIdx = j / blockSize;
+                int withinBlock = j % blockSize;
+                int blockByteOff = (rowBlockOff + blockIdx) * Q8_0_BLOCK_BYTES;
+                HalfFloat sc = wk.getHalfFloat(blockByteOff);
+                byte q8 = wk.get(blockByteOff + 2 + withinBlock);
+                partial += ((float) q8 * sc.getFloat32()) * wrapXbBatch.get(inputOff + j);
+            }
+            localSum[localId] = partial;
+            context.localBarrier();
+            for (int s = localWorkGroupSize / 2; s > 0; s >>= 1) {
+                if (localId < s) localSum[localId] += localSum[localId + s];
+                context.localBarrier();
+            }
+            if (localId == 0) wrapKBatch.set(batchIdx * kvDim + kRow, localSum[0]);
+
+        } else {
+            int vRow = rowIdx - qDim - kvDim;
+            int blocksPerRow = (inputDim + blockSize - 1) / blockSize;
+            int rowBlockOff = vRow * blocksPerRow;
+            float partial = 0.0f;
+            for (int j = localId; j < inputDim; j += localWorkGroupSize) {
+                int blockIdx = j / blockSize;
+                int withinBlock = j % blockSize;
+                int blockByteOff = (rowBlockOff + blockIdx) * Q8_0_BLOCK_BYTES;
+                HalfFloat sc = wv.getHalfFloat(blockByteOff);
+                byte q8 = wv.get(blockByteOff + 2 + withinBlock);
+                partial += ((float) q8 * sc.getFloat32()) * wrapXbBatch.get(inputOff + j);
+            }
+            localSum[localId] = partial;
+            context.localBarrier();
+            for (int s = localWorkGroupSize / 2; s > 0; s >>= 1) {
+                if (localId < s) localSum[localId] += localSum[localId + s];
+                context.localBarrier();
+            }
+            if (localId == 0) wrapVBatch.set(batchIdx * kvDim + vRow, localSum[0]);
+        }
+    }
+
+    /**
+     * Batched fused Q/K RMSNorm for Qwen3 GQA.
+     *
+     * <p>Workgroup layout: B*(nHeads+nHeadKv) groups × nEmbdHead local threads.
+     * Groups [0, B*nHeads) normalize Q; groups [B*nHeads, B*(nHeads+nHeadKv)) normalize K.
+     * groupIdx = batchIdx*(nHeads+nHeadKv) + headSlot.</p>
+     *
+     * Worker: B*(nHeads+nHeadKv) workgroups × nEmbdHead threads.
+     */
+    public static void batchedFusedQKRmsNorm(
+            KernelContext context,
+            FloatArray wrapQBatch,
+            FloatArray wrapKBatch,
+            FloatArray qWeights,
+            FloatArray kWeights,
+            int nHeads,
+            int nHeadKv,
+            int nEmbdHead,
+            int qDim,
+            int kvDim,
+            float rmsNormEps) {
+
+        int groupId = context.globalIdx / nEmbdHead;
+        int localId = context.localIdx;
+        int localSize = context.localGroupSizeX;
+        int totalHeadsPerBatch = nHeads + nHeadKv;
+
+        int batchIdx = groupId / totalHeadsPerBatch;
+        int headSlot = groupId % totalHeadsPerBatch;
+
+        float[] localSum = context.allocateFloatLocalArray(nEmbdHead);
+
+        if (headSlot < nHeads) {
+            // Q head
+            int headOffset = batchIdx * qDim + headSlot * nEmbdHead;
+            float partialSum = 0.0f;
+            for (int i = localId; i < nEmbdHead; i += localSize) {
+                float val = wrapQBatch.get(headOffset + i);
+                partialSum += val * val;
+            }
+            localSum[localId] = partialSum;
+            context.localBarrier();
+            for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) localSum[localId] += localSum[localId + stride];
+                context.localBarrier();
+            }
+            float ss = localSum[0] / nEmbdHead + rmsNormEps;
+            ss = 1.0f / TornadoMath.sqrt(ss);
+            context.localBarrier();
+            for (int i = localId; i < nEmbdHead; i += localSize) {
+                wrapQBatch.set(headOffset + i, qWeights.get(i) * ss * wrapQBatch.get(headOffset + i));
+            }
+        } else {
+            // K head
+            int kHeadIdx = headSlot - nHeads;
+            int headOffset = batchIdx * kvDim + kHeadIdx * nEmbdHead;
+            float partialSum = 0.0f;
+            for (int i = localId; i < nEmbdHead; i += localSize) {
+                float val = wrapKBatch.get(headOffset + i);
+                partialSum += val * val;
+            }
+            localSum[localId] = partialSum;
+            context.localBarrier();
+            for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) localSum[localId] += localSum[localId + stride];
+                context.localBarrier();
+            }
+            float ss = localSum[0] / nEmbdHead + rmsNormEps;
+            ss = 1.0f / TornadoMath.sqrt(ss);
+            context.localBarrier();
+            for (int i = localId; i < nEmbdHead; i += localSize) {
+                wrapKBatch.set(headOffset + i, kWeights.get(i) * ss * wrapKBatch.get(headOffset + i));
+            }
+        }
+    }
+
+    /**
+     * Batched fused RoPE rotation + KV cache write for Qwen3.
+     *
+     * <p>Like {@code TransformerBatchPrefillKernels.batchedRopeWithKVCache} but uses
+     * Qwen3 RoPE theta (1 000 000) and a separate {@code qDim} for the Q stride.</p>
+     *
+     * <p>globalIdx = batchIdx*(qDim/2) + pairIdx.
+     * K rotation is applied only when pairIdx &lt; kvDim/2.</p>
+     *
+     * Worker: B*(qDim/2) global threads, localSize tuned like Llama RoPE.
+     */
+    public static void batchedRopeWithKVCacheQwen3(
+            KernelContext context,
+            IntArray batchStartPosHolder,
+            FloatArray wrapQBatch,
+            FloatArray wrapKBatch,
+            FloatArray wrapVBatch,
+            FloatArray wrapKeyCache,
+            FloatArray wrapValueCache,
+            int kvDim,
+            int nEmbdHead,
+            int layerIndex,
+            int contextLength,
+            int qDim) {
+
+        int globalIdx = context.globalIdx;
+        int halfQDim = qDim / 2;
+        int batchIdx = globalIdx / halfQDim;
+        int pairIdx = globalIdx % halfQDim;
+
+        int pos = batchStartPosHolder.get(0) + batchIdx;
+
+        // Qwen3 uses split-half RoPE: pair element ic with ic + nEmbdHead/2 within each head.
+        int halfEmbdHead = nEmbdHead / 2;
+        int ic      = pairIdx % halfEmbdHead;
+        int headIdx = pairIdx / halfEmbdHead;
+
+        float freq = 1.0f / TornadoMath.pow(1000000.0f, 2.0f * ic / (float) nEmbdHead);
+        float val  = pos * freq;
+        float fcr  = TornadoMath.cos(val);
+        float fci  = TornadoMath.sin(val);
+
+        // Rotate Q (split-half pairs within each head)
+        int qHeadBase = batchIdx * qDim + headIdx * nEmbdHead;
+        float v0q = wrapQBatch.get(qHeadBase + ic);
+        float v1q = wrapQBatch.get(qHeadBase + ic + halfEmbdHead);
+        wrapQBatch.set(qHeadBase + ic,              v0q * fcr - v1q * fci);
+        wrapQBatch.set(qHeadBase + ic + halfEmbdHead, v0q * fci + v1q * fcr);
+
+        // Rotate K and write K,V to cache (only for KV pairs)
+        if (pairIdx < kvDim / 2) {
+            int kHeadIdx  = pairIdx / halfEmbdHead;
+            int kHeadBase = batchIdx * kvDim + kHeadIdx * nEmbdHead;
+            float v0k = wrapKBatch.get(kHeadBase + ic);
+            float v1k = wrapKBatch.get(kHeadBase + ic + halfEmbdHead);
+            float rotK0 = v0k * fcr - v1k * fci;
+            float rotK1 = v0k * fci + v1k * fcr;
+            wrapKBatch.set(kHeadBase + ic,              rotK0);
+            wrapKBatch.set(kHeadBase + ic + halfEmbdHead, rotK1);
+
+            int cacheOff = layerIndex * contextLength * kvDim + pos * kvDim + kHeadIdx * nEmbdHead;
+            wrapKeyCache.set(cacheOff + ic,              rotK0);
+            wrapKeyCache.set(cacheOff + ic + halfEmbdHead, rotK1);
+            wrapValueCache.set(cacheOff + ic,              wrapVBatch.get(kHeadBase + ic));
+            wrapValueCache.set(cacheOff + ic + halfEmbdHead, wrapVBatch.get(kHeadBase + ic + halfEmbdHead));
+        }
+    }
 }
 // @formatter:on
