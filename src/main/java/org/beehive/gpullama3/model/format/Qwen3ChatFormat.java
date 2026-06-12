@@ -205,15 +205,16 @@ public class Qwen3ChatFormat implements ChatFormat {
     }
 
     /**
-     * Encodes a tool result using the Qwen3 "tool" role.
-     * Format: {@code <|im_start|>tool\nresult<|im_end|>}
+     * Encodes a tool result in the native Qwen3 format: a {@code user} turn whose content is the
+     * result wrapped in {@code <tool_response>…</tool_response>} tags, matching the official Qwen3
+     * chat template. (Qwen3 has no dedicated "tool" role — results are delivered as user turns.)
+     * Format: {@code <|im_start|>user\n<tool_response>\nresult\n</tool_response><|im_end|>}
      */
     @Override
     public List<Integer> encodeToolResultTurn(String toolCallId, String toolName, String result) {
         List<Integer> tokens = new ArrayList<>();
         tokens.add(imStart);
-        tokens.addAll(tokenizer.encodeOrdinaryAsList("tool\n"));
-        tokens.addAll(tokenizer.encodeOrdinaryAsList(result));
+        tokens.addAll(tokenizer.encodeOrdinaryAsList("user\n<tool_response>\n" + result + "\n</tool_response>"));
         if (imEnd != -1) {
             tokens.add(imEnd);
         }
