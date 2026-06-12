@@ -138,6 +138,32 @@ public class Qwen3ChatFormat implements ChatFormat {
         return 0.9;
     }
 
+    /**
+     * Genuine Qwen3 exposes the {@code enable_thinking} template switch and so supports thinking
+     * control. DeepSeek-R1 is routed through this same format (detected by the absence of an
+     * {@code <|im_end|>} token) but is a pure reasoning model with no off-switch, so it reports
+     * {@code false} and is left to always reason.
+     */
+    @Override
+    public boolean supportsThinking() {
+        return imEnd != -1;
+    }
+
+    /**
+     * Qwen3 thinking control. When thinking is disabled, primes a pre-closed
+     * {@code <think>\n\n</think>\n\n} block right after the assistant header so the model skips
+     * its reasoning phase — matching the {@code enable_thinking=false} branch of the official
+     * Qwen3 chat template. When enabled (or for DeepSeek-R1, which cannot disable thinking),
+     * returns nothing and lets the model reason on its own.
+     */
+    @Override
+    public List<Integer> encodeThinkingControl(boolean enableThinking) {
+        if (enableThinking || !supportsThinking()) {
+            return List.of();
+        }
+        return tokenizer.encodeOrdinaryAsList("<think>\n\n</think>\n\n");
+    }
+
     // ── Tool calling ──────────────────────────────────────────────────────────
 
     @Override

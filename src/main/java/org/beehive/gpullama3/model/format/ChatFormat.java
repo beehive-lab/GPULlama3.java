@@ -187,6 +187,30 @@ public interface ChatFormat {
         return getStopTokens();
     }
 
+    /**
+     * Returns {@code true} when this chat format has a controllable thinking/reasoning mode that
+     * {@link #encodeThinkingControl(boolean)} can toggle (e.g. Qwen3). Formats that return
+     * {@code false} (the default) have no reasoning phase to switch on or off, so the
+     * {@code enableThinking} flag is inert for them. Pure reasoning models that always think and
+     * offer no off-switch (e.g. DeepSeek-R1) also return {@code false}.
+     */
+    default boolean supportsThinking() {
+        return false;
+    }
+
+    /**
+     * Returns the tokens to append immediately after the assistant header in order to control
+     * the model's thinking/reasoning phase. Models that do not {@link #supportsThinking()} return
+     * an empty list (the default), so callers can invoke this unconditionally.
+     *
+     * @param enableThinking when {@code false}, returns the model-native primer that suppresses
+     *        reasoning (e.g. Qwen3's pre-closed {@code <think></think>} block); when {@code true},
+     *        returns an empty list so the model decides for itself.
+     */
+    default List<Integer> encodeThinkingControl(boolean enableThinking) {
+        return List.of();
+    }
+
     record ChatTokens(String tStartHeader, String tEndHeader, String tEndOfTurn, String tEndOfText, String tEndOfTextFim) {
     }
 
