@@ -168,8 +168,11 @@ public final class ToolCallParserUtils {
     /**
      * Extracts the JSON object value for {@code "key": {…}} using brace-counting.
      * Handles nested objects and tolerates whitespace around {@code :}.
-     * Array brackets {@code […]} are tracked so that {@code {}/{}} characters inside
-     * array elements do not affect the outer brace depth counter.
+     *
+     * <p>Brace counting is <em>string-aware</em>: {@code {} and } characters appearing inside
+     * JSON string literals (e.g. a {@code "code"} argument containing Java source) do not affect
+     * the depth counter, and {@code \"} escapes inside strings are skipped. This keeps argument
+     * objects whose string values contain braces intact.
      */
     private static String extractNestedObject(String json, String key) {
         String marker = "\"" + key + "\"";
@@ -180,13 +183,20 @@ public final class ToolCallParserUtils {
         int braceStart = json.indexOf('{', colonIdx + 1);
         if (braceStart == -1) return null;
         int depth = 0;
-        int arrayDepth = 0;
+        boolean inString = false;
         for (int i = braceStart; i < json.length(); i++) {
             char c = json.charAt(i);
-            if (c == '[') arrayDepth++;
-            else if (c == ']') arrayDepth--;
-            else if (arrayDepth == 0 && c == '{') depth++;
-            else if (arrayDepth == 0 && c == '}') {
+            if (inString) {
+                if (c == '\\') {
+                    i++; // skip the escaped character (e.g. \", \\, \n)
+                } else if (c == '"') {
+                    inString = false;
+                }
+            } else if (c == '"') {
+                inString = true;
+            } else if (c == '{') {
+                depth++;
+            } else if (c == '}') {
                 if (--depth == 0) return json.substring(braceStart, i + 1);
             }
         }
