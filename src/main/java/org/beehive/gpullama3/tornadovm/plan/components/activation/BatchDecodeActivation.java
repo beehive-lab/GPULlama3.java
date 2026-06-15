@@ -1,7 +1,7 @@
 package org.beehive.gpullama3.tornadovm.plan.components.activation;
 
-import org.beehive.gpullama3.inference.state.LlamaState;
-import org.beehive.gpullama3.model.llama.LlamaConfiguration;
+import org.beehive.gpullama3.inference.state.State;
+import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernels;
 import org.beehive.gpullama3.tornadovm.layers.ActivationTaskGraph;
 import org.beehive.gpullama3.tornadovm.scheduling.WorkerGridFactory;
@@ -26,14 +26,14 @@ public class BatchDecodeActivation implements ActivationTaskGraph {
     private final ImmutableTaskGraph itg;
     private final int dim;
 
-    public BatchDecodeActivation(LlamaState state, LlamaConfiguration config, String lastBatchLayerId, boolean isQ8) {
+    public BatchDecodeActivation(State state, Configuration config, String lastBatchLayerId, boolean isQ8) {
         this.dim = config.dim();
         KernelContext ctx = new KernelContext();
         this.itg = buildGraph(ctx, state, lastBatchLayerId, isQ8).snapshot();
     }
 
     // @formatter:off
-    private TaskGraph buildGraph(KernelContext ctx, LlamaState state,
+    private TaskGraph buildGraph(KernelContext ctx, State state,
                                  String lastBatchLayerId, boolean isQ8) {
         TaskGraph tg = new TaskGraph("decodeActivation")
                 .consumeFromDevice(lastBatchLayerId, state.wrapKeyCache, state.wrapValueCache)

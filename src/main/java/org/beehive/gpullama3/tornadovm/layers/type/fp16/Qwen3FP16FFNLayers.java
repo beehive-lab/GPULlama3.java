@@ -24,7 +24,7 @@ import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3TornadoWeights, Qwen3Configuration> {
 
     // Typed reference to Qwen3-specific state
-    private final Qwen3State qwen3State;
+    protected final Qwen3State qwen3State;
     // Qwen3-specific GQA parameters
     private final int nHeadKv;
     private final int nEmbdHeadK;
@@ -192,7 +192,12 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
         var unifiedLayer = new TaskGraph(taskGraphName);
 
         // === Data Setup ===
-        unifiedLayer.consumeFromDevice(state.wrapX);
+        String wrapXSrc = predecessorGraphName(layerIndex);
+        if (wrapXSrc != null) {
+            unifiedLayer.consumeFromDevice(wrapXSrc, state.wrapX);
+        } else {
+            unifiedLayer.consumeFromDevice(state.wrapX);
+        }
         unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
                 // Attention weights
                 weights.rms_att_weightLayered[layerIndex].asFloatArray(),   // RMS norm weights
@@ -356,11 +361,26 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
                         config.hiddenDim(),      // input dim
                         config.dim(),            // output dim
                         LOCAL_WORK_GROUP_SIZE_ALLOC)
-                .persistOnDevice(qwen3State.wrapX);
+                .persistOnDevice(qwen3State.wrapX, qwen3State.wrapKeyCache, qwen3State.wrapValueCache);
 
         return unifiedLayer;
     }
     // @formatter:on
+
+    /**
+     * Returns the explicit predecessor graph name for consumeFromDevice.
+     *
+     * <p>The single-token plan receives {@code wrapX} (and relays all persisted buffers,
+     * including the KV cache) from a named predecessor graph: the activation graph for
+     * layer 0, the previous layer graph otherwise. The no-arg consume form looks up the
+     * <em>current</em> graph's name as the source key, which never matches in interpreter
+     * mode, so the persisted KV-cache buffer is not propagated and gets re-allocated every
+     * decode token — exhausting the device-memory pool (OOM) on long generations.
+     * Decode subclasses override this with their own predecessor names.</p>
+     */
+    protected String predecessorGraphName(int layerIndex) {
+        return (layerIndex == 0) ? "activationUpdate" : "layer_" + (layerIndex - 1);
+    }
 
     /**
      * Configure data transfers for first and subsequent layers
@@ -377,8 +397,12 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
                     qwen3State.wrapKeyCache, qwen3State.wrapValueCache,  //
                     qwen3State.wrapAtt, qwen3State.wrapHb );
         } else {
-            // Subsequent layers: Consume data from previous layer
-            unifiedLayer.consumeFromDevice(context, qwen3State.wrapXb, qwen3State.wrapXb2, //
+            // Subsequent layers: consume from the previous layer graph BY NAME.
+            // The no-arg consumeFromDevice form uses the current graph's own name as the
+            // source key, which never matches the predecessor in interpreter mode, so the
+            // persisted KV cache is not propagated and is re-allocated every token (OOM).
+            String pred = "layer_" + (layerIndex - 1);
+            unifiedLayer.consumeFromDevice(pred, context, qwen3State.wrapXb, qwen3State.wrapXb2, //
                     qwen3State.wrapQ, qwen3State.wrapK,  //
                     qwen3State.wrapV, qwen3State.wrapKeyCache, //
                     qwen3State.wrapValueCache, qwen3State.wrapAtt, //

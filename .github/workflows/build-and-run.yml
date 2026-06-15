@@ -177,15 +177,62 @@ jobs:
           flags: --with-prefill-decode --batch-prefill-size 32 --cuda-graphs
           metrics_file: ${{ runner.temp }}/metrics-ptx-llama-1b-f16-batch-prefill-decode-cuda-graphs.json
 
-      - name: FP16 - Run Qwen3-4B-f16.gguf
+      - name: FP16 - Run Qwen3-0.6B-f16.gguf
         uses: ./.github/actions/run-inference
         with:
           backend: ${{ matrix.backend.name }}
-          model_file: Qwen3-4B-f16.gguf
-          model: Qwen3-4B
+          model_file: Qwen3-0.6B-f16.gguf
+          model: Qwen3-0.6B
           quantization: F16
           configuration: standard
-          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-qwen3-4b-f16-standard.json
+          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-qwen3-0.6b-f16-standard.json
+
+      - name: FP16 - Run Qwen3-0.6B-f16.gguf - Prefill-Decode
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ matrix.backend.name }}
+          model_file: Qwen3-0.6B-f16.gguf
+          model: Qwen3-0.6B
+          quantization: F16
+          configuration: prefill-decode
+          flags: --with-prefill-decode
+          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-qwen3-0.6b-f16-prefill-decode.json
+
+      - name: FP16 - Run Qwen3-0.6B-f16.gguf - Batch-Prefill-Decode
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ matrix.backend.name }}
+          model_file: Qwen3-0.6B-f16.gguf
+          model: Qwen3-0.6B
+          quantization: F16
+          configuration: batch-prefill-decode
+          flags: --with-prefill-decode --batch-prefill-size 32
+          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-qwen3-0.6b-f16-batch-prefill-decode.json
+
+      # PTX-only: CUDA-graph variants
+      - name: PTX - FP16 - Run Qwen3-0.6B-f16.gguf - Prefill-Decode-CUDA-Graphs
+        if: matrix.backend.name == 'ptx'
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ matrix.backend.name }}
+          model_file: Qwen3-0.6B-f16.gguf
+          model: Qwen3-0.6B
+          quantization: F16
+          configuration: prefill-decode-cuda-graphs
+          flags: --with-prefill-decode --cuda-graphs
+          metrics_file: ${{ runner.temp }}/metrics-ptx-qwen3-0.6b-f16-prefill-decode-cuda-graphs.json
+
+      - name: PTX - FP16 - Run Qwen3-0.6B-f16.gguf - Batch-Prefill-Decode-CUDA-Graphs
+        if: matrix.backend.name == 'ptx'
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ matrix.backend.name }}
+          model_file: Qwen3-0.6B-f16.gguf
+          model: Qwen3-0.6B
+          quantization: F16
+          configuration: batch-prefill-decode-cuda-graphs
+          flags: --with-prefill-decode --batch-prefill-size 32 --cuda-graphs
+          metrics_file: ${{ runner.temp }}/metrics-ptx-qwen3-0.6b-f16-batch-prefill-decode-cuda-graphs.json
 
       - name: FP16 - Run Mistral-7B-Instruct-v0.3.fp16.gguf
         uses: ./.github/actions/run-inference
@@ -357,6 +404,53 @@ jobs:
           quantization: Q8_0
           configuration: standard
           metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-qwen3-0-6b-q8-standard.json
+
+      - name: Q8 - Run Qwen3-0.6B-Q8_0.gguf - Prefill-Decode
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ matrix.backend.name }}
+          model_file: Qwen3-0.6B-Q8_0.gguf
+          model: Qwen3-0.6B
+          quantization: Q8_0
+          configuration: prefill-decode
+          flags: --with-prefill-decode
+          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-qwen3-0-6b-q8-prefill-decode.json
+
+      - name: Q8 - Run Qwen3-0.6B-Q8_0.gguf - Batch-Prefill-Decode
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ matrix.backend.name }}
+          model_file: Qwen3-0.6B-Q8_0.gguf
+          model: Qwen3-0.6B
+          quantization: Q8_0
+          configuration: batch-prefill-decode
+          flags: --with-prefill-decode --batch-prefill-size 32
+          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-qwen3-0-6b-q8-batch-prefill-decode.json
+
+      # PTX-only: CUDA-graph variants
+      - name: PTX - Q8 - Run Qwen3-0.6B-Q8_0.gguf - Prefill-Decode-CUDA-Graphs
+        if: matrix.backend.name == 'ptx'
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ matrix.backend.name }}
+          model_file: Qwen3-0.6B-Q8_0.gguf
+          model: Qwen3-0.6B
+          quantization: Q8_0
+          configuration: prefill-decode-cuda-graphs
+          flags: --with-prefill-decode --cuda-graphs
+          metrics_file: ${{ runner.temp }}/metrics-ptx-qwen3-0-6b-q8-prefill-decode-cuda-graphs.json
+
+      - name: PTX - Q8 - Run Qwen3-0.6B-Q8_0.gguf - Batch-Prefill-Decode-CUDA-Graphs
+        if: matrix.backend.name == 'ptx'
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ matrix.backend.name }}
+          model_file: Qwen3-0.6B-Q8_0.gguf
+          model: Qwen3-0.6B
+          quantization: Q8_0
+          configuration: batch-prefill-decode-cuda-graphs
+          flags: --with-prefill-decode --batch-prefill-size 32 --cuda-graphs
+          metrics_file: ${{ runner.temp }}/metrics-ptx-qwen3-0-6b-q8-batch-prefill-decode-cuda-graphs.json
 
       - name: Q8 - Run Phi-3-mini-4k-instruct-Q8_0.gguf
         uses: ./.github/actions/run-inference

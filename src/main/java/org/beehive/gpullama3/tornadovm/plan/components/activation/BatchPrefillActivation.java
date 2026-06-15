@@ -1,7 +1,7 @@
 package org.beehive.gpullama3.tornadovm.plan.components.activation;
 
-import org.beehive.gpullama3.inference.state.LlamaState;
-import org.beehive.gpullama3.model.llama.LlamaConfiguration;
+import org.beehive.gpullama3.inference.state.State;
+import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerBatchPrefillKernels;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernels;
 import org.beehive.gpullama3.tornadovm.layers.ActivationTaskGraph;
@@ -29,7 +29,7 @@ public class BatchPrefillActivation implements ActivationTaskGraph {
     private final int batchSize;
     private final int dim;
 
-    public BatchPrefillActivation(LlamaState state, LlamaConfiguration config, int batchSize, boolean isQ8) {
+    public BatchPrefillActivation(State state, Configuration config, int batchSize, boolean isQ8) {
         this.isQ8 = isQ8;
         this.batchSize = batchSize;
         this.dim = config.dim();
@@ -37,7 +37,7 @@ public class BatchPrefillActivation implements ActivationTaskGraph {
         this.itg = buildGraph(ctx, state).snapshot();
     }
 
-    private TaskGraph buildGraph(KernelContext ctx, LlamaState state) {
+    private TaskGraph buildGraph(KernelContext ctx, State state) {
         if (isQ8) {
             return new TaskGraph("prefillActivation")
                     .transferToDevice(DataTransferMode.EVERY_EXECUTION, state.wrapXBatch)

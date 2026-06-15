@@ -176,15 +176,21 @@ public class ForwardPlanFactory {
     }
 
     private static ForwardPlan createQwen3FP16Plan(ExecutionMode mode, Qwen3State state, Model model) {
-        if (mode != ExecutionMode.STANDARD)
-            throw new UnsupportedOperationException(mode + " not yet supported for QWEN_3 + F16");
-        return new SingleTokenForwardPlan(model, new Qwen3FP16PlanComponents(state, model));
+        BatchPrefillDecodeForwardPlanComponents components = new Qwen3FP16PlanComponents(state, model);
+        return switch (mode) {
+            case STANDARD             -> new SingleTokenForwardPlan(model, components);
+            case PREFILL_DECODE       -> new PrefillDecodeForwardPlan(model, components);
+            case BATCH_PREFILL_DECODE -> new BatchPrefillDecodeForwardPlan(model, components, TornadoVMMasterPlan.PREFILL_BATCH_SIZE);
+        };
     }
 
     private static ForwardPlan createQwen3Q8_0Plan(ExecutionMode mode, Qwen3State state, Model model) {
-        if (mode != ExecutionMode.STANDARD)
-            throw new UnsupportedOperationException(mode + " not yet supported for QWEN_3 + Q8_0");
-        return new SingleTokenForwardPlan(model, new Qwen3Q8_0PlanComponents(state, model));
+        BatchPrefillDecodeForwardPlanComponents components = new Qwen3Q8_0PlanComponents(state, model);
+        return switch (mode) {
+            case STANDARD             -> new SingleTokenForwardPlan(model, components);
+            case PREFILL_DECODE       -> new PrefillDecodeForwardPlan(model, components);
+            case BATCH_PREFILL_DECODE -> new BatchPrefillDecodeForwardPlan(model, components, TornadoVMMasterPlan.PREFILL_BATCH_SIZE);
+        };
     }
 
     private static ForwardPlan createPhi3FP16Plan(ExecutionMode mode, Phi3State state, Model model) {

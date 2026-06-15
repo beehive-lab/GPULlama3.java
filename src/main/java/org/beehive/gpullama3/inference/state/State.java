@@ -77,10 +77,10 @@ public abstract class State {
     public final HalfFloatArray embeddingXBatch;    // B × dim  (FP16 input)
     public final FloatArray wrapXBatch;             // B × dim  (live activations / Q8_0 dequant)
     public final HalfFloatArray wrapXbFP16Batch;    // B × dim  (RMSNorm output, FP16)
-    public final FloatArray wrapQBatch;             // B × dim
+    public final FloatArray wrapQBatch;             // B × qDim (Q projection)
     public final FloatArray wrapKBatch;             // B × kvDim
     public final FloatArray wrapVBatch;             // B × kvDim
-    public final FloatArray wrapXbBatch;            // B × dim  (attention output)
+    public final FloatArray wrapXbBatch;            // B × qDim  (attention output)
     public final FloatArray wrapHbBatch;            // B × hiddenDim
     public final FloatArray attnScaleBatch;         // B        (per-token RMS scale, attn)
     public final FloatArray ffnScaleBatch;          // B        (per-token RMS scale, FFN)
@@ -135,14 +135,15 @@ public abstract class State {
 
         int gpuBatchSize = Integer.getInteger("llama.prefillBatchSize", 1);
         if (gpuBatchSize > 1) {
-            int kvDim = (config.dim() * config.numberOfKeyValueHeads()) / config.numberOfHeads();
+            int qDim  = batchQDim(config);
+            int kvDim = batchKvDim(config);
             this.embeddingXBatch = new HalfFloatArray(gpuBatchSize * config.dim());
             this.wrapXBatch = new FloatArray(gpuBatchSize * config.dim());
             this.wrapXbFP16Batch = new HalfFloatArray(gpuBatchSize * config.dim());
-            this.wrapQBatch = new FloatArray(gpuBatchSize * config.dim());
+            this.wrapQBatch = new FloatArray(gpuBatchSize * qDim);
             this.wrapKBatch = new FloatArray(gpuBatchSize * kvDim);
             this.wrapVBatch = new FloatArray(gpuBatchSize * kvDim);
-            this.wrapXbBatch = new FloatArray(gpuBatchSize * config.dim());
+            this.wrapXbBatch = new FloatArray(gpuBatchSize * qDim);
             this.wrapHbBatch = new FloatArray(gpuBatchSize * config.hiddenDim());
             this.attnScaleBatch = new FloatArray(gpuBatchSize);
             this.ffnScaleBatch = new FloatArray(gpuBatchSize);
@@ -160,6 +161,16 @@ public abstract class State {
             this.ffnScaleBatch = null;
             this.batchStartPosHolder = null;
         }
+    }
+
+    /** Q-projection output dimension per token (model specific: = dim for Llama; differs for Qwen3). */
+    protected int batchQDim(Configuration config) {
+        return config.dim();
+    }
+
+    /** KV-cache dimension per token (model specific: = dim*nHeadKv/nHeads for Llama; differs for Qwen3). */
+    protected int batchKvDim(Configuration config) {
+        return (config.dim() * config.numberOfKeyValueHeads()) / config.numberOfHeads();
     }
 
     // Abstract method - subclasses implement their specific allocation logic and sizes
