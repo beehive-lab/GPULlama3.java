@@ -155,13 +155,29 @@ public class Qwen3ChatFormat implements ChatFormat {
      * its reasoning phase — matching the {@code enable_thinking=false} branch of the official
      * Qwen3 chat template. When enabled (or for DeepSeek-R1, which cannot disable thinking),
      * returns nothing and lets the model reason on its own.
+     *
+     * <p>The {@code <think>}/{@code </think>} markers are emitted as their <em>canonical</em>
+     * single token ids (not ordinary BPE sub-pieces): the tokenizer strips them from its special
+     * map so reasoning renders as text, but the model only recognises the closed block — and thus
+     * actually skips reasoning — when it sees the real control tokens it was trained on.
      */
     @Override
     public List<Integer> encodeThinkingControl(boolean enableThinking) {
         if (enableThinking || !supportsThinking()) {
             return List.of();
         }
-        return tokenizer.encodeOrdinaryAsList("<think>\n\n</think>\n\n");
+        int thinkStart = tokenizer.getThinkStartToken();
+        int thinkEnd = tokenizer.getThinkEndToken();
+        if (thinkStart == -1 || thinkEnd == -1) {
+            // GGUF without dedicated think tokens — fall back to ordinary text encoding.
+            return tokenizer.encodeOrdinaryAsList("<think>\n\n</think>\n\n");
+        }
+        List<Integer> tokens = new ArrayList<>();
+        tokens.add(thinkStart);
+        tokens.addAll(tokenizer.encodeOrdinaryAsList("\n\n"));
+        tokens.add(thinkEnd);
+        tokens.addAll(tokenizer.encodeOrdinaryAsList("\n\n"));
+        return tokens;
     }
 
     // ── Tool calling ──────────────────────────────────────────────────────────
