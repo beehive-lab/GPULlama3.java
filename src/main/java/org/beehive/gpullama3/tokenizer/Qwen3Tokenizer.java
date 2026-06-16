@@ -25,6 +25,11 @@ public class Qwen3Tokenizer implements Tokenizer {
     private final Map<Pair<Integer, Integer>, Integer> merges;
     private final Map<String, Integer> specialTokens;
     private final int[] tokenTypes;
+    /** Canonical {@code <think>}/{@code </think>} token ids (or -1), captured before they are
+     *  removed from {@link #specialTokens} so reasoning renders as text. Used to prime the
+     *  thinking-disabled control block with the tokens the model was actually trained on. */
+    private final int thinkStartToken;
+    private final int thinkEndToken;
     /** buffer to store incomplete UTF-8 sequence */
     private final byte[] bufUtf8 = new byte[4];
     /** index in UTF-8 buffer */
@@ -59,6 +64,10 @@ public class Qwen3Tokenizer implements Tokenizer {
                                 i -> specialTokensList.get(i),
                                 i -> baseTokens + i)
                         );
+        // Capture the canonical think-control token ids BEFORE removing them from the special
+        // map (they are removed so reasoning text renders verbatim during decode).
+        this.thinkStartToken = specialTokens.getOrDefault("<think>", -1);
+        this.thinkEndToken = specialTokens.getOrDefault("</think>", -1);
         specialTokens.remove("<think>");
         specialTokens.remove("</think>");
 
@@ -143,6 +152,16 @@ public class Qwen3Tokenizer implements Tokenizer {
     @Override
     public Map<String, Integer> getSpecialTokens() {
         return specialTokens;
+    }
+
+    /** Canonical {@code <think>} token id, or {@code -1} if this GGUF has no think tokens. */
+    public int getThinkStartToken() {
+        return thinkStartToken;
+    }
+
+    /** Canonical {@code </think>} token id, or {@code -1} if this GGUF has no think tokens. */
+    public int getThinkEndToken() {
+        return thinkEndToken;
     }
 
     @Override

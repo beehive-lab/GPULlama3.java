@@ -14,7 +14,6 @@ public class Qwen3ChatFormat implements ChatFormat {
     protected final int endHeader;
     protected final int endOfTurn;
     protected final int endOfText;
-    protected final int endOfMessage;
     protected final int endOfTextFim;
     protected final int imStart; // beginOfText
     protected final int imEnd; // endOfText
@@ -28,13 +27,12 @@ public class Qwen3ChatFormat implements ChatFormat {
         this.tokenizer = tokenizer;
         this.chatTokens = chatTokens;
         Map<String, Integer> specialTokens = tokenizer.getSpecialTokens();
-        this.beginOfText = specialTokens.getOrDefault("", -1);
+        this.beginOfText = -1; // Qwen3 has no BOS token; getBeginOfText() falls back to startHeader
         this.startHeader = specialTokens.getOrDefault(chatTokens.tStartHeader(), -1);
         this.endHeader = specialTokens.getOrDefault(chatTokens.tEndHeader(), -1);
         this.endOfTurn = specialTokens.getOrDefault(chatTokens.tEndOfTurn(), -1);
         this.endOfText = specialTokens.getOrDefault(chatTokens.tEndOfText(), -1);
         this.endOfTextFim = specialTokens.getOrDefault(chatTokens.tEndOfTextFim(), -1);
-        this.endOfMessage = specialTokens.getOrDefault("", -1); // Use default value if key not found
 
         this.imStart = startHeader;
         this.imEnd = endHeader;
@@ -128,5 +126,154 @@ public class Qwen3ChatFormat implements ChatFormat {
         }
 
         return stopTokens;
+    }
+
+    @Override
+    public double defaultTemperature() {
+        return 0.8;
+    }
+
+    @Override
+    public double defaultTopP() {
+        return 0.9;
+    }
+
+    /**
+     * Genuine Qwen3 exposes the {@code enable_thinking} template switch and so supports thinking
+     * control. DeepSeek-R1 is routed through this same format (detected by the absence of an
+     * {@code <|im_end|>} token) but is a pure reasoning model with no off-switch, so it reports
+     * {@code false} and is left to always reason.
+     */
+    @Override
+    public boolean supportsThinking() {
+        return imEnd != -1;
+    }
+
+    /**
+     * Qwen3 thinking control. When thinking is disabled, primes a pre-closed
+     * {@code <think>\n\n</think>\n\n} block right after the assistant header so the model skips
+     * its reasoning phase — matching the {@code enable_thinking=false} branch of the official
+     * Qwen3 chat template. When enabled (or for DeepSeek-R1, which cannot disable thinking),
+     * returns nothing and lets the model reason on its own.
+     *
+     * <p>The {@code <think>}/{@code </think>} markers are emitted as their <em>canonical</em>
+     * single token ids (not ordinary BPE sub-pieces): the tokenizer strips them from its special
+     * map so reasoning renders as text, but the model only recognises the closed block — and thus
+     * actually skips reasoning — when it sees the real control tokens it was trained on.
+     */
+    @Override
+    public List<Integer> encodeThinkingControl(boolean enableThinking) {
+        if (enableThinking || !supportsThinking()) {
+            return List.of();
+        }
+        int thinkStart = tokenizer.getThinkStartToken();
+        int thinkEnd = tokenizer.getThinkEndToken();
+        if (thinkStart == -1 || thinkEnd == -1) {
+            // GGUF without dedicated think tokens — fall back to ordinary text encoding.
+            return tokenizer.encodeOrdinaryAsList("<think>\n\n</think>\n\n");
+        }
+        List<Integer> tokens = new ArrayList<>();
+        tokens.add(thinkStart);
+        tokens.addAll(tokenizer.encodeOrdinaryAsList("\n\n"));
+        tokens.add(thinkEnd);
+        tokens.addAll(tokenizer.encodeOrdinaryAsList("\n\n"));
+        return tokens;
+    }
+
+    // ── Tool calling ──────────────────────────────────────────────────────────
+
+    @Override
+    public boolean supportsToolCalling() {
+        return true;
+    }
+
+    /**
+     * Qwen3 tool calling system prompt suffix.
+     * Appended to the system message; instructs the model to wrap tool calls in
+     * {@code <tool_call>…</tool_call>} XML tags.
+     */
+    @Override
+    public String toolSystemPromptSuffix(String toolsJson) {
+        return "\n\n# Tools\n\n"
+                + "You may call one or more functions to assist with the user query.\n\n"
+                + "You are provided with function signatures within <tools></tools> XML tags:\n"
+                + "<tools>\n"
+                + toolsJson
+                + "\n</tools>\n\n"
+                + "For each function call, return a json object with function name and arguments "
+                + "within <tool_call></tool_call> XML tags:\n"
+                + "<tool_call>\n"
+                + "{\"name\": <function-name>, \"arguments\": <args-json-object>}\n"
+                + "</tool_call>";
+    }
+
+    /**
+     * Re-encodes a prior assistant tool-call turn for multi-turn history.
+     * Format: {@code <|im_start|>assistant\n<tool_call>\nJSON\n</tool_call><|im_end|>}
+     */
+    @Override
+    public List<Integer> encodeToolCallAssistantTurn(ToolCallExtract toolCall) {
+        List<Integer> tokens = new ArrayList<>();
+        tokens.add(imStart);
+        tokens.addAll(tokenizer.encodeOrdinaryAsList("assistant\n"));
+        String json = "{\"name\":\"" + toolCall.name() + "\",\"arguments\":" + toolCall.argumentsJson() + "}";
+        tokens.addAll(tokenizer.encodeOrdinaryAsList("<tool_call>\n" + json + "\n</tool_call>"));
+        if (imEnd != -1) {
+            tokens.add(imEnd);
+        }
+        return tokens;
+    }
+
+    /**
+     * Encodes multiple tool calls as a single assistant turn: one {@code <|im_start|>assistant}
+     * header, all {@code <tool_call>} blocks concatenated, then {@code <|im_end|>}.
+     * For a single call, delegates to the existing single-call method.
+     */
+    @Override
+    public List<Integer> encodeToolCallAssistantTurn(List<ToolCallExtract> toolCalls) {
+        if (toolCalls.isEmpty()) return List.of();
+        if (toolCalls.size() == 1) return encodeToolCallAssistantTurn(toolCalls.get(0));
+        List<Integer> tokens = new ArrayList<>();
+        tokens.add(imStart);
+        tokens.addAll(tokenizer.encodeOrdinaryAsList("assistant\n"));
+        for (ToolCallExtract tc : toolCalls) {
+            String json = "{\"name\":\"" + tc.name() + "\",\"arguments\":" + tc.argumentsJson() + "}";
+            tokens.addAll(tokenizer.encodeOrdinaryAsList("<tool_call>\n" + json + "\n</tool_call>"));
+        }
+        if (imEnd != -1) {
+            tokens.add(imEnd);
+        }
+        return tokens;
+    }
+
+    /**
+     * Encodes a tool result in the native Qwen3 format: a {@code user} turn whose content is the
+     * result wrapped in {@code <tool_response>…</tool_response>} tags, matching the official Qwen3
+     * chat template. (Qwen3 has no dedicated "tool" role — results are delivered as user turns.)
+     * Format: {@code <|im_start|>user\n<tool_response>\nresult\n</tool_response><|im_end|>}
+     */
+    @Override
+    public List<Integer> encodeToolResultTurn(String toolCallId, String toolName, String result) {
+        List<Integer> tokens = new ArrayList<>();
+        tokens.add(imStart);
+        tokens.addAll(tokenizer.encodeOrdinaryAsList("user\n<tool_response>\n" + result + "\n</tool_response>"));
+        if (imEnd != -1) {
+            tokens.add(imEnd);
+        }
+        return tokens;
+    }
+
+    /**
+     * Detects a tool call enclosed in {@code <tool_call>…</tool_call>} tags.
+     * Delegates to {@link ToolCallParserUtils#parseToolCallResponse}.
+     */
+    @Override
+    public Optional<ToolCallExtract> extractToolCall(String responseText) {
+        return ToolCallParserUtils.parseToolCallResponse(responseText);
+    }
+
+    @Override
+    public List<ToolCallExtract> extractAllToolCalls(String responseText) {
+        return ToolCallParserUtils.parseAllToolCalls(responseText);
     }
 }
