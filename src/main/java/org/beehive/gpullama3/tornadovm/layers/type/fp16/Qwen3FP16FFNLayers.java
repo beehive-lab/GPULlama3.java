@@ -33,6 +33,12 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
     private final int nEmbdHead;
     private final int nEmbdGqa;
     private final int gqa;
+    // Qwen3 decode attention kernel selector: -Dllama.qwen3AttentionKernel=optv2|online|splitk (default optv2).
+    private final String attentionKernel = System.getProperty("llama.qwen3AttentionKernel", "optv2").toLowerCase();
+    private final boolean useOnlineAttention = attentionKernel.equals("online");
+    protected final boolean useSplitKVAttention = attentionKernel.equals("splitk");
+    // Split-KV (flash-decoding) workgroups per head; tune via -Dllama.qwen3SplitKV (default 8).
+    private final int attentionSplits = Integer.getInteger("llama.qwen3SplitKV", 8);
 
     public Qwen3FP16FFNLayers(String taskGraphName, Qwen3State state, Qwen3TornadoWeights weights, Qwen3Configuration config, SchedulerType schedulerType) {
         super(taskGraphName, state, weights, config, schedulerType);
@@ -53,8 +59,12 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
     public GridScheduler updateGridScheduler(GridScheduler gridScheduler) {
         WorkerGrid rmsNormWorker = WorkerGridFactory.createRmsNormWorker(config.dim(), state.localSize);
         WorkerGrid ropeWorker = WorkerGridFactory.createRoPEWorker(config.numberOfHeads(), nEmbdHead);
-        // Parallel attention worker
-        WorkerGrid parallelAttentionWorker = WorkerGridFactory.createAttentionWorker(config.numberOfHeads(), nEmbdHead);
+        // Parallel attention worker. Split-KV launches nHeads*nSplits workgroups (one per head-split)
+        // followed by a combine pass over nHeads workgroups; other kernels use one workgroup per head.
+        WorkerGrid parallelAttentionWorker = useSplitKVAttention
+                ? WorkerGridFactory.createAttentionWorker(config.numberOfHeads() * attentionSplits, nEmbdHead)
+                : WorkerGridFactory.createAttentionWorker(config.numberOfHeads(), nEmbdHead);
+        WorkerGrid attentionCombineWorker = WorkerGridFactory.createAttentionWorker(config.numberOfHeads(), nEmbdHead);
         // attn_output_proj worker (output projection)
         int matmul1Global = config.dim() * LOCAL_WORK_GROUP_SIZE_ALLOC;
         WorkerGrid matmul1Worker = WorkerGridFactory.genericWorker(matmul1Global, LOCAL_WORK_GROUP_SIZE_ALLOC);
@@ -81,6 +91,9 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
             gridScheduler.addWorkerGrid("layer_" + i + ".qk_rmsnorm", qkRmsNormWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".attention", parallelAttentionWorker);
+            if (useSplitKVAttention) {
+                gridScheduler.addWorkerGrid("layer_" + i + ".attention_combine", attentionCombineWorker);
+            }
             gridScheduler.addWorkerGrid("layer_" + i + ".attn_output_proj", matmul1Worker);
             // === FFN Block ===
             gridScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce", rmsNormWorker);
@@ -286,21 +299,64 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
                 layerIndex,                   // layer index for cache offset
                 config.contextLength()); // max sequence length
 
-        // Flash Attention
-        unifiedLayer.task("attention",
-                TransformerComputeKernelsLayered::processHeadsFlashAttentionOptV2,
-                context,
-                qwen3State.wrapQ,             // query vectors
-                qwen3State.wrapKeyCache,      // key cache
-                qwen3State.wrapValueCache,    // value cache
-                qwen3State.wrapXb,            // output: attention result
-                config.numberOfHeads(),  // nHeads
-                nEmbdHead,                    // headSize
-                nEmbdGqa,                     // kvDim
-                gqa,                          // kvMul (nHeads / nHeadKv)
-                qwen3State.positionHolder,    // position
-                layerIndex,                   // layer index
-                config.contextLength()); // context length
+        // Flash Attention (kernel selectable via -Dllama.qwen3AttentionKernel; default optv2)
+        if (useSplitKVAttention) {
+            // Phase 1: split each head's KV range across attentionSplits workgroups; partials -> wrapAttSplit.
+            unifiedLayer.task("attention",
+                    TransformerComputeKernelsLayered::processHeadsFlashAttentionSplitKV,
+                    context,
+                    qwen3State.wrapQ,             // query vectors
+                    qwen3State.wrapKeyCache,      // key cache
+                    qwen3State.wrapValueCache,    // value cache
+                    qwen3State.wrapAttSplit,      // scratch: per-head split partials (compact layout)
+                    config.numberOfHeads(),  // nHeads
+                    nEmbdHead,                    // headSize
+                    nEmbdGqa,                     // kvDim
+                    gqa,                          // kvMul (nHeads / nHeadKv)
+                    qwen3State.positionHolder,    // position
+                    layerIndex,                   // layer index
+                    config.contextLength(),  // context length
+                    attentionSplits);             // number of KV splits per head
+            // Phase 2: combine the per-head split partials into the final attention output -> wrapXb.
+            unifiedLayer.task("attention_combine",
+                    TransformerComputeKernelsLayered::combineSplitKVAttention,
+                    context,
+                    qwen3State.wrapAttSplit,      // scratch: per-head split partials (compact layout)
+                    qwen3State.wrapXb,            // output: attention result
+                    config.numberOfHeads(),  // nHeads
+                    nEmbdHead,                    // headSize
+                    attentionSplits);             // number of KV splits per head
+        } else if (useOnlineAttention) {
+            unifiedLayer.task("attention",
+                    TransformerComputeKernelsLayered::processHeadsFlashAttentionQwen3Online,
+                    context,
+                    qwen3State.wrapQ,             // query vectors
+                    qwen3State.wrapKeyCache,      // key cache
+                    qwen3State.wrapValueCache,    // value cache
+                    qwen3State.wrapXb,            // output: attention result
+                    config.numberOfHeads(),  // nHeads
+                    nEmbdHead,                    // headSize
+                    nEmbdGqa,                     // kvDim
+                    gqa,                          // kvMul (nHeads / nHeadKv)
+                    qwen3State.positionHolder,    // position
+                    layerIndex,                   // layer index
+                    config.contextLength()); // context length
+        } else {
+            unifiedLayer.task("attention",
+                    TransformerComputeKernelsLayered::processHeadsFlashAttentionOptV2,
+                    context,
+                    qwen3State.wrapQ,             // query vectors
+                    qwen3State.wrapKeyCache,      // key cache
+                    qwen3State.wrapValueCache,    // value cache
+                    qwen3State.wrapXb,            // output: attention result
+                    config.numberOfHeads(),  // nHeads
+                    nEmbdHead,                    // headSize
+                    nEmbdGqa,                     // kvDim
+                    gqa,                          // kvMul (nHeads / nHeadKv)
+                    qwen3State.positionHolder,    // position
+                    layerIndex,                   // layer index
+                    config.contextLength()); // context length
+        }
 
         // Output Projection with Residual
         unifiedLayer.task("attn_output_proj",
@@ -396,6 +452,9 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
                     qwen3State.wrapQ, qwen3State.wrapK, qwen3State.wrapV, //
                     qwen3State.wrapKeyCache, qwen3State.wrapValueCache,  //
                     qwen3State.wrapAtt, qwen3State.wrapHb );
+            if (useSplitKVAttention) {
+                unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION, qwen3State.wrapAttSplit);
+            }
         } else {
             // Subsequent layers: consume from the previous layer graph BY NAME.
             // The no-arg consumeFromDevice form uses the current graph's own name as the
@@ -407,6 +466,9 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
                     qwen3State.wrapV, qwen3State.wrapKeyCache, //
                     qwen3State.wrapValueCache, qwen3State.wrapAtt, //
                     qwen3State.wrapHb, qwen3State.positionHolder); //
+            if (useSplitKVAttention) {
+                unifiedLayer.consumeFromDevice(pred, qwen3State.wrapAttSplit);
+            }
 
         }
         return unifiedLayer;

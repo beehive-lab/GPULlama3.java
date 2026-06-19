@@ -26,6 +26,12 @@ public final class Qwen3State extends State {
     public FloatArray tempQcur;
     public FloatArray tempKcur;
 
+    // Split-KV (flash-decoding) attention scratch: per (head, split) partial numerator [headSize] plus
+    // block max and block sum. Sized exactly to the configured split count so the split-KV kernel writes
+    // every element each layer (a partially-written large buffer is not reliably synced between the
+    // split and combine tasks by TornadoVM). See processHeadsFlashAttentionSplitKV / combineSplitKVAttention.
+    public FloatArray wrapAttSplit;
+
     public Qwen3State(Configuration config, int batchsize) {
         super(config, batchsize);
         // Initialize Qwen3-specific fields
@@ -33,6 +39,10 @@ public final class Qwen3State extends State {
         int nEmbdHead = qwen3config.numberOfHeads();
         this.tempQcur = new FloatArray(nEmbdHead);
         this.tempKcur = new FloatArray(nEmbdHead);
+
+        int splitKv = Integer.getInteger("llama.qwen3SplitKV", 8);
+        int headSizeV = qwen3config.numberOfHeadsValue();
+        this.wrapAttSplit = new FloatArray(qwen3config.numberOfHeads() * splitKv * (headSizeV + 2));
     }
 
     @Override
