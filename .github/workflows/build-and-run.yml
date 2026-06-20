@@ -31,7 +31,7 @@ jobs:
           # ./mvnw -T12C -Pspotless spotless:check
 
   # Build: TornadoVM → GPULlama3 → Quarkus LangChain4j
-  # max-parallel: 1 ensures the opencl and ptx variants run sequentially so
+  # max-parallel: 1 ensures the opencl, ptx and cuda variants run sequentially so
   # there are no workspace conflicts between matrix jobs.
   build:
     if: github.repository == 'beehive-lab/GPULlama3.java'
@@ -45,6 +45,7 @@ jobs:
         backend:
           - name: opencl
           - name: ptx
+          - name: cuda
 
     steps:
       - name: Checkout GPULlama3
@@ -99,6 +100,7 @@ jobs:
         backend:
           - name: opencl
           - name: ptx
+          - name: cuda
 
     steps:
       - name: Checkout GPULlama3
@@ -523,6 +525,7 @@ jobs:
         backend:
           - name: opencl
           - name: ptx
+          - name: cuda
 
     steps:
       - name: Checkout GPULlama3

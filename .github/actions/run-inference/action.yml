@@ -3,7 +3,7 @@ description: Run one llama-tornado inference pass and write the metrics + sideca
 
 inputs:
   backend:
-    description: 'GPU backend (opencl or ptx)'
+    description: 'GPU backend (opencl, ptx, or cuda)'
     required: true
   model_file:
     description: 'Model filename inside $MODELS_DIR (e.g. Llama-3.2-1B-Instruct-F16.gguf)'

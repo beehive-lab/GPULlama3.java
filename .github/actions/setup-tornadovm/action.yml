@@ -3,17 +3,29 @@ description: Build TornadoVM once per backend and reuse across runs via a local 
 
 inputs:
   backend:
-    description: 'TornadoVM backend to build (opencl or ptx)'
+    description: 'TornadoVM backend to build (opencl, ptx, or cuda)'
     required: true
 
 runs:
   using: composite
   steps:
+    - name: Determine TornadoVM branch
+      id: branch
+      shell: bash
+      run: |
+        # The CUDA backend currently lives on the cuda2 branch (TornadoVM PR #861)
+        # until it is merged to master; all other backends build from master.
+        if [ "${{ inputs.backend }}" = "cuda" ]; then
+          echo "ref=cuda2" >> $GITHUB_OUTPUT
+        else
+          echo "ref=master" >> $GITHUB_OUTPUT
+        fi
+
     - name: Get TornadoVM HEAD SHA
       id: tornado_sha
       shell: bash
       run: |
-        SHA=$(git ls-remote https://github.com/beehive-lab/TornadoVM HEAD | cut -f1)
+        SHA=$(git ls-remote https://github.com/beehive-lab/TornadoVM ${{ steps.branch.outputs.ref }} | cut -f1)
         echo "sha=$SHA" >> $GITHUB_OUTPUT
 
     - name: Check local build sentinel
@@ -27,12 +39,12 @@ runs:
           echo "up-to-date=false" >> $GITHUB_OUTPUT
         fi
 
-    - name: Clone TornadoVM master
+    - name: Clone TornadoVM
       if: steps.sentinel.outputs.up-to-date != 'true'
       shell: bash
       run: |
         rm -rf $TORNADO_ROOT
-        git clone --depth 1 --branch master \
+        git clone --depth 1 --branch ${{ steps.branch.outputs.ref }} \
           https://github.com/beehive-lab/TornadoVM.git \
           $TORNADO_ROOT
 
