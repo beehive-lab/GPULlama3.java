@@ -39,9 +39,10 @@
         <properties>
             <!-- CI-friendly version: resolved by flatten-maven-plugin at build time -->
             <revision>0.4.0</revision>
-            <tornadovm.base.version>4.0.1</tornadovm.base.version>
+            <tornadovm.base.version>4.0.2</tornadovm.base.version>
             <jdk.version.suffix>-jdk21</jdk.version.suffix>
-            <tornadovm.version>${tornadovm.base.version}${jdk.version.suffix}</tornadovm.version>
+            <!-- CUDA backend is only available in a dev build of TornadoVM (PR #861) -->
+            <tornadovm.version>${tornadovm.base.version}${jdk.version.suffix}-dev</tornadovm.version>
             <!-- Compiler defaults (overridden by JDK profiles below) -->
             <maven.compiler.source>25</maven.compiler.source>
             <maven.compiler.target>25</maven.compiler.target>
@@ -147,7 +148,8 @@
                     <maven.compiler.source>21</maven.compiler.source>
                     <maven.compiler.target>21</maven.compiler.target>
                     <jdk.version.suffix>-jdk21</jdk.version.suffix>
-                    <tornadovm.version>${tornadovm.base.version}${jdk.version.suffix}</tornadovm.version>
+                    <!-- CUDA backend is only available in a dev build of TornadoVM (PR #861) -->
+                    <tornadovm.version>${tornadovm.base.version}${jdk.version.suffix}-dev</tornadovm.version>
                 </properties>
                 <build>
                     <plugins>
