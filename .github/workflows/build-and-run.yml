@@ -18,7 +18,7 @@ env:
 jobs:
   code-quality:
     if: github.repository == 'beehive-lab/GPULlama3.java'
-    runs-on: [self-hosted, orion-strix]
+    runs-on: [self-hosted, 5090-laptop]
     timeout-minutes: 30
 
     steps:
@@ -35,7 +35,7 @@ jobs:
   # there are no workspace conflicts between matrix jobs.
   build:
     if: github.repository == 'beehive-lab/GPULlama3.java'
-    runs-on: [self-hosted, orion-strix]
+    runs-on: [self-hosted, 5090-laptop]
     needs: code-quality
     timeout-minutes: 30
     strategy:
@@ -91,7 +91,7 @@ jobs:
 
   standalone-inference:
     if: github.repository == 'beehive-lab/GPULlama3.java'
-    runs-on: [self-hosted, orion-strix]
+    runs-on: [self-hosted, 5090-laptop]
     needs: build
     timeout-minutes: 30
     strategy:
@@ -516,7 +516,7 @@ jobs:
   # Test integration with Quarkus-langchain4j
   quarkus-langchain4j-integration:
     if: github.repository == 'beehive-lab/GPULlama3.java'
-    runs-on: [self-hosted, orion-strix]
+    runs-on: [self-hosted, 5090-laptop]
     needs: build
     timeout-minutes: 10
     strategy:
@@ -618,7 +618,7 @@ jobs:
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main'
 
-    runs-on: [self-hosted, orion-strix]
+    runs-on: [self-hosted, 5090-laptop]
     needs: standalone-inference
     timeout-minutes: 15
 
