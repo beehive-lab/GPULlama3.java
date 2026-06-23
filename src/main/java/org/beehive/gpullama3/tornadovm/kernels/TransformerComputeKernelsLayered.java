@@ -1224,8 +1224,8 @@ public class TransformerComputeKernelsLayered {
     /**
      * Qwen3-family decode attention, split-KV (flash-decoding) phase 1.
      *
-     * <p>For small models the position-parallel {@link #processHeadsFlashAttentionQwen3Online} launches
-     * only {@code nHeads} workgroups (e.g. 16), leaving most SMs idle. This kernel splits each head's KV
+     * <p>A one-workgroup-per-head decode attention launches only {@code nHeads} workgroups (e.g. 16),
+     * leaving most SMs idle. This kernel splits each head's KV
      * range across {@code nSplits} workgroups, launching {@code nHeads * nSplits} blocks so the device is
      * fully occupied. Each block computes the online-softmax partial state for its position chunk —
      * unnormalized numerator {@code out_s[d] = Σ exp(score-M_s)·V}, block max {@code M_s}, and block sum
@@ -2864,6 +2864,45 @@ public class TransformerComputeKernelsLayered {
         if (localId == 0) {
             float result = hb.get(rowId) + sum;
             hb.set(rowId, result);
+        }
+    }
+
+    /**
+     * Warp-shuffle variant of {@link #matrixVectorGenericWithResidualQ8_0Byte}: one 32-lane warp per
+     * output row, reduced via {@code simdShuffleDown} instead of a shared-memory tree. Q8_0 byte layout
+     * (34-byte blocks: 2-byte half scale + 32 int8 quants).
+     */
+    public static void matrixVectorGenericWithResidualQ8_0ByteSimd32(KernelContext context, FloatArray x, FloatArray hb, ByteArray w, int n, int d) {
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        if (rowId >= d) {
+            return;
+        }
+
+        final int blockSize = 32;
+        final int Q8_0_BLOCK_BYTES = 34; // 2-byte scale + 32 int8 quants
+        int blocksPerRow = (n + blockSize - 1) / blockSize;
+        int rowBlockOffset = rowId * blocksPerRow;
+
+        float partialSum = 0.0f;
+        for (int j = localId; j < n; j += 32) {
+            int blockIdx = j / blockSize;
+            int withinBlockIdx = j - blockIdx * blockSize;
+            int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+            float scaleFloat = w.getHalfFloat(blockByteOffset).getFloat32();
+            byte quant = w.get(blockByteOffset + 2 + withinBlockIdx);
+            partialSum += ((float) quant * scaleFloat) * x.get(j);
+        }
+
+        partialSum += context.simdShuffleDown(partialSum, 16);
+        partialSum += context.simdShuffleDown(partialSum, 8);
+        partialSum += context.simdShuffleDown(partialSum, 4);
+        partialSum += context.simdShuffleDown(partialSum, 2);
+        partialSum += context.simdShuffleDown(partialSum, 1);
+
+        if (localId == 0) {
+            hb.set(rowId, hb.get(rowId) + partialSum);
         }
     }
 
