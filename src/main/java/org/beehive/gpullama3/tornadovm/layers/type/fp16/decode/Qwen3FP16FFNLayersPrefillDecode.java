@@ -43,9 +43,7 @@ public class Qwen3FP16FFNLayersPrefillDecode extends Qwen3FP16FFNLayers {
                 qwen3State.wrapKeyCache, qwen3State.wrapValueCache,
                 qwen3State.wrapAtt, qwen3State.wrapHb,
                 qwen3State.positionHolder);
-        if (useSplitKVAttention) {
-            layer.consumeFromDevice(pred, qwen3State.wrapAttSplit);
-        }
+        layer.consumeFromDevice(pred, qwen3State.wrapAttSplit);
         return layer;
     }
 }
