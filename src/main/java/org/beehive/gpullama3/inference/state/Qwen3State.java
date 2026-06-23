@@ -32,6 +32,9 @@ public final class Qwen3State extends State {
     // split and combine tasks by TornadoVM). See processHeadsFlashAttentionSplitKV / combineSplitKVAttention.
     public FloatArray wrapAttSplit;
 
+    /** Number of KV splits per head for split-KV (flash-decoding) decode attention. */
+    public static final int SPLIT_KV = 8;
+
     public Qwen3State(Configuration config, int batchsize) {
         super(config, batchsize);
         // Initialize Qwen3-specific fields
@@ -40,9 +43,8 @@ public final class Qwen3State extends State {
         this.tempQcur = new FloatArray(nEmbdHead);
         this.tempKcur = new FloatArray(nEmbdHead);
 
-        int splitKv = Integer.getInteger("llama.qwen3SplitKV", 8);
         int headSizeV = qwen3config.numberOfHeadsValue();
-        this.wrapAttSplit = new FloatArray(qwen3config.numberOfHeads() * splitKv * (headSizeV + 2));
+        this.wrapAttSplit = new FloatArray(qwen3config.numberOfHeads() * SPLIT_KV * (headSizeV + 2));
     }
 
     @Override
