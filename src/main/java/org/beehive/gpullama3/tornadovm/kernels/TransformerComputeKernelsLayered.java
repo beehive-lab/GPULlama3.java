@@ -147,6 +147,60 @@ public class TransformerComputeKernelsLayered {
     }
 
     /**
+     * Warp-shuffle variant of {@link #fusedRmsNormFFNGateUpQ8_0}: one 32-lane warp per hidden row,
+     * two independent {@code simdShuffleDown} reductions (gate W1 and up W3), no shared-memory tree.
+     * Q8_0 byte layout (34-byte blocks: 2-byte half scale + 32 int8 quants).
+     */
+    public static void fusedRmsNormFFNGateUpQ8_0Warp(KernelContext context, FloatArray x, FloatArray hb, FloatArray rmsWeights, FloatArray rmsScale, ByteArray w1, ByteArray w3, int inputDim,
+            int hiddenDim, int localWorkGroupSize) {
+
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        if (rowId >= hiddenDim) {
+            return;
+        }
+
+        float scale = rmsScale.get(0);
+        final int blockSize = 32;
+        final int Q8_0_BLOCK_BYTES = 34; // 2-byte scale + 32 int8 quants
+        int blocksPerRow = (inputDim + blockSize - 1) / blockSize;
+        int rowBlockOffset = rowId * blocksPerRow;
+
+        float sum1 = 0.0f;
+        float sum3 = 0.0f;
+        for (int j = localId; j < inputDim; j += 32) {
+            int blockIdx = j / blockSize;
+            int withinBlockIdx = j - blockIdx * blockSize;
+            int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+            float w1s = w1.getHalfFloat(blockByteOffset).getFloat32();
+            float w3s = w3.getHalfFloat(blockByteOffset).getFloat32();
+            byte w1q = w1.get(blockByteOffset + 2 + withinBlockIdx);
+            byte w3q = w3.get(blockByteOffset + 2 + withinBlockIdx);
+            float normalized = rmsWeights.get(j) * (scale * x.get(j));
+            sum1 += ((float) w1q * w1s) * normalized;
+            sum3 += ((float) w3q * w3s) * normalized;
+        }
+
+        sum1 += context.simdShuffleDown(sum1, 16);
+        sum1 += context.simdShuffleDown(sum1, 8);
+        sum1 += context.simdShuffleDown(sum1, 4);
+        sum1 += context.simdShuffleDown(sum1, 2);
+        sum1 += context.simdShuffleDown(sum1, 1);
+
+        sum3 += context.simdShuffleDown(sum3, 16);
+        sum3 += context.simdShuffleDown(sum3, 8);
+        sum3 += context.simdShuffleDown(sum3, 4);
+        sum3 += context.simdShuffleDown(sum3, 2);
+        sum3 += context.simdShuffleDown(sum3, 1);
+
+        if (localId == 0) {
+            float silu = sum1 / (1.0f + TornadoMath.exp(-sum1));
+            hb.set(rowId, silu * sum3);
+        }
+    }
+
+    /**
      * Fused RMSNorm apply + Gate/Up projection + SiLU + GLU for Q8_0 weights.
      * Combines: reductionOneBlock2WithLayer + fusedFeedForwardWithSiLUAndGLUActivationQ8_0Byte
      */
