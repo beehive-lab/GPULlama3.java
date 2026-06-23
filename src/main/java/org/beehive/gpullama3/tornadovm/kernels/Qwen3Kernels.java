@@ -870,6 +870,97 @@ public class Qwen3Kernels {
         }
     }
 
+    /**
+     * Warp-shuffle variant of {@link #fusedRmsNormQKVMatmulQ8_0}: one 32-lane warp per output row,
+     * reducing via {@code simdShuffleDown} instead of a shared-memory tree. Q8_0 byte layout (34-byte
+     * blocks: 2-byte half scale + 32 int8 quants). Three independent branches (q/k/v) each do their own
+     * loop + warp reduction + write; keeping the reduction inside each branch avoids carrying the partial
+     * across control flow, which produced incorrect PTX for the shuffle.
+     */
+    public static void fusedRmsNormQKVMatmulQ8_0Warp(
+            KernelContext context,
+            FloatArray x,
+            FloatArray q,
+            FloatArray k,
+            FloatArray v,
+            FloatArray rmsWeights,
+            FloatArray rmsScale,
+            ByteArray wq,
+            ByteArray wk,
+            ByteArray wv,
+            int inputDim,
+            int qDim,
+            int kvDim,
+            int localWorkGroupSize) {
+
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+        float scale = rmsScale.get(0);
+        final int blockSize = 32;
+        final int Q8_0_BLOCK_BYTES = 34; // 2-byte scale + 32 int8 quants
+        int blocksPerRow = (inputDim + blockSize - 1) / blockSize;
+
+        if (rowId < qDim) {
+            int rowBlockOffset = rowId * blocksPerRow;
+            float partialSum = 0.0f;
+            for (int j = localId; j < inputDim; j += 32) {
+                int blockIdx = j / blockSize;
+                int withinBlockIdx = j - blockIdx * blockSize;
+                int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+                float s = wq.getHalfFloat(blockByteOffset).getFloat32();
+                byte quant = wq.get(blockByteOffset + 2 + withinBlockIdx);
+                partialSum += ((float) quant * s) * (rmsWeights.get(j) * scale * x.get(j));
+            }
+            partialSum += context.simdShuffleDown(partialSum, 16);
+            partialSum += context.simdShuffleDown(partialSum, 8);
+            partialSum += context.simdShuffleDown(partialSum, 4);
+            partialSum += context.simdShuffleDown(partialSum, 2);
+            partialSum += context.simdShuffleDown(partialSum, 1);
+            if (localId == 0) {
+                q.set(rowId, partialSum);
+            }
+        } else if (rowId < qDim + kvDim) {
+            int kRow = rowId - qDim;
+            int rowBlockOffset = kRow * blocksPerRow;
+            float partialSum = 0.0f;
+            for (int j = localId; j < inputDim; j += 32) {
+                int blockIdx = j / blockSize;
+                int withinBlockIdx = j - blockIdx * blockSize;
+                int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+                float s = wk.getHalfFloat(blockByteOffset).getFloat32();
+                byte quant = wk.get(blockByteOffset + 2 + withinBlockIdx);
+                partialSum += ((float) quant * s) * (rmsWeights.get(j) * scale * x.get(j));
+            }
+            partialSum += context.simdShuffleDown(partialSum, 16);
+            partialSum += context.simdShuffleDown(partialSum, 8);
+            partialSum += context.simdShuffleDown(partialSum, 4);
+            partialSum += context.simdShuffleDown(partialSum, 2);
+            partialSum += context.simdShuffleDown(partialSum, 1);
+            if (localId == 0) {
+                k.set(kRow, partialSum);
+            }
+        } else if (rowId < qDim + 2 * kvDim) {
+            int vRow = rowId - qDim - kvDim;
+            int rowBlockOffset = vRow * blocksPerRow;
+            float partialSum = 0.0f;
+            for (int j = localId; j < inputDim; j += 32) {
+                int blockIdx = j / blockSize;
+                int withinBlockIdx = j - blockIdx * blockSize;
+                int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+                float s = wv.getHalfFloat(blockByteOffset).getFloat32();
+                byte quant = wv.get(blockByteOffset + 2 + withinBlockIdx);
+                partialSum += ((float) quant * s) * (rmsWeights.get(j) * scale * x.get(j));
+            }
+            partialSum += context.simdShuffleDown(partialSum, 16);
+            partialSum += context.simdShuffleDown(partialSum, 8);
+            partialSum += context.simdShuffleDown(partialSum, 4);
+            partialSum += context.simdShuffleDown(partialSum, 2);
+            partialSum += context.simdShuffleDown(partialSum, 1);
+            if (localId == 0) {
+                v.set(vRow, partialSum);
+            }
+        }
+    }
 
     /**
      * Fused Q and K RMSNorm for Qwen3.
