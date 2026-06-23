@@ -101,6 +101,52 @@ public class TransformerComputeKernelsLayered {
     }
 
     /**
+     * Warp-shuffle variant of {@link #fusedRmsNormFFNGateUp}. Assumes a 32-lane workgroup per output row
+     * (the decode worker shape). Reduces each row's dot product with {@code simdShuffleDown} instead of a
+     * shared-memory tree, eliminating the per-row barriers and shared round-trip — the same reduction
+     * strategy as llama.cpp's {@code mul_mat_vec}. Used on PTX/CUDA only (see
+     * {@code SchedulerDetectionService.isWarpShuffleSupported}); OpenCL miscompiles the shuffle.
+     */
+    public static void fusedRmsNormFFNGateUpWarp(KernelContext context, FloatArray x, FloatArray hb, FloatArray rmsWeights, FloatArray rmsScale, HalfFloatArray w1, HalfFloatArray w3, int dim,
+            int hiddenDim, int localWorkGroupSize) {
+
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        if (rowId >= hiddenDim) {
+            return;
+        }
+
+        float scale = rmsScale.get(0);
+        int rowOffset = rowId * dim;
+
+        float sum1 = 0.0f;
+        float sum3 = 0.0f;
+        for (int j = localId; j < dim; j += 32) {
+            float normalized = rmsWeights.get(j) * scale * x.get(j);
+            sum1 += w1.get(rowOffset + j).getFloat32() * normalized;
+            sum3 += w3.get(rowOffset + j).getFloat32() * normalized;
+        }
+
+        sum1 += context.simdShuffleDown(sum1, 16);
+        sum1 += context.simdShuffleDown(sum1, 8);
+        sum1 += context.simdShuffleDown(sum1, 4);
+        sum1 += context.simdShuffleDown(sum1, 2);
+        sum1 += context.simdShuffleDown(sum1, 1);
+
+        sum3 += context.simdShuffleDown(sum3, 16);
+        sum3 += context.simdShuffleDown(sum3, 8);
+        sum3 += context.simdShuffleDown(sum3, 4);
+        sum3 += context.simdShuffleDown(sum3, 2);
+        sum3 += context.simdShuffleDown(sum3, 1);
+
+        if (localId == 0) {
+            float silu = sum1 / (1.0f + TornadoMath.exp(-sum1));
+            hb.set(rowId, silu * sum3);
+        }
+    }
+
+    /**
      * Fused RMSNorm apply + Gate/Up projection + SiLU + GLU for Q8_0 weights.
      * Combines: reductionOneBlock2WithLayer + fusedFeedForwardWithSiLUAndGLUActivationQ8_0Byte
      */
