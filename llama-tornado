@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 llama-tornado: GPU-accelerated Java LLM runner with TornadoVM
-Run LLM models using either OpenCL or PTX backends.
+Run LLM models using OpenCL, PTX, CUDA, or Metal backends.
 """
 
 import argparse
@@ -19,6 +19,7 @@ from enum import Enum
 class Backend(Enum):
     OPENCL = "opencl"
     PTX = "ptx"
+    CUDA = "cuda"
     METAL = "metal"
 
 
@@ -176,6 +177,14 @@ class LlamaRunner:
                     f"@{self.tornado_sdk}/etc/exportLists/ptx-exports",
                     "--add-modules",
                     "ALL-SYSTEM,jdk.incubator.vector,tornado.runtime,tornado.annotation,tornado.drivers.common,tornado.drivers.ptx",
+                ]
+            )
+        elif args.backend == Backend.CUDA:
+            module_config.extend(
+                [
+                    f"@{self.tornado_sdk}/etc/exportLists/cuda-exports",
+                    "--add-modules",
+                    "ALL-SYSTEM,jdk.incubator.vector,tornado.runtime,tornado.annotation,tornado.drivers.common,tornado.drivers.cuda",
                 ]
             )
         elif args.backend == Backend.METAL:
@@ -426,7 +435,14 @@ def create_parser() -> argparse.ArgumentParser:
         dest="backend",
         action="store_const",
         const=Backend.PTX,
-        help="Use PTX/CUDA backend",
+        help="Use PTX backend",
+    )
+    hw_group.add_argument(
+        "--cuda",
+        dest="backend",
+        action="store_const",
+        const=Backend.CUDA,
+        help="Use CUDA backend (requires TornadoVM built with the CUDA backend)",
     )
     hw_group.add_argument(
         "--metal",
