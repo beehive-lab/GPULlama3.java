@@ -74,8 +74,14 @@ runs:
       run: |
         FULL_SDK="${{ steps.find_sdk.outputs.sdk_dir }}"
         echo "Detected TornadoVM SDK: $FULL_SDK"
+        # Persist for subsequent steps in the calling workflow.
         echo "TORNADOVM_HOME=$FULL_SDK" >> $GITHUB_ENV
         echo "$FULL_SDK/bin" >> $GITHUB_PATH
         echo "$JAVA_HOME/bin" >> $GITHUB_PATH
+        # $GITHUB_ENV / $GITHUB_PATH only affect later steps, so also apply them to THIS
+        # shell for the verification below (otherwise `tornado` resolves to the sdkman
+        # wrapper and aborts with "TORNADOVM_HOME is not set").
+        export TORNADOVM_HOME="$FULL_SDK"
+        export PATH="$FULL_SDK/bin:$JAVA_HOME/bin:$PATH"
         which tornado || { echo "::error::tornado not in PATH"; exit 1; }
         tornado --devices
