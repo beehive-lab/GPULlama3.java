@@ -39,7 +39,7 @@
         <properties>
             <!-- CI-friendly version: resolved by flatten-maven-plugin at build time -->
             <revision>0.4.0</revision>
-            <tornadovm.base.version>4.0.1</tornadovm.base.version>
+            <tornadovm.base.version>4.0.2</tornadovm.base.version>
             <jdk.version.suffix>-jdk21</jdk.version.suffix>
             <tornadovm.version>${tornadovm.base.version}${jdk.version.suffix}</tornadovm.version>
             <!-- Compiler defaults (overridden by JDK profiles below) -->

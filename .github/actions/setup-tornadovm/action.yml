@@ -1,5 +1,5 @@
 name: Setup TornadoVM
-description: Build TornadoVM once per backend and reuse across runs via a local SHA sentinel. Exports TORNADOVM_HOME and updates PATH for all subsequent steps.
+description: Build TornadoVM develop once per backend and reuse across runs via a local SHA sentinel. Exports TORNADOVM_HOME and updates PATH for all subsequent steps.
 
 inputs:
   backend:
@@ -9,11 +9,11 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Get TornadoVM HEAD SHA
+    - name: Get TornadoVM develop SHA
       id: tornado_sha
       shell: bash
       run: |
-        SHA=$(git ls-remote https://github.com/beehive-lab/TornadoVM HEAD | cut -f1)
+        SHA=$(git ls-remote https://github.com/beehive-lab/TornadoVM refs/heads/develop | cut -f1)
         echo "sha=$SHA" >> $GITHUB_OUTPUT
 
     - name: Check local build sentinel
@@ -27,12 +27,12 @@ runs:
           echo "up-to-date=false" >> $GITHUB_OUTPUT
         fi
 
-    - name: Clone TornadoVM master
+    - name: Clone TornadoVM develop
       if: steps.sentinel.outputs.up-to-date != 'true'
       shell: bash
       run: |
         rm -rf $TORNADO_ROOT
-        git clone --depth 1 --branch master \
+        git clone --depth 1 --branch develop \
           https://github.com/beehive-lab/TornadoVM.git \
           $TORNADO_ROOT
 
