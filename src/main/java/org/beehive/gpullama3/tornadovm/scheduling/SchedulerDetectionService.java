@@ -20,7 +20,10 @@ public class SchedulerDetectionService {
         TornadoVMBackendType backendType = TornadoRuntimeProvider.getTornadoRuntime()
                 .getBackend(0)
                 .getBackendType();
-        return backendType == TornadoVMBackendType.PTX || backendType == TornadoVMBackendType.CUDA;
+        String backendName = backendType.name();
+        return "PTX".equals(backendName);
+        // TODO replace lines 23-24 with 26 when CUDA backend is merged
+        // return backendType == TornadoVMBackendType.PTX || backendType == TornadoVMBackendType.CUDA;
     }
 
     // @formatter:off
