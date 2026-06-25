@@ -2,6 +2,34 @@
 
 All notable changes to GPULlama3.java will be documented in this file.
 
+## [0.5.0] - 2026-06-25
+
+### Features
+
+- Add prefill-decode and batch-prefill-decode for Qwen3 (FP16 and Q8_0) ([#122](https://github.com/beehive-lab/GPULlama3.java/pull/122))
+- Refactor GPU backend planner ([#117](https://github.com/beehive-lab/GPULlama3.java/pull/117))
+- Several fixes and improvements for CI ([#115](https://github.com/beehive-lab/GPULlama3.java/pull/115))
+- Ci/metrics history ([#114](https://github.com/beehive-lab/GPULlama3.java/pull/114))
+- Improve collection of performance/throughput metrics ([#113](https://github.com/beehive-lab/GPULlama3.java/pull/113))
+- Update TornadoVM dependency for jdk21 and fixed suffix regarding future releases ([#111](https://github.com/beehive-lab/GPULlama3.java/pull/111))
+- Add Prefill–Decode Separation with Batched Prompt Ingestion and Logits Skipping  ([#102](https://github.com/beehive-lab/GPULlama3.java/pull/102))
+
+### Other Changes
+
+- Release 0.5.0 ([#125](https://github.com/beehive-lab/GPULlama3.java/pull/125))
+- Qwen3 decode: split-KV attention + backend-aware warp GEMV (FP16 & Q8_0) ([#123](https://github.com/beehive-lab/GPULlama3.java/pull/123))
+- Introduce tool calling support ([#116](https://github.com/beehive-lab/GPULlama3.java/pull/116))
+- Cleanup of presentation materials ([#121](https://github.com/beehive-lab/GPULlama3.java/pull/121))
+- Add Q4_K/Q5_K/Q6_K GPU support via Q8_0 dequantization ([#108](https://github.com/beehive-lab/GPULlama3.java/pull/108))
+- llama-tornado script curation ([#112](https://github.com/beehive-lab/GPULlama3.java/pull/112))
+- Add Apple Metal backend support ([#103](https://github.com/beehive-lab/GPULlama3.java/pull/103))
+- Add DevoxxGreece presentation material ([#109](https://github.com/beehive-lab/GPULlama3.java/pull/109))
+-   Devstral 2 support (Mistral 3 architecture, Tekken tokenizer, YaRN … ([#107](https://github.com/beehive-lab/GPULlama3.java/pull/107))
+-   Add llamaTornado Java 25 single-file launcher with Metal backend support   ([#105](https://github.com/beehive-lab/GPULlama3.java/pull/105))
+- [refactor] Simplify and unify the TornadoVM layer planner infrastructure ([#101](https://github.com/beehive-lab/GPULlama3.java/pull/101))
+- AddCI Actions for Quarkus-LangChain4j integration ([#89](https://github.com/beehive-lab/GPULlama3.java/pull/89))
+- Simplify and generalize TornadoVM version across JDK profiles in pom.xml ([#99](https://github.com/beehive-lab/GPULlama3.java/pull/99))
+
 ## [0.5.0] - 2026-06-24
 
 ### Features
