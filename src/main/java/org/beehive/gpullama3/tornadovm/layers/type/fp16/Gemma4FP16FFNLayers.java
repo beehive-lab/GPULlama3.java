@@ -5,9 +5,9 @@ import org.beehive.gpullama3.inference.weights.tornado.Gemma4TornadoWeights;
 import org.beehive.gpullama3.model.gemma4.Gemma4Configuration;
 import org.beehive.gpullama3.tornadovm.kernels.Gemma4Kernels;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
-import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
-import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
-import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
+import org.beehive.gpullama3.tornadovm.scheduling.WorkerGridFactory;
+import org.beehive.gpullama3.tornadovm.scheduling.SchedulerType;
+import org.beehive.gpullama3.tornadovm.layers.AbstractTransformerLayerTaskGraphs;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
@@ -30,7 +30,7 @@ import uk.ac.manchester.tornado.api.enums.DataTransferMode;
  * and computing the per-layer-embedding inputs ({@code perLayerInputs}) from the per-layer model
  * projection and the (host-gathered) per-layer token embedding row -- see {@link #appendPLESetupTasks}.</p>
  */
-public class Gemma4FP16FFNLayers extends AbstractFFNLayers<Gemma4TornadoWeights, Gemma4Configuration> {
+public class Gemma4FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Gemma4TornadoWeights, Gemma4Configuration> {
 
     /** Local memory size for per-head Q/K/V-norm reductions; must evenly divide both head dimensions (256, 512). */
     private static final int HEAD_NORM_LOCAL_SIZE = 64;

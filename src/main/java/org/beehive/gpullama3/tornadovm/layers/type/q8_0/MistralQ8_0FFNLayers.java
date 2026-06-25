@@ -4,20 +4,23 @@ import org.beehive.gpullama3.inference.state.LlamaState;
 import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
 import org.beehive.gpullama3.model.mistral.MistralConfiguration;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
-import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
-import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
-import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
+import org.beehive.gpullama3.tornadovm.scheduling.WorkerGridFactory;
+import org.beehive.gpullama3.tornadovm.scheduling.SchedulerType;
+import org.beehive.gpullama3.tornadovm.layers.AbstractTransformerLayerTaskGraphs;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
-public class MistralQ8_0FFNLayers extends AbstractFFNLayers<LlamaTornadoWeights, MistralConfiguration> {
+public class MistralQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<LlamaTornadoWeights, MistralConfiguration> {
 
-    public MistralQ8_0FFNLayers(String taskGraphName, LlamaState state, LlamaTornadoWeights weights, MistralConfiguration config, SchedulerType schedulerType) {
+    // @formatter:off
+    public MistralQ8_0FFNLayers(String taskGraphName, LlamaState state, LlamaTornadoWeights weights,
+                                MistralConfiguration config, SchedulerType schedulerType) {
         super(taskGraphName, state, weights, config, schedulerType);
         setupFFNLayers();
     }
+    // @formatter:on
 
     // @formatter:off
     @Override
@@ -113,29 +116,42 @@ public class MistralQ8_0FFNLayers extends AbstractFFNLayers<LlamaTornadoWeights,
 
         return unifiedLayer;
     }
+    // @formatter:on
 
+    // @formatter:off
     protected TaskGraph configureLayerDataTransfers(TaskGraph unifiedLayer, int layerIndex) {
         if (layerIndex == 0) {
-            unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION,
-                    state.positionHolder, state.temp, state.tempFFN);
-            unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION,
-                    context,
-                    state.wrapXb, state.wrapXb2,
-                    state.wrapQ, state.wrapK, state.wrapV,
-                    state.wrapKeyCache, state.wrapValueCache,
-                    state.wrapAtt, state.wrapHb);
+            unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION, state.positionHolder,
+                                                                            state.temp,
+                                                                            state.tempFFN);
+            unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION, context,
+                                                                            state.wrapXb,
+                                                                            state.wrapXb2,
+                                                                            state.wrapQ,
+                                                                            state.wrapK,
+                                                                            state.wrapV,
+                                                                            state.wrapKeyCache,
+                                                                            state.wrapValueCache,
+                                                                            state.wrapAtt,
+                                                                            state.wrapHb);
         } else {
-            unifiedLayer.consumeFromDevice(
-                    context,
-                    state.wrapXb, state.wrapXb2,
-                    state.wrapQ, state.wrapK, state.wrapV,
-                    state.wrapKeyCache, state.wrapValueCache,
-                    state.wrapAtt, state.wrapHb,
-                    state.positionHolder);
+            unifiedLayer.consumeFromDevice(context,
+                                           state.wrapXb,
+                                           state.wrapXb2,
+                                           state.wrapQ,
+                                           state.wrapK,
+                                           state.wrapV,
+                                           state.wrapKeyCache,
+                                           state.wrapValueCache,
+                                           state.wrapAtt,
+                                           state.wrapHb,
+                                           state.positionHolder);
         }
         return unifiedLayer;
     }
+    // @formatter:on
 
+    // @formatter:off
     @Override
     public GridScheduler updateGridScheduler(GridScheduler tornadoForwardScheduler) {
         WorkerGrid rmsNormWorker = WorkerGridFactory.createRmsNormWorker(config.dim(), 256);
@@ -166,7 +182,9 @@ public class MistralQ8_0FFNLayers extends AbstractFFNLayers<LlamaTornadoWeights,
 
         return tornadoForwardScheduler;
     }
+    // @formatter:on
 
+    // @formatter:off
     private TaskGraph configureAttention(TaskGraph unifiedLayer, int layerIndex) {
         if (schedulerType == SchedulerType.NVIDIA) {
             return unifiedLayer.task("attention",

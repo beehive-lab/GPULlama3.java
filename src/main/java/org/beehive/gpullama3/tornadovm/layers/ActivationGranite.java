@@ -11,7 +11,7 @@ import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 
 /**
  * Granite-specific activation: applies an embedding scale factor during the FP32 conversion.
- * Overrides only the task graph builder; all other behaviour is inherited from Activation.
+ * Overrides only the TaskGraph builder; all other behaviour is inherited from Activation.
  */
 public class ActivationGranite extends Activation {
 

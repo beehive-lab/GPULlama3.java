@@ -66,15 +66,22 @@ jobs:
 
       - name: Build GPULlama3.java
         run: |
-          tornado --version
+          TORNADO_VERSION=$(tornado --version | tee /tmp/tornado-version.txt | sed -n 's/^version=//p' | head -n 1)
+          if [ -z "$TORNADO_VERSION" ]; then
+            echo "::error::Could not determine TornadoVM version from tornado --version"
+            cat /tmp/tornado-version.txt
+            exit 1
+          fi
+          echo "TornadoVM Maven version: $TORNADO_VERSION"
           # Strip any pre-existing -SNAPSHOT suffix before appending, making this step idempotent
           # across sequential matrix variants (ptx runs after opencl on the same workspace).
           BASE_VERSION=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout | sed 's/-SNAPSHOT$//')
           GPULLAMA3_VERSION="${BASE_VERSION}-SNAPSHOT"
           echo "GPULlama3 version: $GPULLAMA3_VERSION"
-          ./mvnw versions:set -DnewVersion=$GPULLAMA3_VERSION
-          ./mvnw clean install -DskipTests
+          ./mvnw versions:set -DnewVersion="$GPULLAMA3_VERSION" -Dtornadovm.version="$TORNADO_VERSION"
+          ./mvnw clean install -DskipTests -Dtornadovm.version="$TORNADO_VERSION"
           echo "GPULLAMA3_VERSION=$GPULLAMA3_VERSION" >> $GITHUB_ENV
+          echo "TORNADOVM_MAVEN_VERSION=$TORNADO_VERSION" >> $GITHUB_ENV
 
       - name: Clone Quarkus LangChain4j
         run: |
@@ -177,15 +184,62 @@ jobs:
           flags: --with-prefill-decode --batch-prefill-size 32 --cuda-graphs
           metrics_file: ${{ runner.temp }}/metrics-ptx-llama-1b-f16-batch-prefill-decode-cuda-graphs.json
 
-      - name: FP16 - Run Qwen3-4B-f16.gguf
+      - name: FP16 - Run Qwen3-0.6B-f16.gguf
         uses: ./.github/actions/run-inference
         with:
           backend: ${{ matrix.backend.name }}
-          model_file: Qwen3-4B-f16.gguf
-          model: Qwen3-4B
+          model_file: Qwen3-0.6B-f16.gguf
+          model: Qwen3-0.6B
           quantization: F16
           configuration: standard
-          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-qwen3-4b-f16-standard.json
+          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-qwen3-0.6b-f16-standard.json
+
+      - name: FP16 - Run Qwen3-0.6B-f16.gguf - Prefill-Decode
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ matrix.backend.name }}
+          model_file: Qwen3-0.6B-f16.gguf
+          model: Qwen3-0.6B
+          quantization: F16
+          configuration: prefill-decode
+          flags: --with-prefill-decode
+          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-qwen3-0.6b-f16-prefill-decode.json
+
+      - name: FP16 - Run Qwen3-0.6B-f16.gguf - Batch-Prefill-Decode
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ matrix.backend.name }}
+          model_file: Qwen3-0.6B-f16.gguf
+          model: Qwen3-0.6B
+          quantization: F16
+          configuration: batch-prefill-decode
+          flags: --with-prefill-decode --batch-prefill-size 32
+          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-qwen3-0.6b-f16-batch-prefill-decode.json
+
+      # PTX-only: CUDA-graph variants
+      - name: PTX - FP16 - Run Qwen3-0.6B-f16.gguf - Prefill-Decode-CUDA-Graphs
+        if: matrix.backend.name == 'ptx'
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ matrix.backend.name }}
+          model_file: Qwen3-0.6B-f16.gguf
+          model: Qwen3-0.6B
+          quantization: F16
+          configuration: prefill-decode-cuda-graphs
+          flags: --with-prefill-decode --cuda-graphs
+          metrics_file: ${{ runner.temp }}/metrics-ptx-qwen3-0.6b-f16-prefill-decode-cuda-graphs.json
+
+      - name: PTX - FP16 - Run Qwen3-0.6B-f16.gguf - Batch-Prefill-Decode-CUDA-Graphs
+        if: matrix.backend.name == 'ptx'
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ matrix.backend.name }}
+          model_file: Qwen3-0.6B-f16.gguf
+          model: Qwen3-0.6B
+          quantization: F16
+          configuration: batch-prefill-decode-cuda-graphs
+          flags: --with-prefill-decode --batch-prefill-size 32 --cuda-graphs
+          metrics_file: ${{ runner.temp }}/metrics-ptx-qwen3-0.6b-f16-batch-prefill-decode-cuda-graphs.json
 
       - name: FP16 - Run Mistral-7B-Instruct-v0.3.fp16.gguf
         uses: ./.github/actions/run-inference
@@ -247,6 +301,107 @@ jobs:
           configuration: standard
           metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-llama-1b-q8-standard.json
 
+      - name: Q8 - Run Llama-3.2-1B-Instruct-Q8_0.gguf - Prefill-Decode
+        env:
+          JAVA_TOOL_OPTIONS: >-
+            -Dllama.metrics.format=json
+            -Dllama.metrics.output=file
+            -Dllama.metrics.file=${{ runner.temp }}/metrics-${{ matrix.backend.name }}-llama-1b-q8-prefill-decode.json
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
+          ./llama-tornado --gpu --${{ matrix.backend.name }} \
+            --model $MODELS_DIR/Llama-3.2-1B-Instruct-Q8_0.gguf \
+            --prompt "Say hello" \
+            --with-prefill-decode
+          python3 scripts/write_metrics_sidecar.py \
+            --out "${{ runner.temp }}/metrics-${{ matrix.backend.name }}-llama-1b-q8-prefill-decode.meta.json" \
+            backend="${{ matrix.backend.name }}" \
+            task=llama-inference \
+            model_file=Llama-3.2-1B-Instruct-Q8_0.gguf \
+            model=Llama-3.2-1B-Instruct \
+            quantization=Q8_0 \
+            configuration=prefill-decode \
+            "flags=--with-prefill-decode" \
+            prompt="Say hello"
+
+      - name: Q8 - Run Llama-3.2-1B-Instruct-Q8_0.gguf - Batch-Prefill-Decode
+        env:
+          JAVA_TOOL_OPTIONS: >-
+            -Dllama.metrics.format=json
+            -Dllama.metrics.output=file
+            -Dllama.metrics.file=${{ runner.temp }}/metrics-${{ matrix.backend.name }}-llama-1b-q8-batch-prefill-decode.json
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
+          ./llama-tornado --gpu --${{ matrix.backend.name }} \
+            --model $MODELS_DIR/Llama-3.2-1B-Instruct-Q8_0.gguf \
+            --prompt "Say hello" \
+            --with-prefill-decode --batch-prefill-size 32
+          python3 scripts/write_metrics_sidecar.py \
+            --out "${{ runner.temp }}/metrics-${{ matrix.backend.name }}-llama-1b-q8-batch-prefill-decode.meta.json" \
+            backend="${{ matrix.backend.name }}" \
+            task=llama-inference \
+            model_file=Llama-3.2-1B-Instruct-Q8_0.gguf \
+            model=Llama-3.2-1B-Instruct \
+            quantization=Q8_0 \
+            configuration=batch-prefill-decode \
+            "flags=--with-prefill-decode --batch-prefill-size 32" \
+            prompt="Say hello"
+
+      # ── PTX-only: CUDA-graph variants ────────────────────────────────────────
+      - name: PTX - Q8 - Run Llama-3.2-1B-Instruct-Q8_0.gguf - Prefill-Decode-CUDA-Graphs
+        if: matrix.backend.name == 'ptx'
+        env:
+          JAVA_TOOL_OPTIONS: >-
+            -Dllama.metrics.format=json
+            -Dllama.metrics.output=file
+            -Dllama.metrics.file=${{ runner.temp }}/metrics-ptx-llama-1b-q8-prefill-decode-cuda-graphs.json
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
+          ./llama-tornado --gpu --ptx \
+            --model $MODELS_DIR/Llama-3.2-1B-Instruct-Q8_0.gguf \
+            --prompt "Say hello" \
+            --with-prefill-decode \
+            --cuda-graphs
+          python3 scripts/write_metrics_sidecar.py \
+            --out "${{ runner.temp }}/metrics-ptx-llama-1b-q8-prefill-decode-cuda-graphs.meta.json" \
+            backend=ptx \
+            task=llama-inference \
+            model_file=Llama-3.2-1B-Instruct-Q8_0.gguf \
+            model=Llama-3.2-1B-Instruct \
+            quantization=Q8_0 \
+            configuration=prefill-decode-cuda-graphs \
+            "flags=--with-prefill-decode --cuda-graphs" \
+            prompt="Say hello"
+
+      - name: PTX - Q8 - Run Llama-3.2-1B-Instruct-Q8_0.gguf - Batch-Prefill-Decode-CUDA-Graphs
+        if: matrix.backend.name == 'ptx'
+        env:
+          JAVA_TOOL_OPTIONS: >-
+            -Dllama.metrics.format=json
+            -Dllama.metrics.output=file
+            -Dllama.metrics.file=${{ runner.temp }}/metrics-ptx-llama-1b-q8-batch-prefill-decode-cuda-graphs.json
+        run: |
+          cd ${{ github.workspace }}
+          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
+          ./llama-tornado --gpu --ptx \
+            --model $MODELS_DIR/Llama-3.2-1B-Instruct-Q8_0.gguf \
+            --prompt "Say hello" \
+            --with-prefill-decode --batch-prefill-size 32 \
+            --cuda-graphs
+          python3 scripts/write_metrics_sidecar.py \
+            --out "${{ runner.temp }}/metrics-ptx-llama-1b-q8-batch-prefill-decode-cuda-graphs.meta.json" \
+            backend=ptx \
+            task=llama-inference \
+            model_file=Llama-3.2-1B-Instruct-Q8_0.gguf \
+            model=Llama-3.2-1B-Instruct \
+            quantization=Q8_0 \
+            configuration=batch-prefill-decode-cuda-graphs \
+            "flags=--with-prefill-decode --batch-prefill-size 32 --cuda-graphs" \
+            prompt="Say hello"
+
       - name: Q8 - Run Qwen3-0.6B-Q8_0.gguf
         uses: ./.github/actions/run-inference
         with:
@@ -256,6 +411,53 @@ jobs:
           quantization: Q8_0
           configuration: standard
           metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-qwen3-0-6b-q8-standard.json
+
+      - name: Q8 - Run Qwen3-0.6B-Q8_0.gguf - Prefill-Decode
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ matrix.backend.name }}
+          model_file: Qwen3-0.6B-Q8_0.gguf
+          model: Qwen3-0.6B
+          quantization: Q8_0
+          configuration: prefill-decode
+          flags: --with-prefill-decode
+          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-qwen3-0-6b-q8-prefill-decode.json
+
+      - name: Q8 - Run Qwen3-0.6B-Q8_0.gguf - Batch-Prefill-Decode
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ matrix.backend.name }}
+          model_file: Qwen3-0.6B-Q8_0.gguf
+          model: Qwen3-0.6B
+          quantization: Q8_0
+          configuration: batch-prefill-decode
+          flags: --with-prefill-decode --batch-prefill-size 32
+          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-qwen3-0-6b-q8-batch-prefill-decode.json
+
+      # PTX-only: CUDA-graph variants
+      - name: PTX - Q8 - Run Qwen3-0.6B-Q8_0.gguf - Prefill-Decode-CUDA-Graphs
+        if: matrix.backend.name == 'ptx'
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ matrix.backend.name }}
+          model_file: Qwen3-0.6B-Q8_0.gguf
+          model: Qwen3-0.6B
+          quantization: Q8_0
+          configuration: prefill-decode-cuda-graphs
+          flags: --with-prefill-decode --cuda-graphs
+          metrics_file: ${{ runner.temp }}/metrics-ptx-qwen3-0-6b-q8-prefill-decode-cuda-graphs.json
+
+      - name: PTX - Q8 - Run Qwen3-0.6B-Q8_0.gguf - Batch-Prefill-Decode-CUDA-Graphs
+        if: matrix.backend.name == 'ptx'
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ matrix.backend.name }}
+          model_file: Qwen3-0.6B-Q8_0.gguf
+          model: Qwen3-0.6B
+          quantization: Q8_0
+          configuration: batch-prefill-decode-cuda-graphs
+          flags: --with-prefill-decode --batch-prefill-size 32 --cuda-graphs
+          metrics_file: ${{ runner.temp }}/metrics-ptx-qwen3-0-6b-q8-batch-prefill-decode-cuda-graphs.json
 
       - name: Q8 - Run Phi-3-mini-4k-instruct-Q8_0.gguf
         uses: ./.github/actions/run-inference

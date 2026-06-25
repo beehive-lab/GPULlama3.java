@@ -5,25 +5,26 @@ import org.beehive.gpullama3.model.Model;
 import uk.ac.manchester.tornado.api.TornadoExecutionPlan;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
+// @formatter:off
 /**
  * Common contract for all TornadoVM GPU execution plans.
  *
  * <p>Three concrete implementations exist:</p>
  * <ul>
- *   <li>{@link TornadoVMMasterPlanStandard} — baseline single-token forward pass
+ *   <li>{@link TornadoVMMasterPlanSingleToken} — baseline single-token forward pass
  *       (preprocessing + N layers + logits).</li>
- *   <li>{@link TornadoVMMasterPlanWithPrefillDecode} — sequential prefill/decode separation;
+ *   <li>{@link TornadoVMMasterPlanPrefillDecode} — sequential prefill/decode separation;
  *       reuses the same N layer graphs for both phases, skipping logits during prefill.</li>
- *   <li>{@link TornadoVMMasterPlanWithBatchPrefillDecode} — batched prefill + single-token
+ *   <li>{@link TornadoVMMasterPlanBatchPrefillDecode} — batched prefill + single-token
  *       decode; holds 2N+3 graphs in one plan to keep the KV cache on device across phases.</li>
  * </ul>
  *
  * <p>The {@link #initializeTornadoVMPlan} factory selects the implementation based on
  * {@code llama.withPrefillDecode} and {@code llama.prefillBatchSize}:</p>
  * <ul>
- *   <li>{@code withPrefillDecode=false} → {@link TornadoVMMasterPlanStandard}</li>
- *   <li>{@code withPrefillDecode=true}, {@code prefillBatchSize=1} → {@link TornadoVMMasterPlanWithPrefillDecode}</li>
- *   <li>{@code withPrefillDecode=true}, {@code prefillBatchSize>1} → {@link TornadoVMMasterPlanWithBatchPrefillDecode}</li>
+ *   <li>{@code withPrefillDecode=false} → {@link TornadoVMMasterPlanSingleToken}</li>
+ *   <li>{@code withPrefillDecode=true}, {@code prefillBatchSize=1} → {@link TornadoVMMasterPlanPrefillDecode}</li>
+ *   <li>{@code withPrefillDecode=true}, {@code prefillBatchSize>1} → {@link TornadoVMMasterPlanBatchPrefillDecode}</li>
  * </ul>
  */
 public interface TornadoVMMasterPlan {
@@ -43,8 +44,8 @@ public interface TornadoVMMasterPlan {
      * Factory: creates, JIT-compiles, and warms up the appropriate TornadoVMMasterPlan.
      *
      * <p>When {@code llama.withPrefillDecode=true} and {@code llama.prefillBatchSize > 1},
-     * a {@link TornadoVMMasterPlanWithBatchPrefillDecode} is returned.
-     * Otherwise a {@link TornadoVMMasterPlanStandard} is returned (used for the baseline
+     * a {@link TornadoVMMasterPlanBatchPrefillDecode} is returned.
+     * Otherwise a {@link TornadoVMMasterPlanSingleToken} is returned (used for the baseline
      * path and the sequential prefill/decode path when batch size is 1).</p>
      *
      * @param state the model state
@@ -56,17 +57,18 @@ public interface TornadoVMMasterPlan {
 
         if (WITH_PREFILL_DECODE && PREFILL_BATCH_SIZE > 1) {
             // GPU path with batched prefill/decode
-            plan = new TornadoVMMasterPlanWithBatchPrefillDecode(state, model);
+            plan = new TornadoVMMasterPlanBatchPrefillDecode(state, model);
         } else if (WITH_PREFILL_DECODE) {
             // GPU path with simple prefill/decode
-            plan = new TornadoVMMasterPlanWithPrefillDecode(state, model);
+            plan = new TornadoVMMasterPlanPrefillDecode(state, model);
         } else {
             // GPU path with no prefill/decode
-            plan = new TornadoVMMasterPlanStandard(state, model);
+            plan = new TornadoVMMasterPlanSingleToken(state, model);
         }
         model.setTornadoVMPlan(plan);
         return plan;
     }
+    // @formatter:on
 
     /**
      * Creates the appropriate {@link TornadoExecutionPlan} instance
@@ -76,7 +78,7 @@ public interface TornadoVMMasterPlan {
 
     void forceCopyInReadOnlyData();
 
-    FloatArray tornadoVMForwardExecuteLayered(int position);
+    FloatArray tornadoVMForwardDecode(int position);
 
     /** Releases all device memory held by this plan. */
     void freeTornadoExecutionPlan();

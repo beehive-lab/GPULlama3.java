@@ -5,23 +5,23 @@ import org.beehive.gpullama3.inference.weights.tornado.Phi3TornadoWeights;
 import org.beehive.gpullama3.model.phi3.Phi3Configuration;
 import org.beehive.gpullama3.tornadovm.kernels.Phi3Kernels;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
-import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
-import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
-import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
+import org.beehive.gpullama3.tornadovm.scheduling.WorkerGridFactory;
+import org.beehive.gpullama3.tornadovm.scheduling.SchedulerType;
+import org.beehive.gpullama3.tornadovm.layers.AbstractTransformerLayerTaskGraphs;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
 /**
- * Phi3Q8_0FFNLayers: Q8_0-quantized FFN layers for Phi3 with Group Query Attention (GQA) support.
+ * Phi3Q8_0FFNLayers: Q8_0 transformer-layer TaskGraphs for Phi3 with Group Query Attention (GQA) support.
  *
  * Key Differences from Phi3FP16FFNLayers: - Uses Q8_0-quantized weights (getQuants() and getScales()) - Same attention and RoPE kernels as FP16 version - 8-bit integer computations with
  * dequantization - 2x memory compression vs FP16 - Same combined QKV and gate/up FFN structure
  *
  * Works directly with Phi3State to access and mutate Phi3-specific state fields.
  */
-public class Phi3Q8_0FFNLayers extends AbstractFFNLayers<Phi3TornadoWeights, Phi3Configuration> {
+public class Phi3Q8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Phi3TornadoWeights, Phi3Configuration> {
 
     // Typed reference to Phi3-specific state
     private final Phi3State phi3State;

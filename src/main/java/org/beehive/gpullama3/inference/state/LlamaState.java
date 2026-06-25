@@ -3,7 +3,6 @@ package org.beehive.gpullama3.inference.state;
 import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
 import org.beehive.gpullama3.tensor.standard.FloatTensor;
 import org.beehive.gpullama3.model.Configuration;
-import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
@@ -22,50 +21,8 @@ import java.util.stream.Stream;
  */
 public final class LlamaState extends State {
 
-    // ── Batch-prefill GPU buffers ─────────────────────────────────────────────
-    // Allocated when llama.prefillBatchSize > 1; null otherwise.
-    // Layout: flat [B × stride], element [b][i] at index b*stride + i.
-    public final HalfFloatArray embeddingXBatch;  // B × dim  (FP16 input)
-    public final FloatArray     wrapXBatch;        // B × dim  (live activations)
-    public final HalfFloatArray wrapXbFP16Batch;  // B × dim  (RMSNorm output, FP16)
-    public final FloatArray     wrapQBatch;        // B × dim
-    public final FloatArray     wrapKBatch;        // B × kvDim
-    public final FloatArray     wrapVBatch;        // B × kvDim
-    public final FloatArray     wrapXbBatch;       // B × dim  (attention output)
-    public final FloatArray     wrapHbBatch;       // B × hiddenDim
-    public final FloatArray     attnScaleBatch;    // B        (per-token RMS scale, attn)
-    public final FloatArray     ffnScaleBatch;     // B        (per-token RMS scale, FFN)
-    public final IntArray       batchStartPosHolder; // 1      (start position of chunk)
-
     public LlamaState(Configuration config, int batchsize) {
         super(config, batchsize);
-        int gpuBatchSize = Integer.getInteger("llama.prefillBatchSize", 1);
-        if (gpuBatchSize > 1) {
-            int kvDim = (config.dim() * config.numberOfKeyValueHeads()) / config.numberOfHeads();
-            this.embeddingXBatch   = new HalfFloatArray(gpuBatchSize * config.dim());
-            this.wrapXBatch        = new FloatArray(gpuBatchSize * config.dim());
-            this.wrapXbFP16Batch   = new HalfFloatArray(gpuBatchSize * config.dim());
-            this.wrapQBatch        = new FloatArray(gpuBatchSize * config.dim());
-            this.wrapKBatch        = new FloatArray(gpuBatchSize * kvDim);
-            this.wrapVBatch        = new FloatArray(gpuBatchSize * kvDim);
-            this.wrapXbBatch       = new FloatArray(gpuBatchSize * config.dim());
-            this.wrapHbBatch       = new FloatArray(gpuBatchSize * config.hiddenDim());
-            this.attnScaleBatch    = new FloatArray(gpuBatchSize);
-            this.ffnScaleBatch     = new FloatArray(gpuBatchSize);
-            this.batchStartPosHolder = new IntArray(1);
-        } else {
-            this.embeddingXBatch   = null;
-            this.wrapXBatch        = null;
-            this.wrapXbFP16Batch   = null;
-            this.wrapQBatch        = null;
-            this.wrapKBatch        = null;
-            this.wrapVBatch        = null;
-            this.wrapXbBatch       = null;
-            this.wrapHbBatch       = null;
-            this.attnScaleBatch    = null;
-            this.ffnScaleBatch     = null;
-            this.batchStartPosHolder = null;
-        }
     }
 
     @Override
@@ -123,4 +80,5 @@ public final class LlamaState extends State {
 
         return fields;
     }
+
 }

@@ -5,16 +5,16 @@ import org.beehive.gpullama3.inference.weights.tornado.Phi3TornadoWeights;
 import org.beehive.gpullama3.model.phi3.Phi3Configuration;
 import org.beehive.gpullama3.tornadovm.kernels.Phi3Kernels;
 import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
-import org.beehive.gpullama3.tornadovm.layerplanner.WorkerGridFactory;
-import org.beehive.gpullama3.tornadovm.layerplanner.strategy.SchedulerType;
-import org.beehive.gpullama3.tornadovm.layers.AbstractFFNLayers;
+import org.beehive.gpullama3.tornadovm.scheduling.WorkerGridFactory;
+import org.beehive.gpullama3.tornadovm.scheduling.SchedulerType;
+import org.beehive.gpullama3.tornadovm.layers.AbstractTransformerLayerTaskGraphs;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
 /**
- * Phi3FP16FFNLayers: FP16 FFN layers for Phi3 with Group Query Attention (GQA) support.
+ * Phi3FP16FFNLayers: FP16 transformer-layer TaskGraphs for Phi3 with Group Query Attention (GQA) support.
  *
  * Key Differences from Qwen2/Qwen3: - Uses combined QKV matrix (wqkv) instead of separate Q, K, V matrices - Includes splitQKV task to separate combined buffer - Uses ropeRotationPhi3 kernel for
  * position embeddings - FFN uses single wUp matrix that outputs both Gate and Up (2 * hiddenDim) - Includes splitGateUpAndSiLU task for FFN activation - Uses wDown for final FFN projection - No Q, K,
@@ -22,7 +22,7 @@ import uk.ac.manchester.tornado.api.enums.DataTransferMode;
  *
  * Works directly with Phi3State to access and mutate Phi3-specific state fields.
  */
-public class Phi3FP16FFNLayers extends AbstractFFNLayers<Phi3TornadoWeights, Phi3Configuration> {
+public class Phi3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Phi3TornadoWeights, Phi3Configuration> {
 
     // Typed references to Phi3-specific state and config
     private final Phi3State phi3State;
