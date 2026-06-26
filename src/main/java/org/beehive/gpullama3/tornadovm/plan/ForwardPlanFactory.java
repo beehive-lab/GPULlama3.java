@@ -1,6 +1,7 @@
 package org.beehive.gpullama3.tornadovm.plan;
 
 import org.beehive.gpullama3.inference.state.DevstralState;
+import org.beehive.gpullama3.inference.state.Gemma4State;
 import org.beehive.gpullama3.inference.state.GraniteState;
 import org.beehive.gpullama3.inference.state.LlamaState;
 import org.beehive.gpullama3.inference.state.Phi3State;
@@ -12,6 +13,7 @@ import org.beehive.gpullama3.tensor.GGMLType;
 import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlan;
 import org.beehive.gpullama3.tornadovm.plan.components.BatchPrefillDecodeForwardPlanComponents;
 import org.beehive.gpullama3.tornadovm.plan.components.fp16.DevstralFP16PlanComponents;
+import org.beehive.gpullama3.tornadovm.plan.components.fp16.Gemma4FP16PlanComponents;
 import org.beehive.gpullama3.tornadovm.plan.components.fp16.GraniteFP16PlanComponents;
 import org.beehive.gpullama3.tornadovm.plan.components.fp16.LlamaFP16PlanComponents;
 import org.beehive.gpullama3.tornadovm.plan.components.fp16.MistralFP16PlanComponents;
@@ -19,6 +21,7 @@ import org.beehive.gpullama3.tornadovm.plan.components.fp16.Phi3FP16PlanComponen
 import org.beehive.gpullama3.tornadovm.plan.components.fp16.Qwen2FP16PlanComponents;
 import org.beehive.gpullama3.tornadovm.plan.components.fp16.Qwen3FP16PlanComponents;
 import org.beehive.gpullama3.tornadovm.plan.components.q8_0.DevstralQ8_0PlanComponents;
+import org.beehive.gpullama3.tornadovm.plan.components.q8_0.Gemma4Q8_0PlanComponents;
 import org.beehive.gpullama3.tornadovm.plan.components.q8_0.GraniteQ8_0PlanComponents;
 import org.beehive.gpullama3.tornadovm.plan.components.q8_0.LlamaQ8_0PlanComponents;
 import org.beehive.gpullama3.tornadovm.plan.components.q8_0.MistralQ8_0PlanComponents;
@@ -94,6 +97,7 @@ public class ForwardPlanFactory {
             case DEVSTRAL_2 -> createDevstralFP16Plan(mode, (DevstralState) state, model);
             case QWEN_2 -> createQwen2FP16Plan(mode, (Qwen2State) state, model);
             case QWEN_3 -> createQwen3FP16Plan(mode, (Qwen3State) state, model);
+            case GEMMA_4 -> createGemma4FP16Plan(mode, (Gemma4State) state, model);
             case PHI_3 -> createPhi3FP16Plan(mode, (Phi3State) state, model);
             case GRANITE -> createGraniteFP16Plan(mode, (GraniteState) state, model);
             case DEEPSEEK_R1_DISTILL_QWEN -> createQwen2FP16Plan(mode, (Qwen2State) state, model);
@@ -110,6 +114,7 @@ public class ForwardPlanFactory {
             case DEVSTRAL_2 -> createDevstralQ8_0Plan(mode, (DevstralState) state, model);
             case QWEN_2 -> createQwen2Q8_0Plan(mode, (Qwen2State) state, model);
             case QWEN_3 -> createQwen3Q8_0Plan(mode, (Qwen3State) state, model);
+            case GEMMA_4 -> createGemma4Q8_0Plan(mode, (Gemma4State) state, model);
             case PHI_3 -> createPhi3Q8_0Plan(mode, (Phi3State) state, model);
             case GRANITE -> createGraniteQ8_0Plan(mode, (GraniteState) state, model);
             case DEEPSEEK_R1_DISTILL_QWEN -> createQwen2Q8_0Plan(mode, (Qwen2State) state, model);
@@ -193,10 +198,22 @@ public class ForwardPlanFactory {
         };
     }
 
+    private static ForwardPlan createGemma4FP16Plan(ExecutionMode mode, Gemma4State state, Model model) {
+        if (mode != ExecutionMode.STANDARD)
+            throw new UnsupportedOperationException(mode + " not yet supported for GEMMA_4 + F16");
+        return new SingleTokenForwardPlan(model, new Gemma4FP16PlanComponents(state, model));
+    }
+
     private static ForwardPlan createPhi3FP16Plan(ExecutionMode mode, Phi3State state, Model model) {
         if (mode != ExecutionMode.STANDARD)
             throw new UnsupportedOperationException(mode + " not yet supported for PHI_3 + F16");
         return new SingleTokenForwardPlan(model, new Phi3FP16PlanComponents(state, model));
+    }
+
+    private static ForwardPlan createGemma4Q8_0Plan(ExecutionMode mode, Gemma4State state, Model model) {
+        if (mode != ExecutionMode.STANDARD)
+            throw new UnsupportedOperationException(mode + " not yet supported for GEMMA_4 + Q8_0");
+        return new SingleTokenForwardPlan(model, new Gemma4Q8_0PlanComponents(state, model));
     }
 
     private static ForwardPlan createPhi3Q8_0Plan(ExecutionMode mode, Phi3State state, Model model) {
