@@ -3,6 +3,7 @@ package org.beehive.gpullama3.tornadovm.kernels;
 import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.annotations.Parallel;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
+import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
@@ -372,6 +373,35 @@ public class Gemma4Kernels {
 
         if (localId == 0) {
             hb.set(rowId, TransformerComputeKernelsLayered.geluActivation(result1) * result3);
+        }
+    }
+
+    /**
+     * Q8_0 counterpart of {@link #fusedGateUpGeGLU}: identical GeGLU fusion, but the gate ({@code w1})
+     * and up ({@code w3}) weights are Q8_0-quantized byte arrays, dequantized on the fly by
+     * {@link TransformerComputeKernelsLayered#matrixVectorRowMajorOptimizedQ8_0Byte}. One row per workgroup.
+     */
+    public static void fusedGateUpGeGLUQ8(
+            KernelContext context,
+            FloatArray xNorm,
+            FloatArray hb,
+            ByteArray w1,
+            ByteArray w3,
+            int dim,
+            int hiddenDim,
+            int localWorkGroupSize) {
+
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+        if (rowId >= hiddenDim) {
+            return;
+        }
+
+        float sum1 = TransformerComputeKernelsLayered.matrixVectorRowMajorOptimizedQ8_0Byte(context, localWorkGroupSize, xNorm, w1, dim);
+        float sum3 = TransformerComputeKernelsLayered.matrixVectorRowMajorOptimizedQ8_0Byte(context, localWorkGroupSize, xNorm, w3, dim);
+
+        if (localId == 0) {
+            hb.set(rowId, TransformerComputeKernelsLayered.geluActivation(sum1) * sum3);
         }
     }
 

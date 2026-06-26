@@ -299,10 +299,28 @@ public abstract class ModelLoader {
      */
     public static void copyEmbeddingRowToFloatArray(GGMLTensorEntry entry, long rowIndex, int rowSize, FloatArray dest, float scale) {
         GGMLType type = entry.ggmlType();
+        MemorySegment segment = entry.memorySegment();
+
+        // Q8_0 is block-quantized (32 int8 values + one FP16 scale per 34-byte block); dequantize the
+        // requested row element-by-element from its global flat index (the blocks tile the row-major data).
+        if (type == GGMLType.Q8_0) {
+            final int blockSize = GGMLType.Q8_0.getBlockSize(); // 32 elements
+            final int typeSize = GGMLType.Q8_0.getTypeSize();   // 2-byte scale + 32 quants = 34 bytes
+            long rowStartElement = rowIndex * rowSize;
+            for (int i = 0; i < rowSize; i++) {
+                long globalElement = rowStartElement + i;
+                long blockOffset = (globalElement / blockSize) * typeSize;
+                int withinBlock = (int) (globalElement % blockSize);
+                float blockScale = Float.float16ToFloat(segment.get(ValueLayout.JAVA_SHORT_UNALIGNED, blockOffset));
+                byte quant = segment.get(ValueLayout.JAVA_BYTE, blockOffset + Short.BYTES + withinBlock);
+                dest.set(i, quant * blockScale * scale);
+            }
+            return;
+        }
+
         if (type.getBlockSize() != 1) {
             throw new UnsupportedOperationException("copyEmbeddingRowToFloatArray only supports unblocked (per-element) types, got " + type);
         }
-        MemorySegment segment = entry.memorySegment();
         long elementBytes = type.getTypeSize();
         long rowByteOffset = rowIndex * rowSize * elementBytes;
         for (int i = 0; i < rowSize; i++) {
