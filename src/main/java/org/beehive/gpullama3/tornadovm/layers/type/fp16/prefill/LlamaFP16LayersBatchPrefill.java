@@ -11,6 +11,8 @@ import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
+import uk.ac.manchester.tornado.api.WorkerGrid1D;
+import uk.ac.manchester.tornado.api.WorkerGrid2D;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
 import java.util.List;
@@ -70,7 +72,9 @@ public class LlamaFP16LayersBatchPrefill implements BatchPrefillTransformerLayer
                     state.wrapQBatch, state.wrapKBatch, state.wrapVBatch,
                     state.wrapXbBatch,
                     state.wrapHbBatch,
-                    state.wrapKeyCache, state.wrapValueCache);
+                    state.wrapKeyCache, state.wrapValueCache,
+                    state.normedXFFNFP16, state.ffnGateResult, state.ffnUpResult,
+                    state.attnOutFP16, state.woOut, state.wrapHbFP16Batch, state.w2Out);
             // wrapXBatch produced by the prefillActivation graph and persists in device memory
             // to consume it from there we should use the explicit uniqueTaskGraph name
             // the no-arg form would use current graph name, which causes NPE without CUDA Graphs
@@ -81,13 +85,15 @@ public class LlamaFP16LayersBatchPrefill implements BatchPrefillTransformerLayer
             batchPrefillLayer.consumeFromDevice(pred,
                     context,
                     state.wrapXBatch,
+                    state.batchStartPosHolder,
+                    state.attnScaleBatch, state.ffnScaleBatch,
                     state.wrapXbFP16Batch,
                     state.wrapQBatch, state.wrapKBatch, state.wrapVBatch,
                     state.wrapXbBatch,
                     state.wrapHbBatch,
                     state.wrapKeyCache, state.wrapValueCache,
-                    state.batchStartPosHolder,
-                    state.attnScaleBatch, state.ffnScaleBatch);
+                    state.normedXFFNFP16, state.ffnGateResult, state.ffnUpResult,
+                    state.attnOutFP16, state.woOut, state.wrapHbFP16Batch, state.w2Out);
         }
 
         // Per-layer weights: upload once
@@ -118,15 +124,28 @@ public class LlamaFP16LayersBatchPrefill implements BatchPrefillTransformerLayer
                 weights.rms_att_weightLayered[layerIndex].asFloatArray(),
                 state.attnScaleBatch, dim);
 
-        batchPrefillLayer.task("batch_qkv",
-                TransformerBatchPrefillKernels::batchedFusedQKVMatmul,
-                context,
-                state.wrapXbFP16Batch,
-                state.wrapQBatch, state.wrapKBatch, state.wrapVBatch,
-                weights.wqLayered[layerIndex].asHalfFloatArray(),
-                weights.wkLayered[layerIndex].asHalfFloatArray(),
-                weights.wvLayered[layerIndex].asHalfFloatArray(),
-                dim, kvDim, LOCAL_WORK_GROUP_SIZE);
+//        batchPrefillLayer.task("batch_qkv",
+//                TransformerBatchPrefillKernels::batchedFusedQKVMatmul,
+//                context,
+//                state.wrapXbFP16Batch,
+//                state.wrapQBatch, state.wrapKBatch, state.wrapVBatch,
+//                weights.wqLayered[layerIndex].asHalfFloatArray(),
+//                weights.wkLayered[layerIndex].asHalfFloatArray(),
+//                weights.wvLayered[layerIndex].asHalfFloatArray(),
+//                dim, kvDim, LOCAL_WORK_GROUP_SIZE);
+
+        batchPrefillLayer.task("qProj", TransformerBatchPrefillKernels::gemmMMA,
+                        context, state.wrapXbFP16Batch,
+                        weights.wqLayered[layerIndex].asHalfFloatArray(),
+                        state.wrapQBatch, batchSize, dim, dim)
+                .task("kProj", TransformerBatchPrefillKernels::gemmMMA,
+                        context, state.wrapXbFP16Batch,
+                        weights.wkLayered[layerIndex].asHalfFloatArray(),
+                        state.wrapKBatch, batchSize, kvDim, dim)
+                .task("vProj", TransformerBatchPrefillKernels::gemmMMA,
+                        context, state.wrapXbFP16Batch,
+                        weights.wvLayered[layerIndex].asHalfFloatArray(),
+                        state.wrapVBatch, batchSize, kvDim, dim);
 
         batchPrefillLayer.task("batch_rope_kv",
                 TransformerBatchPrefillKernels::batchedRopeWithKVCache,
@@ -143,11 +162,19 @@ public class LlamaFP16LayersBatchPrefill implements BatchPrefillTransformerLayer
                 config.numberOfHeads(), config.headSize(),
                 kvDim, config.kvMul(), layerIndex, config.contextLength(), dim);
 
-        batchPrefillLayer.task("batch_attn_out",
-                TransformerBatchPrefillKernels::batchedMatVecWithResidual,
-                context, state.wrapXbBatch, state.wrapXBatch,
-                weights.woLayered[layerIndex].asHalfFloatArray(),
-                dim, dim, LOCAL_WORK_GROUP_SIZE);
+//        batchPrefillLayer.task("batch_attn_out",
+//                TransformerBatchPrefillKernels::batchedMatVecWithResidual,
+//                context, state.wrapXbBatch, state.wrapXBatch,
+//                weights.woLayered[layerIndex].asHalfFloatArray(),
+//                dim, dim, LOCAL_WORK_GROUP_SIZE);
+        batchPrefillLayer.task("attnCast", TransformerBatchPrefillKernels::batchedConvertFP32toFP16,
+                        context, state.wrapXbBatch, state.attnOutFP16)
+                .task("woProj", TransformerBatchPrefillKernels::gemmMMA,
+                        context, state.attnOutFP16,
+                        weights.woLayered[layerIndex].asHalfFloatArray(),
+                        state.woOut, batchSize, dim, dim)
+                .task("woResid", TransformerBatchPrefillKernels::batchedResidualAddFP32,
+                        context, state.wrapXBatch, state.woOut);
 
         // ── FFN Block ──────────────────────────────────────────────────────────
         batchPrefillLayer.task("batch_ffn_rms",
@@ -155,20 +182,55 @@ public class LlamaFP16LayersBatchPrefill implements BatchPrefillTransformerLayer
                 context, state.wrapXBatch, state.ffnScaleBatch,
                 dim, config.rmsNormEps());
 
-        batchPrefillLayer.task("batch_ffn_gate_up",
-                TransformerBatchPrefillKernels::batchedFusedRmsNormFFNGateUp,
-                context, state.wrapXBatch, state.wrapHbBatch,
+        batchPrefillLayer.task("batch_ffn_rms_apply",
+                TransformerBatchPrefillKernels::batchedFFNRmsApplyFP16,
+                context, state.normedXFFNFP16, state.wrapXBatch,
                 weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),
-                state.ffnScaleBatch,
-                weights.w1Layered[layerIndex].asHalfFloatArray(),
-                weights.w3Layered[layerIndex].asHalfFloatArray(),
-                dim, hidDim, LOCAL_WORK_GROUP_SIZE);
+                state.ffnScaleBatch, dim);
 
-        batchPrefillLayer.task("batch_ffn_down",
-                TransformerBatchPrefillKernels::batchedMatVecWithResidual,
-                context, state.wrapHbBatch, state.wrapXBatch,
-                weights.w2Layered[layerIndex].asHalfFloatArray(),
-                hidDim, dim, LOCAL_WORK_GROUP_SIZE);
+        batchPrefillLayer.task("batch_ffn_w1_mma",
+                TransformerBatchPrefillKernels::gemmMMA,
+                context, state.normedXFFNFP16,
+                weights.w1Layered[layerIndex].asHalfFloatArray(),
+                state.ffnGateResult,
+                batchSize, hidDim, dim);
+
+        batchPrefillLayer.task("batch_ffn_w3_mma",
+                TransformerBatchPrefillKernels::gemmMMA,
+                context, state.normedXFFNFP16,
+                weights.w3Layered[layerIndex].asHalfFloatArray(),
+                state.ffnUpResult,
+                batchSize, hidDim, dim);
+
+
+//        batchPrefillLayer.task("batch_ffn_swiglu",
+//                TransformerBatchPrefillKernels::batchedFFNSwiGLU,
+//                context, state.wrapHbBatch, state.ffnGateResult, state.ffnUpResult,
+//                hidDim);
+
+
+//        batchPrefillLayer.task("batch_ffn_gate_up",
+//                TransformerBatchPrefillKernels::batchedFusedRmsNormFFNGateUp,
+//                context, state.wrapXBatch, state.wrapHbBatch,
+//                weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),
+//                state.ffnScaleBatch,
+//                weights.w1Layered[layerIndex].asHalfFloatArray(),
+//                weights.w3Layered[layerIndex].asHalfFloatArray(),
+//                dim, hidDim, LOCAL_WORK_GROUP_SIZE);
+
+//        batchPrefillLayer.task("batch_ffn_down",
+//                TransformerBatchPrefillKernels::batchedMatVecWithResidual,
+//                context, state.wrapHbBatch, state.wrapXBatch,
+//                weights.w2Layered[layerIndex].asHalfFloatArray(),
+//                hidDim, dim, LOCAL_WORK_GROUP_SIZE);
+        batchPrefillLayer.task("swiglu", TransformerBatchPrefillKernels::batchedFFNSwiGLUFP16,
+                        context, state.wrapHbFP16Batch, state.ffnGateResult, state.ffnUpResult, hidDim)
+                .task("w2Proj", TransformerBatchPrefillKernels::gemmMMA,
+                        context, state.wrapHbFP16Batch,
+                        weights.w2Layered[layerIndex].asHalfFloatArray(),
+                        state.w2Out, batchSize, dim, hidDim)
+                .task("w2Resid", TransformerBatchPrefillKernels::batchedResidualAddFP32,
+                        context, state.wrapXBatch, state.w2Out);
 
         // Persist wrapXBatch for the next layer, and KV cache so the decode
         // layers can consume it via the activation graph pass-through.
@@ -177,6 +239,21 @@ public class LlamaFP16LayersBatchPrefill implements BatchPrefillTransformerLayer
         return batchPrefillLayer;
     }
     // @formatter:on
+
+    // gemmMMA: 256 threads/block (1D within block), grid over M- and N-blocks.
+    static WorkerGrid mmaGrid(int paddedM, int N) {
+        int mBlocks = paddedM / 128;   // BM
+        int nBlocks = N / 128;         // BN
+        WorkerGrid2D g = new WorkerGrid2D(mBlocks * 256, nBlocks);
+        g.setLocalWork(256, 1, 1);     // groupIdx∈[0,mBlocks), groupIdy∈[0,nBlocks)
+        return g;
+    }
+
+    static WorkerGrid elementwiseGrid(int n) {   // n must be a multiple of 256
+        WorkerGrid1D g = new WorkerGrid1D(n);
+        g.setLocalWork(256, 1, 1);
+        return g;
+    }
 
     /** Registers all batch layer workers in the shared {@link GridScheduler}. */
     public void updateGridScheduler(GridScheduler scheduler) {
@@ -214,17 +291,53 @@ public class LlamaFP16LayersBatchPrefill implements BatchPrefillTransformerLayer
         WorkerGrid matVecHidWorker = WorkerGridFactory.genericWorker(
                 batchSize * hidDim * LOCAL_WORK_GROUP_SIZE, LOCAL_WORK_GROUP_SIZE);
 
+        // FFN RMS apply: B*dim threads, local=256
+        WorkerGrid ffnRmsApplyWorker = WorkerGridFactory.genericWorker(batchSize * dim, 256);
+
+        // MMA: 128x128 block tile, 256 threads/block, M=batchSize, N=hiddenDim, K=dim
+        // Global = (M/128)*256 in X, (N/128) in Y, local (256,1,1)
+        WorkerGrid mmaFFNWorker = new WorkerGrid2D((batchSize / 128) * 256, hidDim / 128);
+        mmaFFNWorker.setLocalWork(256, 1, 1);
+
+        // SwiGLU: B*hiddenDim threads, local=256
+        WorkerGrid swigluWorker = WorkerGridFactory.genericWorker(batchSize * hidDim, 256);
+
+        WorkerGrid mmaDimWorker = mmaGrid(batchSize, dim);     // qProj, woProj, w2Proj
+        WorkerGrid mmaKvWorker  = mmaGrid(batchSize, kvDim);   // kProj, vProj
+        WorkerGrid mmaHidWorker = mmaGrid(batchSize, hidDim);  // w1, w3 (replaces mmaFFNWorker)
+
+// Elementwise grids (one thread per valid element; dim & hidDim are mult. of 256)
+        WorkerGrid ewDimWorker = elementwiseGrid(batchSize * dim);     // attnCast, woResid, w2Resid
+        WorkerGrid ewHidWorker = elementwiseGrid(batchSize * hidDim);  // swiglu
+
         for (int i = 0; i < config.numberOfLayers(); i++) {
             String p = "batchPrefillLayer_" + i + ".";
-            scheduler.addWorkerGrid(p + "batch_attn_rms",     rmsWorker);
+//            scheduler.addWorkerGrid(p + "batch_attn_rms",     rmsWorker);
+//            scheduler.addWorkerGrid(p + "batch_attn_rms_apply", rmsApplyWorker);
+//            scheduler.addWorkerGrid(p + "batch_qkv",          qkvWorker);
+//            scheduler.addWorkerGrid(p + "batch_rope_kv",      ropeWorker);
+//            scheduler.addWorkerGrid(p + "batch_attention",    attnWorker);
+//            scheduler.addWorkerGrid(p + "batch_attn_out",     matVecDimWorker);
+//            scheduler.addWorkerGrid(p + "batch_ffn_rms",      rmsWorker);
+//            scheduler.addWorkerGrid(p + "batch_ffn_gate_up",  matVecHidWorker);
+//            scheduler.addWorkerGrid(p + "batch_ffn_down",     matVecDimWorker);
+            scheduler.addWorkerGrid(p + "batch_attn_rms",       rmsWorker);
             scheduler.addWorkerGrid(p + "batch_attn_rms_apply", rmsApplyWorker);
-            scheduler.addWorkerGrid(p + "batch_qkv",          qkvWorker);
-            scheduler.addWorkerGrid(p + "batch_rope_kv",      ropeWorker);
-            scheduler.addWorkerGrid(p + "batch_attention",    attnWorker);
-            scheduler.addWorkerGrid(p + "batch_attn_out",     matVecDimWorker);
-            scheduler.addWorkerGrid(p + "batch_ffn_rms",      rmsWorker);
-            scheduler.addWorkerGrid(p + "batch_ffn_gate_up",  matVecHidWorker);
-            scheduler.addWorkerGrid(p + "batch_ffn_down",     matVecDimWorker);
+            scheduler.addWorkerGrid(p + "qProj", mmaDimWorker);
+            scheduler.addWorkerGrid(p + "kProj", mmaKvWorker);
+            scheduler.addWorkerGrid(p + "vProj", mmaKvWorker);
+            scheduler.addWorkerGrid(p + "batch_rope_kv",   ropeWorker);
+            scheduler.addWorkerGrid(p + "batch_attention", attnWorker);
+            scheduler.addWorkerGrid(p + "attnCast", ewDimWorker);
+            scheduler.addWorkerGrid(p + "woProj",   mmaDimWorker);
+            scheduler.addWorkerGrid(p + "woResid",  ewDimWorker);
+            scheduler.addWorkerGrid(p + "batch_ffn_rms",       rmsWorker);
+            scheduler.addWorkerGrid(p + "batch_ffn_rms_apply", ffnRmsApplyWorker);
+            scheduler.addWorkerGrid(p + "batch_ffn_w1_mma",    mmaHidWorker);
+            scheduler.addWorkerGrid(p + "batch_ffn_w3_mma",    mmaHidWorker);
+            scheduler.addWorkerGrid(p + "swiglu",  ewHidWorker);
+            scheduler.addWorkerGrid(p + "w2Proj",  mmaDimWorker);
+            scheduler.addWorkerGrid(p + "w2Resid", ewDimWorker);
         }
     }
 

@@ -1,6 +1,7 @@
 package org.beehive.gpullama3.tornadovm.kernels;
 
 import uk.ac.manchester.tornado.api.KernelContext;
+import uk.ac.manchester.tornado.api.enums.MMAShape;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
 import uk.ac.manchester.tornado.api.types.HalfFloat;
 import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
@@ -716,6 +717,195 @@ public final class TransformerBatchPrefillKernels {
             float silu = result1 / (1.0f + TornadoMath.exp(-result1));
             wrapHbBatch.set(batchIdx * hiddenDim + rowIdx, silu * result3);
         }
+    }
+
+    /**
+     * RMS-apply for FFN, writing FP16. Mirrors batchedRmsApplyFP16 but pulls
+     * scale from ffnScaleBatch. Output is the A operand for the W1/W3 MMA tasks.
+     *
+     * Worker: B*dim global threads, localSize=256.
+     */
+    public static void batchedFFNRmsApplyFP16(KernelContext context,
+                                              HalfFloatArray normedXFFNFP16,
+                                              FloatArray wrapXBatch,
+                                              FloatArray rmsFFNWeights,
+                                              FloatArray ffnScaleBatch,
+                                              int dim) {
+        int gid = context.globalIdx;
+        int b = gid / dim;
+        int i = gid % dim;
+        float scale = ffnScaleBatch.get(b);
+        float result = rmsFFNWeights.get(i) * scale * wrapXBatch.get(gid);
+        normedXFFNFP16.set(gid, new HalfFloat(result));
+    }
+
+    /**
+     * Fused SiLU(gate) * up after the two FFN matmuls.
+     * Operates on FP32 inputs (MMA writes FP32).
+     *
+     * Worker: B*hiddenDim global threads, localSize=256.
+     */
+    public static void batchedFFNSwiGLU(KernelContext context,
+                                        FloatArray wrapHbBatch,
+                                        FloatArray ffnGateResult,
+                                        FloatArray ffnUpResult,
+                                        int hiddenDim) {
+        int gid = context.globalIdx;
+        float g = ffnGateResult.get(gid);
+        float u = ffnUpResult.get(gid);
+        float silu = g / (1.0f + TornadoMath.exp(-g));
+        wrapHbBatch.set(gid, silu * u);
+    }
+
+    private static final int WARP_SIZE = 32;
+    private static final int BM = 128, BN = 128, BK = 16;
+    private static final int WARPS_M = 4, WARPS_N = 2;
+    private static final int WARPS_PER_BLOCK = WARPS_M * WARPS_N;
+    private static final int THREADS_PER_BLOCK = WARPS_PER_BLOCK * WARP_SIZE;
+    private static final int WM = BM / WARPS_M;
+    private static final int WN = BN / WARPS_N;
+    private static final int B_SUBTILE_BYTES = 256;
+
+    public static void gemmMMA(KernelContext ctx,
+                               HalfFloatArray A, HalfFloatArray B, FloatArray C,
+                               int M, int N, int K) {
+        int tid = ctx.localIdx;
+        int warpId = tid / WARP_SIZE;
+        int warpM = warpId / WARPS_N;
+        int warpN = warpId % WARPS_N;
+        int blockRow = BM * ctx.groupIdx;
+        int blockCol = BN * ctx.groupIdy;
+
+        int[] aTile = ctx.allocateIntLocalArray(BM * BK / 2);
+        int[] bTile = ctx.allocateIntLocalArray(BK * BN / 2);
+
+        float[] c00 = ctx.mmaFragment(0.0f); float[] c01 = ctx.mmaFragment(0.0f);
+        float[] c02 = ctx.mmaFragment(0.0f); float[] c03 = ctx.mmaFragment(0.0f);
+        float[] c04 = ctx.mmaFragment(0.0f); float[] c05 = ctx.mmaFragment(0.0f);
+        float[] c06 = ctx.mmaFragment(0.0f); float[] c07 = ctx.mmaFragment(0.0f);
+        float[] c10 = ctx.mmaFragment(0.0f); float[] c11 = ctx.mmaFragment(0.0f);
+        float[] c12 = ctx.mmaFragment(0.0f); float[] c13 = ctx.mmaFragment(0.0f);
+        float[] c14 = ctx.mmaFragment(0.0f); float[] c15 = ctx.mmaFragment(0.0f);
+        float[] c16 = ctx.mmaFragment(0.0f); float[] c17 = ctx.mmaFragment(0.0f);
+
+        int numKSteps = K / BK;
+        for (int kStep = 0; kStep < numKSteps; kStep++) {
+            int kBase = kStep * BK;
+            // A load: A is [M, K] row-major (unchanged from gemmMMA)
+            for (int idx = tid; idx < BM * BK / 2; idx += THREADS_PER_BLOCK) {
+                int m_row = idx / (BK / 2);
+                int k_pair = idx % (BK / 2);
+                int k_base = k_pair * 2;
+                int gA = (blockRow + m_row) * K + (kBase + k_base);
+                int lo = A.get(gA).getHalfFloatValue() & 0xFFFF;
+                int hi = A.get(gA + 1).getHalfFloatValue() & 0xFFFF;
+                aTile[m_row * (BK / 2) + k_pair] = lo | (hi << 16);
+            }
+            // B load: B is [N, K] row-major.
+            // The shared-memory layout in bTile is unchanged; we read from
+            // a different global layout and pack into the same shared positions
+            // so that mmaLoadB, mma fragments, and stores all operate identically.
+            for (int idx = tid; idx < BK * BN / 2; idx += THREADS_PER_BLOCK) {
+                int subTileId = idx / 64;
+                int intInSub = idx % 64;
+                int k_row = intInSub / 4;
+                int j_pair = intInSub % 4;
+                int j_base = j_pair * 2;
+                int col_in_block = subTileId * 8 + j_base;
+                // B[col, k] is at col * K + k in [N, K] row-major.
+                int gB0 = (blockCol + col_in_block)     * K + (kBase + k_row);
+                int gB1 = (blockCol + col_in_block + 1) * K + (kBase + k_row);
+                int lo = B.get(gB0).getHalfFloatValue() & 0xFFFF;
+                int hi = B.get(gB1).getHalfFloatValue() & 0xFFFF;
+                bTile[idx] = lo | (hi << 16);
+            }
+            ctx.localBarrier();
+
+            int aOff0 = warpM * 1024;
+            int aOff1 = warpM * 1024 + 512;
+            HalfFloat[] a0 = ctx.mmaLoadA(aTile, BK, aOff0);
+            HalfFloat[] a1 = ctx.mmaLoadA(aTile, BK, aOff1);
+            int bBase = warpN * 8;
+            HalfFloat[] b0 = ctx.mmaLoadB(bTile, BK, (bBase + 0) * B_SUBTILE_BYTES);
+            HalfFloat[] b1 = ctx.mmaLoadB(bTile, BK, (bBase + 1) * B_SUBTILE_BYTES);
+            HalfFloat[] b2 = ctx.mmaLoadB(bTile, BK, (bBase + 2) * B_SUBTILE_BYTES);
+            HalfFloat[] b3 = ctx.mmaLoadB(bTile, BK, (bBase + 3) * B_SUBTILE_BYTES);
+            HalfFloat[] b4 = ctx.mmaLoadB(bTile, BK, (bBase + 4) * B_SUBTILE_BYTES);
+            HalfFloat[] b5 = ctx.mmaLoadB(bTile, BK, (bBase + 5) * B_SUBTILE_BYTES);
+            HalfFloat[] b6 = ctx.mmaLoadB(bTile, BK, (bBase + 6) * B_SUBTILE_BYTES);
+            HalfFloat[] b7 = ctx.mmaLoadB(bTile, BK, (bBase + 7) * B_SUBTILE_BYTES);
+
+            c00 = ctx.mma(a0, b0, c00, MMAShape.M16N8K16);
+            c01 = ctx.mma(a0, b1, c01, MMAShape.M16N8K16);
+            c02 = ctx.mma(a0, b2, c02, MMAShape.M16N8K16);
+            c03 = ctx.mma(a0, b3, c03, MMAShape.M16N8K16);
+            c04 = ctx.mma(a0, b4, c04, MMAShape.M16N8K16);
+            c05 = ctx.mma(a0, b5, c05, MMAShape.M16N8K16);
+            c06 = ctx.mma(a0, b6, c06, MMAShape.M16N8K16);
+            c07 = ctx.mma(a0, b7, c07, MMAShape.M16N8K16);
+            c10 = ctx.mma(a1, b0, c10, MMAShape.M16N8K16);
+            c11 = ctx.mma(a1, b1, c11, MMAShape.M16N8K16);
+            c12 = ctx.mma(a1, b2, c12, MMAShape.M16N8K16);
+            c13 = ctx.mma(a1, b3, c13, MMAShape.M16N8K16);
+            c14 = ctx.mma(a1, b4, c14, MMAShape.M16N8K16);
+            c15 = ctx.mma(a1, b5, c15, MMAShape.M16N8K16);
+            c16 = ctx.mma(a1, b6, c16, MMAShape.M16N8K16);
+            c17 = ctx.mma(a1, b7, c17, MMAShape.M16N8K16);
+            ctx.localBarrier();
+        }
+
+        int rBase = blockRow + warpM * WM;
+        int cBase = blockCol + warpN * WN;
+        ctx.mmaStore(c00, C, rBase + 0,  cBase + 0,  N);
+        ctx.mmaStore(c01, C, rBase + 0,  cBase + 8,  N);
+        ctx.mmaStore(c02, C, rBase + 0,  cBase + 16, N);
+        ctx.mmaStore(c03, C, rBase + 0,  cBase + 24, N);
+        ctx.mmaStore(c04, C, rBase + 0,  cBase + 32, N);
+        ctx.mmaStore(c05, C, rBase + 0,  cBase + 40, N);
+        ctx.mmaStore(c06, C, rBase + 0,  cBase + 48, N);
+        ctx.mmaStore(c07, C, rBase + 0,  cBase + 56, N);
+        ctx.mmaStore(c10, C, rBase + 16, cBase + 0,  N);
+        ctx.mmaStore(c11, C, rBase + 16, cBase + 8,  N);
+        ctx.mmaStore(c12, C, rBase + 16, cBase + 16, N);
+        ctx.mmaStore(c13, C, rBase + 16, cBase + 24, N);
+        ctx.mmaStore(c14, C, rBase + 16, cBase + 32, N);
+        ctx.mmaStore(c15, C, rBase + 16, cBase + 40, N);
+        ctx.mmaStore(c16, C, rBase + 16, cBase + 48, N);
+        ctx.mmaStore(c17, C, rBase + 16, cBase + 56, N);
+    }
+
+    // ── Residual add (FP32) ───────────────────────────────────────────────
+    // gemmMMA overwrites C, but Wo and W2 both need x = x + W·a.
+    // Worker: B*dim global threads (valid rows only), localSize=256.
+    public static void batchedResidualAddFP32(KernelContext context,
+                                              FloatArray residual,   // x (in/out)
+                                              FloatArray delta) {     // GEMM output
+        int gid = context.globalIdx;
+        residual.set(gid, residual.get(gid) + delta.get(gid));
+    }
+
+    // ── SwiGLU emitting FP16 ──────────────────────────────────────────────
+    // Replaces batchedFFNSwiGLU. Output is the A operand for the W2 GEMM.
+    // Worker: B*hiddenDim global threads, localSize=256.
+    public static void batchedFFNSwiGLUFP16(KernelContext context,
+                                            HalfFloatArray wrapHbFP16Batch,
+                                            FloatArray ffnGateResult,
+                                            FloatArray ffnUpResult,
+                                            int hiddenDim) {
+        int gid = context.globalIdx;
+        float g = ffnGateResult.get(gid);
+        float u = ffnUpResult.get(gid);
+        float silu = g / (1.0f + TornadoMath.exp(-g));
+        wrapHbFP16Batch.set(gid, new HalfFloat(silu * u));
+    }
+
+    // ── FP32 → FP16 cast (Option B only, see Wo below) ────────────────────
+    // Worker: B*dim global threads, localSize=256.
+    public static void batchedConvertFP32toFP16(KernelContext context,
+                                                FloatArray in,
+                                                HalfFloatArray out) {
+        int gid = context.globalIdx;
+        out.set(gid, new HalfFloat(in.get(gid)));
     }
 
     // @formatter:on

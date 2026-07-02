@@ -85,6 +85,14 @@ public abstract class State {
     public final FloatArray attnScaleBatch;         // B        (per-token RMS scale, attn)
     public final FloatArray ffnScaleBatch;          // B        (per-token RMS scale, FFN)
     public final IntArray batchStartPosHolder;      // 1      (start position of chunk)
+    public final HalfFloatArray normedXFFNFP16;
+    public final FloatArray ffnGateResult;
+    public final FloatArray ffnUpResult;
+    public final HalfFloatArray xbFP16Batch;
+    public final HalfFloatArray attnOutFP16;
+    public final FloatArray woOut;
+    public final HalfFloatArray wrapHbFP16Batch;
+    public final FloatArray w2Out;
 
     protected State(Configuration config, int batchsize) {
         this.batchsize = batchsize;
@@ -148,6 +156,15 @@ public abstract class State {
             this.attnScaleBatch = new FloatArray(gpuBatchSize);
             this.ffnScaleBatch = new FloatArray(gpuBatchSize);
             this.batchStartPosHolder = new IntArray(1);
+            this.normedXFFNFP16 = new HalfFloatArray(gpuBatchSize * config.dim());
+            this.ffnGateResult  = new FloatArray(gpuBatchSize * config.hiddenDim());
+            this.ffnUpResult    = new FloatArray(gpuBatchSize * config.hiddenDim());
+
+            this.xbFP16Batch = new HalfFloatArray(gpuBatchSize * config.dim());
+            this.attnOutFP16 = new HalfFloatArray(gpuBatchSize * config.dim());
+            this.woOut = new FloatArray(gpuBatchSize * config.dim());
+            this.wrapHbFP16Batch = new HalfFloatArray(gpuBatchSize * config.hiddenDim());
+            this.w2Out = new FloatArray(gpuBatchSize * config.dim());
         } else {
             this.embeddingXBatch = null;
             this.wrapXBatch = null;
@@ -160,6 +177,14 @@ public abstract class State {
             this.attnScaleBatch = null;
             this.ffnScaleBatch = null;
             this.batchStartPosHolder = null;
+            this.normedXFFNFP16 = null;
+            this.ffnGateResult  = null;
+            this.ffnUpResult    = null;
+            this.xbFP16Batch = null;
+            this.attnOutFP16 = null;
+            this.woOut = null;
+            this.wrapHbFP16Batch = null;
+            this.w2Out = null;
         }
     }
 
