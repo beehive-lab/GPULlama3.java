@@ -93,6 +93,8 @@ public abstract class State {
     public final FloatArray woOut;
     public final HalfFloatArray wrapHbFP16Batch;
     public final FloatArray w2Out;
+    public final FloatArray qkvResultBatch;       // B × (dim + 2*kvDim), packed [q|k|v] rows
+    public final FloatArray gateUpResultBatch;    // B × 2*hiddenDim, packed [gate|up] rows
 
     protected State(Configuration config, int batchsize) {
         this.batchsize = batchsize;
@@ -165,6 +167,8 @@ public abstract class State {
             this.woOut = new FloatArray(gpuBatchSize * config.dim());
             this.wrapHbFP16Batch = new HalfFloatArray(gpuBatchSize * config.hiddenDim());
             this.w2Out = new FloatArray(gpuBatchSize * config.dim());
+            this.qkvResultBatch = new FloatArray(gpuBatchSize * (config.dim() + 2 * config.kvDim()));
+            this.gateUpResultBatch = new FloatArray(gpuBatchSize * 2 * config.hiddenDim());
         } else {
             this.embeddingXBatch = null;
             this.wrapXBatch = null;
@@ -185,6 +189,8 @@ public abstract class State {
             this.woOut = null;
             this.wrapHbFP16Batch = null;
             this.w2Out = null;
+            this.qkvResultBatch = null;
+            this.gateUpResultBatch = null;
         }
     }
 

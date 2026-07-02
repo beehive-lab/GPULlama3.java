@@ -766,6 +766,29 @@ public final class TransformerBatchPrefillKernels {
     private static final int WN = BN / WARPS_N;
     private static final int B_SUBTILE_BYTES = 256;
 
+    /**
+     * Packs two consecutive FP16 values into one int (lo | hi<<16) for the
+     * shared-memory ldmatrix tiles. Leaf helper; inlined by the Tornado JIT.
+     */
+    private static int packHalves(HalfFloatArray src, int idxLo, int idxHi) {
+        int lo = src.get(idxLo).getHalfFloatValue() & 0xFFFF;
+        int hi = src.get(idxHi).getHalfFloatValue() & 0xFFFF;
+        return lo | (hi << 16);
+    }
+
+    /**
+     * Tensor-core GEMM: C[M,N] (FP32) = A[M,K] (FP16, row-major) × B[N,K] (FP16, row-major).
+     *
+     * <p>Software-pipelined: each thread stages the NEXT K-step's A/B elements in
+     * registers while the CURRENT step's ldmatrix+MMA execute, so global-memory
+     * latency is hidden behind tensor-core compute. Shared memory stays
+     * single-buffered; the two block barriers per step preserve correctness
+     * (read-complete before overwrite, write-complete before next ldmatrix).</p>
+     *
+     * <p>Requires M % 128 == 0, N % 128 == 0, K % 16 == 0, SM 8.0+.</p>
+     *
+     * Worker: WorkerGrid2D((M/128)*256, N/128), local (256,1,1).
+     */
     public static void gemmMMA(KernelContext ctx,
                                HalfFloatArray A, HalfFloatArray B, FloatArray C,
                                int M, int N, int K) {
@@ -788,38 +811,48 @@ public final class TransformerBatchPrefillKernels {
         float[] c14 = ctx.mmaFragment(0.0f); float[] c15 = ctx.mmaFragment(0.0f);
         float[] c16 = ctx.mmaFragment(0.0f); float[] c17 = ctx.mmaFragment(0.0f);
 
+        // ── Per-thread staging index math (constant across K-steps) ──────────
+        // A tile: BM*BK/2 = 1024 ints; layout idx = m_row*(BK/2) + k_pair.
+        //   m_row = idx >>> 3, k = (idx & 7)*2; global A element (blockRow+m_row, kBase+k).
+        int aIdx0 = tid;       int gA0 = (blockRow + (aIdx0 >>> 3)) * K + ((aIdx0 & 7) << 1);
+        int aIdx1 = tid + 256; int gA1 = (blockRow + (aIdx1 >>> 3)) * K + ((aIdx1 & 7) << 1);
+        int aIdx2 = tid + 512; int gA2 = (blockRow + (aIdx2 >>> 3)) * K + ((aIdx2 & 7) << 1);
+        int aIdx3 = tid + 768; int gA3 = (blockRow + (aIdx3 >>> 3)) * K + ((aIdx3 & 7) << 1);
+        // B tile: BK*BN/2 = 1024 ints; subTileId = idx >>> 6, k_row = (idx & 63) >>> 2,
+        //   col = subTileId*8 + (idx & 3)*2; B[col, k] at col*K + k (pair at +K).
+        int bIdx0 = tid;       int gB0 = (blockCol + ((bIdx0 >>> 6) << 3) + ((bIdx0 & 3) << 1)) * K + ((bIdx0 & 63) >>> 2);
+        int bIdx1 = tid + 256; int gB1 = (blockCol + ((bIdx1 >>> 6) << 3) + ((bIdx1 & 3) << 1)) * K + ((bIdx1 & 63) >>> 2);
+        int bIdx2 = tid + 512; int gB2 = (blockCol + ((bIdx2 >>> 6) << 3) + ((bIdx2 & 3) << 1)) * K + ((bIdx2 & 63) >>> 2);
+        int bIdx3 = tid + 768; int gB3 = (blockCol + ((bIdx3 >>> 6) << 3) + ((bIdx3 & 3) << 1)) * K + ((bIdx3 & 63) >>> 2);
+
+        // ── Prologue: stage K-step 0 ─────────────────────────────────────────
+        int aReg0 = packHalves(A, gA0, gA0 + 1);
+        int aReg1 = packHalves(A, gA1, gA1 + 1);
+        int aReg2 = packHalves(A, gA2, gA2 + 1);
+        int aReg3 = packHalves(A, gA3, gA3 + 1);
+        int bReg0 = packHalves(B, gB0, gB0 + K);
+        int bReg1 = packHalves(B, gB1, gB1 + K);
+        int bReg2 = packHalves(B, gB2, gB2 + K);
+        int bReg3 = packHalves(B, gB3, gB3 + K);
+        aTile[aIdx0] = aReg0; aTile[aIdx1] = aReg1; aTile[aIdx2] = aReg2; aTile[aIdx3] = aReg3;
+        bTile[bIdx0] = bReg0; bTile[bIdx1] = bReg1; bTile[bIdx2] = bReg2; bTile[bIdx3] = bReg3;
+        ctx.localBarrier();
+
         int numKSteps = K / BK;
         for (int kStep = 0; kStep < numKSteps; kStep++) {
-            int kBase = kStep * BK;
-            // A load: A is [M, K] row-major (unchanged from gemmMMA)
-            for (int idx = tid; idx < BM * BK / 2; idx += THREADS_PER_BLOCK) {
-                int m_row = idx / (BK / 2);
-                int k_pair = idx % (BK / 2);
-                int k_base = k_pair * 2;
-                int gA = (blockRow + m_row) * K + (kBase + k_base);
-                int lo = A.get(gA).getHalfFloatValue() & 0xFFFF;
-                int hi = A.get(gA + 1).getHalfFloatValue() & 0xFFFF;
-                aTile[m_row * (BK / 2) + k_pair] = lo | (hi << 16);
+            // Issue next step's global loads FIRST: independent of the MMAs below,
+            // so their latency overlaps ldmatrix + tensor-core compute.
+            if (kStep + 1 < numKSteps) {
+                int kOff = (kStep + 1) * BK;
+                aReg0 = packHalves(A, gA0 + kOff, gA0 + kOff + 1);
+                aReg1 = packHalves(A, gA1 + kOff, gA1 + kOff + 1);
+                aReg2 = packHalves(A, gA2 + kOff, gA2 + kOff + 1);
+                aReg3 = packHalves(A, gA3 + kOff, gA3 + kOff + 1);
+                bReg0 = packHalves(B, gB0 + kOff, gB0 + kOff + K);
+                bReg1 = packHalves(B, gB1 + kOff, gB1 + kOff + K);
+                bReg2 = packHalves(B, gB2 + kOff, gB2 + kOff + K);
+                bReg3 = packHalves(B, gB3 + kOff, gB3 + kOff + K);
             }
-            // B load: B is [N, K] row-major.
-            // The shared-memory layout in bTile is unchanged; we read from
-            // a different global layout and pack into the same shared positions
-            // so that mmaLoadB, mma fragments, and stores all operate identically.
-            for (int idx = tid; idx < BK * BN / 2; idx += THREADS_PER_BLOCK) {
-                int subTileId = idx / 64;
-                int intInSub = idx % 64;
-                int k_row = intInSub / 4;
-                int j_pair = intInSub % 4;
-                int j_base = j_pair * 2;
-                int col_in_block = subTileId * 8 + j_base;
-                // B[col, k] is at col * K + k in [N, K] row-major.
-                int gB0 = (blockCol + col_in_block)     * K + (kBase + k_row);
-                int gB1 = (blockCol + col_in_block + 1) * K + (kBase + k_row);
-                int lo = B.get(gB0).getHalfFloatValue() & 0xFFFF;
-                int hi = B.get(gB1).getHalfFloatValue() & 0xFFFF;
-                bTile[idx] = lo | (hi << 16);
-            }
-            ctx.localBarrier();
 
             int aOff0 = warpM * 1024;
             int aOff1 = warpM * 1024 + 512;
@@ -834,6 +867,13 @@ public final class TransformerBatchPrefillKernels {
             HalfFloat[] b5 = ctx.mmaLoadB(bTile, BK, (bBase + 5) * B_SUBTILE_BYTES);
             HalfFloat[] b6 = ctx.mmaLoadB(bTile, BK, (bBase + 6) * B_SUBTILE_BYTES);
             HalfFloat[] b7 = ctx.mmaLoadB(bTile, BK, (bBase + 7) * B_SUBTILE_BYTES);
+            ctx.localBarrier();   // all shared reads for this K-step complete
+
+            // Overwrite shared tiles for the next step; overlaps the MMAs below.
+            if (kStep + 1 < numKSteps) {
+                aTile[aIdx0] = aReg0; aTile[aIdx1] = aReg1; aTile[aIdx2] = aReg2; aTile[aIdx3] = aReg3;
+                bTile[bIdx0] = bReg0; bTile[bIdx1] = bReg1; bTile[bIdx2] = bReg2; bTile[bIdx3] = bReg3;
+            }
 
             c00 = ctx.mma(a0, b0, c00, MMAShape.M16N8K16);
             c01 = ctx.mma(a0, b1, c01, MMAShape.M16N8K16);
@@ -851,7 +891,7 @@ public final class TransformerBatchPrefillKernels {
             c15 = ctx.mma(a1, b5, c15, MMAShape.M16N8K16);
             c16 = ctx.mma(a1, b6, c16, MMAShape.M16N8K16);
             c17 = ctx.mma(a1, b7, c17, MMAShape.M16N8K16);
-            ctx.localBarrier();
+            ctx.localBarrier();   // shared writes visible before next step's ldmatrix
         }
 
         int rBase = blockRow + warpM * WM;
@@ -906,6 +946,598 @@ public final class TransformerBatchPrefillKernels {
                                                 HalfFloatArray out) {
         int gid = context.globalIdx;
         out.set(gid, new HalfFloat(in.get(gid)));
+    }
+
+
+    // ── Fused MMA projections ─────────────────────────────────────────────────
+    //
+    // Q, K, V (and gate/up) share the same A operand and the same K dimension,
+    // so they are fused into ONE kernel launch each. The N grid spans the packed
+    // output [dim | kvDim | kvDim] (resp. [hidDim | hidDim]); each thread block
+    // selects its weight matrix from groupIdy — a block-uniform branch, so there
+    // is zero divergence and no weight duplication in memory. This restores the
+    // A-reuse of the old fused matvec kernels AND fixes grid starvation for the
+    // skinny GQA projections (kvDim/128 blocks alone cannot fill the SMs).
+
+    /**
+     * Fused QKV tensor-core GEMM into a PACKED output:
+     * qkvOut[M, dim+2*kvDim] = A[M,K] × [Wq | Wk | Wv] (each [N_i, K] row-major).
+     *
+     * <p>Layout of a row of qkvOut: [ q(0..dim) | k(0..kvDim) | v(0..kvDim) ].
+     * Requires dim % 128 == 0 and kvDim % 128 == 0.</p>
+     *
+     * Worker: WorkerGrid2D((M/128)*256, (dim+2*kvDim)/128), local (256,1,1).
+     */
+    public static void gemmMMAQKV(KernelContext ctx,
+                                  HalfFloatArray A,
+                                  HalfFloatArray wq, HalfFloatArray wk, HalfFloatArray wv,
+                                  FloatArray qkvOut,
+                                  int M, int dim, int kvDim, int K) {
+        int tid = ctx.localIdx;
+        int warpId = tid / WARP_SIZE;
+        int warpM = warpId / WARPS_N;
+        int warpN = warpId % WARPS_N;
+        int blockRow = BM * ctx.groupIdx;
+        int blockCol = BN * ctx.groupIdy;          // column in the packed output
+        int qkvStride = dim + 2 * kvDim;
+
+        // Column base inside the segment's own weight matrix (block-uniform).
+        int wColBase = blockCol;
+        if (blockCol >= dim) wColBase -= dim;
+        if (blockCol >= dim + kvDim) wColBase -= kvDim;
+
+        int[] aTile = ctx.allocateIntLocalArray(BM * BK / 2);
+        int[] bTile = ctx.allocateIntLocalArray(BK * BN / 2);
+
+        float[] c00 = ctx.mmaFragment(0.0f); float[] c01 = ctx.mmaFragment(0.0f);
+        float[] c02 = ctx.mmaFragment(0.0f); float[] c03 = ctx.mmaFragment(0.0f);
+        float[] c04 = ctx.mmaFragment(0.0f); float[] c05 = ctx.mmaFragment(0.0f);
+        float[] c06 = ctx.mmaFragment(0.0f); float[] c07 = ctx.mmaFragment(0.0f);
+        float[] c10 = ctx.mmaFragment(0.0f); float[] c11 = ctx.mmaFragment(0.0f);
+        float[] c12 = ctx.mmaFragment(0.0f); float[] c13 = ctx.mmaFragment(0.0f);
+        float[] c14 = ctx.mmaFragment(0.0f); float[] c15 = ctx.mmaFragment(0.0f);
+        float[] c16 = ctx.mmaFragment(0.0f); float[] c17 = ctx.mmaFragment(0.0f);
+
+        int aIdx0 = tid;       int gA0 = (blockRow + (aIdx0 >>> 3)) * K + ((aIdx0 & 7) << 1);
+        int aIdx1 = tid + 256; int gA1 = (blockRow + (aIdx1 >>> 3)) * K + ((aIdx1 & 7) << 1);
+        int aIdx2 = tid + 512; int gA2 = (blockRow + (aIdx2 >>> 3)) * K + ((aIdx2 & 7) << 1);
+        int aIdx3 = tid + 768; int gA3 = (blockRow + (aIdx3 >>> 3)) * K + ((aIdx3 & 7) << 1);
+        int bIdx0 = tid;       int gB0 = (wColBase + ((bIdx0 >>> 6) << 3) + ((bIdx0 & 3) << 1)) * K + ((bIdx0 & 63) >>> 2);
+        int bIdx1 = tid + 256; int gB1 = (wColBase + ((bIdx1 >>> 6) << 3) + ((bIdx1 & 3) << 1)) * K + ((bIdx1 & 63) >>> 2);
+        int bIdx2 = tid + 512; int gB2 = (wColBase + ((bIdx2 >>> 6) << 3) + ((bIdx2 & 3) << 1)) * K + ((bIdx2 & 63) >>> 2);
+        int bIdx3 = tid + 768; int gB3 = (wColBase + ((bIdx3 >>> 6) << 3) + ((bIdx3 & 3) << 1)) * K + ((bIdx3 & 63) >>> 2);
+
+        // ── Prologue: stage K-step 0 ──
+        int aReg0 = packHalves(A, gA0, gA0 + 1);
+        int aReg1 = packHalves(A, gA1, gA1 + 1);
+        int aReg2 = packHalves(A, gA2, gA2 + 1);
+        int aReg3 = packHalves(A, gA3, gA3 + 1);
+        int bReg0; int bReg1; int bReg2; int bReg3;
+        if (blockCol < dim) {
+            bReg0 = packHalves(wq, gB0, gB0 + K);
+            bReg1 = packHalves(wq, gB1, gB1 + K);
+            bReg2 = packHalves(wq, gB2, gB2 + K);
+            bReg3 = packHalves(wq, gB3, gB3 + K);
+        } else if (blockCol < dim + kvDim) {
+            bReg0 = packHalves(wk, gB0, gB0 + K);
+            bReg1 = packHalves(wk, gB1, gB1 + K);
+            bReg2 = packHalves(wk, gB2, gB2 + K);
+            bReg3 = packHalves(wk, gB3, gB3 + K);
+        } else {
+            bReg0 = packHalves(wv, gB0, gB0 + K);
+            bReg1 = packHalves(wv, gB1, gB1 + K);
+            bReg2 = packHalves(wv, gB2, gB2 + K);
+            bReg3 = packHalves(wv, gB3, gB3 + K);
+        }
+        aTile[aIdx0] = aReg0; aTile[aIdx1] = aReg1; aTile[aIdx2] = aReg2; aTile[aIdx3] = aReg3;
+        bTile[bIdx0] = bReg0; bTile[bIdx1] = bReg1; bTile[bIdx2] = bReg2; bTile[bIdx3] = bReg3;
+        ctx.localBarrier();
+
+        int numKSteps = K / BK;
+        for (int kStep = 0; kStep < numKSteps; kStep++) {
+            if (kStep + 1 < numKSteps) {
+                int kOff = (kStep + 1) * BK;
+                aReg0 = packHalves(A, gA0 + kOff, gA0 + kOff + 1);
+                aReg1 = packHalves(A, gA1 + kOff, gA1 + kOff + 1);
+                aReg2 = packHalves(A, gA2 + kOff, gA2 + kOff + 1);
+                aReg3 = packHalves(A, gA3 + kOff, gA3 + kOff + 1);
+                if (blockCol < dim) {
+                    bReg0 = packHalves(wq, gB0 + kOff, gB0 + kOff + K);
+                    bReg1 = packHalves(wq, gB1 + kOff, gB1 + kOff + K);
+                    bReg2 = packHalves(wq, gB2 + kOff, gB2 + kOff + K);
+                    bReg3 = packHalves(wq, gB3 + kOff, gB3 + kOff + K);
+                } else if (blockCol < dim + kvDim) {
+                    bReg0 = packHalves(wk, gB0 + kOff, gB0 + kOff + K);
+                    bReg1 = packHalves(wk, gB1 + kOff, gB1 + kOff + K);
+                    bReg2 = packHalves(wk, gB2 + kOff, gB2 + kOff + K);
+                    bReg3 = packHalves(wk, gB3 + kOff, gB3 + kOff + K);
+                } else {
+                    bReg0 = packHalves(wv, gB0 + kOff, gB0 + kOff + K);
+                    bReg1 = packHalves(wv, gB1 + kOff, gB1 + kOff + K);
+                    bReg2 = packHalves(wv, gB2 + kOff, gB2 + kOff + K);
+                    bReg3 = packHalves(wv, gB3 + kOff, gB3 + kOff + K);
+                }
+            }
+
+            int aOff0 = warpM * 1024;
+            int aOff1 = warpM * 1024 + 512;
+            HalfFloat[] a0 = ctx.mmaLoadA(aTile, BK, aOff0);
+            HalfFloat[] a1 = ctx.mmaLoadA(aTile, BK, aOff1);
+            int bBase = warpN * 8;
+            HalfFloat[] b0 = ctx.mmaLoadB(bTile, BK, (bBase + 0) * B_SUBTILE_BYTES);
+            HalfFloat[] b1 = ctx.mmaLoadB(bTile, BK, (bBase + 1) * B_SUBTILE_BYTES);
+            HalfFloat[] b2 = ctx.mmaLoadB(bTile, BK, (bBase + 2) * B_SUBTILE_BYTES);
+            HalfFloat[] b3 = ctx.mmaLoadB(bTile, BK, (bBase + 3) * B_SUBTILE_BYTES);
+            HalfFloat[] b4 = ctx.mmaLoadB(bTile, BK, (bBase + 4) * B_SUBTILE_BYTES);
+            HalfFloat[] b5 = ctx.mmaLoadB(bTile, BK, (bBase + 5) * B_SUBTILE_BYTES);
+            HalfFloat[] b6 = ctx.mmaLoadB(bTile, BK, (bBase + 6) * B_SUBTILE_BYTES);
+            HalfFloat[] b7 = ctx.mmaLoadB(bTile, BK, (bBase + 7) * B_SUBTILE_BYTES);
+            ctx.localBarrier();
+
+            if (kStep + 1 < numKSteps) {
+                aTile[aIdx0] = aReg0; aTile[aIdx1] = aReg1; aTile[aIdx2] = aReg2; aTile[aIdx3] = aReg3;
+                bTile[bIdx0] = bReg0; bTile[bIdx1] = bReg1; bTile[bIdx2] = bReg2; bTile[bIdx3] = bReg3;
+            }
+
+            c00 = ctx.mma(a0, b0, c00, MMAShape.M16N8K16);
+            c01 = ctx.mma(a0, b1, c01, MMAShape.M16N8K16);
+            c02 = ctx.mma(a0, b2, c02, MMAShape.M16N8K16);
+            c03 = ctx.mma(a0, b3, c03, MMAShape.M16N8K16);
+            c04 = ctx.mma(a0, b4, c04, MMAShape.M16N8K16);
+            c05 = ctx.mma(a0, b5, c05, MMAShape.M16N8K16);
+            c06 = ctx.mma(a0, b6, c06, MMAShape.M16N8K16);
+            c07 = ctx.mma(a0, b7, c07, MMAShape.M16N8K16);
+            c10 = ctx.mma(a1, b0, c10, MMAShape.M16N8K16);
+            c11 = ctx.mma(a1, b1, c11, MMAShape.M16N8K16);
+            c12 = ctx.mma(a1, b2, c12, MMAShape.M16N8K16);
+            c13 = ctx.mma(a1, b3, c13, MMAShape.M16N8K16);
+            c14 = ctx.mma(a1, b4, c14, MMAShape.M16N8K16);
+            c15 = ctx.mma(a1, b5, c15, MMAShape.M16N8K16);
+            c16 = ctx.mma(a1, b6, c16, MMAShape.M16N8K16);
+            c17 = ctx.mma(a1, b7, c17, MMAShape.M16N8K16);
+            ctx.localBarrier();
+        }
+
+        // Stores are uniform: packed column == blockCol-relative column,
+        // stride is the packed row width.
+        int rBase = blockRow + warpM * WM;
+        int cBase = blockCol + warpN * WN;
+        ctx.mmaStore(c00, qkvOut, rBase + 0,  cBase + 0,  qkvStride);
+        ctx.mmaStore(c01, qkvOut, rBase + 0,  cBase + 8,  qkvStride);
+        ctx.mmaStore(c02, qkvOut, rBase + 0,  cBase + 16, qkvStride);
+        ctx.mmaStore(c03, qkvOut, rBase + 0,  cBase + 24, qkvStride);
+        ctx.mmaStore(c04, qkvOut, rBase + 0,  cBase + 32, qkvStride);
+        ctx.mmaStore(c05, qkvOut, rBase + 0,  cBase + 40, qkvStride);
+        ctx.mmaStore(c06, qkvOut, rBase + 0,  cBase + 48, qkvStride);
+        ctx.mmaStore(c07, qkvOut, rBase + 0,  cBase + 56, qkvStride);
+        ctx.mmaStore(c10, qkvOut, rBase + 16, cBase + 0,  qkvStride);
+        ctx.mmaStore(c11, qkvOut, rBase + 16, cBase + 8,  qkvStride);
+        ctx.mmaStore(c12, qkvOut, rBase + 16, cBase + 16, qkvStride);
+        ctx.mmaStore(c13, qkvOut, rBase + 16, cBase + 24, qkvStride);
+        ctx.mmaStore(c14, qkvOut, rBase + 16, cBase + 32, qkvStride);
+        ctx.mmaStore(c15, qkvOut, rBase + 16, cBase + 40, qkvStride);
+        ctx.mmaStore(c16, qkvOut, rBase + 16, cBase + 48, qkvStride);
+        ctx.mmaStore(c17, qkvOut, rBase + 16, cBase + 56, qkvStride);
+    }
+
+    /**
+     * Fused W1/W3 (gate/up) tensor-core GEMM into a PACKED output:
+     * gateUpOut[M, 2*hidDim] = A[M,K] × [W1 | W3] (each [hidDim, K] row-major).
+     *
+     * <p>Layout of a row: [ gate(0..hidDim) | up(0..hidDim) ].
+     * Requires hidDim % 128 == 0.</p>
+     *
+     * Worker: WorkerGrid2D((M/128)*256, (2*hidDim)/128), local (256,1,1).
+     */
+    public static void gemmMMAGateUp(KernelContext ctx,
+                                     HalfFloatArray A,
+                                     HalfFloatArray w1, HalfFloatArray w3,
+                                     FloatArray gateUpOut,
+                                     int M, int hidDim, int K) {
+        int tid = ctx.localIdx;
+        int warpId = tid / WARP_SIZE;
+        int warpM = warpId / WARPS_N;
+        int warpN = warpId % WARPS_N;
+        int blockRow = BM * ctx.groupIdx;
+        int blockCol = BN * ctx.groupIdy;          // column in the packed output
+        int outStride = 2 * hidDim;
+
+        int wColBase = (blockCol < hidDim) ? blockCol : (blockCol - hidDim);
+
+        int[] aTile = ctx.allocateIntLocalArray(BM * BK / 2);
+        int[] bTile = ctx.allocateIntLocalArray(BK * BN / 2);
+
+        float[] c00 = ctx.mmaFragment(0.0f); float[] c01 = ctx.mmaFragment(0.0f);
+        float[] c02 = ctx.mmaFragment(0.0f); float[] c03 = ctx.mmaFragment(0.0f);
+        float[] c04 = ctx.mmaFragment(0.0f); float[] c05 = ctx.mmaFragment(0.0f);
+        float[] c06 = ctx.mmaFragment(0.0f); float[] c07 = ctx.mmaFragment(0.0f);
+        float[] c10 = ctx.mmaFragment(0.0f); float[] c11 = ctx.mmaFragment(0.0f);
+        float[] c12 = ctx.mmaFragment(0.0f); float[] c13 = ctx.mmaFragment(0.0f);
+        float[] c14 = ctx.mmaFragment(0.0f); float[] c15 = ctx.mmaFragment(0.0f);
+        float[] c16 = ctx.mmaFragment(0.0f); float[] c17 = ctx.mmaFragment(0.0f);
+
+        int aIdx0 = tid;       int gA0 = (blockRow + (aIdx0 >>> 3)) * K + ((aIdx0 & 7) << 1);
+        int aIdx1 = tid + 256; int gA1 = (blockRow + (aIdx1 >>> 3)) * K + ((aIdx1 & 7) << 1);
+        int aIdx2 = tid + 512; int gA2 = (blockRow + (aIdx2 >>> 3)) * K + ((aIdx2 & 7) << 1);
+        int aIdx3 = tid + 768; int gA3 = (blockRow + (aIdx3 >>> 3)) * K + ((aIdx3 & 7) << 1);
+        int bIdx0 = tid;       int gB0 = (wColBase + ((bIdx0 >>> 6) << 3) + ((bIdx0 & 3) << 1)) * K + ((bIdx0 & 63) >>> 2);
+        int bIdx1 = tid + 256; int gB1 = (wColBase + ((bIdx1 >>> 6) << 3) + ((bIdx1 & 3) << 1)) * K + ((bIdx1 & 63) >>> 2);
+        int bIdx2 = tid + 512; int gB2 = (wColBase + ((bIdx2 >>> 6) << 3) + ((bIdx2 & 3) << 1)) * K + ((bIdx2 & 63) >>> 2);
+        int bIdx3 = tid + 768; int gB3 = (wColBase + ((bIdx3 >>> 6) << 3) + ((bIdx3 & 3) << 1)) * K + ((bIdx3 & 63) >>> 2);
+
+        int aReg0 = packHalves(A, gA0, gA0 + 1);
+        int aReg1 = packHalves(A, gA1, gA1 + 1);
+        int aReg2 = packHalves(A, gA2, gA2 + 1);
+        int aReg3 = packHalves(A, gA3, gA3 + 1);
+        int bReg0; int bReg1; int bReg2; int bReg3;
+        if (blockCol < hidDim) {
+            bReg0 = packHalves(w1, gB0, gB0 + K);
+            bReg1 = packHalves(w1, gB1, gB1 + K);
+            bReg2 = packHalves(w1, gB2, gB2 + K);
+            bReg3 = packHalves(w1, gB3, gB3 + K);
+        } else {
+            bReg0 = packHalves(w3, gB0, gB0 + K);
+            bReg1 = packHalves(w3, gB1, gB1 + K);
+            bReg2 = packHalves(w3, gB2, gB2 + K);
+            bReg3 = packHalves(w3, gB3, gB3 + K);
+        }
+        aTile[aIdx0] = aReg0; aTile[aIdx1] = aReg1; aTile[aIdx2] = aReg2; aTile[aIdx3] = aReg3;
+        bTile[bIdx0] = bReg0; bTile[bIdx1] = bReg1; bTile[bIdx2] = bReg2; bTile[bIdx3] = bReg3;
+        ctx.localBarrier();
+
+        int numKSteps = K / BK;
+        for (int kStep = 0; kStep < numKSteps; kStep++) {
+            if (kStep + 1 < numKSteps) {
+                int kOff = (kStep + 1) * BK;
+                aReg0 = packHalves(A, gA0 + kOff, gA0 + kOff + 1);
+                aReg1 = packHalves(A, gA1 + kOff, gA1 + kOff + 1);
+                aReg2 = packHalves(A, gA2 + kOff, gA2 + kOff + 1);
+                aReg3 = packHalves(A, gA3 + kOff, gA3 + kOff + 1);
+                if (blockCol < hidDim) {
+                    bReg0 = packHalves(w1, gB0 + kOff, gB0 + kOff + K);
+                    bReg1 = packHalves(w1, gB1 + kOff, gB1 + kOff + K);
+                    bReg2 = packHalves(w1, gB2 + kOff, gB2 + kOff + K);
+                    bReg3 = packHalves(w1, gB3 + kOff, gB3 + kOff + K);
+                } else {
+                    bReg0 = packHalves(w3, gB0 + kOff, gB0 + kOff + K);
+                    bReg1 = packHalves(w3, gB1 + kOff, gB1 + kOff + K);
+                    bReg2 = packHalves(w3, gB2 + kOff, gB2 + kOff + K);
+                    bReg3 = packHalves(w3, gB3 + kOff, gB3 + kOff + K);
+                }
+            }
+
+            int aOff0 = warpM * 1024;
+            int aOff1 = warpM * 1024 + 512;
+            HalfFloat[] a0 = ctx.mmaLoadA(aTile, BK, aOff0);
+            HalfFloat[] a1 = ctx.mmaLoadA(aTile, BK, aOff1);
+            int bBase = warpN * 8;
+            HalfFloat[] b0 = ctx.mmaLoadB(bTile, BK, (bBase + 0) * B_SUBTILE_BYTES);
+            HalfFloat[] b1 = ctx.mmaLoadB(bTile, BK, (bBase + 1) * B_SUBTILE_BYTES);
+            HalfFloat[] b2 = ctx.mmaLoadB(bTile, BK, (bBase + 2) * B_SUBTILE_BYTES);
+            HalfFloat[] b3 = ctx.mmaLoadB(bTile, BK, (bBase + 3) * B_SUBTILE_BYTES);
+            HalfFloat[] b4 = ctx.mmaLoadB(bTile, BK, (bBase + 4) * B_SUBTILE_BYTES);
+            HalfFloat[] b5 = ctx.mmaLoadB(bTile, BK, (bBase + 5) * B_SUBTILE_BYTES);
+            HalfFloat[] b6 = ctx.mmaLoadB(bTile, BK, (bBase + 6) * B_SUBTILE_BYTES);
+            HalfFloat[] b7 = ctx.mmaLoadB(bTile, BK, (bBase + 7) * B_SUBTILE_BYTES);
+            ctx.localBarrier();
+
+            if (kStep + 1 < numKSteps) {
+                aTile[aIdx0] = aReg0; aTile[aIdx1] = aReg1; aTile[aIdx2] = aReg2; aTile[aIdx3] = aReg3;
+                bTile[bIdx0] = bReg0; bTile[bIdx1] = bReg1; bTile[bIdx2] = bReg2; bTile[bIdx3] = bReg3;
+            }
+
+            c00 = ctx.mma(a0, b0, c00, MMAShape.M16N8K16);
+            c01 = ctx.mma(a0, b1, c01, MMAShape.M16N8K16);
+            c02 = ctx.mma(a0, b2, c02, MMAShape.M16N8K16);
+            c03 = ctx.mma(a0, b3, c03, MMAShape.M16N8K16);
+            c04 = ctx.mma(a0, b4, c04, MMAShape.M16N8K16);
+            c05 = ctx.mma(a0, b5, c05, MMAShape.M16N8K16);
+            c06 = ctx.mma(a0, b6, c06, MMAShape.M16N8K16);
+            c07 = ctx.mma(a0, b7, c07, MMAShape.M16N8K16);
+            c10 = ctx.mma(a1, b0, c10, MMAShape.M16N8K16);
+            c11 = ctx.mma(a1, b1, c11, MMAShape.M16N8K16);
+            c12 = ctx.mma(a1, b2, c12, MMAShape.M16N8K16);
+            c13 = ctx.mma(a1, b3, c13, MMAShape.M16N8K16);
+            c14 = ctx.mma(a1, b4, c14, MMAShape.M16N8K16);
+            c15 = ctx.mma(a1, b5, c15, MMAShape.M16N8K16);
+            c16 = ctx.mma(a1, b6, c16, MMAShape.M16N8K16);
+            c17 = ctx.mma(a1, b7, c17, MMAShape.M16N8K16);
+            ctx.localBarrier();
+        }
+
+        int rBase = blockRow + warpM * WM;
+        int cBase = blockCol + warpN * WN;
+        ctx.mmaStore(c00, gateUpOut, rBase + 0,  cBase + 0,  outStride);
+        ctx.mmaStore(c01, gateUpOut, rBase + 0,  cBase + 8,  outStride);
+        ctx.mmaStore(c02, gateUpOut, rBase + 0,  cBase + 16, outStride);
+        ctx.mmaStore(c03, gateUpOut, rBase + 0,  cBase + 24, outStride);
+        ctx.mmaStore(c04, gateUpOut, rBase + 0,  cBase + 32, outStride);
+        ctx.mmaStore(c05, gateUpOut, rBase + 0,  cBase + 40, outStride);
+        ctx.mmaStore(c06, gateUpOut, rBase + 0,  cBase + 48, outStride);
+        ctx.mmaStore(c07, gateUpOut, rBase + 0,  cBase + 56, outStride);
+        ctx.mmaStore(c10, gateUpOut, rBase + 16, cBase + 0,  outStride);
+        ctx.mmaStore(c11, gateUpOut, rBase + 16, cBase + 8,  outStride);
+        ctx.mmaStore(c12, gateUpOut, rBase + 16, cBase + 16, outStride);
+        ctx.mmaStore(c13, gateUpOut, rBase + 16, cBase + 24, outStride);
+        ctx.mmaStore(c14, gateUpOut, rBase + 16, cBase + 32, outStride);
+        ctx.mmaStore(c15, gateUpOut, rBase + 16, cBase + 40, outStride);
+        ctx.mmaStore(c16, gateUpOut, rBase + 16, cBase + 48, outStride);
+        ctx.mmaStore(c17, gateUpOut, rBase + 16, cBase + 56, outStride);
+    }
+
+    // ── Parallel RMS reductions ───────────────────────────────────────────────
+    // Replace the localSize=1 sequential reductions (one thread walking `dim`
+    // elements alone) with one 256-thread workgroup per token and a shared-memory
+    // tree reduction.
+
+    /**
+     * Parallel RMS square-sum reduction. One workgroup per batch token.
+     *
+     * Worker: B workgroups × localSize threads (localSize=256).
+     */
+    public static void batchedRmsReduceParallel(KernelContext context,
+                                                FloatArray wrapXBatch,
+                                                FloatArray scaleBatch,
+                                                int dim, float eps, int localSize) {
+        int tid = context.localIdx;
+        int b = context.groupIdx;
+        int localSz = context.localGroupSizeX;
+        float[] partial = context.allocateFloatLocalArray(localSize);
+
+        int base = b * dim;
+        float ss = 0.0f;
+        for (int i = tid; i < dim; i += localSz) {
+            float v = wrapXBatch.get(base + i);
+            ss += v * v;
+        }
+        partial[tid] = ss;
+        context.localBarrier();
+        for (int s = localSz / 2; s > 0; s >>= 1) {
+            if (tid < s) {
+                partial[tid] += partial[tid + s];
+            }
+            context.localBarrier();
+        }
+        if (tid == 0) {
+            float m = partial[0] / dim + eps;
+            scaleBatch.set(b, 1.0f / TornadoMath.sqrt(m));
+        }
+    }
+
+    /**
+     * Parallel RMS reduction FUSED with the pending residual add:
+     * x[b,i] += delta[b,i] first, then square-sum over the updated row.
+     * Replaces the separate woResid task + FFN RMS reduce (each element is
+     * visited exactly once, so the in-place update is race-free).
+     *
+     * Worker: B workgroups × localSize threads (localSize=256).
+     */
+    public static void batchedRmsReduceFusedResidual(KernelContext context,
+                                                     FloatArray wrapXBatch,
+                                                     FloatArray delta,
+                                                     FloatArray scaleBatch,
+                                                     int dim, float eps, int localSize) {
+        int tid = context.localIdx;
+        int b = context.groupIdx;
+        int localSz = context.localGroupSizeX;
+        float[] partial = context.allocateFloatLocalArray(localSize);
+
+        int base = b * dim;
+        float ss = 0.0f;
+        for (int i = tid; i < dim; i += localSz) {
+            float v = wrapXBatch.get(base + i) + delta.get(base + i);
+            wrapXBatch.set(base + i, v);
+            ss += v * v;
+        }
+        partial[tid] = ss;
+        context.localBarrier();
+        for (int s = localSz / 2; s > 0; s >>= 1) {
+            if (tid < s) {
+                partial[tid] += partial[tid + s];
+            }
+            context.localBarrier();
+        }
+        if (tid == 0) {
+            float m = partial[0] / dim + eps;
+            scaleBatch.set(b, 1.0f / TornadoMath.sqrt(m));
+        }
+    }
+
+    // ── RoPE + KV cache over the packed QKV buffer ────────────────────────────
+
+    /**
+     * Fused batched RoPE rotation + KV cache write, reading/writing the PACKED
+     * QKV buffer produced by {@link #gemmMMAQKV}. Row layout: [ q | k | v ].
+     * Q is rotated in place (consumed from the packed buffer by attention).
+     *
+     * Worker: B*(dim/2) global threads, localSize=512 (or less).
+     */
+    public static void batchedRopeWithKVCachePacked(KernelContext context,
+                                                    IntArray batchStartPosHolder,
+                                                    FloatArray qkvBatch,
+                                                    FloatArray wrapKeyCache,
+                                                    FloatArray wrapValueCache,
+                                                    int kvDim, int headSize,
+                                                    int layerIndex, int contextLength, int dim) {
+        int globalIdx = context.globalIdx;
+        int halfDim = dim / 2;
+        int batchIdx = globalIdx / halfDim;
+        int pairIdx = globalIdx % halfDim;
+        int i = pairIdx * 2;
+        int qkvStride = dim + 2 * kvDim;
+
+        int pos = batchStartPosHolder.get(0) + batchIdx;
+        int qOffset = batchIdx * qkvStride;
+        int kOffset = batchIdx * qkvStride + dim;
+        int vOffset = batchIdx * qkvStride + dim + kvDim;
+
+        if (i + 1 < dim) {
+            int head_dim = i % headSize;
+            float freq = 1.0f / TornadoMath.pow(50000.0f, head_dim / (float) headSize);
+            float val = pos * freq;
+            float fcr = TornadoMath.cos(val);
+            float fci = TornadoMath.sin(val);
+
+            // Rotate Q in place
+            float v0q = qkvBatch.get(qOffset + i);
+            float v1q = qkvBatch.get(qOffset + i + 1);
+            qkvBatch.set(qOffset + i, v0q * fcr - v1q * fci);
+            qkvBatch.set(qOffset + i + 1, v0q * fci + v1q * fcr);
+
+            // Rotate K and write K,V to cache
+            if (i + 1 < kvDim) {
+                float v0k = qkvBatch.get(kOffset + i);
+                float v1k = qkvBatch.get(kOffset + i + 1);
+                float rotK0 = v0k * fcr - v1k * fci;
+                float rotK1 = v0k * fci + v1k * fcr;
+
+                int cacheOff = layerIndex * contextLength * kvDim + pos * kvDim;
+                wrapKeyCache.set(cacheOff + i, rotK0);
+                wrapKeyCache.set(cacheOff + i + 1, rotK1);
+                wrapValueCache.set(cacheOff + i, qkvBatch.get(vOffset + i));
+                wrapValueCache.set(cacheOff + i + 1, qkvBatch.get(vOffset + i + 1));
+            }
+        }
+    }
+
+    // ── Flash attention (fixed accumulation, FP16 output) ────────────────────
+
+    /**
+     * Batched causal flash attention over the packed QKV buffer, writing FP16
+     * directly (the A operand of the Wo GEMM — eliminates the attnCast pass).
+     *
+     * <p>Fixes the redundant accumulation of the previous version: each thread
+     * now OWNS output dims {tid, tid+localSz} and accumulates them in registers,
+     * instead of every thread redundantly computing the full headSize output
+     * vector into a (spilled) private array. K/V tile loads are flattened over
+     * (t, d) so consecutive threads issue coalesced reads.</p>
+     *
+     * <p>Requires headSize <= 2*localSz (localSz = min(headSize, 128)).</p>
+     *
+     * Worker: B*nHeads workgroups × min(headSize,128) threads.
+     */
+    public static void batchedFlashAttentionFP16Out(KernelContext context,
+                                                    IntArray batchStartPosHolder,
+                                                    FloatArray qkvBatch,
+                                                    FloatArray wrapKeyCache,
+                                                    FloatArray wrapValueCache,
+                                                    HalfFloatArray attnOutFP16,
+                                                    int nHeads, int headSize,
+                                                    int kvDim, int kvMul,
+                                                    int layerIndex, int contextLength, int dim) {
+        int tid = context.localIdx;
+        int groupId = context.groupIdx;
+        int localSz = context.localGroupSizeX;
+
+        int batchIdx = groupId / nHeads;
+        int h = groupId % nHeads;
+        int pos = batchStartPosHolder.get(0) + batchIdx;
+        int loff = layerIndex * contextLength * kvDim;
+        int kvHeadIdx = h / kvMul;
+        int BLOCK_C = 16;
+        int qkvStride = dim + 2 * kvDim;
+
+        float[] qShared = context.allocateFloatLocalArray(headSize);
+        float[] kTile = context.allocateFloatLocalArray(BLOCK_C * headSize);
+        float[] vTile = context.allocateFloatLocalArray(BLOCK_C * headSize);
+        float[] sTile = context.allocateFloatLocalArray(BLOCK_C);
+
+        // Load Q (rotated, from the packed QKV buffer) into shared memory
+        int qOffset = batchIdx * qkvStride + h * headSize;
+        for (int i = tid; i < headSize; i += localSz) {
+            qShared[i] = qkvBatch.get(qOffset + i);
+        }
+        context.localBarrier();
+
+        float maxScore = Float.NEGATIVE_INFINITY;
+        float sumExp = 0.0f;
+        // Each thread owns output dims d0 = tid and (if headSize > localSz) d1.
+        float acc0 = 0.0f;
+        float acc1 = 0.0f;
+        int d1 = tid + localSz;
+
+        for (int tileC = 0; tileC <= pos; tileC += BLOCK_C) {
+            int tileEnd = Math.min(tileC + BLOCK_C - 1, pos);
+            int tileLen = tileEnd - tileC + 1;
+
+            // Load K/V tile — flattened over (t, d) for coalescing
+            for (int idx = tid; idx < tileLen * headSize; idx += localSz) {
+                int tInTile = idx / headSize;
+                int d = idx % headSize;
+                int kvOff = loff + (tileC + tInTile) * kvDim + kvHeadIdx * headSize + d;
+                kTile[tInTile * headSize + d] = wrapKeyCache.get(kvOff);
+                vTile[tInTile * headSize + d] = wrapValueCache.get(kvOff);
+            }
+            context.localBarrier();
+
+            // Scores: one thread per key position in the tile
+            for (int t = tileC + tid; t <= tileEnd; t += localSz) {
+                int tInTile = t - tileC;
+                float score = 0.0f;
+                for (int d = 0; d < headSize; d++) {
+                    score += qShared[d] * kTile[tInTile * headSize + d];
+                }
+                sTile[tInTile] = score / TornadoMath.sqrt(headSize);
+            }
+            context.localBarrier();
+
+            // Tile max: redundant per-thread scan over <= 16 shared values —
+            // deterministic across the workgroup, no broadcast needed.
+            float tileMax = Float.NEGATIVE_INFINITY;
+            for (int t = 0; t < tileLen; t++) {
+                if (sTile[t] > tileMax) {
+                    tileMax = sTile[t];
+                }
+            }
+
+            float newMax = Math.max(maxScore, tileMax);
+            if (maxScore != Float.NEGATIVE_INFINITY && newMax != maxScore) {
+                float corr = TornadoMath.exp(maxScore - newMax);
+                sumExp *= corr;
+                acc0 *= corr;
+                acc1 *= corr;
+            }
+            maxScore = newMax;
+
+            for (int t = 0; t < tileLen; t++) {
+                float p = TornadoMath.exp(sTile[t] - maxScore);
+                sumExp += p;
+                acc0 += p * vTile[t * headSize + tid];
+                if (d1 < headSize) {
+                    acc1 += p * vTile[t * headSize + d1];
+                }
+            }
+            context.localBarrier();
+        }
+
+        float norm = (sumExp > 0.0f) ? (1.0f / sumExp) : 0.0f;
+        int outOffset = batchIdx * dim + h * headSize;
+        attnOutFP16.set(outOffset + tid, new HalfFloat(acc0 * norm));
+        if (d1 < headSize) {
+            attnOutFP16.set(outOffset + d1, new HalfFloat(acc1 * norm));
+        }
+    }
+
+    // ── SwiGLU over the packed gate/up buffer, emitting FP16 ─────────────────
+
+    /**
+     * Fused SiLU(gate) * up over the PACKED [gate | up] GEMM output,
+     * emitting FP16 (the A operand of the W2 GEMM).
+     *
+     * Worker: B*hiddenDim global threads, localSize=256.
+     */
+    public static void batchedFFNSwiGLUFP16Packed(KernelContext context,
+                                                  HalfFloatArray wrapHbFP16Batch,
+                                                  FloatArray gateUpResult,
+                                                  int hiddenDim) {
+        int gid = context.globalIdx;
+        int b = gid / hiddenDim;
+        int i = gid % hiddenDim;
+        int rowBase = b * 2 * hiddenDim;
+        float g = gateUpResult.get(rowBase + i);
+        float u = gateUpResult.get(rowBase + hiddenDim + i);
+        float silu = g / (1.0f + TornadoMath.exp(-g));
+        wrapHbFP16Batch.set(gid, new HalfFloat(silu * u));
     }
 
     // @formatter:on
