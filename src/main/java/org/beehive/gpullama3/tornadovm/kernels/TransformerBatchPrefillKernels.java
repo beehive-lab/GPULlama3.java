@@ -1540,5 +1540,456 @@ public final class TransformerBatchPrefillKernels {
         wrapHbFP16Batch.set(gid, new HalfFloat(silu * u));
     }
 
+
+    // ── Q8_0 tensor-core GEMMs (W8A16) ───────────────────────────────────────
+    //
+    // Q8_0 weights stay quantized in global memory (34-byte GGUF blocks:
+    // FP16 scale + 32 int8 quants) and are dequantized to FP16 *in the
+    // register-staging step* of the software pipeline, then flow through the
+    // identical ldmatrix + m16n8k16 path as the FP16 GEMMs. This halves the
+    // weight-side memory traffic relative to FP16 while reusing the proven
+    // FP16 tensor-core pipeline. A true INT8 (m16n8k32) path would need
+    // per-k-block accumulator rescaling — blocked on fragment-level access
+    // in the TornadoVM intrinsics; see paper future work.
+    //
+    // Note: BK = 16, so a K-step never straddles a Q8_0 block boundary
+    // (32 | K), and each staged pair reads exactly one scale per column.
+
+    /**
+     * Dequantizes and packs two vertically-adjacent (col, col+1) Q8_0 weight
+     * elements at depth k into one int of two FP16 values, matching the
+     * bTile layout expected by mmaLoadB. Leaf helper; inlined by the JIT.
+     */
+    private static int packQ8Halves(ByteArray w, int col, int k, int blocksPerRow) {
+        int kBlock = k >>> 5;                                 // k / 32
+        int kIn = k & 31;                                     // k % 32
+        int off0 = (col * blocksPerRow + kBlock) * 34;
+        int off1 = off0 + blocksPerRow * 34;                  // column col+1, same k-block
+        float v0 = w.getHalfFloat(off0).getFloat32() * w.get(off0 + 2 + kIn);
+        float v1 = w.getHalfFloat(off1).getFloat32() * w.get(off1 + 2 + kIn);
+        int lo = new HalfFloat(v0).getHalfFloatValue() & 0xFFFF;
+        int hi = new HalfFloat(v1).getHalfFloatValue() & 0xFFFF;
+        return lo | (hi << 16);
+    }
+
+    /**
+     * Tensor-core GEMM with Q8_0 weights:
+     * C[M,N] (FP32) = A[M,K] (FP16) × B[N,K] (Q8_0 blocks, row-major).
+     * Same tiling, pipeline, and constraints as {@link #gemmMMA}.
+     */
+    public static void gemmMMAQ8(KernelContext ctx,
+                                 HalfFloatArray A, ByteArray B, FloatArray C,
+                                 int M, int N, int K) {
+        int tid = ctx.localIdx;
+        int warpId = tid / WARP_SIZE;
+        int warpM = warpId / WARPS_N;
+        int warpN = warpId % WARPS_N;
+        int blockRow = BM * ctx.groupIdx;
+        int blockCol = BN * ctx.groupIdy;
+        int blocksPerRow = K / 32;
+
+        int[] aTile = ctx.allocateIntLocalArray(BM * BK / 2);
+        int[] bTile = ctx.allocateIntLocalArray(BK * BN / 2);
+
+        float[] c00 = ctx.mmaFragment(0.0f); float[] c01 = ctx.mmaFragment(0.0f);
+        float[] c02 = ctx.mmaFragment(0.0f); float[] c03 = ctx.mmaFragment(0.0f);
+        float[] c04 = ctx.mmaFragment(0.0f); float[] c05 = ctx.mmaFragment(0.0f);
+        float[] c06 = ctx.mmaFragment(0.0f); float[] c07 = ctx.mmaFragment(0.0f);
+        float[] c10 = ctx.mmaFragment(0.0f); float[] c11 = ctx.mmaFragment(0.0f);
+        float[] c12 = ctx.mmaFragment(0.0f); float[] c13 = ctx.mmaFragment(0.0f);
+        float[] c14 = ctx.mmaFragment(0.0f); float[] c15 = ctx.mmaFragment(0.0f);
+        float[] c16 = ctx.mmaFragment(0.0f); float[] c17 = ctx.mmaFragment(0.0f);
+
+        int aIdx0 = tid;       int gA0 = (blockRow + (aIdx0 >>> 3)) * K + ((aIdx0 & 7) << 1);
+        int aIdx1 = tid + 256; int gA1 = (blockRow + (aIdx1 >>> 3)) * K + ((aIdx1 & 7) << 1);
+        int aIdx2 = tid + 512; int gA2 = (blockRow + (aIdx2 >>> 3)) * K + ((aIdx2 & 7) << 1);
+        int aIdx3 = tid + 768; int gA3 = (blockRow + (aIdx3 >>> 3)) * K + ((aIdx3 & 7) << 1);
+        // B staging keeps (col, k) coordinates explicit for block-offset math.
+        int bIdx0 = tid;       int bCol0 = blockCol + ((bIdx0 >>> 6) << 3) + ((bIdx0 & 3) << 1); int bK0 = (bIdx0 & 63) >>> 2;
+        int bIdx1 = tid + 256; int bCol1 = blockCol + ((bIdx1 >>> 6) << 3) + ((bIdx1 & 3) << 1); int bK1 = (bIdx1 & 63) >>> 2;
+        int bIdx2 = tid + 512; int bCol2 = blockCol + ((bIdx2 >>> 6) << 3) + ((bIdx2 & 3) << 1); int bK2 = (bIdx2 & 63) >>> 2;
+        int bIdx3 = tid + 768; int bCol3 = blockCol + ((bIdx3 >>> 6) << 3) + ((bIdx3 & 3) << 1); int bK3 = (bIdx3 & 63) >>> 2;
+
+        int aReg0 = packHalves(A, gA0, gA0 + 1);
+        int aReg1 = packHalves(A, gA1, gA1 + 1);
+        int aReg2 = packHalves(A, gA2, gA2 + 1);
+        int aReg3 = packHalves(A, gA3, gA3 + 1);
+        int bReg0 = packQ8Halves(B, bCol0, bK0, blocksPerRow);
+        int bReg1 = packQ8Halves(B, bCol1, bK1, blocksPerRow);
+        int bReg2 = packQ8Halves(B, bCol2, bK2, blocksPerRow);
+        int bReg3 = packQ8Halves(B, bCol3, bK3, blocksPerRow);
+        aTile[aIdx0] = aReg0; aTile[aIdx1] = aReg1; aTile[aIdx2] = aReg2; aTile[aIdx3] = aReg3;
+        bTile[bIdx0] = bReg0; bTile[bIdx1] = bReg1; bTile[bIdx2] = bReg2; bTile[bIdx3] = bReg3;
+        ctx.localBarrier();
+
+        int numKSteps = K / BK;
+        for (int kStep = 0; kStep < numKSteps; kStep++) {
+            if (kStep + 1 < numKSteps) {
+                int kOff = (kStep + 1) * BK;
+                aReg0 = packHalves(A, gA0 + kOff, gA0 + kOff + 1);
+                aReg1 = packHalves(A, gA1 + kOff, gA1 + kOff + 1);
+                aReg2 = packHalves(A, gA2 + kOff, gA2 + kOff + 1);
+                aReg3 = packHalves(A, gA3 + kOff, gA3 + kOff + 1);
+                bReg0 = packQ8Halves(B, bCol0, kOff + bK0, blocksPerRow);
+                bReg1 = packQ8Halves(B, bCol1, kOff + bK1, blocksPerRow);
+                bReg2 = packQ8Halves(B, bCol2, kOff + bK2, blocksPerRow);
+                bReg3 = packQ8Halves(B, bCol3, kOff + bK3, blocksPerRow);
+            }
+
+            int aOff0 = warpM * 1024;
+            int aOff1 = warpM * 1024 + 512;
+            HalfFloat[] a0 = ctx.mmaLoadA(aTile, BK, aOff0);
+            HalfFloat[] a1 = ctx.mmaLoadA(aTile, BK, aOff1);
+            int bBase = warpN * 8;
+            HalfFloat[] b0 = ctx.mmaLoadB(bTile, BK, (bBase + 0) * B_SUBTILE_BYTES);
+            HalfFloat[] b1 = ctx.mmaLoadB(bTile, BK, (bBase + 1) * B_SUBTILE_BYTES);
+            HalfFloat[] b2 = ctx.mmaLoadB(bTile, BK, (bBase + 2) * B_SUBTILE_BYTES);
+            HalfFloat[] b3 = ctx.mmaLoadB(bTile, BK, (bBase + 3) * B_SUBTILE_BYTES);
+            HalfFloat[] b4 = ctx.mmaLoadB(bTile, BK, (bBase + 4) * B_SUBTILE_BYTES);
+            HalfFloat[] b5 = ctx.mmaLoadB(bTile, BK, (bBase + 5) * B_SUBTILE_BYTES);
+            HalfFloat[] b6 = ctx.mmaLoadB(bTile, BK, (bBase + 6) * B_SUBTILE_BYTES);
+            HalfFloat[] b7 = ctx.mmaLoadB(bTile, BK, (bBase + 7) * B_SUBTILE_BYTES);
+            ctx.localBarrier();
+
+            if (kStep + 1 < numKSteps) {
+                aTile[aIdx0] = aReg0; aTile[aIdx1] = aReg1; aTile[aIdx2] = aReg2; aTile[aIdx3] = aReg3;
+                bTile[bIdx0] = bReg0; bTile[bIdx1] = bReg1; bTile[bIdx2] = bReg2; bTile[bIdx3] = bReg3;
+            }
+
+            c00 = ctx.mma(a0, b0, c00, MMAShape.M16N8K16);
+            c01 = ctx.mma(a0, b1, c01, MMAShape.M16N8K16);
+            c02 = ctx.mma(a0, b2, c02, MMAShape.M16N8K16);
+            c03 = ctx.mma(a0, b3, c03, MMAShape.M16N8K16);
+            c04 = ctx.mma(a0, b4, c04, MMAShape.M16N8K16);
+            c05 = ctx.mma(a0, b5, c05, MMAShape.M16N8K16);
+            c06 = ctx.mma(a0, b6, c06, MMAShape.M16N8K16);
+            c07 = ctx.mma(a0, b7, c07, MMAShape.M16N8K16);
+            c10 = ctx.mma(a1, b0, c10, MMAShape.M16N8K16);
+            c11 = ctx.mma(a1, b1, c11, MMAShape.M16N8K16);
+            c12 = ctx.mma(a1, b2, c12, MMAShape.M16N8K16);
+            c13 = ctx.mma(a1, b3, c13, MMAShape.M16N8K16);
+            c14 = ctx.mma(a1, b4, c14, MMAShape.M16N8K16);
+            c15 = ctx.mma(a1, b5, c15, MMAShape.M16N8K16);
+            c16 = ctx.mma(a1, b6, c16, MMAShape.M16N8K16);
+            c17 = ctx.mma(a1, b7, c17, MMAShape.M16N8K16);
+            ctx.localBarrier();
+        }
+
+        int rBase = blockRow + warpM * WM;
+        int cBase = blockCol + warpN * WN;
+        ctx.mmaStore(c00, C, rBase + 0,  cBase + 0,  N);
+        ctx.mmaStore(c01, C, rBase + 0,  cBase + 8,  N);
+        ctx.mmaStore(c02, C, rBase + 0,  cBase + 16, N);
+        ctx.mmaStore(c03, C, rBase + 0,  cBase + 24, N);
+        ctx.mmaStore(c04, C, rBase + 0,  cBase + 32, N);
+        ctx.mmaStore(c05, C, rBase + 0,  cBase + 40, N);
+        ctx.mmaStore(c06, C, rBase + 0,  cBase + 48, N);
+        ctx.mmaStore(c07, C, rBase + 0,  cBase + 56, N);
+        ctx.mmaStore(c10, C, rBase + 16, cBase + 0,  N);
+        ctx.mmaStore(c11, C, rBase + 16, cBase + 8,  N);
+        ctx.mmaStore(c12, C, rBase + 16, cBase + 16, N);
+        ctx.mmaStore(c13, C, rBase + 16, cBase + 24, N);
+        ctx.mmaStore(c14, C, rBase + 16, cBase + 32, N);
+        ctx.mmaStore(c15, C, rBase + 16, cBase + 40, N);
+        ctx.mmaStore(c16, C, rBase + 16, cBase + 48, N);
+        ctx.mmaStore(c17, C, rBase + 16, cBase + 56, N);
+    }
+
+    /**
+     * Fused QKV tensor-core GEMM with Q8_0 weights into the PACKED output:
+     * qkvOut[M, dim+2*kvDim] = A[M,K] (FP16) × [Wq | Wk | Wv] (Q8_0, [N_i,K] row-major).
+     * Same layout, fusion, and constraints as {@link #gemmMMAQKV}.
+     */
+    public static void gemmMMAQKVQ8(KernelContext ctx,
+                                    HalfFloatArray A,
+                                    ByteArray wq, ByteArray wk, ByteArray wv,
+                                    FloatArray qkvOut,
+                                    int M, int dim, int kvDim, int K) {
+        int tid = ctx.localIdx;
+        int warpId = tid / WARP_SIZE;
+        int warpM = warpId / WARPS_N;
+        int warpN = warpId % WARPS_N;
+        int blockRow = BM * ctx.groupIdx;
+        int blockCol = BN * ctx.groupIdy;
+        int qkvStride = dim + 2 * kvDim;
+        int blocksPerRow = K / 32;
+
+        int wColBase = blockCol;
+        if (blockCol >= dim) wColBase -= dim;
+        if (blockCol >= dim + kvDim) wColBase -= kvDim;
+
+        int[] aTile = ctx.allocateIntLocalArray(BM * BK / 2);
+        int[] bTile = ctx.allocateIntLocalArray(BK * BN / 2);
+
+        float[] c00 = ctx.mmaFragment(0.0f); float[] c01 = ctx.mmaFragment(0.0f);
+        float[] c02 = ctx.mmaFragment(0.0f); float[] c03 = ctx.mmaFragment(0.0f);
+        float[] c04 = ctx.mmaFragment(0.0f); float[] c05 = ctx.mmaFragment(0.0f);
+        float[] c06 = ctx.mmaFragment(0.0f); float[] c07 = ctx.mmaFragment(0.0f);
+        float[] c10 = ctx.mmaFragment(0.0f); float[] c11 = ctx.mmaFragment(0.0f);
+        float[] c12 = ctx.mmaFragment(0.0f); float[] c13 = ctx.mmaFragment(0.0f);
+        float[] c14 = ctx.mmaFragment(0.0f); float[] c15 = ctx.mmaFragment(0.0f);
+        float[] c16 = ctx.mmaFragment(0.0f); float[] c17 = ctx.mmaFragment(0.0f);
+
+        int aIdx0 = tid;       int gA0 = (blockRow + (aIdx0 >>> 3)) * K + ((aIdx0 & 7) << 1);
+        int aIdx1 = tid + 256; int gA1 = (blockRow + (aIdx1 >>> 3)) * K + ((aIdx1 & 7) << 1);
+        int aIdx2 = tid + 512; int gA2 = (blockRow + (aIdx2 >>> 3)) * K + ((aIdx2 & 7) << 1);
+        int aIdx3 = tid + 768; int gA3 = (blockRow + (aIdx3 >>> 3)) * K + ((aIdx3 & 7) << 1);
+        int bIdx0 = tid;       int bCol0 = wColBase + ((bIdx0 >>> 6) << 3) + ((bIdx0 & 3) << 1); int bK0 = (bIdx0 & 63) >>> 2;
+        int bIdx1 = tid + 256; int bCol1 = wColBase + ((bIdx1 >>> 6) << 3) + ((bIdx1 & 3) << 1); int bK1 = (bIdx1 & 63) >>> 2;
+        int bIdx2 = tid + 512; int bCol2 = wColBase + ((bIdx2 >>> 6) << 3) + ((bIdx2 & 3) << 1); int bK2 = (bIdx2 & 63) >>> 2;
+        int bIdx3 = tid + 768; int bCol3 = wColBase + ((bIdx3 >>> 6) << 3) + ((bIdx3 & 3) << 1); int bK3 = (bIdx3 & 63) >>> 2;
+
+        int aReg0 = packHalves(A, gA0, gA0 + 1);
+        int aReg1 = packHalves(A, gA1, gA1 + 1);
+        int aReg2 = packHalves(A, gA2, gA2 + 1);
+        int aReg3 = packHalves(A, gA3, gA3 + 1);
+        int bReg0; int bReg1; int bReg2; int bReg3;
+        if (blockCol < dim) {
+            bReg0 = packQ8Halves(wq, bCol0, bK0, blocksPerRow);
+            bReg1 = packQ8Halves(wq, bCol1, bK1, blocksPerRow);
+            bReg2 = packQ8Halves(wq, bCol2, bK2, blocksPerRow);
+            bReg3 = packQ8Halves(wq, bCol3, bK3, blocksPerRow);
+        } else if (blockCol < dim + kvDim) {
+            bReg0 = packQ8Halves(wk, bCol0, bK0, blocksPerRow);
+            bReg1 = packQ8Halves(wk, bCol1, bK1, blocksPerRow);
+            bReg2 = packQ8Halves(wk, bCol2, bK2, blocksPerRow);
+            bReg3 = packQ8Halves(wk, bCol3, bK3, blocksPerRow);
+        } else {
+            bReg0 = packQ8Halves(wv, bCol0, bK0, blocksPerRow);
+            bReg1 = packQ8Halves(wv, bCol1, bK1, blocksPerRow);
+            bReg2 = packQ8Halves(wv, bCol2, bK2, blocksPerRow);
+            bReg3 = packQ8Halves(wv, bCol3, bK3, blocksPerRow);
+        }
+        aTile[aIdx0] = aReg0; aTile[aIdx1] = aReg1; aTile[aIdx2] = aReg2; aTile[aIdx3] = aReg3;
+        bTile[bIdx0] = bReg0; bTile[bIdx1] = bReg1; bTile[bIdx2] = bReg2; bTile[bIdx3] = bReg3;
+        ctx.localBarrier();
+
+        int numKSteps = K / BK;
+        for (int kStep = 0; kStep < numKSteps; kStep++) {
+            if (kStep + 1 < numKSteps) {
+                int kOff = (kStep + 1) * BK;
+                aReg0 = packHalves(A, gA0 + kOff, gA0 + kOff + 1);
+                aReg1 = packHalves(A, gA1 + kOff, gA1 + kOff + 1);
+                aReg2 = packHalves(A, gA2 + kOff, gA2 + kOff + 1);
+                aReg3 = packHalves(A, gA3 + kOff, gA3 + kOff + 1);
+                if (blockCol < dim) {
+                    bReg0 = packQ8Halves(wq, bCol0, kOff + bK0, blocksPerRow);
+                    bReg1 = packQ8Halves(wq, bCol1, kOff + bK1, blocksPerRow);
+                    bReg2 = packQ8Halves(wq, bCol2, kOff + bK2, blocksPerRow);
+                    bReg3 = packQ8Halves(wq, bCol3, kOff + bK3, blocksPerRow);
+                } else if (blockCol < dim + kvDim) {
+                    bReg0 = packQ8Halves(wk, bCol0, kOff + bK0, blocksPerRow);
+                    bReg1 = packQ8Halves(wk, bCol1, kOff + bK1, blocksPerRow);
+                    bReg2 = packQ8Halves(wk, bCol2, kOff + bK2, blocksPerRow);
+                    bReg3 = packQ8Halves(wk, bCol3, kOff + bK3, blocksPerRow);
+                } else {
+                    bReg0 = packQ8Halves(wv, bCol0, kOff + bK0, blocksPerRow);
+                    bReg1 = packQ8Halves(wv, bCol1, kOff + bK1, blocksPerRow);
+                    bReg2 = packQ8Halves(wv, bCol2, kOff + bK2, blocksPerRow);
+                    bReg3 = packQ8Halves(wv, bCol3, kOff + bK3, blocksPerRow);
+                }
+            }
+
+            int aOff0 = warpM * 1024;
+            int aOff1 = warpM * 1024 + 512;
+            HalfFloat[] a0 = ctx.mmaLoadA(aTile, BK, aOff0);
+            HalfFloat[] a1 = ctx.mmaLoadA(aTile, BK, aOff1);
+            int bBase = warpN * 8;
+            HalfFloat[] b0 = ctx.mmaLoadB(bTile, BK, (bBase + 0) * B_SUBTILE_BYTES);
+            HalfFloat[] b1 = ctx.mmaLoadB(bTile, BK, (bBase + 1) * B_SUBTILE_BYTES);
+            HalfFloat[] b2 = ctx.mmaLoadB(bTile, BK, (bBase + 2) * B_SUBTILE_BYTES);
+            HalfFloat[] b3 = ctx.mmaLoadB(bTile, BK, (bBase + 3) * B_SUBTILE_BYTES);
+            HalfFloat[] b4 = ctx.mmaLoadB(bTile, BK, (bBase + 4) * B_SUBTILE_BYTES);
+            HalfFloat[] b5 = ctx.mmaLoadB(bTile, BK, (bBase + 5) * B_SUBTILE_BYTES);
+            HalfFloat[] b6 = ctx.mmaLoadB(bTile, BK, (bBase + 6) * B_SUBTILE_BYTES);
+            HalfFloat[] b7 = ctx.mmaLoadB(bTile, BK, (bBase + 7) * B_SUBTILE_BYTES);
+            ctx.localBarrier();
+
+            if (kStep + 1 < numKSteps) {
+                aTile[aIdx0] = aReg0; aTile[aIdx1] = aReg1; aTile[aIdx2] = aReg2; aTile[aIdx3] = aReg3;
+                bTile[bIdx0] = bReg0; bTile[bIdx1] = bReg1; bTile[bIdx2] = bReg2; bTile[bIdx3] = bReg3;
+            }
+
+            c00 = ctx.mma(a0, b0, c00, MMAShape.M16N8K16);
+            c01 = ctx.mma(a0, b1, c01, MMAShape.M16N8K16);
+            c02 = ctx.mma(a0, b2, c02, MMAShape.M16N8K16);
+            c03 = ctx.mma(a0, b3, c03, MMAShape.M16N8K16);
+            c04 = ctx.mma(a0, b4, c04, MMAShape.M16N8K16);
+            c05 = ctx.mma(a0, b5, c05, MMAShape.M16N8K16);
+            c06 = ctx.mma(a0, b6, c06, MMAShape.M16N8K16);
+            c07 = ctx.mma(a0, b7, c07, MMAShape.M16N8K16);
+            c10 = ctx.mma(a1, b0, c10, MMAShape.M16N8K16);
+            c11 = ctx.mma(a1, b1, c11, MMAShape.M16N8K16);
+            c12 = ctx.mma(a1, b2, c12, MMAShape.M16N8K16);
+            c13 = ctx.mma(a1, b3, c13, MMAShape.M16N8K16);
+            c14 = ctx.mma(a1, b4, c14, MMAShape.M16N8K16);
+            c15 = ctx.mma(a1, b5, c15, MMAShape.M16N8K16);
+            c16 = ctx.mma(a1, b6, c16, MMAShape.M16N8K16);
+            c17 = ctx.mma(a1, b7, c17, MMAShape.M16N8K16);
+            ctx.localBarrier();
+        }
+
+        int rBase = blockRow + warpM * WM;
+        int cBase = blockCol + warpN * WN;
+        ctx.mmaStore(c00, qkvOut, rBase + 0,  cBase + 0,  qkvStride);
+        ctx.mmaStore(c01, qkvOut, rBase + 0,  cBase + 8,  qkvStride);
+        ctx.mmaStore(c02, qkvOut, rBase + 0,  cBase + 16, qkvStride);
+        ctx.mmaStore(c03, qkvOut, rBase + 0,  cBase + 24, qkvStride);
+        ctx.mmaStore(c04, qkvOut, rBase + 0,  cBase + 32, qkvStride);
+        ctx.mmaStore(c05, qkvOut, rBase + 0,  cBase + 40, qkvStride);
+        ctx.mmaStore(c06, qkvOut, rBase + 0,  cBase + 48, qkvStride);
+        ctx.mmaStore(c07, qkvOut, rBase + 0,  cBase + 56, qkvStride);
+        ctx.mmaStore(c10, qkvOut, rBase + 16, cBase + 0,  qkvStride);
+        ctx.mmaStore(c11, qkvOut, rBase + 16, cBase + 8,  qkvStride);
+        ctx.mmaStore(c12, qkvOut, rBase + 16, cBase + 16, qkvStride);
+        ctx.mmaStore(c13, qkvOut, rBase + 16, cBase + 24, qkvStride);
+        ctx.mmaStore(c14, qkvOut, rBase + 16, cBase + 32, qkvStride);
+        ctx.mmaStore(c15, qkvOut, rBase + 16, cBase + 40, qkvStride);
+        ctx.mmaStore(c16, qkvOut, rBase + 16, cBase + 48, qkvStride);
+        ctx.mmaStore(c17, qkvOut, rBase + 16, cBase + 56, qkvStride);
+    }
+
+    /**
+     * Fused W1/W3 (gate/up) tensor-core GEMM with Q8_0 weights into the PACKED
+     * output gateUpOut[M, 2*hidDim]. Same layout and constraints as
+     * {@link #gemmMMAGateUp}.
+     */
+    public static void gemmMMAGateUpQ8(KernelContext ctx,
+                                       HalfFloatArray A,
+                                       ByteArray w1, ByteArray w3,
+                                       FloatArray gateUpOut,
+                                       int M, int hidDim, int K) {
+        int tid = ctx.localIdx;
+        int warpId = tid / WARP_SIZE;
+        int warpM = warpId / WARPS_N;
+        int warpN = warpId % WARPS_N;
+        int blockRow = BM * ctx.groupIdx;
+        int blockCol = BN * ctx.groupIdy;
+        int outStride = 2 * hidDim;
+        int blocksPerRow = K / 32;
+
+        int wColBase = (blockCol < hidDim) ? blockCol : (blockCol - hidDim);
+
+        int[] aTile = ctx.allocateIntLocalArray(BM * BK / 2);
+        int[] bTile = ctx.allocateIntLocalArray(BK * BN / 2);
+
+        float[] c00 = ctx.mmaFragment(0.0f); float[] c01 = ctx.mmaFragment(0.0f);
+        float[] c02 = ctx.mmaFragment(0.0f); float[] c03 = ctx.mmaFragment(0.0f);
+        float[] c04 = ctx.mmaFragment(0.0f); float[] c05 = ctx.mmaFragment(0.0f);
+        float[] c06 = ctx.mmaFragment(0.0f); float[] c07 = ctx.mmaFragment(0.0f);
+        float[] c10 = ctx.mmaFragment(0.0f); float[] c11 = ctx.mmaFragment(0.0f);
+        float[] c12 = ctx.mmaFragment(0.0f); float[] c13 = ctx.mmaFragment(0.0f);
+        float[] c14 = ctx.mmaFragment(0.0f); float[] c15 = ctx.mmaFragment(0.0f);
+        float[] c16 = ctx.mmaFragment(0.0f); float[] c17 = ctx.mmaFragment(0.0f);
+
+        int aIdx0 = tid;       int gA0 = (blockRow + (aIdx0 >>> 3)) * K + ((aIdx0 & 7) << 1);
+        int aIdx1 = tid + 256; int gA1 = (blockRow + (aIdx1 >>> 3)) * K + ((aIdx1 & 7) << 1);
+        int aIdx2 = tid + 512; int gA2 = (blockRow + (aIdx2 >>> 3)) * K + ((aIdx2 & 7) << 1);
+        int aIdx3 = tid + 768; int gA3 = (blockRow + (aIdx3 >>> 3)) * K + ((aIdx3 & 7) << 1);
+        int bIdx0 = tid;       int bCol0 = wColBase + ((bIdx0 >>> 6) << 3) + ((bIdx0 & 3) << 1); int bK0 = (bIdx0 & 63) >>> 2;
+        int bIdx1 = tid + 256; int bCol1 = wColBase + ((bIdx1 >>> 6) << 3) + ((bIdx1 & 3) << 1); int bK1 = (bIdx1 & 63) >>> 2;
+        int bIdx2 = tid + 512; int bCol2 = wColBase + ((bIdx2 >>> 6) << 3) + ((bIdx2 & 3) << 1); int bK2 = (bIdx2 & 63) >>> 2;
+        int bIdx3 = tid + 768; int bCol3 = wColBase + ((bIdx3 >>> 6) << 3) + ((bIdx3 & 3) << 1); int bK3 = (bIdx3 & 63) >>> 2;
+
+        int aReg0 = packHalves(A, gA0, gA0 + 1);
+        int aReg1 = packHalves(A, gA1, gA1 + 1);
+        int aReg2 = packHalves(A, gA2, gA2 + 1);
+        int aReg3 = packHalves(A, gA3, gA3 + 1);
+        int bReg0; int bReg1; int bReg2; int bReg3;
+        if (blockCol < hidDim) {
+            bReg0 = packQ8Halves(w1, bCol0, bK0, blocksPerRow);
+            bReg1 = packQ8Halves(w1, bCol1, bK1, blocksPerRow);
+            bReg2 = packQ8Halves(w1, bCol2, bK2, blocksPerRow);
+            bReg3 = packQ8Halves(w1, bCol3, bK3, blocksPerRow);
+        } else {
+            bReg0 = packQ8Halves(w3, bCol0, bK0, blocksPerRow);
+            bReg1 = packQ8Halves(w3, bCol1, bK1, blocksPerRow);
+            bReg2 = packQ8Halves(w3, bCol2, bK2, blocksPerRow);
+            bReg3 = packQ8Halves(w3, bCol3, bK3, blocksPerRow);
+        }
+        aTile[aIdx0] = aReg0; aTile[aIdx1] = aReg1; aTile[aIdx2] = aReg2; aTile[aIdx3] = aReg3;
+        bTile[bIdx0] = bReg0; bTile[bIdx1] = bReg1; bTile[bIdx2] = bReg2; bTile[bIdx3] = bReg3;
+        ctx.localBarrier();
+
+        int numKSteps = K / BK;
+        for (int kStep = 0; kStep < numKSteps; kStep++) {
+            if (kStep + 1 < numKSteps) {
+                int kOff = (kStep + 1) * BK;
+                aReg0 = packHalves(A, gA0 + kOff, gA0 + kOff + 1);
+                aReg1 = packHalves(A, gA1 + kOff, gA1 + kOff + 1);
+                aReg2 = packHalves(A, gA2 + kOff, gA2 + kOff + 1);
+                aReg3 = packHalves(A, gA3 + kOff, gA3 + kOff + 1);
+                if (blockCol < hidDim) {
+                    bReg0 = packQ8Halves(w1, bCol0, kOff + bK0, blocksPerRow);
+                    bReg1 = packQ8Halves(w1, bCol1, kOff + bK1, blocksPerRow);
+                    bReg2 = packQ8Halves(w1, bCol2, kOff + bK2, blocksPerRow);
+                    bReg3 = packQ8Halves(w1, bCol3, kOff + bK3, blocksPerRow);
+                } else {
+                    bReg0 = packQ8Halves(w3, bCol0, kOff + bK0, blocksPerRow);
+                    bReg1 = packQ8Halves(w3, bCol1, kOff + bK1, blocksPerRow);
+                    bReg2 = packQ8Halves(w3, bCol2, kOff + bK2, blocksPerRow);
+                    bReg3 = packQ8Halves(w3, bCol3, kOff + bK3, blocksPerRow);
+                }
+            }
+
+            int aOff0 = warpM * 1024;
+            int aOff1 = warpM * 1024 + 512;
+            HalfFloat[] a0 = ctx.mmaLoadA(aTile, BK, aOff0);
+            HalfFloat[] a1 = ctx.mmaLoadA(aTile, BK, aOff1);
+            int bBase = warpN * 8;
+            HalfFloat[] b0 = ctx.mmaLoadB(bTile, BK, (bBase + 0) * B_SUBTILE_BYTES);
+            HalfFloat[] b1 = ctx.mmaLoadB(bTile, BK, (bBase + 1) * B_SUBTILE_BYTES);
+            HalfFloat[] b2 = ctx.mmaLoadB(bTile, BK, (bBase + 2) * B_SUBTILE_BYTES);
+            HalfFloat[] b3 = ctx.mmaLoadB(bTile, BK, (bBase + 3) * B_SUBTILE_BYTES);
+            HalfFloat[] b4 = ctx.mmaLoadB(bTile, BK, (bBase + 4) * B_SUBTILE_BYTES);
+            HalfFloat[] b5 = ctx.mmaLoadB(bTile, BK, (bBase + 5) * B_SUBTILE_BYTES);
+            HalfFloat[] b6 = ctx.mmaLoadB(bTile, BK, (bBase + 6) * B_SUBTILE_BYTES);
+            HalfFloat[] b7 = ctx.mmaLoadB(bTile, BK, (bBase + 7) * B_SUBTILE_BYTES);
+            ctx.localBarrier();
+
+            if (kStep + 1 < numKSteps) {
+                aTile[aIdx0] = aReg0; aTile[aIdx1] = aReg1; aTile[aIdx2] = aReg2; aTile[aIdx3] = aReg3;
+                bTile[bIdx0] = bReg0; bTile[bIdx1] = bReg1; bTile[bIdx2] = bReg2; bTile[bIdx3] = bReg3;
+            }
+
+            c00 = ctx.mma(a0, b0, c00, MMAShape.M16N8K16);
+            c01 = ctx.mma(a0, b1, c01, MMAShape.M16N8K16);
+            c02 = ctx.mma(a0, b2, c02, MMAShape.M16N8K16);
+            c03 = ctx.mma(a0, b3, c03, MMAShape.M16N8K16);
+            c04 = ctx.mma(a0, b4, c04, MMAShape.M16N8K16);
+            c05 = ctx.mma(a0, b5, c05, MMAShape.M16N8K16);
+            c06 = ctx.mma(a0, b6, c06, MMAShape.M16N8K16);
+            c07 = ctx.mma(a0, b7, c07, MMAShape.M16N8K16);
+            c10 = ctx.mma(a1, b0, c10, MMAShape.M16N8K16);
+            c11 = ctx.mma(a1, b1, c11, MMAShape.M16N8K16);
+            c12 = ctx.mma(a1, b2, c12, MMAShape.M16N8K16);
+            c13 = ctx.mma(a1, b3, c13, MMAShape.M16N8K16);
+            c14 = ctx.mma(a1, b4, c14, MMAShape.M16N8K16);
+            c15 = ctx.mma(a1, b5, c15, MMAShape.M16N8K16);
+            c16 = ctx.mma(a1, b6, c16, MMAShape.M16N8K16);
+            c17 = ctx.mma(a1, b7, c17, MMAShape.M16N8K16);
+            ctx.localBarrier();
+        }
+
+        int rBase = blockRow + warpM * WM;
+        int cBase = blockCol + warpN * WN;
+        ctx.mmaStore(c00, gateUpOut, rBase + 0,  cBase + 0,  outStride);
+        ctx.mmaStore(c01, gateUpOut, rBase + 0,  cBase + 8,  outStride);
+        ctx.mmaStore(c02, gateUpOut, rBase + 0,  cBase + 16, outStride);
+        ctx.mmaStore(c03, gateUpOut, rBase + 0,  cBase + 24, outStride);
+        ctx.mmaStore(c04, gateUpOut, rBase + 0,  cBase + 32, outStride);
+        ctx.mmaStore(c05, gateUpOut, rBase + 0,  cBase + 40, outStride);
+        ctx.mmaStore(c06, gateUpOut, rBase + 0,  cBase + 48, outStride);
+        ctx.mmaStore(c07, gateUpOut, rBase + 0,  cBase + 56, outStride);
+        ctx.mmaStore(c10, gateUpOut, rBase + 16, cBase + 0,  outStride);
+        ctx.mmaStore(c11, gateUpOut, rBase + 16, cBase + 8,  outStride);
+        ctx.mmaStore(c12, gateUpOut, rBase + 16, cBase + 16, outStride);
+        ctx.mmaStore(c13, gateUpOut, rBase + 16, cBase + 24, outStride);
+        ctx.mmaStore(c14, gateUpOut, rBase + 16, cBase + 32, outStride);
+        ctx.mmaStore(c15, gateUpOut, rBase + 16, cBase + 40, outStride);
+        ctx.mmaStore(c16, gateUpOut, rBase + 16, cBase + 48, outStride);
+        ctx.mmaStore(c17, gateUpOut, rBase + 16, cBase + 56, outStride);
+    }
+
     // @formatter:on
 }
