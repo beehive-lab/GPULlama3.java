@@ -145,11 +145,16 @@ public abstract class State {
 
         int gpuBatchSize = Integer.getInteger("llama.prefillBatchSize", 1);
         if (gpuBatchSize > 1) {
+            // The tensor-core GEMM kernels operate on full 128-row M tiles
+            // (BM = 128). Pad the GEMM-adjacent activation buffers so any
+            // batch size launches whole tiles; rows >= gpuBatchSize hold
+            // garbage and are never read by the non-GEMM kernels.
+            int paddedGpuBatch = (gpuBatchSize + 127) & ~127;
             int qDim  = batchQDim(config);
             int kvDim = batchKvDim(config);
             this.embeddingXBatch = new HalfFloatArray(gpuBatchSize * config.dim());
             this.wrapXBatch = new FloatArray(gpuBatchSize * config.dim());
-            this.wrapXbFP16Batch = new HalfFloatArray(gpuBatchSize * config.dim());
+            this.wrapXbFP16Batch = new HalfFloatArray(paddedGpuBatch * config.dim());
             this.wrapQBatch = new FloatArray(gpuBatchSize * qDim);
             this.wrapKBatch = new FloatArray(gpuBatchSize * kvDim);
             this.wrapVBatch = new FloatArray(gpuBatchSize * kvDim);
@@ -158,17 +163,17 @@ public abstract class State {
             this.attnScaleBatch = new FloatArray(gpuBatchSize);
             this.ffnScaleBatch = new FloatArray(gpuBatchSize);
             this.batchStartPosHolder = new IntArray(1);
-            this.normedXFFNFP16 = new HalfFloatArray(gpuBatchSize * config.dim());
+            this.normedXFFNFP16 = new HalfFloatArray(paddedGpuBatch * config.dim());
             this.ffnGateResult  = new FloatArray(gpuBatchSize * config.hiddenDim());
             this.ffnUpResult    = new FloatArray(gpuBatchSize * config.hiddenDim());
 
             this.xbFP16Batch = new HalfFloatArray(gpuBatchSize * config.dim());
-            this.attnOutFP16 = new HalfFloatArray(gpuBatchSize * config.dim());
-            this.woOut = new FloatArray(gpuBatchSize * config.dim());
-            this.wrapHbFP16Batch = new HalfFloatArray(gpuBatchSize * config.hiddenDim());
-            this.w2Out = new FloatArray(gpuBatchSize * config.dim());
-            this.qkvResultBatch = new FloatArray(gpuBatchSize * (config.dim() + 2 * config.kvDim()));
-            this.gateUpResultBatch = new FloatArray(gpuBatchSize * 2 * config.hiddenDim());
+            this.attnOutFP16 = new HalfFloatArray(paddedGpuBatch * config.dim());
+            this.woOut = new FloatArray(paddedGpuBatch * config.dim());
+            this.wrapHbFP16Batch = new HalfFloatArray(paddedGpuBatch * config.hiddenDim());
+            this.w2Out = new FloatArray(paddedGpuBatch * config.dim());
+            this.qkvResultBatch = new FloatArray(paddedGpuBatch * (config.dim() + 2 * config.kvDim()));
+            this.gateUpResultBatch = new FloatArray(paddedGpuBatch * 2 * config.hiddenDim());
         } else {
             this.embeddingXBatch = null;
             this.wrapXBatch = null;

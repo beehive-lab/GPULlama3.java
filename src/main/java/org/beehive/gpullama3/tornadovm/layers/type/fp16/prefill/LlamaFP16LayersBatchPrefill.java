@@ -54,6 +54,10 @@ public class LlamaFP16LayersBatchPrefill implements BatchPrefillTransformerLayer
     private final LlamaConfiguration config;
     private final KernelContext context = new KernelContext();
     private final int batchSize;
+    // GEMM M dimension rounded up to whole 128-row tiles (BM). The GEMM-adjacent
+    // buffers in State are allocated at this padded size; rows >= batchSize are
+    // computed but never consumed. All non-GEMM kernels use the true batchSize.
+    private final int paddedBatch;
     private final List<ImmutableTaskGraph> layerITGs;
     private String lastLayerTaskGraphID;
 
@@ -63,6 +67,12 @@ public class LlamaFP16LayersBatchPrefill implements BatchPrefillTransformerLayer
         this.weights = weights;
         this.config = config;
         this.batchSize = batchSize;
+        this.paddedBatch = (batchSize + 127) & ~127;
+        if (batchSize % 128 != 0) {
+            System.out.printf("[GPULlama3] prefill batch %d padded to %d for tensor-core tiles; "
+                    + "GEMM efficiency is %d/%d — use a multiple of 128 for best throughput.%n",
+                    batchSize, paddedBatch, batchSize, paddedBatch);
+        }
         this.layerITGs = IntStream.range(0, config.numberOfLayers())
                 .mapToObj(this::createBatchPrefillLayerTaskGraph)
                 .map(TaskGraph::snapshot)
@@ -145,7 +155,7 @@ public class LlamaFP16LayersBatchPrefill implements BatchPrefillTransformerLayer
                 weights.wqLayered[layerIndex].asHalfFloatArray(),
                 weights.wkLayered[layerIndex].asHalfFloatArray(),
                 weights.wvLayered[layerIndex].asHalfFloatArray(),
-                state.qkvResultBatch, batchSize, dim, kvDim, dim);
+                state.qkvResultBatch, paddedBatch, dim, kvDim, dim);
 
         batchPrefillLayer.task("batch_rope_kv",
                 TransformerBatchPrefillKernels::batchedRopeWithKVCachePacked,
@@ -167,7 +177,7 @@ public class LlamaFP16LayersBatchPrefill implements BatchPrefillTransformerLayer
         batchPrefillLayer.task("woProj", TransformerBatchPrefillKernels::gemmMMA,
                 context, state.attnOutFP16,
                 weights.woLayered[layerIndex].asHalfFloatArray(),
-                state.woOut, batchSize, dim, dim);
+                state.woOut, paddedBatch, dim, dim);
 
         // ── FFN Block ──────────────────────────────────────────────────────────
         // x += woOut is fused into the FFN RMS reduction (drops the woResid task).
@@ -188,7 +198,7 @@ public class LlamaFP16LayersBatchPrefill implements BatchPrefillTransformerLayer
                 context, state.normedXFFNFP16,
                 weights.w1Layered[layerIndex].asHalfFloatArray(),
                 weights.w3Layered[layerIndex].asHalfFloatArray(),
-                state.gateUpResultBatch, batchSize, hidDim, dim);
+                state.gateUpResultBatch, paddedBatch, hidDim, dim);
 
         batchPrefillLayer.task("swiglu",
                 TransformerBatchPrefillKernels::batchedFFNSwiGLUFP16Packed,
@@ -252,9 +262,9 @@ public class LlamaFP16LayersBatchPrefill implements BatchPrefillTransformerLayer
                 batchSize * nHeads * attnLocal, attnLocal);
 
         // MMA grids
-        WorkerGrid mmaQkvWorker    = mmaGrid(batchSize, dim + 2 * kvDim);  // fused QKV
-        WorkerGrid mmaDimWorker    = mmaGrid(batchSize, dim);              // woProj, w2Proj
-        WorkerGrid mmaGateUpWorker = mmaGrid(batchSize, 2 * hidDim);       // fused W1/W3
+        WorkerGrid mmaQkvWorker    = mmaGrid(paddedBatch, dim + 2 * kvDim);  // fused QKV
+        WorkerGrid mmaDimWorker    = mmaGrid(paddedBatch, dim);              // woProj, w2Proj
+        WorkerGrid mmaGateUpWorker = mmaGrid(paddedBatch, 2 * hidDim);       // fused W1/W3
 
         // Elementwise grids (one thread per valid element; dim & hidDim are mult. of 256)
         WorkerGrid ewDimWorker = elementwiseGrid(batchSize * dim);     // w2Resid
