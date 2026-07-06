@@ -1214,5 +1214,137 @@ public class Qwen3Kernels {
             wrapValueCache.set(cacheOff + ic + halfEmbdHead, wrapVBatch.get(kHeadBase + ic + halfEmbdHead));
         }
     }
+
+    // ── Packed-QKV variants for the tensor-core batch prefill path ───────────
+    // These mirror batchedFusedQKRmsNorm / batchedRopeWithKVCacheQwen3 but read
+    // and write the packed [q | k | v] buffer produced by gemmMMAQKV
+    // (row stride qDim + 2*kvDim), so no separate Q/K/V buffers are needed.
+
+    public static void batchedFusedQKRmsNormPacked(
+            KernelContext context,
+            FloatArray qkvBatch,
+            FloatArray qWeights,
+            FloatArray kWeights,
+            int nHeads,
+            int nHeadKv,
+            int nEmbdHead,
+            int qDim,
+            int kvDim,
+            float rmsNormEps) {
+
+        int groupId = context.globalIdx / nEmbdHead;
+        int localId = context.localIdx;
+        int localSize = context.localGroupSizeX;
+        int totalHeadsPerBatch = nHeads + nHeadKv;
+        int qkvStride = qDim + 2 * kvDim;
+
+        int batchIdx = groupId / totalHeadsPerBatch;
+        int headSlot = groupId % totalHeadsPerBatch;
+
+        float[] localSum = context.allocateFloatLocalArray(nEmbdHead);
+
+        if (headSlot < nHeads) {
+            // Q head (packed offset 0)
+            int headOffset = batchIdx * qkvStride + headSlot * nEmbdHead;
+            float partialSum = 0.0f;
+            for (int i = localId; i < nEmbdHead; i += localSize) {
+                float val = qkvBatch.get(headOffset + i);
+                partialSum += val * val;
+            }
+            localSum[localId] = partialSum;
+            context.localBarrier();
+            for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) {
+                    localSum[localId] += localSum[localId + stride];
+                }
+                context.localBarrier();
+            }
+            float ss = localSum[0] / nEmbdHead + rmsNormEps;
+            ss = 1.0f / TornadoMath.sqrt(ss);
+            context.localBarrier();
+            for (int i = localId; i < nEmbdHead; i += localSize) {
+                qkvBatch.set(headOffset + i, qWeights.get(i) * ss * qkvBatch.get(headOffset + i));
+            }
+        } else {
+            // K head (packed offset qDim)
+            int kHeadIdx = headSlot - nHeads;
+            int headOffset = batchIdx * qkvStride + qDim + kHeadIdx * nEmbdHead;
+            float partialSum = 0.0f;
+            for (int i = localId; i < nEmbdHead; i += localSize) {
+                float val = qkvBatch.get(headOffset + i);
+                partialSum += val * val;
+            }
+            localSum[localId] = partialSum;
+            context.localBarrier();
+            for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+                if (localId < stride) {
+                    localSum[localId] += localSum[localId + stride];
+                }
+                context.localBarrier();
+            }
+            float ss = localSum[0] / nEmbdHead + rmsNormEps;
+            ss = 1.0f / TornadoMath.sqrt(ss);
+            context.localBarrier();
+            for (int i = localId; i < nEmbdHead; i += localSize) {
+                qkvBatch.set(headOffset + i, kWeights.get(i) * ss * qkvBatch.get(headOffset + i));
+            }
+        }
+    }
+
+    public static void batchedRopeWithKVCacheQwen3Packed(
+            KernelContext context,
+            IntArray batchStartPosHolder,
+            FloatArray qkvBatch,
+            FloatArray wrapKeyCache,
+            FloatArray wrapValueCache,
+            int kvDim,
+            int nEmbdHead,
+            int layerIndex,
+            int contextLength,
+            int qDim) {
+
+        int globalIdx = context.globalIdx;
+        int halfQDim = qDim / 2;
+        int batchIdx = globalIdx / halfQDim;
+        int pairIdx = globalIdx % halfQDim;
+        int qkvStride = qDim + 2 * kvDim;
+
+        int pos = batchStartPosHolder.get(0) + batchIdx;
+
+        // Qwen3 uses split-half RoPE: pair element ic with ic + nEmbdHead/2 within each head.
+        int halfEmbdHead = nEmbdHead / 2;
+        int ic      = pairIdx % halfEmbdHead;
+        int headIdx = pairIdx / halfEmbdHead;
+
+        float freq = 1.0f / TornadoMath.pow(1000000.0f, 2.0f * ic / (float) nEmbdHead);
+        float val  = pos * freq;
+        float fcr  = TornadoMath.cos(val);
+        float fci  = TornadoMath.sin(val);
+
+        // Rotate Q in place (packed offset 0)
+        int qHeadBase = batchIdx * qkvStride + headIdx * nEmbdHead;
+        float v0q = qkvBatch.get(qHeadBase + ic);
+        float v1q = qkvBatch.get(qHeadBase + ic + halfEmbdHead);
+        qkvBatch.set(qHeadBase + ic,                v0q * fcr - v1q * fci);
+        qkvBatch.set(qHeadBase + ic + halfEmbdHead, v0q * fci + v1q * fcr);
+
+        // Rotate K (packed offset qDim) and write K,V to cache
+        if (pairIdx < kvDim / 2) {
+            int kHeadIdx  = pairIdx / halfEmbdHead;
+            int kHeadBase = batchIdx * qkvStride + qDim + kHeadIdx * nEmbdHead;
+            int vHeadBase = batchIdx * qkvStride + qDim + kvDim + kHeadIdx * nEmbdHead;
+            float v0k = qkvBatch.get(kHeadBase + ic);
+            float v1k = qkvBatch.get(kHeadBase + ic + halfEmbdHead);
+            float rotK0 = v0k * fcr - v1k * fci;
+            float rotK1 = v0k * fci + v1k * fcr;
+
+            int cacheOff = layerIndex * contextLength * kvDim + pos * kvDim + kHeadIdx * nEmbdHead;
+            wrapKeyCache.set(cacheOff + ic,                rotK0);
+            wrapKeyCache.set(cacheOff + ic + halfEmbdHead, rotK1);
+            wrapValueCache.set(cacheOff + ic,                qkvBatch.get(vHeadBase + ic));
+            wrapValueCache.set(cacheOff + ic + halfEmbdHead, qkvBatch.get(vHeadBase + ic + halfEmbdHead));
+        }
+    }
+
 }
 // @formatter:on

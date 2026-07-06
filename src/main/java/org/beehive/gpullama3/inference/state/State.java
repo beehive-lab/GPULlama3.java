@@ -168,11 +168,11 @@ public abstract class State {
             this.ffnUpResult    = new FloatArray(gpuBatchSize * config.hiddenDim());
 
             this.xbFP16Batch = new HalfFloatArray(gpuBatchSize * config.dim());
-            this.attnOutFP16 = new HalfFloatArray(paddedGpuBatch * config.dim());
+            this.attnOutFP16 = new HalfFloatArray(paddedGpuBatch * qDim);   // qDim == dim for Llama; qDim = nHeads*headDim for Qwen3
             this.woOut = new FloatArray(paddedGpuBatch * config.dim());
             this.wrapHbFP16Batch = new HalfFloatArray(paddedGpuBatch * config.hiddenDim());
             this.w2Out = new FloatArray(paddedGpuBatch * config.dim());
-            this.qkvResultBatch = new FloatArray(paddedGpuBatch * (config.dim() + 2 * config.kvDim()));
+            this.qkvResultBatch = new FloatArray(paddedGpuBatch * (qDim + 2 * kvDim));
             this.gateUpResultBatch = new FloatArray(paddedGpuBatch * 2 * config.hiddenDim());
         } else {
             this.embeddingXBatch = null;
