@@ -8,7 +8,7 @@ import java.util.List;
 /**
  * Interface for a group of N batched-prefill transformer-layer TornadoVM TaskGraphs.
  *
- * <p>Implemented by {@code LlamaFP16LayersBatchPrefill} and {@code LlamaQ8_0LayersBatchPrefill}.</p>
+ * <p>Implemented by {@code LlamaFP16LayersBatchPrefillMMA} and {@code LlamaQ8_0LayersBatchPrefillMMA}.</p>
  */
 public interface BatchPrefillTransformerLayerTaskGraphs {
     List<ImmutableTaskGraph> getLayerImmutableTaskGraphs();
