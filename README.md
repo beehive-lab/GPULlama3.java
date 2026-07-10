@@ -67,7 +67,7 @@ Ensure you have the following installed and configured:
 
 - **Java 21**: Required for Vector API support & TornadoVM.
 - [TornadoVM](https://github.com/beehive-lab/TornadoVM) with OpenCL, PTX, or CUDA backends.
-  - The `--cuda` backend requires a TornadoVM build that includes the CUDA backend from [TornadoVM PR #861](https://github.com/beehive-lab/TornadoVM/pull/861). This project currently builds against TornadoVM `4.0.2-jdk21-dev`.
+  - The `--cuda` backend requires a TornadoVM build that includes the CUDA backend from [TornadoVM PR #861](https://github.com/beehive-lab/TornadoVM/pull/861). This project currently builds against TornadoVM `5.0.0-jdk21-dev`.
 - GCC/G++ 13 or newer: Required to build and run TornadoVM native components.
 
 ### Install, Build, and Run
