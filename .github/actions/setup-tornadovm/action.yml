@@ -1,5 +1,5 @@
 name: Setup TornadoVM
-description: Build TornadoVM once per backend and reuse across runs via a local SHA sentinel. Exports TORNADOVM_HOME and updates PATH for all subsequent steps.
+description: Build TornadoVM develop once per backend and reuse across runs via a local SHA sentinel. Exports TORNADOVM_HOME and updates PATH for all subsequent steps.
 
 inputs:
   backend:
@@ -9,23 +9,11 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Determine TornadoVM branch
-      id: branch
-      shell: bash
-      run: |
-        # The CUDA backend currently lives on the cuda2 branch (TornadoVM PR #861)
-        # until it is merged to master; all other backends build from master.
-        if [ "${{ inputs.backend }}" = "cuda" ]; then
-          echo "ref=cuda2" >> $GITHUB_OUTPUT
-        else
-          echo "ref=master" >> $GITHUB_OUTPUT
-        fi
-
-    - name: Get TornadoVM HEAD SHA
+    - name: Get TornadoVM develop SHA
       id: tornado_sha
       shell: bash
       run: |
-        SHA=$(git ls-remote https://github.com/beehive-lab/TornadoVM ${{ steps.branch.outputs.ref }} | cut -f1)
+        SHA=$(git ls-remote https://github.com/beehive-lab/TornadoVM refs/heads/develop | cut -f1)
         echo "sha=$SHA" >> $GITHUB_OUTPUT
 
     - name: Check local build sentinel
@@ -39,12 +27,12 @@ runs:
           echo "up-to-date=false" >> $GITHUB_OUTPUT
         fi
 
-    - name: Clone TornadoVM
+    - name: Clone TornadoVM develop
       if: steps.sentinel.outputs.up-to-date != 'true'
       shell: bash
       run: |
         rm -rf $TORNADO_ROOT
-        git clone --depth 1 --branch ${{ steps.branch.outputs.ref }} \
+        git clone --depth 1 --branch develop \
           https://github.com/beehive-lab/TornadoVM.git \
           $TORNADO_ROOT
 
@@ -86,8 +74,14 @@ runs:
       run: |
         FULL_SDK="${{ steps.find_sdk.outputs.sdk_dir }}"
         echo "Detected TornadoVM SDK: $FULL_SDK"
+        # Persist for subsequent steps in the calling workflow.
         echo "TORNADOVM_HOME=$FULL_SDK" >> $GITHUB_ENV
         echo "$FULL_SDK/bin" >> $GITHUB_PATH
         echo "$JAVA_HOME/bin" >> $GITHUB_PATH
+        # $GITHUB_ENV / $GITHUB_PATH only affect later steps, so also apply them to THIS
+        # shell for the verification below (otherwise `tornado` resolves to the sdkman
+        # wrapper and aborts with "TORNADOVM_HOME is not set").
+        export TORNADOVM_HOME="$FULL_SDK"
+        export PATH="$FULL_SDK/bin:$JAVA_HOME/bin:$PATH"
         which tornado || { echo "::error::tornado not in PATH"; exit 1; }
         tornado --devices

@@ -67,15 +67,22 @@ jobs:
 
       - name: Build GPULlama3.java
         run: |
-          tornado --version
+          TORNADO_VERSION=$(tornado --version | tee /tmp/tornado-version.txt | sed -n 's/^version=//p' | head -n 1)
+          if [ -z "$TORNADO_VERSION" ]; then
+            echo "::error::Could not determine TornadoVM version from tornado --version"
+            cat /tmp/tornado-version.txt
+            exit 1
+          fi
+          echo "TornadoVM Maven version: $TORNADO_VERSION"
           # Strip any pre-existing -SNAPSHOT suffix before appending, making this step idempotent
           # across sequential matrix variants (ptx runs after opencl on the same workspace).
           BASE_VERSION=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout | sed 's/-SNAPSHOT$//')
           GPULLAMA3_VERSION="${BASE_VERSION}-SNAPSHOT"
           echo "GPULlama3 version: $GPULLAMA3_VERSION"
-          ./mvnw versions:set -DnewVersion=$GPULLAMA3_VERSION
-          ./mvnw clean install -DskipTests
+          ./mvnw versions:set -DnewVersion="$GPULLAMA3_VERSION" -Dtornadovm.version="$TORNADO_VERSION"
+          ./mvnw clean install -DskipTests -Dtornadovm.version="$TORNADO_VERSION"
           echo "GPULLAMA3_VERSION=$GPULLAMA3_VERSION" >> $GITHUB_ENV
+          echo "TORNADOVM_MAVEN_VERSION=$TORNADO_VERSION" >> $GITHUB_ENV
 
       - name: Clone Quarkus LangChain4j
         run: |

@@ -38,7 +38,7 @@
 
         <properties>
             <!-- CI-friendly version: resolved by flatten-maven-plugin at build time -->
-            <revision>0.4.0</revision>
+            <revision>0.5.0</revision>
             <tornadovm.base.version>5.0.0</tornadovm.base.version>
             <jdk.version.suffix>-jdk21</jdk.version.suffix>
             <!-- CUDA backend is only available after 5.0.0 TornadoVM version -->

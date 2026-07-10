@@ -101,6 +101,106 @@ public class TransformerComputeKernelsLayered {
     }
 
     /**
+     * Warp-shuffle variant of {@link #fusedRmsNormFFNGateUp}. Assumes a 32-lane workgroup per output row
+     * (the decode worker shape). Reduces each row's dot product with {@code simdShuffleDown} instead of a
+     * shared-memory tree, eliminating the per-row barriers and shared round-trip — the same reduction
+     * strategy as llama.cpp's {@code mul_mat_vec}. Used on PTX/CUDA only (see
+     * {@code SchedulerDetectionService.isWarpShuffleSupported}); OpenCL miscompiles the shuffle.
+     */
+    public static void fusedRmsNormFFNGateUpWarp(KernelContext context, FloatArray x, FloatArray hb, FloatArray rmsWeights, FloatArray rmsScale, HalfFloatArray w1, HalfFloatArray w3, int dim,
+            int hiddenDim, int localWorkGroupSize) {
+
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        if (rowId >= hiddenDim) {
+            return;
+        }
+
+        float scale = rmsScale.get(0);
+        int rowOffset = rowId * dim;
+
+        float sum1 = 0.0f;
+        float sum3 = 0.0f;
+        for (int j = localId; j < dim; j += 32) {
+            float normalized = rmsWeights.get(j) * scale * x.get(j);
+            sum1 += w1.get(rowOffset + j).getFloat32() * normalized;
+            sum3 += w3.get(rowOffset + j).getFloat32() * normalized;
+        }
+
+        sum1 += context.simdShuffleDown(sum1, 16);
+        sum1 += context.simdShuffleDown(sum1, 8);
+        sum1 += context.simdShuffleDown(sum1, 4);
+        sum1 += context.simdShuffleDown(sum1, 2);
+        sum1 += context.simdShuffleDown(sum1, 1);
+
+        sum3 += context.simdShuffleDown(sum3, 16);
+        sum3 += context.simdShuffleDown(sum3, 8);
+        sum3 += context.simdShuffleDown(sum3, 4);
+        sum3 += context.simdShuffleDown(sum3, 2);
+        sum3 += context.simdShuffleDown(sum3, 1);
+
+        if (localId == 0) {
+            float silu = sum1 / (1.0f + TornadoMath.exp(-sum1));
+            hb.set(rowId, silu * sum3);
+        }
+    }
+
+    /**
+     * Warp-shuffle variant of {@link #fusedRmsNormFFNGateUpQ8_0}: one 32-lane warp per hidden row,
+     * two independent {@code simdShuffleDown} reductions (gate W1 and up W3), no shared-memory tree.
+     * Q8_0 byte layout (34-byte blocks: 2-byte half scale + 32 int8 quants).
+     */
+    public static void fusedRmsNormFFNGateUpQ8_0Warp(KernelContext context, FloatArray x, FloatArray hb, FloatArray rmsWeights, FloatArray rmsScale, ByteArray w1, ByteArray w3, int inputDim,
+            int hiddenDim, int localWorkGroupSize) {
+
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        if (rowId >= hiddenDim) {
+            return;
+        }
+
+        float scale = rmsScale.get(0);
+        final int blockSize = 32;
+        final int Q8_0_BLOCK_BYTES = 34; // 2-byte scale + 32 int8 quants
+        int blocksPerRow = (inputDim + blockSize - 1) / blockSize;
+        int rowBlockOffset = rowId * blocksPerRow;
+
+        float sum1 = 0.0f;
+        float sum3 = 0.0f;
+        for (int j = localId; j < inputDim; j += 32) {
+            int blockIdx = j / blockSize;
+            int withinBlockIdx = j - blockIdx * blockSize;
+            int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+            float w1s = w1.getHalfFloat(blockByteOffset).getFloat32();
+            float w3s = w3.getHalfFloat(blockByteOffset).getFloat32();
+            byte w1q = w1.get(blockByteOffset + 2 + withinBlockIdx);
+            byte w3q = w3.get(blockByteOffset + 2 + withinBlockIdx);
+            float normalized = rmsWeights.get(j) * (scale * x.get(j));
+            sum1 += ((float) w1q * w1s) * normalized;
+            sum3 += ((float) w3q * w3s) * normalized;
+        }
+
+        sum1 += context.simdShuffleDown(sum1, 16);
+        sum1 += context.simdShuffleDown(sum1, 8);
+        sum1 += context.simdShuffleDown(sum1, 4);
+        sum1 += context.simdShuffleDown(sum1, 2);
+        sum1 += context.simdShuffleDown(sum1, 1);
+
+        sum3 += context.simdShuffleDown(sum3, 16);
+        sum3 += context.simdShuffleDown(sum3, 8);
+        sum3 += context.simdShuffleDown(sum3, 4);
+        sum3 += context.simdShuffleDown(sum3, 2);
+        sum3 += context.simdShuffleDown(sum3, 1);
+
+        if (localId == 0) {
+            float silu = sum1 / (1.0f + TornadoMath.exp(-sum1));
+            hb.set(rowId, silu * sum3);
+        }
+    }
+
+    /**
      * Fused RMSNorm apply + Gate/Up projection + SiLU + GLU for Q8_0 weights.
      * Combines: reductionOneBlock2WithLayer + fusedFeedForwardWithSiLUAndGLUActivationQ8_0Byte
      */
@@ -991,6 +1091,344 @@ public class TransformerComputeKernelsLayered {
     }
 
     /**
+     * Qwen3-family decode attention kernel: position-parallel online softmax.
+     *
+     * <p>Unlike {@link #processHeadsFlashAttentionOptV2}, which tiles the KV sequence and runs two
+     * {@code log2(localSize)}-step parallel reductions per 32-position tile (hundreds of barriers per
+     * head per decode token), this kernel parallelizes threads over KV positions: each thread scans a
+     * strided subset of positions {@code p = tid, tid+localSize, ...} maintaining its own online-softmax
+     * running max/sum and output accumulator, with a single cross-thread merge at the end
+     * (~4 barriers total).</p>
+     *
+     * <p>Each thread's accumulator lives in a shared-memory row (rather than a private array) so the
+     * merge can read it and so we avoid a {@code headSize}-element private accumulator per thread. The
+     * merge is the standard online-softmax combine: per-thread partials {@code (m_t, l_t, acc_t)} are
+     * combined against the global max {@code M} via {@code corr_t = exp(m_t - M)}.</p>
+     *
+     * <p>One workgroup per query head (reuses the existing attention worker grid). GQA is handled via
+     * {@code kvHeadIdx = h / kvMul}. All dimensions are runtime-configurable; the MAX_* constants are
+     * static upper bounds required because TornadoVM local arrays must be statically sized.</p>
+     *
+     * <p>Writes the final attention output to {@code xb} ({@code wrapXb}); never touches {@code wrapAtt}.</p>
+     *
+     * <p>TODO: Qwen3 uses a single {@code headSize} (= nEmbdHead) for both K and V across all current
+     * sizes; if a future variant diverges, split into separate headSizeK / headSizeV parameters.</p>
+     * <p>TODO (v2): GQA-aware K/V reuse across the Q heads that share a KV head (currently each Q-head
+     * workgroup re-reads K/V from global independently).</p>
+     */
+    public static void processHeadsFlashAttentionQwen3Online(KernelContext context, FloatArray q, FloatArray key_cache, FloatArray value_cache, FloatArray xb, int nHeads, int headSize,
+            int kvDim, int kvMul, IntArray positionHolder, int layer, int contextLength) {
+
+        // Static upper bounds for local-memory allocation (Qwen3 uses headSize=128, attention worker localSize=64).
+        final int MAX_HEAD_SIZE = 128;
+        final int MAX_LOCAL_SIZE = 64;
+
+        int tid = context.localIdx;
+        int h = context.groupIdx;
+        int localSize = context.localGroupSizeX;
+
+        if (h >= nHeads) {
+            return;
+        }
+
+        int pos = positionHolder.get(0);
+        int loff = layer * contextLength * kvDim;
+        int kvHeadIdx = h / kvMul;
+        float invSqrt = 1.0f / TornadoMath.sqrt(headSize);
+
+        // Shared memory: query, per-thread accumulator rows, and per-thread merge scalars.
+        float[] q_shared = context.allocateFloatLocalArray(MAX_HEAD_SIZE);
+        float[] accShared = context.allocateFloatLocalArray(MAX_LOCAL_SIZE * MAX_HEAD_SIZE);
+        float[] mShared = context.allocateFloatLocalArray(MAX_LOCAL_SIZE);
+        float[] lShared = context.allocateFloatLocalArray(MAX_LOCAL_SIZE);
+        float[] corrShared = context.allocateFloatLocalArray(MAX_LOCAL_SIZE);
+        float[] bcast = context.allocateFloatLocalArray(1);
+
+        // Load query cooperatively.
+        for (int i = tid; i < headSize; i += localSize) {
+            q_shared[i] = q.get(h * headSize + i);
+        }
+
+        // Initialize this thread's accumulator row.
+        int rowBase = tid * headSize;
+        for (int d = 0; d < headSize; d++) {
+            accShared[rowBase + d] = 0.0f;
+        }
+        context.localBarrier();
+
+        // === Strided scan over KV positions (NO barriers in this loop) ===
+        float m = Float.NEGATIVE_INFINITY;
+        float l = 0.0f;
+        for (int p = tid; p <= pos; p += localSize) {
+            int base = loff + p * kvDim + kvHeadIdx * headSize;
+
+            float score = 0.0f;
+            for (int d = 0; d < headSize; d++) {
+                score += q_shared[d] * key_cache.get(base + d);
+            }
+            score *= invSqrt;
+
+            float newM = Math.max(m, score);
+            // corr rescales the existing accumulator; 0 when no prior contribution (m == -inf).
+            float corr = (m == Float.NEGATIVE_INFINITY) ? 0.0f : TornadoMath.exp(m - newM);
+            float e = TornadoMath.exp(score - newM);
+            for (int d = 0; d < headSize; d++) {
+                accShared[rowBase + d] = accShared[rowBase + d] * corr + e * value_cache.get(base + d);
+            }
+            l = l * corr + e;
+            m = newM;
+        }
+        mShared[tid] = m;
+        lShared[tid] = l;
+        context.localBarrier();
+
+        // === Global max over per-thread maxima (thread 0 serial, broadcast) ===
+        if (tid == 0) {
+            float globalMax = Float.NEGATIVE_INFINITY;
+            for (int t = 0; t < localSize; t++) {
+                if (mShared[t] > globalMax) {
+                    globalMax = mShared[t];
+                }
+            }
+            bcast[0] = globalMax;
+        }
+        context.localBarrier();
+        float M = bcast[0];
+
+        // Per-thread correction against the global max.
+        corrShared[tid] = (mShared[tid] == Float.NEGATIVE_INFINITY) ? 0.0f : TornadoMath.exp(mShared[tid] - M);
+        context.localBarrier();
+
+        // === Global normalization sum (thread 0 serial, broadcast) ===
+        if (tid == 0) {
+            float globalSum = 0.0f;
+            for (int t = 0; t < localSize; t++) {
+                globalSum += lShared[t] * corrShared[t];
+            }
+            bcast[0] = globalSum;
+        }
+        context.localBarrier();
+        float L = bcast[0];
+        float inv = (L > 0.0f) ? (1.0f / L) : 0.0f;
+
+        // === Merge output: each thread owns dims d = tid, tid+localSize, ... ===
+        for (int d = tid; d < headSize; d += localSize) {
+            float acc = 0.0f;
+            for (int t = 0; t < localSize; t++) {
+                acc += corrShared[t] * accShared[t * headSize + d];
+            }
+            xb.set(h * headSize + d, acc * inv);
+        }
+    }
+
+    /**
+     * Qwen3-family decode attention, split-KV (flash-decoding) phase 1.
+     *
+     * <p>A one-workgroup-per-head decode attention launches only {@code nHeads} workgroups (e.g. 16),
+     * leaving most SMs idle. This kernel splits each head's KV
+     * range across {@code nSplits} workgroups, launching {@code nHeads * nSplits} blocks so the device is
+     * fully occupied. Each block computes the online-softmax partial state for its position chunk —
+     * unnormalized numerator {@code out_s[d] = Σ exp(score-M_s)·V}, block max {@code M_s}, and block sum
+     * {@code L_s = Σ exp(score-M_s)} — and writes them into the {@code att} scratch buffer
+     * ({@code wrapAttSplit}). {@link #combineSplitKVAttention} then merges the {@code nSplits} partials per head.</p>
+     *
+     * <p>{@code att} is a dedicated buffer sized exactly {@code nHeads*nSplits*(headSize+2)} and written in a
+     * COMPACT layout (per-head stride {@code nSplits*(headSize+2)}): {@code [nSplits*headSize} partial
+     * outputs] {@code [nSplits} block maxima] {@code [nSplits} block sums]. Every element is written each
+     * layer — a partially-written large buffer (e.g. reusing {@code wrapAtt} with a {@code contextLength}
+     * stride) is not reliably synced between the split and combine tasks by TornadoVM.</p>
+     *
+     * <p>{@code nSplits} is fixed at graph-build time (grid size); chunks are derived in-kernel from the
+     * runtime position, so splits beyond the current sequence length exit as empty (M=-inf, L=0) and
+     * contribute nothing in the combine.</p>
+     */
+    public static void processHeadsFlashAttentionSplitKV(KernelContext context, FloatArray q, FloatArray key_cache, FloatArray value_cache, FloatArray att, int nHeads, int headSize,
+            int kvDim, int kvMul, IntArray positionHolder, int layer, int contextLength, int nSplits) {
+
+        final int MAX_HEAD_SIZE = 128;
+        final int MAX_LOCAL_SIZE = 64;
+
+        int tid = context.localIdx;
+        int g = context.groupIdx;            // 0 .. nHeads*nSplits - 1
+        int localSize = context.localGroupSizeX;
+        int h = g / nSplits;
+        int s = g % nSplits;
+
+        if (h >= nHeads) {
+            return;
+        }
+
+        int pos = positionHolder.get(0);
+        int seqLen = pos + 1;
+        int chunk = (seqLen + nSplits - 1) / nSplits;
+        int startPos = s * chunk;
+        int endPos = Math.min(startPos + chunk, seqLen);   // exclusive
+
+        int loff = layer * contextLength * kvDim;
+        int kvHeadIdx = h / kvMul;
+        float invSqrt = 1.0f / TornadoMath.sqrt(headSize);
+
+        float[] q_shared = context.allocateFloatLocalArray(MAX_HEAD_SIZE);
+        float[] accShared = context.allocateFloatLocalArray(MAX_LOCAL_SIZE * MAX_HEAD_SIZE);
+        float[] mShared = context.allocateFloatLocalArray(MAX_LOCAL_SIZE);
+        float[] lShared = context.allocateFloatLocalArray(MAX_LOCAL_SIZE);
+        float[] corrShared = context.allocateFloatLocalArray(MAX_LOCAL_SIZE);
+        float[] bcast = context.allocateFloatLocalArray(1);
+
+        // Per-head region within att, COMPACT layout (stride nSplits*(headSize+2)): [nSplits*headSize
+        // partial outputs][nSplits block maxima][nSplits block sums]. A contextLength stride here would
+        // scatter writes at large offsets that TornadoVM fails to sync between the two tasks.
+        int headBase = h * nSplits * (headSize + 2);
+        int outBase = headBase + s * headSize;
+        int mBase = headBase + nSplits * headSize;
+        int lBase = mBase + nSplits;
+
+        for (int i = tid; i < headSize; i += localSize) {
+            q_shared[i] = q.get(h * headSize + i);
+        }
+        int rowBase = tid * headSize;
+        for (int d = 0; d < headSize; d++) {
+            accShared[rowBase + d] = 0.0f;
+        }
+        context.localBarrier();
+
+        // Strided scan over this split's position chunk (no barriers).
+        float m = Float.NEGATIVE_INFINITY;
+        float l = 0.0f;
+        for (int p = startPos + tid; p < endPos; p += localSize) {
+            int base = loff + p * kvDim + kvHeadIdx * headSize;
+            float score = 0.0f;
+            for (int d = 0; d < headSize; d++) {
+                score += q_shared[d] * key_cache.get(base + d);
+            }
+            score *= invSqrt;
+            float newM = Math.max(m, score);
+            float corr = (m == Float.NEGATIVE_INFINITY) ? 0.0f : TornadoMath.exp(m - newM);
+            float e = TornadoMath.exp(score - newM);
+            for (int d = 0; d < headSize; d++) {
+                accShared[rowBase + d] = accShared[rowBase + d] * corr + e * value_cache.get(base + d);
+            }
+            l = l * corr + e;
+            m = newM;
+        }
+        mShared[tid] = m;
+        lShared[tid] = l;
+        context.localBarrier();
+
+        // Block max.
+        if (tid == 0) {
+            float blockMax = Float.NEGATIVE_INFINITY;
+            for (int t = 0; t < localSize; t++) {
+                if (mShared[t] > blockMax) {
+                    blockMax = mShared[t];
+                }
+            }
+            bcast[0] = blockMax;
+        }
+        context.localBarrier();
+        float M = bcast[0];
+
+        corrShared[tid] = (mShared[tid] == Float.NEGATIVE_INFINITY) ? 0.0f : TornadoMath.exp(mShared[tid] - M);
+        context.localBarrier();
+
+        // Block sum L = Σ_t l_t · corr_t.
+        if (tid == 0) {
+            float blockSum = 0.0f;
+            for (int t = 0; t < localSize; t++) {
+                blockSum += lShared[t] * corrShared[t];
+            }
+            bcast[0] = blockSum;
+        }
+        context.localBarrier();
+        float L = bcast[0];
+
+        // Write UNNORMALIZED partial numerator (relative to block max M), plus M and L for the combine.
+        for (int d = tid; d < headSize; d += localSize) {
+            float acc = 0.0f;
+            for (int t = 0; t < localSize; t++) {
+                acc += corrShared[t] * accShared[t * headSize + d];
+            }
+            att.set(outBase + d, acc); // unnormalized partial numerator (relative to block max M)
+        }
+        if (tid == 0) {
+            att.set(mBase + s, M);
+            att.set(lBase + s, L);
+        }
+    }
+
+    /**
+     * Qwen3-family decode attention, split-KV (flash-decoding) phase 2: combine.
+     *
+     * <p>One workgroup per query head. Reads the {@code nSplits} partial states
+     * ({@code out_s, M_s, L_s}) produced by {@link #processHeadsFlashAttentionSplitKV} from {@code att}
+     * ({@code wrapAttSplit}) and merges them with the standard online-softmax rule: global max
+     * {@code Mg = max_s M_s}, scale {@code f_s = exp(M_s - Mg)}, output
+     * {@code xb[d] = Σ_s f_s·out_s[d] / Σ_s f_s·L_s}. Writes the final attention result to {@code xb}.</p>
+     */
+    public static void combineSplitKVAttention(KernelContext context, FloatArray att, FloatArray xb, int nHeads, int headSize, int nSplits) {
+
+        final int MAX_SPLITS = 64;
+
+        int tid = context.localIdx;
+        int h = context.groupIdx;
+        int localSize = context.localGroupSizeX;
+
+        if (h >= nHeads) {
+            return;
+        }
+
+        // Must match the COMPACT layout written by processHeadsFlashAttentionSplitKV.
+        int headBase = h * nSplits * (headSize + 2);
+        int mBase = headBase + nSplits * headSize;
+        int lBase = mBase + nSplits;
+
+        float[] fShared = context.allocateFloatLocalArray(MAX_SPLITS);
+        float[] bcast = context.allocateFloatLocalArray(1);
+
+        // Global max over split maxima.
+        if (tid == 0) {
+            float gMax = Float.NEGATIVE_INFINITY;
+            for (int s = 0; s < nSplits; s++) {
+                float ms = att.get(mBase + s);
+                if (ms > gMax) {
+                    gMax = ms;
+                }
+            }
+            bcast[0] = gMax;
+        }
+        context.localBarrier();
+        float gMax = bcast[0];
+
+        // Per-split scale factors f_s = exp(M_s - gMax).
+        for (int s = tid; s < nSplits; s += localSize) {
+            float ms = att.get(mBase + s);
+            fShared[s] = (ms == Float.NEGATIVE_INFINITY) ? 0.0f : TornadoMath.exp(ms - gMax);
+        }
+        context.localBarrier();
+
+        // Global denominator Σ_s f_s · L_s.
+        if (tid == 0) {
+            float denom = 0.0f;
+            for (int s = 0; s < nSplits; s++) {
+                denom += fShared[s] * att.get(lBase + s);
+            }
+            bcast[0] = denom;
+        }
+        context.localBarrier();
+        float denom = bcast[0];
+        float inv = (denom > 0.0f) ? (1.0f / denom) : 0.0f;
+
+        // Merge per-dimension numerators across splits and normalize.
+        for (int d = tid; d < headSize; d += localSize) {
+            float acc = 0.0f;
+            for (int s = 0; s < nSplits; s++) {
+                acc += fShared[s] * att.get(headBase + s * headSize + d);
+            }
+            xb.set(h * headSize + d, acc * inv);
+        }
+    }
+
+    /**
      * Same as processHeadsFlashAttention but with some optimizations that seem to lower attention's execution time, especially in larger models.
      */
     public static void processHeadsFlashAttentionOpt(KernelContext context, FloatArray q, FloatArray key_cache, FloatArray value_cache, FloatArray xb, int nHeads, int headSize, int kvDim, int kvMul,
@@ -1326,6 +1764,75 @@ public class TransformerComputeKernelsLayered {
     }
 
     /**
+     * PTX/Metal SIMD variant of fusedQKVMatmulX for LLaMA FP16 decode.
+     * It assumes the existing decode worker shape: one 32-lane workgroup per
+     * Q/K/V output row.
+     */
+    public static void fusedQKVMatmulXSimd32(
+            KernelContext context,
+            HalfFloatArray x,
+            FloatArray q,
+            FloatArray k,
+            FloatArray v,
+            HalfFloatArray wq,
+            HalfFloatArray wk,
+            HalfFloatArray wv,
+            int dim,
+            int kvDim) {
+
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        if (rowId < dim) {
+            int rowOffset = rowId * dim;
+            float partialSum = 0.0f;
+            for (int j = localId; j < dim; j += 32) {
+                partialSum += wq.get(rowOffset + j).getFloat32() * x.get(j).getFloat32();
+            }
+            partialSum += context.simdShuffleDown(partialSum, 16);
+            partialSum += context.simdShuffleDown(partialSum, 8);
+            partialSum += context.simdShuffleDown(partialSum, 4);
+            partialSum += context.simdShuffleDown(partialSum, 2);
+            partialSum += context.simdShuffleDown(partialSum, 1);
+            if (localId == 0) {
+                q.set(rowId, partialSum);
+            }
+
+        } else if (rowId < dim + kvDim) {
+            int kRow = rowId - dim;
+            int rowOffset = kRow * dim;
+            float partialSum = 0.0f;
+            for (int j = localId; j < dim; j += 32) {
+                partialSum += wk.get(rowOffset + j).getFloat32() * x.get(j).getFloat32();
+            }
+            partialSum += context.simdShuffleDown(partialSum, 16);
+            partialSum += context.simdShuffleDown(partialSum, 8);
+            partialSum += context.simdShuffleDown(partialSum, 4);
+            partialSum += context.simdShuffleDown(partialSum, 2);
+            partialSum += context.simdShuffleDown(partialSum, 1);
+            if (localId == 0) {
+                k.set(kRow, partialSum);
+            }
+
+        } else if (rowId < dim + 2 * kvDim) {
+            int vRow = rowId - dim - kvDim;
+            int rowOffset = vRow * dim;
+            float partialSum = 0.0f;
+            for (int j = localId; j < dim; j += 32) {
+                partialSum += wv.get(rowOffset + j).getFloat32() * x.get(j).getFloat32();
+            }
+            partialSum += context.simdShuffleDown(partialSum, 16);
+            partialSum += context.simdShuffleDown(partialSum, 8);
+            partialSum += context.simdShuffleDown(partialSum, 4);
+            partialSum += context.simdShuffleDown(partialSum, 2);
+            partialSum += context.simdShuffleDown(partialSum, 1);
+            if (localId == 0) {
+                v.set(vRow, partialSum);
+            }
+        }
+    }
+
+    /**
      * Fused QKV matmul for FP16 models where Q output dim != input dim.
      */
     public static void fusedQKVMatmulXNonSquare(
@@ -1449,6 +1956,35 @@ public class TransformerComputeKernelsLayered {
         if (localId == 0) {
             float result = hb.get(rowId) + sum;
             hb.set(rowId, result);
+        }
+    }
+
+    /**
+     * PTX/Metal SIMD variant of matrixVectorGenericWithResidual for LLaMA FP16 decode.
+     * It assumes the existing decode worker shape: one 32-lane workgroup per output row.
+     */
+    public static void matrixVectorGenericWithResidualSimd32(KernelContext context, FloatArray x, FloatArray hb, HalfFloatArray w, int n, int d) {
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        if (rowId >= d) {
+            return;
+        }
+
+        int rowOffset = rowId * n;
+        float partialSum = 0.0f;
+        for (int j = localId; j < n; j += 32) {
+            partialSum += w.get(rowOffset + j).getFloat32() * x.get(j);
+        }
+
+        partialSum += context.simdShuffleDown(partialSum, 16);
+        partialSum += context.simdShuffleDown(partialSum, 8);
+        partialSum += context.simdShuffleDown(partialSum, 4);
+        partialSum += context.simdShuffleDown(partialSum, 2);
+        partialSum += context.simdShuffleDown(partialSum, 1);
+
+        if (localId == 0) {
+            hb.set(rowId, hb.get(rowId) + partialSum);
         }
     }
 
@@ -2328,6 +2864,45 @@ public class TransformerComputeKernelsLayered {
         if (localId == 0) {
             float result = hb.get(rowId) + sum;
             hb.set(rowId, result);
+        }
+    }
+
+    /**
+     * Warp-shuffle variant of {@link #matrixVectorGenericWithResidualQ8_0Byte}: one 32-lane warp per
+     * output row, reduced via {@code simdShuffleDown} instead of a shared-memory tree. Q8_0 byte layout
+     * (34-byte blocks: 2-byte half scale + 32 int8 quants).
+     */
+    public static void matrixVectorGenericWithResidualQ8_0ByteSimd32(KernelContext context, FloatArray x, FloatArray hb, ByteArray w, int n, int d) {
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+
+        if (rowId >= d) {
+            return;
+        }
+
+        final int blockSize = 32;
+        final int Q8_0_BLOCK_BYTES = 34; // 2-byte scale + 32 int8 quants
+        int blocksPerRow = (n + blockSize - 1) / blockSize;
+        int rowBlockOffset = rowId * blocksPerRow;
+
+        float partialSum = 0.0f;
+        for (int j = localId; j < n; j += 32) {
+            int blockIdx = j / blockSize;
+            int withinBlockIdx = j - blockIdx * blockSize;
+            int blockByteOffset = (rowBlockOffset + blockIdx) * Q8_0_BLOCK_BYTES;
+            float scaleFloat = w.getHalfFloat(blockByteOffset).getFloat32();
+            byte quant = w.get(blockByteOffset + 2 + withinBlockIdx);
+            partialSum += ((float) quant * scaleFloat) * x.get(j);
+        }
+
+        partialSum += context.simdShuffleDown(partialSum, 16);
+        partialSum += context.simdShuffleDown(partialSum, 8);
+        partialSum += context.simdShuffleDown(partialSum, 4);
+        partialSum += context.simdShuffleDown(partialSum, 2);
+        partialSum += context.simdShuffleDown(partialSum, 1);
+
+        if (localId == 0) {
+            hb.set(rowId, hb.get(rowId) + partialSum);
         }
     }
 

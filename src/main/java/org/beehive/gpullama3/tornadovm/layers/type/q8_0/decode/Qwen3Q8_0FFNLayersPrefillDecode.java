@@ -40,6 +40,7 @@ public class Qwen3Q8_0FFNLayersPrefillDecode extends Qwen3Q8_0FFNLayers {
                 qwen3State.wrapAtt, qwen3State.wrapHb,
                 qwen3State.positionHolder);
         layer.consumeFromDevice(qwen3State.tempQcur, qwen3State.tempKcur);
+        layer.consumeFromDevice(pred, qwen3State.wrapAttSplit);
         return layer;
     }
 }
