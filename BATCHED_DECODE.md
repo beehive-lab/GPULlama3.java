@@ -207,6 +207,31 @@ so identical token counts and all outputs mutually prefix-consistent):
 draining each wave to its longest request. The gap widens with more length variance.
 Correctness under scheduling = all completed outputs are mutually prefix-consistent.
 
+## PagedAttention (`-Dbatch.decode.paged=true`, LLaMA)
+
+The contiguous KV cache reserves the full `ctx` per slot — `B·ctx` token-slots even
+when most sequences are short. Paging stores KV in a **shared pool of fixed-size blocks**
+(`blockSize` positions each) addressed through a per-slot **block table**; the two decode
+KV kernels index `blockTable[b][pos/blockSize]` instead of `pos·kvDim`. Blocks are
+allocated on demand as a sequence grows and returned to the pool on eviction, so the pool
+is sized to **actual concurrent demand**, not the worst case.
+
+Same 512-request continuous workload (Llama-1B, B=128, ctx=512, blockSize=16):
+
+| KV cache | pool | peak used | throughput | correct |
+|----------|-----:|----------:|-----------:|:-------:|
+| contiguous | 4096 MB (=B·ctx reservation) | — | 1972 tok/s | ✓ |
+| paged, 768-block pool | 768 MB | 372 blk (48%) | 1971 tok/s | ✓ |
+| paged, 384-block pool | 384 MB | 372 blk (97%) | 1939 tok/s | ✓ |
+
+**~10.7× less KV memory** (384 MB vs 4096 MB) at ~1% throughput overhead, output still
+bit-exact. The pool floor is the peak concurrent block demand (~372 here); undersizing it
+throws a clear `KV block pool exhausted` (the point where admission control / backpressure
+takes over — the vLLM behavior). One reserved *scratch* block absorbs the KV writes of
+inactive slots (they still execute the kernels each step) so they never corrupt a live
+block. Paging is the prerequisite for prefix caching (share a prompt's blocks across
+requests via the block table + refcounting).
+
 ## Reproduce
 
 ### 1. TornadoVM (CUDA backend + tensor-core MMA)

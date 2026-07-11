@@ -50,6 +50,11 @@ public class LlamaFP16LayersBatchDecodeMMA {
     private final FloatArray keyCacheBatch;
     private final FloatArray valueCacheBatch;
     private final IntArray seqPositions;
+    // Paging (optional): when blockTable != null, KV is addressed through a block table.
+    private final boolean paged;
+    private final IntArray blockTable;
+    private final int blockSize;
+    private final int maxBlocksPerSlot;
     private final List<ImmutableTaskGraph> layerITGs;
     private String lastLayerTaskGraphID;
 
@@ -57,6 +62,16 @@ public class LlamaFP16LayersBatchDecodeMMA {
                                          LlamaConfiguration config, int batchSize, int decodeCtx,
                                          FloatArray keyCacheBatch, FloatArray valueCacheBatch,
                                          IntArray seqPositions) {
+        this(state, weights, config, batchSize, decodeCtx, keyCacheBatch, valueCacheBatch, seqPositions,
+                null, 0, 0);
+    }
+
+    /** Paged constructor: keyCacheBatch/valueCacheBatch are the shared block pools. */
+    public LlamaFP16LayersBatchDecodeMMA(LlamaState state, LlamaTornadoWeights weights,
+                                         LlamaConfiguration config, int batchSize, int decodeCtx,
+                                         FloatArray keyCacheBatch, FloatArray valueCacheBatch,
+                                         IntArray seqPositions,
+                                         IntArray blockTable, int blockSize, int maxBlocksPerSlot) {
         this.state = state;
         this.weights = weights;
         this.config = config;
@@ -66,6 +81,10 @@ public class LlamaFP16LayersBatchDecodeMMA {
         this.keyCacheBatch = keyCacheBatch;
         this.valueCacheBatch = valueCacheBatch;
         this.seqPositions = seqPositions;
+        this.paged = blockTable != null;
+        this.blockTable = blockTable;
+        this.blockSize = blockSize;
+        this.maxBlocksPerSlot = maxBlocksPerSlot;
         this.layerITGs = IntStream.range(0, config.numberOfLayers())
                 .mapToObj(this::createLayerTaskGraph)
                 .map(TaskGraph::snapshot)
@@ -82,6 +101,9 @@ public class LlamaFP16LayersBatchDecodeMMA {
         if (layerIndex == 0) {
             // Per-slot positions change every decode step.
             g.transferToDevice(DataTransferMode.EVERY_EXECUTION, seqPositions);
+            if (paged) {
+                g.transferToDevice(DataTransferMode.EVERY_EXECUTION, blockTable);
+            }
             g.transferToDevice(DataTransferMode.FIRST_EXECUTION,
                     context,
                     state.attnScaleBatch, state.ffnScaleBatch,
@@ -93,6 +115,9 @@ public class LlamaFP16LayersBatchDecodeMMA {
             g.consumeFromDevice("prefillActivation", state.wrapXBatch);
         } else {
             String pred = "batchDecodeLayer_" + (layerIndex - 1);
+            if (paged) {
+                g.consumeFromDevice(pred, context, blockTable);
+            }
             g.consumeFromDevice(pred,
                     context,
                     state.wrapXBatch,
@@ -139,21 +164,40 @@ public class LlamaFP16LayersBatchDecodeMMA {
                 weights.wvLayered[layerIndex].asHalfFloatArray(),
                 state.qkvResultBatch, paddedBatch, dim, kvDim, dim);
 
-        // DECODE: per-slot position + per-slot KV region.
-        g.task("batch_rope_kv",
-                TransformerBatchPrefillKernels::batchedDecodeRopeWithKVCachePacked,
-                context, seqPositions,
-                state.qkvResultBatch,
-                keyCacheBatch, valueCacheBatch,
-                kvDim, config.headSize(), layerIndex, config.numberOfLayers(), decodeCtx, dim);
+        // DECODE: per-slot position + per-slot KV region (paged via block table, or contiguous).
+        if (paged) {
+            int blockCfg = blockSize | (maxBlocksPerSlot << 16);
+            g.task("batch_rope_kv",
+                    TransformerBatchPrefillKernels::batchedDecodePagedRopeWithKVCachePacked,
+                    context, seqPositions, blockTable,
+                    state.qkvResultBatch, keyCacheBatch, valueCacheBatch,
+                    kvDim, config.headSize(), layerIndex, config.numberOfLayers(),
+                    blockCfg, dim);
 
-        g.task("batch_attention",
-                TransformerBatchPrefillKernels::batchedDecodeAttentionFP16Out,
-                context, seqPositions,
-                state.qkvResultBatch, keyCacheBatch, valueCacheBatch,
-                state.attnOutFP16,
-                config.numberOfHeads(), config.headSize(),
-                kvDim, config.kvMul(), layerIndex, config.numberOfLayers(), decodeCtx, dim);
+            g.task("batch_attention",
+                    TransformerBatchPrefillKernels::batchedDecodePagedAttentionFP16Out,
+                    context, seqPositions, blockTable,
+                    state.qkvResultBatch, keyCacheBatch, valueCacheBatch,
+                    state.attnOutFP16,
+                    config.numberOfHeads(), config.headSize(),
+                    kvDim, config.kvMul(), layerIndex, config.numberOfLayers(),
+                    blockCfg);
+        } else {
+            g.task("batch_rope_kv",
+                    TransformerBatchPrefillKernels::batchedDecodeRopeWithKVCachePacked,
+                    context, seqPositions,
+                    state.qkvResultBatch,
+                    keyCacheBatch, valueCacheBatch,
+                    kvDim, config.headSize(), layerIndex, config.numberOfLayers(), decodeCtx, dim);
+
+            g.task("batch_attention",
+                    TransformerBatchPrefillKernels::batchedDecodeAttentionFP16Out,
+                    context, seqPositions,
+                    state.qkvResultBatch, keyCacheBatch, valueCacheBatch,
+                    state.attnOutFP16,
+                    config.numberOfHeads(), config.headSize(),
+                    kvDim, config.kvMul(), layerIndex, config.numberOfLayers(), decodeCtx, dim);
+        }
 
         g.task("woProj", TransformerBatchPrefillKernels::gemmMMA,
                 context, state.attnOutFP16,

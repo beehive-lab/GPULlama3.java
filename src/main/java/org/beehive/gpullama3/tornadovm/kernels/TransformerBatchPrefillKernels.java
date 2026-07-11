@@ -1805,6 +1805,184 @@ public final class TransformerBatchPrefillKernels {
         }
     }
 
+    // ── Paged KV variants (block-table indirection) ─────────────────────────
+    //
+    // KV lives in a global pool of fixed-size blocks. A block holds `blockSize`
+    // consecutive positions of ONE sequence across ALL layers:
+    //   pool[ physBlock*(numLayers*blockSize*kvDim) + layer*(blockSize*kvDim)
+    //         + (pos % blockSize)*kvDim + c ]
+    // The per-slot block table maps a logical block to a physical one:
+    //   physBlock = blockTable[batchIdx*maxBlocksPerSlot + pos/blockSize]
+    // This removes the fixed per-slot context reservation of the contiguous cache:
+    // slots draw blocks from a shared pool only for the tokens they actually hold,
+    // so the pool can be far smaller than B*ctx (and blocks can be shared for
+    // prefix caching).
+
+    /**
+     * Paged per-slot RoPE + KV write (Llama adjacent-pair). {@code blockCfg} packs
+     * {@code blockSize | (maxBlocksPerSlot << 16)} to stay within the task arg limit.
+     */
+    public static void batchedDecodePagedRopeWithKVCachePacked(KernelContext context,
+                                                              IntArray seqPositions,
+                                                              IntArray blockTable,
+                                                              FloatArray qkvBatch,
+                                                              FloatArray keyPool,
+                                                              FloatArray valuePool,
+                                                              int kvDim, int headSize,
+                                                              int layerIndex, int numLayers,
+                                                              int blockCfg, int dim) {
+        int blockSize = blockCfg & 0xFFFF;
+        int maxBlocksPerSlot = blockCfg >>> 16;
+        int globalIdx = context.globalIdx;
+        int halfDim = dim / 2;
+        int batchIdx = globalIdx / halfDim;
+        int pairIdx = globalIdx % halfDim;
+        int i = pairIdx * 2;
+        int qkvStride = dim + 2 * kvDim;
+
+        int pos = seqPositions.get(batchIdx);
+        int qOffset = batchIdx * qkvStride;
+        int kOffset = batchIdx * qkvStride + dim;
+        int vOffset = batchIdx * qkvStride + dim + kvDim;
+
+        if (i + 1 < dim) {
+            int head_dim = i % headSize;
+            float freq = 1.0f / TornadoMath.pow(50000.0f, head_dim / (float) headSize);
+            float val = pos * freq;
+            float fcr = TornadoMath.cos(val);
+            float fci = TornadoMath.sin(val);
+
+            float v0q = qkvBatch.get(qOffset + i);
+            float v1q = qkvBatch.get(qOffset + i + 1);
+            qkvBatch.set(qOffset + i, v0q * fcr - v1q * fci);
+            qkvBatch.set(qOffset + i + 1, v0q * fci + v1q * fcr);
+
+            if (i + 1 < kvDim) {
+                float v0k = qkvBatch.get(kOffset + i);
+                float v1k = qkvBatch.get(kOffset + i + 1);
+                float rotK0 = v0k * fcr - v1k * fci;
+                float rotK1 = v0k * fci + v1k * fcr;
+
+                int physBlock = blockTable.get(batchIdx * maxBlocksPerSlot + pos / blockSize);
+                int slotInBlock = pos % blockSize;
+                int cacheOff = physBlock * (numLayers * blockSize * kvDim)
+                        + layerIndex * (blockSize * kvDim) + slotInBlock * kvDim;
+                keyPool.set(cacheOff + i, rotK0);
+                keyPool.set(cacheOff + i + 1, rotK1);
+                valuePool.set(cacheOff + i, qkvBatch.get(vOffset + i));
+                valuePool.set(cacheOff + i + 1, qkvBatch.get(vOffset + i + 1));
+            }
+        }
+    }
+
+    /**
+     * Paged per-slot flash attention, FP16 output (Llama; {@code dim = nHeads*headSize}).
+     * {@code blockCfg} packs {@code blockSize | (maxBlocksPerSlot << 16)}.
+     */
+    public static void batchedDecodePagedAttentionFP16Out(KernelContext context,
+                                                          IntArray seqPositions,
+                                                          IntArray blockTable,
+                                                          FloatArray qkvBatch,
+                                                          FloatArray keyPool,
+                                                          FloatArray valuePool,
+                                                          HalfFloatArray attnOutFP16,
+                                                          int nHeads, int headSize,
+                                                          int kvDim, int kvMul,
+                                                          int layerIndex, int numLayers,
+                                                          int blockCfg) {
+        int blockSize = blockCfg & 0xFFFF;
+        int maxBlocksPerSlot = blockCfg >>> 16;
+        int dim = nHeads * headSize;
+        int tid = context.localIdx;
+        int groupId = context.groupIdx;
+        int localSz = context.localGroupSizeX;
+
+        int batchIdx = groupId / nHeads;
+        int h = groupId % nHeads;
+        int pos = seqPositions.get(batchIdx);
+        int layerOff = layerIndex * (blockSize * kvDim);
+        int kvHeadIdx = h / kvMul;
+        int BLOCK_C = 16;
+        int qkvStride = dim + 2 * kvDim;
+        int blockStride = numLayers * blockSize * kvDim;
+
+        float[] qShared = context.allocateFloatLocalArray(headSize);
+        float[] kTile = context.allocateFloatLocalArray(BLOCK_C * headSize);
+        float[] vTile = context.allocateFloatLocalArray(BLOCK_C * headSize);
+        float[] sTile = context.allocateFloatLocalArray(BLOCK_C);
+
+        int qOffset = batchIdx * qkvStride + h * headSize;
+        for (int i = tid; i < headSize; i += localSz) {
+            qShared[i] = qkvBatch.get(qOffset + i);
+        }
+        context.localBarrier();
+
+        float maxScore = Float.NEGATIVE_INFINITY;
+        float sumExp = 0.0f;
+        float acc0 = 0.0f;
+        float acc1 = 0.0f;
+        int d1 = tid + localSz;
+
+        for (int tileC = 0; tileC <= pos; tileC += BLOCK_C) {
+            int tileEnd = Math.min(tileC + BLOCK_C - 1, pos);
+            int tileLen = tileEnd - tileC + 1;
+
+            for (int idx = tid; idx < tileLen * headSize; idx += localSz) {
+                int tInTile = idx / headSize;
+                int d = idx % headSize;
+                int t = tileC + tInTile;
+                int physBlock = blockTable.get(batchIdx * maxBlocksPerSlot + t / blockSize);
+                int kvOff = physBlock * blockStride + layerOff + (t % blockSize) * kvDim + kvHeadIdx * headSize + d;
+                kTile[tInTile * headSize + d] = keyPool.get(kvOff);
+                vTile[tInTile * headSize + d] = valuePool.get(kvOff);
+            }
+            context.localBarrier();
+
+            for (int t = tileC + tid; t <= tileEnd; t += localSz) {
+                int tInTile = t - tileC;
+                float score = 0.0f;
+                for (int d = 0; d < headSize; d++) {
+                    score += qShared[d] * kTile[tInTile * headSize + d];
+                }
+                sTile[tInTile] = score / TornadoMath.sqrt(headSize);
+            }
+            context.localBarrier();
+
+            float tileMax = Float.NEGATIVE_INFINITY;
+            for (int t = 0; t < tileLen; t++) {
+                if (sTile[t] > tileMax) {
+                    tileMax = sTile[t];
+                }
+            }
+
+            float newMax = Math.max(maxScore, tileMax);
+            if (maxScore != Float.NEGATIVE_INFINITY && newMax != maxScore) {
+                float corr = TornadoMath.exp(maxScore - newMax);
+                sumExp *= corr;
+                acc0 *= corr;
+                acc1 *= corr;
+            }
+            maxScore = newMax;
+
+            for (int t = 0; t < tileLen; t++) {
+                float p = TornadoMath.exp(sTile[t] - maxScore);
+                sumExp += p;
+                acc0 += p * vTile[t * headSize + tid];
+                if (d1 < headSize) {
+                    acc1 += p * vTile[t * headSize + d1];
+                }
+            }
+            context.localBarrier();
+        }
+
+        float norm = (sumExp > 0.0f) ? (1.0f / sumExp) : 0.0f;
+        int outOffset = batchIdx * dim + h * headSize;
+        attnOutFP16.set(outOffset + tid, new HalfFloat(acc0 * norm));
+        if (d1 < headSize) {
+            attnOutFP16.set(outOffset + d1, new HalfFloat(acc1 * norm));
+        }
+    }
+
     // ── SwiGLU over the packed gate/up buffer, emitting FP16 ─────────────────
 
     /**

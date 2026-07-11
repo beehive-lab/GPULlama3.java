@@ -103,7 +103,29 @@ public class BatchedDecodeEngine {
                 B, decodeCtx, P, nDecode, dim, vocab, numLayers, cudaGraphs);
 
         // ── Engine-owned buffers ────────────────────────────────────────────────
-        long kvElems = (long) B * numLayers * decodeCtx * kvDim;
+        // Paged: KV is a shared pool of fixed-size blocks addressed via a per-slot
+        // block table, so the pool can be smaller than the B×ctx contiguous cache.
+        boolean paged = Boolean.parseBoolean(System.getProperty("batch.decode.paged", "false"));
+        int blockSize = Integer.getInteger("batch.decode.blockSize", 16);
+        int maxBlocksPerSlot = (decodeCtx + blockSize - 1) / blockSize;
+        int numBlocks = Integer.getInteger("batch.decode.blocks", B * maxBlocksPerSlot);
+        IntArray blockTable = null;
+        long kvElems;
+        if (paged) {
+            if (isQwen3) {
+                throw new IllegalStateException("paged KV currently wired for LLaMA only");
+            }
+            // +1 scratch block: inactive slots still execute the KV kernels every step,
+            // so they must dump into a reserved block, never a live one.
+            kvElems = (long) (numBlocks + 1) * numLayers * blockSize * kvDim;
+            blockTable = new IntArray(B * maxBlocksPerSlot);
+            blockTable.init(numBlocks);   // point everything at the scratch block initially
+            System.out.printf("[paged] blockSize=%d blocks=%d (=%d MB pool) vs contiguous %d MB; maxBlocks/slot=%d%n",
+                    blockSize, numBlocks, (kvElems * 2 * 4) >> 20,
+                    ((long) B * numLayers * decodeCtx * kvDim * 2 * 4) >> 20, maxBlocksPerSlot);
+        } else {
+            kvElems = (long) B * numLayers * decodeCtx * kvDim;
+        }
         FloatArray keyCacheBatch = new FloatArray((int) kvElems);
         FloatArray valueCacheBatch = new FloatArray((int) kvElems);
         keyCacheBatch.init(0.0f);
@@ -129,10 +151,12 @@ public class BatchedDecodeEngine {
             lastLayerId = q.getLastLayerTaskGraphID();
             updateLayerSched = q::updateGridScheduler;
         } else {
-            LlamaFP16LayersBatchDecodeMMA l = new LlamaFP16LayersBatchDecodeMMA(
-                    (LlamaState) state,
-                    (LlamaTornadoWeights) weights,
-                    (LlamaConfiguration) config, B, decodeCtx, keyCacheBatch, valueCacheBatch, seqPositions);
+            LlamaFP16LayersBatchDecodeMMA l = paged
+                    ? new LlamaFP16LayersBatchDecodeMMA((LlamaState) state, (LlamaTornadoWeights) weights,
+                        (LlamaConfiguration) config, B, decodeCtx, keyCacheBatch, valueCacheBatch, seqPositions,
+                        blockTable, blockSize, maxBlocksPerSlot)
+                    : new LlamaFP16LayersBatchDecodeMMA((LlamaState) state, (LlamaTornadoWeights) weights,
+                        (LlamaConfiguration) config, B, decodeCtx, keyCacheBatch, valueCacheBatch, seqPositions);
             layerITGs = l.getLayerImmutableTaskGraphs();
             lastLayerId = l.getLastLayerTaskGraphID();
             updateLayerSched = l::updateGridScheduler;
@@ -177,7 +201,7 @@ public class BatchedDecodeEngine {
             if (Boolean.parseBoolean(System.getProperty("batch.decode.continuous", "false"))) {
                 runContinuous(plan, gs, nLayers, logitsIdx, cudaGraphs, model, B, dim, vocab, nDecode,
                         prompt, stopTokens, embTable, dimBytes, state.embeddingXBatch.getSegment(),
-                        seqPositions, logitsBatch);
+                        seqPositions, logitsBatch, paged, blockTable, blockSize, maxBlocksPerSlot, numBlocks);
                 return;
             }
 
@@ -299,13 +323,27 @@ public class BatchedDecodeEngine {
                                       boolean cudaGraphs, Model model, int B, int dim, int vocab, int nDecode,
                                       List<Integer> prompt, java.util.Set<Integer> stopTokens,
                                       MemorySegment embTable, long dimBytes, MemorySegment embBatchSeg,
-                                      IntArray seqPositions, FloatArray logitsBatch) {
+                                      IntArray seqPositions, FloatArray logitsBatch,
+                                      boolean paged, IntArray blockTable, int blockSize, int maxBlocksPerSlot, int numBlocks) {
         int R = Integer.getInteger("batch.decode.requests", 4 * B);
         int minN = Integer.getInteger("batch.decode.minN", Math.max(1, nDecode / 2));
         // refill=true → continuous (admit into a freed slot immediately);
         // refill=false → static-wave baseline (idle until the whole wave finishes, then reload).
         boolean refill = Boolean.parseBoolean(System.getProperty("batch.decode.refill", "true"));
         int promptLen = prompt.size();
+
+        // Paged KV block allocator: free list of physical blocks + per-slot held blocks.
+        java.util.ArrayDeque<Integer> freeBlocks = new java.util.ArrayDeque<>();
+        List<List<Integer>> slotBlocks = new ArrayList<>();
+        int peakBlocks = 0;
+        if (paged) {
+            for (int i = 0; i < numBlocks; i++) {
+                freeBlocks.add(i);
+            }
+            for (int b = 0; b < B; b++) {
+                slotBlocks.add(new ArrayList<>());
+            }
+        }
         java.util.Random wl = new java.util.Random(7);
         java.util.ArrayDeque<Integer> queue = new java.util.ArrayDeque<>();
         for (int i = 0; i < R; i++) {
@@ -354,6 +392,24 @@ public class BatchedDecodeEngine {
                 int tok = active[b] ? (decoding[b] ? curTok[b] : prompt.get(promptPos[b])) : prompt.get(0);
                 MemorySegment.copy(embTable, (long) tok * dimBytes, embBatchSeg, (long) b * dimBytes, dimBytes);
                 seqPositions.set(b, active[b] ? pos[b] : 0);
+                if (paged) {
+                    if (active[b]) {                               // ensure a physical block for this position
+                        int lb = pos[b] / blockSize;
+                        List<Integer> sb = slotBlocks.get(b);
+                        while (sb.size() <= lb) {
+                            if (freeBlocks.isEmpty()) {
+                                throw new IllegalStateException("KV block pool exhausted (" + numBlocks
+                                        + "); raise -Dbatch.decode.blocks");
+                            }
+                            int phys = freeBlocks.poll();
+                            blockTable.set(b * maxBlocksPerSlot + sb.size(), phys);
+                            sb.add(phys);
+                            peakBlocks = Math.max(peakBlocks, numBlocks - freeBlocks.size());
+                        }
+                    } else {                                       // inactive slot dumps into the scratch block
+                        blockTable.set(b * maxBlocksPerSlot, numBlocks);
+                    }
+                }
             }
             long t0 = System.nanoTime();
             runStep(plan, gs, nLayers, logitsIdx, true, cudaGraphs);
@@ -390,6 +446,10 @@ public class BatchedDecodeEngine {
                     if (stop) {
                         completed.add(gen.get(b).stream().mapToInt(Integer::intValue).toArray());
                         gen.get(b).clear();
+                        if (paged) {                               // return this request's blocks to the pool
+                            freeBlocks.addAll(slotBlocks.get(b));
+                            slotBlocks.get(b).clear();
+                        }
                         if (refill && !queue.isEmpty()) {          // continuous: admit next request now
                             maxGen[b] = queue.poll();
                             promptPos[b] = 0;
@@ -444,6 +504,10 @@ public class BatchedDecodeEngine {
         System.out.printf("[perf] generated %.0f tok/s | %.1f requests/s | slot utilization %.1f%% | per-step %.2f ms%n",
                 timedGen / sec, completed.size() / (wallNs / 1e9), util * 100.0,
                 timedSteps > 0 ? timedNs / 1e6 / timedSteps : 0.0);
+        if (paged) {
+            System.out.printf("[paged] peak blocks in use %d / %d pool (%.0f%%); full contiguous reservation would need %d%n",
+                    peakBlocks, numBlocks, 100.0 * peakBlocks / numBlocks, B * maxBlocksPerSlot);
+        }
     }
 
     private static void runStep(TornadoExecutionPlan plan, GridScheduler gs,
