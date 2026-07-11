@@ -132,6 +132,11 @@ public class BatchedDecodeEngine {
         HalfFloatArray normedFinalFP16 = new HalfFloatArray(paddedB * dim);
         normedFinalFP16.init(new uk.ac.manchester.tornado.api.types.HalfFloat(0.0f));
         FloatArray logitsBatch = new FloatArray(paddedB * vocab);
+        // On-device greedy: argmax on the GPU, transfer only B token ids (not the
+        // 65–78 MB logits tensor). Falls back to host path for temperature sampling.
+        boolean deviceSample = Boolean.parseBoolean(System.getProperty("batch.decode.deviceSample", "true"))
+                && Float.parseFloat(System.getProperty("batch.decode.temp", "0.0")) == 0.0f;
+        IntArray sampledTokens = new IntArray(paddedB);
 
         // ── Graphs: [0] activation, [1..N] decode layers, [N+1] batched logits ──
         BatchPrefillActivation activation = new BatchPrefillActivation(state, config, B, false);
@@ -174,8 +179,15 @@ public class BatchedDecodeEngine {
                 .task("rms_apply", TransformerBatchPrefillKernels::batchedFFNRmsApplyFP16,
                         logitsCtx, normedFinalFP16, state.wrapXBatch, rmsFinal, finalScaleBatch, dim)
                 .task("vocab", TransformerBatchPrefillKernels::gemmMMA,
-                        logitsCtx, normedFinalFP16, wclsHalf, logitsBatch, paddedB, vocab, dim)
-                .transferToHost(DataTransferMode.EVERY_EXECUTION, logitsBatch);
+                        logitsCtx, normedFinalFP16, wclsHalf, logitsBatch, paddedB, vocab, dim);
+        if (deviceSample) {                                    // argmax on GPU → transfer only B ids
+            logitsTg.transferToDevice(DataTransferMode.FIRST_EXECUTION, sampledTokens)
+                    .task("argmax", TransformerBatchPrefillKernels::batchedArgmaxLogits,
+                            logitsCtx, logitsBatch, sampledTokens, vocab)
+                    .transferToHost(DataTransferMode.EVERY_EXECUTION, sampledTokens);
+        } else {
+            logitsTg.transferToHost(DataTransferMode.EVERY_EXECUTION, logitsBatch);
+        }
         ImmutableTaskGraph logitsItg = logitsTg.snapshot();
 
         // ── Grid scheduler ──────────────────────────────────────────────────────
@@ -185,6 +197,9 @@ public class BatchedDecodeEngine {
         gs.addWorkerGrid("batchLogits.rms_reduce", genericWorker(B * RMS_LOCAL, RMS_LOCAL));
         gs.addWorkerGrid("batchLogits.rms_apply", genericWorker(B * dim, 256));
         gs.addWorkerGrid("batchLogits.vocab", mmaGrid(paddedB, vocab));
+        if (deviceSample) {
+            gs.addWorkerGrid("batchLogits.argmax", genericWorker(B * 256, 256));
+        }
 
         List<ImmutableTaskGraph> all = new ArrayList<>();
         all.add(activation.getImmutableTaskGraph());
@@ -201,7 +216,8 @@ public class BatchedDecodeEngine {
             if (Boolean.parseBoolean(System.getProperty("batch.decode.continuous", "false"))) {
                 runContinuous(plan, gs, nLayers, logitsIdx, cudaGraphs, model, B, dim, vocab, nDecode,
                         prompt, stopTokens, embTable, dimBytes, state.embeddingXBatch.getSegment(),
-                        seqPositions, logitsBatch, paged, blockTable, blockSize, maxBlocksPerSlot, numBlocks);
+                        seqPositions, logitsBatch, paged, blockTable, blockSize, maxBlocksPerSlot, numBlocks,
+                        deviceSample, sampledTokens);
                 return;
             }
 
@@ -236,7 +252,7 @@ public class BatchedDecodeEngine {
             int[] cur = new int[B];
             for (int b = 0; b < B; b++) {
                 int first = sample ? sampleRow(logitsBatch, b, vocab, temperature, rng[b])
-                                   : argmaxRow(logitsBatch, b, vocab);
+                                   : (deviceSample ? sampledTokens.get(b) : argmaxRow(logitsBatch, b, vocab));
                 cur[b] = first;
                 streams[b][0] = first;
             }
@@ -262,7 +278,7 @@ public class BatchedDecodeEngine {
                 }
                 for (int b = 0; b < B; b++) {
                     int nt = sample ? sampleRow(logitsBatch, b, vocab, temperature, rng[b])
-                                    : argmaxRow(logitsBatch, b, vocab);
+                                    : (deviceSample ? sampledTokens.get(b) : argmaxRow(logitsBatch, b, vocab));
                     cur[b] = nt;
                     streams[b][s] = nt;
                 }
@@ -324,7 +340,8 @@ public class BatchedDecodeEngine {
                                       List<Integer> prompt, java.util.Set<Integer> stopTokens,
                                       MemorySegment embTable, long dimBytes, MemorySegment embBatchSeg,
                                       IntArray seqPositions, FloatArray logitsBatch,
-                                      boolean paged, IntArray blockTable, int blockSize, int maxBlocksPerSlot, int numBlocks) {
+                                      boolean paged, IntArray blockTable, int blockSize, int maxBlocksPerSlot, int numBlocks,
+                                      boolean deviceSample, IntArray sampledTokens) {
         int R = Integer.getInteger("batch.decode.requests", 4 * B);
         int minN = Integer.getInteger("batch.decode.minN", Math.max(1, nDecode / 2));
         boolean refill = Boolean.parseBoolean(System.getProperty("batch.decode.refill", "true"));
@@ -487,14 +504,14 @@ public class BatchedDecodeEngine {
                 if (!decoding[b]) {
                     prefillTokens++;
                     if (promptPos[b] == promptLen - 1) {
-                        nt = argmaxRow(logitsBatch, b, vocab);
+                        nt = deviceSample ? sampledTokens.get(b) : argmaxRow(logitsBatch, b, vocab);
                         decoding[b] = true;
                         produced = true;
                     } else {
                         promptPos[b]++;
                     }
                 } else {
-                    nt = argmaxRow(logitsBatch, b, vocab);
+                    nt = deviceSample ? sampledTokens.get(b) : argmaxRow(logitsBatch, b, vocab);
                     produced = true;
                 }
                 if (produced) {

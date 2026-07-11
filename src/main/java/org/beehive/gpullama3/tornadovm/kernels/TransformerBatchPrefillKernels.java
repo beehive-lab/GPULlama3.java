@@ -1983,6 +1983,52 @@ public final class TransformerBatchPrefillKernels {
         }
     }
 
+    // ── On-device greedy sampling (argmax) ──────────────────────────────────
+
+    /**
+     * Per-row argmax over the batched logits: one workgroup per row reduces over the
+     * whole vocab and writes the winning token id to {@code outTokens[b]}. Keeps the
+     * full logits tensor on the GPU — only B integers cross to the host, instead of
+     * the paddedB×vocab (~65–78 MB) D2H copy + a CPU scan every step.
+     *
+     * Worker: B workgroups × localSize threads (localSize a power of two, e.g. 256).
+     */
+    public static void batchedArgmaxLogits(KernelContext context,
+                                           FloatArray logits, IntArray outTokens, int vocab) {
+        int b = context.groupIdx;
+        int tid = context.localIdx;
+        int localSz = context.localGroupSizeX;
+        float[] vals = context.allocateFloatLocalArray(256);
+        int[] idxs = context.allocateIntLocalArray(256);
+
+        int base = b * vocab;
+        float best = Float.NEGATIVE_INFINITY;
+        int bestIdx = 0;
+        for (int i = tid; i < vocab; i += localSz) {
+            float v = logits.get(base + i);
+            if (v > best) {
+                best = v;
+                bestIdx = i;
+            }
+        }
+        vals[tid] = best;
+        idxs[tid] = bestIdx;
+        context.localBarrier();
+
+        for (int s = localSz / 2; s > 0; s >>= 1) {
+            if (tid < s) {
+                if (vals[tid + s] > vals[tid]) {
+                    vals[tid] = vals[tid + s];
+                    idxs[tid] = idxs[tid + s];
+                }
+            }
+            context.localBarrier();
+        }
+        if (tid == 0) {
+            outTokens.set(b, idxs[0]);
+        }
+    }
+
     // ── SwiGLU over the packed gate/up buffer, emitting FP16 ─────────────────
 
     /**
