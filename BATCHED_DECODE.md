@@ -314,6 +314,26 @@ regimes: `bench/BatchedProjectionBench` (compute-bound projection crossover, ~20
 and `bench/BatchedDecodeAttentionBench` (memory-bound per-slot attention, ~2×,
 bit-exact vs a CPU reference).
 
+### Exact prompts + flags per result
+
+Prompts (verbatim):
+- `P_SHORT` = `Tell me a short story about a robot learning to paint.`
+- `P_LONG` (48-token shared prefix) = `You are a helpful and knowledgeable assistant. Please write a detailed, vivid and engaging short story about a small curious robot named Zeta who lives in an old cluttered workshop and slowly learns the delicate art of painting with oil colors.`
+
+| result | model | prompt | engine flags |
+|--------|-------|--------|--------------|
+| static B=128 (41×) | llama-1b-fp16 | P_SHORT | `-Dllama.prefillBatchSize=128 -Dbatch.decode.B=128 -Dbatch.decode.ctx=512 -Dbatch.decode.n=64` |
+| divergent streams | llama-1b-fp16 | P_SHORT | above + `-Dbatch.decode.temp=0.7` |
+| continuous (vs static-wave) | llama-1b-fp16 | P_SHORT | `…B=128 -Dbatch.decode.continuous=true -Dbatch.decode.requests=512 -Dbatch.decode.minN=8 -Dbatch.decode.refill=true` (baseline `refill=false`) |
+| paged (10.7× less KV) | llama-1b-fp16 | P_SHORT | `…continuous=true -Dbatch.decode.paged=true -Dbatch.decode.blocks=384 -Dbatch.decode.requests=512 -Dbatch.decode.minN=8` |
+| prefix cache (+85%) | llama-1b-fp16 | P_LONG | `…continuous=true -Dbatch.decode.paged=true -Dbatch.decode.blocks=1024 -Dbatch.decode.prefixCache=true -Dbatch.decode.requests=512 -Dbatch.decode.minN=8` (off: `prefixCache=false`) |
+| Qwen3 paged+prefix (+104%) | Qwen3-1.7B-f16 | P_LONG | `-Dtornado.device.memory=20GB -Dllama.prefillBatchSize=64 -Dbatch.decode.B=64 -Dbatch.decode.ctx=512 -Dbatch.decode.n=64 -Dbatch.decode.continuous=true -Dbatch.decode.paged=true -Dbatch.decode.blocks=768 -Dbatch.decode.prefixCache=true -Dbatch.decode.requests=256 -Dbatch.decode.minN=8` |
+
+All flags (defaults): `batch.decode.B`, `.ctx`(512), `.n`(64), `.temp`(0=greedy),
+`.cudaGraphs`(true), `.continuous`(false), `.refill`(true), `.requests`(4·B), `.minN`(n/2),
+`.paged`(false), `.blockSize`(16), `.blocks`(B·ctx/blockSize), `.prefixCache`(false).
+Each run prints `[verify] …: true` and `[perf] …`.
+
 ---
 
 ## Limitations / next
