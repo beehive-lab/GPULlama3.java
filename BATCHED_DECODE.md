@@ -185,6 +185,28 @@ launch overhead, which is why CUDA graphs help only marginally.
 
 ---
 
+## Continuous batching (iteration-level scheduling)
+
+`-Dbatch.decode.continuous=true` runs an Orca-style scheduler over the same B slots:
+each slot is independently either **prefilling** its prompt (token-by-token, logits
+ignored) or **decoding**; a slot that hits a stop token / its max-gen is evicted and
+**immediately refilled** from a pending queue — new requests join a partly-decoded
+batch mid-flight, so no slot waits for the slowest in a wave. This works with zero
+kernel changes because the per-step forward already feeds one token per slot at its own
+`seqPositions[b]` with its own KV region — prefill and decode are the same op.
+
+Same 512-request workload (Llama-1B, B=128, prompt 22 tok, max-gen ∈ [8,64], greedy —
+so identical token counts and all outputs mutually prefix-consistent):
+
+| scheduling | steps | gen tok/s | requests/s | slot utilization |
+|------------|------:|----------:|-----------:|-----------------:|
+| static wave (`refill=false`) | 336 | 1645 | 46.9 | 66.4% |
+| **continuous** (`refill=true`) | **272** | **1972** | **56.2** | **82.2%** |
+
+**+20% throughput / +24% relative utilization** by refilling freed slots instead of
+draining each wave to its longest request. The gap widens with more length variance.
+Correctness under scheduling = all completed outputs are mutually prefix-consistent.
+
 ## Reproduce
 
 ### 1. TornadoVM (CUDA backend + tensor-core MMA)

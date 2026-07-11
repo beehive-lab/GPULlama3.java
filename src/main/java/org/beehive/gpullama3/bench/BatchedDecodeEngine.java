@@ -174,6 +174,13 @@ public class BatchedDecodeEngine {
 
         try (TornadoExecutionPlan plan = new TornadoExecutionPlan(all.toArray(new ImmutableTaskGraph[0]))) {
 
+            if (Boolean.parseBoolean(System.getProperty("batch.decode.continuous", "false"))) {
+                runContinuous(plan, gs, nLayers, logitsIdx, cudaGraphs, model, B, dim, vocab, nDecode,
+                        prompt, stopTokens, embTable, dimBytes, state.embeddingXBatch.getSegment(),
+                        seqPositions, logitsBatch);
+                return;
+            }
+
             // greedy (bit-exact verification) or per-slot temperature sampling
             // (divergent independent streams — the real concurrent-request case).
             float temperature = Float.parseFloat(System.getProperty("batch.decode.temp", "0.0"));
@@ -271,6 +278,172 @@ public class BatchedDecodeEngine {
             System.out.printf("[perf] per-step latency %.2f ms | aggregate throughput %.0f tok/s | per-stream %.1f tok/s%n",
                     decodeNs / 1e6 / steps, genTokens / decodeSec, steps / decodeSec);
         }
+    }
+
+    /**
+     * Continuous (iteration-level) batching: B slots, each independently either
+     * PREFILLING its prompt (token-by-token, logits ignored) or DECODING. A slot
+     * that hits a stop token / its max-gen is evicted and immediately refilled from
+     * the pending queue — no waiting for the slowest slot in a wave. Because the
+     * per-step forward already feeds one token per slot at its own {@code seqPositions[b]}
+     * with its own KV region, prefill and decode are the same op; new requests join
+     * a partly-decoded batch mid-flight (Orca-style scheduling).
+     *
+     * Workload: R requests of the same prompt (greedy → deterministic) with random
+     * max-gen lengths, so slots finish at different steps and exercise evict/admit.
+     * Correctness = all completed outputs are mutually prefix-consistent (the shorter
+     * is a prefix of the longer), proving each slot decoded correctly regardless of
+     * when it joined.
+     */
+    private static void runContinuous(TornadoExecutionPlan plan, GridScheduler gs, int nLayers, int logitsIdx,
+                                      boolean cudaGraphs, Model model, int B, int dim, int vocab, int nDecode,
+                                      List<Integer> prompt, java.util.Set<Integer> stopTokens,
+                                      MemorySegment embTable, long dimBytes, MemorySegment embBatchSeg,
+                                      IntArray seqPositions, FloatArray logitsBatch) {
+        int R = Integer.getInteger("batch.decode.requests", 4 * B);
+        int minN = Integer.getInteger("batch.decode.minN", Math.max(1, nDecode / 2));
+        // refill=true → continuous (admit into a freed slot immediately);
+        // refill=false → static-wave baseline (idle until the whole wave finishes, then reload).
+        boolean refill = Boolean.parseBoolean(System.getProperty("batch.decode.refill", "true"));
+        int promptLen = prompt.size();
+        java.util.Random wl = new java.util.Random(7);
+        java.util.ArrayDeque<Integer> queue = new java.util.ArrayDeque<>();
+        for (int i = 0; i < R; i++) {
+            queue.add(minN + wl.nextInt(Math.max(1, nDecode - minN + 1)));
+        }
+        System.out.printf("[continuous] requests=%d maxGen∈[%d,%d] B=%d%n", R, minN, nDecode, B);
+
+        int[] promptPos = new int[B], pos = new int[B], curTok = new int[B], maxGen = new int[B];
+        boolean[] decoding = new boolean[B], active = new boolean[B];
+        List<List<Integer>> gen = new ArrayList<>();
+        for (int b = 0; b < B; b++) {
+            gen.add(new ArrayList<>());
+        }
+        List<int[]> completed = new ArrayList<>();
+        for (int b = 0; b < B; b++) {
+            if (!queue.isEmpty()) {
+                maxGen[b] = queue.poll();
+                active[b] = true;
+            }
+        }
+
+        int warm = cudaGraphs ? 4 : 0;
+        long steps = 0, genTokens = 0, busySlotSteps = 0, timedNs = 0, timedGen = 0, timedBusy = 0, timedSteps = 0;
+        long tTimed = 0;
+        while (true) {
+            boolean anyActive = false;
+            for (int b = 0; b < B; b++) {
+                if (active[b]) { anyActive = true; break; }
+            }
+            if (!anyActive) {
+                if (queue.isEmpty()) {
+                    break;
+                }
+                // static-wave baseline: whole wave drained → load the next wave.
+                for (int b = 0; b < B; b++) {
+                    if (!queue.isEmpty()) {
+                        maxGen[b] = queue.poll();
+                        promptPos[b] = 0;
+                        pos[b] = 0;
+                        decoding[b] = false;
+                        active[b] = true;
+                    }
+                }
+            }
+            for (int b = 0; b < B; b++) {
+                int tok = active[b] ? (decoding[b] ? curTok[b] : prompt.get(promptPos[b])) : prompt.get(0);
+                MemorySegment.copy(embTable, (long) tok * dimBytes, embBatchSeg, (long) b * dimBytes, dimBytes);
+                seqPositions.set(b, active[b] ? pos[b] : 0);
+            }
+            long t0 = System.nanoTime();
+            runStep(plan, gs, nLayers, logitsIdx, true, cudaGraphs);
+            long dt = System.nanoTime() - t0;
+            steps++;
+
+            long stepGen = 0, stepBusy = 0;
+            for (int b = 0; b < B; b++) {
+                if (!active[b]) {
+                    continue;
+                }
+                stepBusy++;
+                pos[b]++;
+                boolean produced = false;
+                int nt = 0;
+                if (!decoding[b]) {
+                    if (promptPos[b] == promptLen - 1) {          // just fed the last prompt token
+                        nt = argmaxRow(logitsBatch, b, vocab);
+                        decoding[b] = true;
+                        produced = true;
+                    } else {
+                        promptPos[b]++;
+                    }
+                } else {
+                    nt = argmaxRow(logitsBatch, b, vocab);
+                    produced = true;
+                }
+                if (produced) {
+                    gen.get(b).add(nt);
+                    curTok[b] = nt;
+                    genTokens++;
+                    stepGen++;
+                    boolean stop = stopTokens.contains(nt) || gen.get(b).size() >= maxGen[b];
+                    if (stop) {
+                        completed.add(gen.get(b).stream().mapToInt(Integer::intValue).toArray());
+                        gen.get(b).clear();
+                        if (refill && !queue.isEmpty()) {          // continuous: admit next request now
+                            maxGen[b] = queue.poll();
+                            promptPos[b] = 0;
+                            pos[b] = 0;
+                            decoding[b] = false;
+                        } else {                                    // static-wave: idle until wave ends
+                            active[b] = false;
+                        }
+                    }
+                }
+            }
+            busySlotSteps += stepBusy;
+            if (steps > warm) {
+                if (timedSteps == 0) {
+                    tTimed = System.nanoTime();
+                }
+                timedNs += dt;
+                timedGen += stepGen;
+                timedBusy += stepBusy;
+                timedSteps++;
+            }
+        }
+        long wallNs = System.nanoTime() - tTimed;
+
+        // ── Verify: mutually prefix-consistent (greedy, same prompt) ─────────────
+        completed.sort(java.util.Comparator.comparingInt(a -> a.length));
+        boolean consistent = true;
+        int[] longest = completed.isEmpty() ? new int[0] : completed.get(completed.size() - 1);
+        for (int[] r : completed) {
+            for (int i = 0; i < r.length; i++) {
+                if (r[i] != longest[i]) {
+                    consistent = false;
+                }
+            }
+        }
+        StringBuilder text = new StringBuilder();
+        for (int tk : longest) {
+            if (stopTokens.contains(tk)) {
+                break;
+            }
+            text.append(model.tokenizer().decode(List.of(tk)));
+        }
+        System.out.println("\n──────────── longest completed request ────────────");
+        System.out.println(text);
+        System.out.println("───────────────────────────────────────────────────");
+        System.out.printf("[verify] %d requests completed, all mutually prefix-consistent (greedy): %b%n",
+                completed.size(), consistent);
+
+        double sec = wallNs / 1e9;
+        double util = timedSteps > 0 ? (double) timedBusy / (timedSteps * B) : 0.0;
+        System.out.printf("[perf] continuous: %d steps, %d gen tokens over %.2f s%n", steps, genTokens, sec);
+        System.out.printf("[perf] generated %.0f tok/s | %.1f requests/s | slot utilization %.1f%% | per-step %.2f ms%n",
+                timedGen / sec, completed.size() / (wallNs / 1e9), util * 100.0,
+                timedSteps > 0 ? timedNs / 1e6 / timedSteps : 0.0);
     }
 
     private static void runStep(TornadoExecutionPlan plan, GridScheduler gs,
