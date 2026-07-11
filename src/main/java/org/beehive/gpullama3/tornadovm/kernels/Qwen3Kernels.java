@@ -1513,5 +1513,66 @@ public class Qwen3Kernels {
         }
     }
 
+    /**
+     * Per-slot Qwen3 split-half RoPE + KV-cache write (batched DECODE).
+     *
+     * <p>Fork of {@link #batchedRopeWithKVCacheQwen3Packed}: each slot rotates at its
+     * own position {@code seqPositions[batchIdx]} and writes K/V into its own KV
+     * region ({@code batchIdx} stride = {@code numLayers*contextLength*kvDim}).</p>
+     */
+    public static void batchedDecodeRopeWithKVCacheQwen3Packed(
+            KernelContext context,
+            IntArray seqPositions,
+            FloatArray qkvBatch,
+            FloatArray wrapKeyCache,
+            FloatArray wrapValueCache,
+            int kvDim,
+            int nEmbdHead,
+            int layerIndex,
+            int numLayers,
+            int contextLength,
+            int qDim) {
+
+        int globalIdx = context.globalIdx;
+        int halfQDim = qDim / 2;
+        int batchIdx = globalIdx / halfQDim;
+        int pairIdx = globalIdx % halfQDim;
+        int qkvStride = qDim + 2 * kvDim;
+
+        int pos = seqPositions.get(batchIdx);
+
+        int halfEmbdHead = nEmbdHead / 2;
+        int ic      = pairIdx % halfEmbdHead;
+        int headIdx = pairIdx / halfEmbdHead;
+
+        float freq = 1.0f / TornadoMath.pow(1000000.0f, 2.0f * ic / (float) nEmbdHead);
+        float val  = pos * freq;
+        float fcr  = TornadoMath.cos(val);
+        float fci  = TornadoMath.sin(val);
+
+        int qHeadBase = batchIdx * qkvStride + headIdx * nEmbdHead;
+        float v0q = qkvBatch.get(qHeadBase + ic);
+        float v1q = qkvBatch.get(qHeadBase + ic + halfEmbdHead);
+        qkvBatch.set(qHeadBase + ic,                v0q * fcr - v1q * fci);
+        qkvBatch.set(qHeadBase + ic + halfEmbdHead, v0q * fci + v1q * fcr);
+
+        if (pairIdx < kvDim / 2) {
+            int kHeadIdx  = pairIdx / halfEmbdHead;
+            int kHeadBase = batchIdx * qkvStride + qDim + kHeadIdx * nEmbdHead;
+            int vHeadBase = batchIdx * qkvStride + qDim + kvDim + kHeadIdx * nEmbdHead;
+            float v0k = qkvBatch.get(kHeadBase + ic);
+            float v1k = qkvBatch.get(kHeadBase + ic + halfEmbdHead);
+            float rotK0 = v0k * fcr - v1k * fci;
+            float rotK1 = v0k * fci + v1k * fcr;
+
+            int slotBase = batchIdx * (numLayers * contextLength * kvDim);
+            int cacheOff = slotBase + layerIndex * contextLength * kvDim + pos * kvDim + kHeadIdx * nEmbdHead;
+            wrapKeyCache.set(cacheOff + ic,                rotK0);
+            wrapKeyCache.set(cacheOff + ic + halfEmbdHead, rotK1);
+            wrapValueCache.set(cacheOff + ic,                qkvBatch.get(vHeadBase + ic));
+            wrapValueCache.set(cacheOff + ic + halfEmbdHead, qkvBatch.get(vHeadBase + ic + halfEmbdHead));
+        }
+    }
+
 }
 // @formatter:on

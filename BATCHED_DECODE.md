@@ -1,13 +1,15 @@
-# Static batched decode (LLaMA FP16)
+# Static batched decode (LLaMA / Qwen3 FP16)
 
 Decode **B independent sequences at once**, one token per step, each attending its
 **own** KV cache. Turns the bandwidth-bound single-token matvecs of decode into
 compute-bound tensor-core GEMMs (one weight read amortized across B tokens), so
 aggregate throughput scales ~linearly with B until the 128-row MMA tile fills.
 
-Measured **41× aggregate throughput** vs single-stream decode on an RTX 4090
+Measured up to **41× aggregate throughput** vs single-stream decode on an RTX 4090
 (Llama-3.2-1B FP16), output verified coherent + bit-exact against the single-stream
-greedy reference.
+greedy reference. Runs on the TornadoVM **CUDA backend** (tensor-core MMA).
+Both **LLaMA** and **Qwen3** are supported (Qwen3 adds per-head Q/K RMS norm + split-
+half RoPE).
 
 ---
 
@@ -90,6 +92,13 @@ addressing:
 The math (RoPE rotation, online-softmax flash attention, register-partitioned P·V)
 is untouched; both forks only change the index into the KV cache.
 
+**Qwen3** reuses the same pattern: `Qwen3FP16LayersBatchDecodeMMA` keeps the per-head
+Q/K RMS-norm task (`batchedFusedQKRmsNormPacked`, per-token — reused as-is) and swaps in
+`batchedDecodeRopeWithKVCacheQwen3Packed` (split-half RoPE, per-slot) +
+`batchedDecodeAttentionFP16Out` (the same per-slot flash kernel, parameterized by
+`qDim`/`nEmbdHead`/`gqa`). The engine dispatches on model type; embeddings and the
+batched-logits GEMM are model-agnostic.
+
 ### KV cache layout (B-sized)
 
 Each slot owns a contiguous region; `batchIdx` stride = `numLayers·ctx·kvDim`.
@@ -139,8 +148,10 @@ requests, not replication):
 
 ## Performance
 
-RTX 4090, Llama-3.2-1B FP16, `ctx=512`, 64 decode steps, CUDA graphs on,
-steady-state (capture steps excluded).
+RTX 4090, TornadoVM **CUDA backend**, FP16, `ctx=512`, CUDA graphs on, steady-state
+(capture steps excluded).
+
+**Llama-3.2-1B** (16 layers, vocab 128256):
 
 | config | aggregate tok/s | vs single-stream | per-step latency |
 |-------:|----------------:|-----------------:|-----------------:|
@@ -151,6 +162,18 @@ steady-state (capture steps excluded).
 
 CUDA graphs (`-Dbatch.decode.cudaGraphs`, default on) cut a uniform ~6% off per-step
 (dispatch overhead across the 2+N graphs).
+
+**Across models** (largest B that fits 24 GB; deeper/wider → higher per-step, so B is
+capped lower):
+
+| model | layers · dim · vocab | single-stream | batched (B) | aggregate | speedup |
+|-------|----------------------|--------------:|:-----------:|----------:|--------:|
+| Llama-3.2-1B | 16 · 2048 · 128256 | 101 tok/s | 128 | 4175 tok/s | 41× |
+| Qwen3-1.7B   | 28 · 2048 · 151936 |  48 tok/s |  64 | 1433 tok/s | 30× |
+| Qwen3-4B     | 36 · 2560 · 151936 |  39 tok/s |  32 |  405 tok/s | 10× |
+
+All bit-exact vs the single-stream greedy reference (`all B streams identical: true`)
+and coherent.
 
 **Operating point.** Per-step latency is ~flat (29–31 ms) from B=8 to B=128: every
 step runs at `paddedBatch = 128` (the MMA tile is 128 rows) and the logits GEMM spans
@@ -166,16 +189,17 @@ launch overhead, which is why CUDA graphs help only marginally.
 
 ### 1. TornadoVM (CUDA backend + tensor-core MMA)
 
-Requires a TornadoVM with the **CUDA/PTX backend** and the **MMA `KernelContext`**
-API (`mmaFragment` / `mmaLoadA` / `mmaMultiply`, `HalfFloatArray`) — the same
-TornadoVM the `feat/mma_cuda` GPULlama3 branch already needs. Tested against
-**TornadoVM 5.0.1-jdk21-dev** built with the PTX backend on **JDK 21**.
+Requires a TornadoVM with the **CUDA backend** and the **MMA `KernelContext`** API
+(`mmaFragment` / `mmaLoadA` / `mmaMultiply`, `HalfFloatArray`) — the same TornadoVM the
+`feat/mma_cuda` GPULlama3 branch already needs. Tested against **TornadoVM
+5.0.1-jdk21-dev**, CUDA backend, **JDK 21**. (All numbers here are from the CUDA
+backend.)
 
 ```bash
 git clone https://github.com/beehive-lab/TornadoVM
 cd TornadoVM
-# JDK 21; build the CUDA/PTX backend (installs artifacts into ~/.m2)
-make BACKEND=ptx
+# JDK 21; build the CUDA backend (installs artifacts into ~/.m2)
+make BACKEND=cuda
 export TORNADOVM_HOME=$PWD/dist/tornadovm-*-cuda
 ```
 
@@ -213,9 +237,10 @@ bit-exact vs a CPU reference).
 
 ## Limitations / next
 
-- **FP16 LLaMA only.** Q8_0 and other architectures reuse the same pattern but need
-  their own decode layer graph. Qwen3 is blocked upstream (empty output on this
-  TornadoVM build) independent of this work.
+- **FP16 LLaMA + Qwen3.** Q8_0 and other architectures reuse the same pattern but need
+  their own decode layer graph. Qwen3-8B produces garbage in the **stock** decode path
+  on this build (independent of batched decode — the engine faithfully reproduces the
+  stock output); Qwen3-1.7B/4B are fine.
 - **Same prompt length across slots** (static batching). Ragged prompts / iteration-
   level (continuous) batching are the follow-up — the per-slot `seqPositions` +
   per-slot KV base already support per-slot positions.
