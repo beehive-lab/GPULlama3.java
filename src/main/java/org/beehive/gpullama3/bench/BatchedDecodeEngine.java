@@ -1,0 +1,336 @@
+package org.beehive.gpullama3.bench;
+
+import org.beehive.gpullama3.Options;
+import org.beehive.gpullama3.inference.state.LlamaState;
+import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
+import org.beehive.gpullama3.model.Model;
+import org.beehive.gpullama3.model.format.ChatFormat;
+import org.beehive.gpullama3.model.llama.LlamaConfiguration;
+import org.beehive.gpullama3.tornadovm.kernels.TransformerBatchPrefillKernels;
+import org.beehive.gpullama3.tornadovm.layers.type.fp16.decode.LlamaFP16LayersBatchDecodeMMA;
+import org.beehive.gpullama3.tornadovm.plan.components.activation.BatchPrefillActivation;
+import uk.ac.manchester.tornado.api.GridScheduler;
+import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
+import uk.ac.manchester.tornado.api.KernelContext;
+import uk.ac.manchester.tornado.api.TaskGraph;
+import uk.ac.manchester.tornado.api.TornadoExecutionPlan;
+import uk.ac.manchester.tornado.api.WorkerGrid;
+import uk.ac.manchester.tornado.api.WorkerGrid1D;
+import uk.ac.manchester.tornado.api.WorkerGrid2D;
+import uk.ac.manchester.tornado.api.enums.DataTransferMode;
+import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.IntArray;
+
+import java.lang.foreign.MemorySegment;
+import java.util.ArrayList;
+import java.util.List;
+
+import static org.beehive.gpullama3.model.loader.ModelLoader.loadModel;
+
+/**
+ * End-to-end static batched-decode engine for LLaMA FP16: B independent sequences
+ * generate together, one token per step, each attending its OWN KV region.
+ *
+ * <p>Reuses the batched-prefill MMA pipeline (projections as tensor-core GEMMs,
+ * weight read once and applied to all B tokens → compute-bound) but swaps the two
+ * KV-addressing kernels for the per-slot decode variants
+ * ({@link TransformerBatchPrefillKernels#batchedDecodeRopeWithKVCachePacked},
+ * {@link TransformerBatchPrefillKernels#batchedDecodeAttentionFP16Out}) over a
+ * B-sized KV cache.</p>
+ *
+ * <p>ONE step routine serves both phases: prompt tokens are fed with logits
+ * discarded (fills the B KV regions with identical RoPE to decode → no cache
+ * mismatch); then generated tokens are fed back. Greedy sampling with B copies of
+ * the same prompt makes all B streams identical AND equal to the single-stream
+ * greedy reference — a bit-exact end-to-end correctness check — while the aggregate
+ * B×tok/s is the batching win.</p>
+ *
+ * <p>Run (JVM prop {@code -Dllama.prefillBatchSize=B} MUST equal B):</p>
+ * <pre>
+ *   java -Dllama.prefillBatchSize=32 -Dbatch.decode.B=32 -Dbatch.decode.ctx=512 \
+ *        -Dbatch.decode.n=64 ... BatchedDecodeEngine --model llama-3.2-1b-fp16.gguf --prompt "..."
+ * </pre>
+ */
+public class BatchedDecodeEngine {
+
+    static final int RMS_LOCAL = 256;
+
+    public static void main(String[] args) throws Exception {
+        System.setProperty("llama.enableTornadoVM", "true");
+        int B = Integer.getInteger("batch.decode.B", 32);
+        int decodeCtx = Integer.getInteger("batch.decode.ctx", 512);
+        int nDecode = Integer.getInteger("batch.decode.n", 64);
+        boolean cudaGraphs = Boolean.parseBoolean(System.getProperty("batch.decode.cudaGraphs", "true"));
+        if (Integer.getInteger("llama.prefillBatchSize", 1) != B) {
+            throw new IllegalStateException("Set -Dllama.prefillBatchSize=" + B + " to match -Dbatch.decode.B");
+        }
+
+        Options options = Options.parseOptions(args);
+        Model model = loadModel(options);
+        LlamaConfiguration config = (LlamaConfiguration) model.configuration();
+        LlamaTornadoWeights weights = (LlamaTornadoWeights) model.weights();
+        LlamaState state = (LlamaState) model.createNewState();
+
+        int dim = config.dim();
+        int vocab = config.vocabularySize();
+        int kvDim = config.kvDim();
+        int numLayers = config.numberOfLayers();
+        int paddedB = (B + 127) & ~127;
+
+        // ── Prompt tokens ──────────────────────────────────────────────────────
+        ChatFormat cf = model.chatFormat();
+        List<Integer> prompt = new ArrayList<>();
+        if (model.shouldAddBeginOfText()) {
+            prompt.add(cf.getBeginOfText());
+        }
+        prompt.addAll(cf.encodeMessage(new ChatFormat.Message(ChatFormat.Role.USER, options.prompt())));
+        prompt.addAll(cf.encodeHeader(new ChatFormat.Message(ChatFormat.Role.ASSISTANT, "")));
+        int P = prompt.size();
+        var stopTokens = cf.getStopTokens();
+        if (P + nDecode >= decodeCtx) {
+            throw new IllegalStateException("prompt(" + P + ")+n(" + nDecode + ") >= ctx(" + decodeCtx + ")");
+        }
+        System.out.printf("[engine] B=%d ctx=%d promptLen=%d nDecode=%d dim=%d vocab=%d layers=%d cudaGraphs=%b%n",
+                B, decodeCtx, P, nDecode, dim, vocab, numLayers, cudaGraphs);
+
+        // ── Engine-owned buffers ────────────────────────────────────────────────
+        long kvElems = (long) B * numLayers * decodeCtx * kvDim;
+        FloatArray keyCacheBatch = new FloatArray((int) kvElems);
+        FloatArray valueCacheBatch = new FloatArray((int) kvElems);
+        keyCacheBatch.init(0.0f);
+        valueCacheBatch.init(0.0f);
+        IntArray seqPositions = new IntArray(B);
+        FloatArray finalScaleBatch = new FloatArray(B);
+        HalfFloatArray normedFinalFP16 = new HalfFloatArray(paddedB * dim);
+        normedFinalFP16.init(new uk.ac.manchester.tornado.api.types.HalfFloat(0.0f));
+        FloatArray logitsBatch = new FloatArray(paddedB * vocab);
+
+        // ── Graphs: [0] activation, [1..N] decode layers, [N+1] batched logits ──
+        BatchPrefillActivation activation = new BatchPrefillActivation(state, config, B, false);
+        LlamaFP16LayersBatchDecodeMMA layers = new LlamaFP16LayersBatchDecodeMMA(
+                state, weights, config, B, decodeCtx, keyCacheBatch, valueCacheBatch, seqPositions);
+
+        KernelContext logitsCtx = new KernelContext();
+        HalfFloatArray wclsHalf = weights.wclsByteArray.asHalfFloatArray();
+        FloatArray rmsFinal = weights.rms_final_weight_as_floatArray.asFloatArray();
+        String lastLayerId = layers.getLastLayerTaskGraphID();
+        TaskGraph logitsTg = new TaskGraph("batchLogits")
+                .consumeFromDevice(lastLayerId, state.wrapXBatch)
+                .transferToDevice(DataTransferMode.FIRST_EXECUTION,
+                        logitsCtx, normedFinalFP16, finalScaleBatch, wclsHalf, rmsFinal)
+                .task("rms_reduce", TransformerBatchPrefillKernels::batchedRmsReduceParallel,
+                        logitsCtx, state.wrapXBatch, finalScaleBatch, dim, config.rmsNormEps(), RMS_LOCAL)
+                .task("rms_apply", TransformerBatchPrefillKernels::batchedFFNRmsApplyFP16,
+                        logitsCtx, normedFinalFP16, state.wrapXBatch, rmsFinal, finalScaleBatch, dim)
+                .task("vocab", TransformerBatchPrefillKernels::gemmMMA,
+                        logitsCtx, normedFinalFP16, wclsHalf, logitsBatch, paddedB, vocab, dim)
+                .transferToHost(DataTransferMode.EVERY_EXECUTION, logitsBatch);
+        ImmutableTaskGraph logitsItg = logitsTg.snapshot();
+
+        // ── Grid scheduler ──────────────────────────────────────────────────────
+        GridScheduler gs = new GridScheduler();
+        activation.updateGridScheduler(gs);
+        layers.updateGridScheduler(gs);
+        gs.addWorkerGrid("batchLogits.rms_reduce", genericWorker(B * RMS_LOCAL, RMS_LOCAL));
+        gs.addWorkerGrid("batchLogits.rms_apply", genericWorker(B * dim, 256));
+        gs.addWorkerGrid("batchLogits.vocab", mmaGrid(paddedB, vocab));
+
+        List<ImmutableTaskGraph> all = new ArrayList<>();
+        all.add(activation.getImmutableTaskGraph());
+        all.addAll(layers.getLayerImmutableTaskGraphs());
+        all.add(logitsItg);
+        int nLayers = layers.getLayerImmutableTaskGraphs().size();
+        int logitsIdx = 1 + nLayers;
+
+        MemorySegment embTable = weights.getTokenEmbeddingTable().asHalfFloatArray().getSegment();
+        long dimBytes = (long) dim * Short.BYTES;
+
+        try (TornadoExecutionPlan plan = new TornadoExecutionPlan(all.toArray(new ImmutableTaskGraph[0]))) {
+
+            // greedy (bit-exact verification) or per-slot temperature sampling
+            // (divergent independent streams — the real concurrent-request case).
+            float temperature = Float.parseFloat(System.getProperty("batch.decode.temp", "0.0"));
+            boolean sample = temperature > 0.0f;
+            java.util.Random[] rng = new java.util.Random[B];
+            for (int b = 0; b < B; b++) {
+                rng[b] = new java.util.Random(1000 + b);
+            }
+
+            // ── Prefill: all slots run the identical prompt, logits only at last pos.
+            long prefillStart = System.nanoTime();
+            for (int t = 0; t < P; t++) {
+                int tok = prompt.get(t);
+                for (int b = 0; b < B; b++) {
+                    MemorySegment.copy(embTable, (long) tok * dimBytes,
+                            state.embeddingXBatch.getSegment(), (long) b * dimBytes, dimBytes);
+                    seqPositions.set(b, t);
+                }
+                boolean needLogits = (t == P - 1);
+                runStep(plan, gs, nLayers, logitsIdx, needLogits, cudaGraphs);
+            }
+            long prefillNs = System.nanoTime() - prefillStart;
+
+            // First generated token per slot (identical → same greedy argmax).
+            int[][] streams = new int[B][];
+            for (int b = 0; b < B; b++) {
+                streams[b] = new int[nDecode];
+            }
+            int[] cur = new int[B];
+            for (int b = 0; b < B; b++) {
+                int first = sample ? sampleRow(logitsBatch, b, vocab, temperature, rng[b])
+                                   : argmaxRow(logitsBatch, b, vocab);
+                cur[b] = first;
+                streams[b][0] = first;
+            }
+
+            // ── Decode: static batch, greedy. Position advances in lock-step.
+            // First few steps capture the CUDA graphs; exclude them from timing so
+            // the reported latency is steady-state replay, not capture.
+            int warmup = cudaGraphs ? Math.min(4, nDecode - 1) : 0;
+            long decodeNs = 0;
+            int steps = 0;
+            for (int s = 1; s < nDecode; s++) {
+                int pos = P + s - 1;
+                for (int b = 0; b < B; b++) {
+                    MemorySegment.copy(embTable, (long) cur[b] * dimBytes,
+                            state.embeddingXBatch.getSegment(), (long) b * dimBytes, dimBytes);
+                    seqPositions.set(b, pos);
+                }
+                long t0 = System.nanoTime();
+                runStep(plan, gs, nLayers, logitsIdx, true, cudaGraphs);
+                if (s > warmup) {
+                    decodeNs += System.nanoTime() - t0;
+                    steps++;
+                }
+                for (int b = 0; b < B; b++) {
+                    int nt = sample ? sampleRow(logitsBatch, b, vocab, temperature, rng[b])
+                                    : argmaxRow(logitsBatch, b, vocab);
+                    cur[b] = nt;
+                    streams[b][s] = nt;
+                }
+            }
+
+            // ── Verify + report ─────────────────────────────────────────────────
+            boolean allIdentical = true;
+            for (int b = 1; b < B; b++) {
+                for (int s = 0; s < nDecode; s++) {
+                    if (streams[b][s] != streams[0][s]) {
+                        allIdentical = false;
+                    }
+                }
+            }
+            java.util.Set<String> distinct = new java.util.HashSet<>();
+            for (int b = 0; b < B; b++) {
+                distinct.add(java.util.Arrays.toString(streams[b]));
+            }
+            int showSlots = sample ? Math.min(3, B) : 1;
+            for (int b = 0; b < showSlots; b++) {
+                System.out.printf("%n──────────── slot %d output ────────────%n", b);
+                System.out.println(decodeStream(model, streams[b], nDecode, stopTokens));
+                System.out.println("───────────────────────────────────────");
+            }
+            if (sample) {
+                System.out.printf("[verify] mode=sample temp=%.2f: %d/%d streams distinct (independent per-slot KV)%n",
+                        temperature, distinct.size(), B);
+            } else {
+                System.out.printf("[verify] mode=greedy: all %d streams identical (== single-stream greedy ref): %b%n",
+                        B, allIdentical);
+            }
+
+            double decodeSec = decodeNs / 1e9;
+            int genTokens = steps * B;
+            System.out.printf("[perf] prefill %d pos in %.1f ms | decode %d steps × B=%d = %d tokens in %.1f ms%n",
+                    P, prefillNs / 1e6, steps, B, genTokens, decodeNs / 1e6);
+            System.out.printf("[perf] per-step latency %.2f ms | aggregate throughput %.0f tok/s | per-stream %.1f tok/s%n",
+                    decodeNs / 1e6 / steps, genTokens / decodeSec, steps / decodeSec);
+        }
+    }
+
+    private static void runStep(TornadoExecutionPlan plan, GridScheduler gs,
+                                int nLayers, int logitsIdx, boolean needLogits, boolean cudaGraphs) {
+        execGraph(plan, gs, 0, cudaGraphs);
+        for (int l = 0; l < nLayers; l++) {
+            execGraph(plan, gs, 1 + l, cudaGraphs);
+        }
+        if (needLogits) {
+            execGraph(plan, gs, logitsIdx, cudaGraphs);
+        }
+    }
+
+    private static void execGraph(TornadoExecutionPlan plan, GridScheduler gs, int idx, boolean cudaGraphs) {
+        var g = plan.withGraph(idx).withGridScheduler(gs);
+        if (cudaGraphs) {
+            g.withCUDAGraph();
+        }
+        g.execute();
+    }
+
+    private static String decodeStream(Model model, int[] stream, int nDecode, java.util.Set<Integer> stopTokens) {
+        StringBuilder text = new StringBuilder();
+        for (int s = 0; s < nDecode; s++) {
+            int tk = stream[s];
+            if (stopTokens.contains(tk)) {
+                break;
+            }
+            text.append(model.tokenizer().decode(List.of(tk)));
+        }
+        return text.toString();
+    }
+
+    /** Temperature softmax sampling over one logits row. */
+    private static int sampleRow(FloatArray logits, int row, int vocab, float temp, java.util.Random rng) {
+        long base = (long) row * vocab;
+        float max = Float.NEGATIVE_INFINITY;
+        for (int i = 0; i < vocab; i++) {
+            float v = logits.get((int) (base + i));
+            if (v > max) {
+                max = v;
+            }
+        }
+        double sum = 0.0;
+        double[] probs = new double[vocab];
+        for (int i = 0; i < vocab; i++) {
+            double e = Math.exp((logits.get((int) (base + i)) - max) / temp);
+            probs[i] = e;
+            sum += e;
+        }
+        double r = rng.nextDouble() * sum;
+        double acc = 0.0;
+        for (int i = 0; i < vocab; i++) {
+            acc += probs[i];
+            if (acc >= r) {
+                return i;
+            }
+        }
+        return vocab - 1;
+    }
+
+    private static int argmaxRow(FloatArray logits, int row, int vocab) {
+        long base = (long) row * vocab;
+        int best = 0;
+        float bestV = logits.get((int) base);
+        for (int i = 1; i < vocab; i++) {
+            float v = logits.get((int) (base + i));
+            if (v > bestV) {
+                bestV = v;
+                best = i;
+            }
+        }
+        return best;
+    }
+
+    static WorkerGrid genericWorker(int global, int local) {
+        WorkerGrid1D g = new WorkerGrid1D(global);
+        g.setLocalWork(local, 1, 1);
+        return g;
+    }
+
+    static WorkerGrid mmaGrid(int paddedM, int N) {
+        int mBlocks = paddedM / 128;
+        int nBlocks = N / 128;
+        WorkerGrid2D g = new WorkerGrid2D(mBlocks * 256, nBlocks);
+        g.setLocalWork(256, 1, 1);
+        return g;
+    }
+}
