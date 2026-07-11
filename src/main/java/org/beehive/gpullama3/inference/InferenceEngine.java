@@ -285,8 +285,10 @@ public final class InferenceEngine {
         // Pre-validate the max tokens to avoid checking in the loop
         int actualMaxTokens = Math.min(maxTokens > 0 ? maxTokens : model.configuration().contextLength(), model.configuration().contextLength());
 
-        // Preallocate with expected capacity to avoid resizing
-        List<Integer> generatedTokens = new ArrayList<>(Math.min(256, actualMaxTokens - promptTokens.size())); // Conservative estimate
+        // Preallocate with expected capacity to avoid resizing. Clamp at 0: when the
+        // prompt is longer than the token budget (actualMaxTokens), the difference is
+        // negative and would throw IllegalArgumentException("Illegal Capacity").
+        List<Integer> generatedTokens = new ArrayList<>(Math.max(0, Math.min(256, actualMaxTokens - promptTokens.size()))); // Conservative estimate
 
         // === Token Generation Loop ===
         int currentToken = state.latestToken;
@@ -373,8 +375,10 @@ public final class InferenceEngine {
         // Pre-validate the max tokens to avoid checking in the loop
         int actualMaxTokens = Math.min(maxTokens > 0 ? maxTokens : model.configuration().contextLength(), model.configuration().contextLength());
 
-        // Preallocate with expected capacity to avoid resizing
-        List<Integer> generatedTokens = new ArrayList<>(Math.min(256, actualMaxTokens - promptTokens.size())); // Conservative estimate
+        // Preallocate with expected capacity to avoid resizing. Clamp at 0: when the
+        // prompt is longer than the token budget (actualMaxTokens), the difference is
+        // negative and would throw IllegalArgumentException("Illegal Capacity").
+        List<Integer> generatedTokens = new ArrayList<>(Math.max(0, Math.min(256, actualMaxTokens - promptTokens.size()))); // Conservative estimate
 
         // Initialize token variables
         int currentToken = state.latestToken; // BOS?
