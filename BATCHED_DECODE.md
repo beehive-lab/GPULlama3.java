@@ -266,6 +266,25 @@ shared prompt:
 
 +104% throughput and prefix sharing also halves peak KV blocks (296→151), all bit-exact.
 
+## On-device sampling (`-Dbatch.decode.deviceSample=true`, default for greedy)
+
+Profiling (nsys) showed the engine was **host-bound**: each step copied the full
+`paddedB×vocab` logits tensor D2H (~65 MB on Llama, ~78 MB on Qwen) and ran a CPU argmax over
+it, stalling the GPU between steps. `batchedArgmaxLogits` (one workgroup per row) does the
+greedy argmax **on the GPU**; the logits stay device-side and only **B token ids** cross to the
+host.
+
+Llama-1B, B=128, 512-request continuous+paged+prefix, identical greedy output:
+
+| sampling | D2H/step | wall | gen tok/s |
+|----------|---------:|-----:|----------:|
+| host | ~65 MB | 7.66 s | 2344 |
+| **on-device** | ~0.5 KB | 5.88 s | **3057** |
+
+**+30% throughput** — the D2H copy collapses (115 ms → 0.03 ms in the trace) and the CPU scan
+is gone; GPU kernel work per step is unchanged, so the gain is pure host-stall removal. Auto-off
+for temperature sampling (which still needs logits on the host).
+
 ## Reproduce
 
 ### 1. TornadoVM (CUDA backend + tensor-core MMA)
