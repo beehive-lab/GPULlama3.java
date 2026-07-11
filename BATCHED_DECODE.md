@@ -232,6 +232,28 @@ inactive slots (they still execute the kernels each step) so they never corrupt 
 block. Paging is the prerequisite for prefix caching (share a prompt's blocks across
 requests via the block table + refcounting).
 
+## Prefix caching (`-Dbatch.decode.prefixCache=true`, needs paging)
+
+When requests share a common prompt prefix (a system prompt, a few-shot preamble), its KV
+is identical across all of them. Prefix caching prefills the block-aligned shared prefix
+**once** into pinned blocks; every request points its block-table prefix rows at those
+shared blocks and starts decoding at `pos = sharedPrefixLen`, skipping the prefix's prefill
+entirely. The attention kernel walks the block table, so it reads shared-then-private blocks
+transparently — **no kernel change**, just scheduling + block-table setup.
+
+Same 512-request continuous+paged workload, 48-token shared prompt (Llama-1B, B=128):
+
+| | steps | gen tok/s | requests/s | prefill tokens |
+|--|------:|----------:|-----------:|---------------:|
+| no prefix cache   | 419 | 1307 | 37.2 | 28672 |
+| **prefix cache**  | **211** | **2422** | **69.0** | 4096 (**85.7% saved**) |
+
+**~2× fewer steps, +85% throughput** — the 48-token prefix is prefilled once (3 pinned
+blocks) instead of 512×, and its KV blocks are shared. Output still bit-exact (all completed
+requests mutually prefix-consistent). The win scales with prefix length / request count. The
+prefix is block-aligned down (`sharedPrefixLen = ⌊(promptLen-1)/blockSize⌋·blockSize`) so a
+request only ever writes into its own private blocks; shared blocks stay read-only.
+
 ## Reproduce
 
 ### 1. TornadoVM (CUDA backend + tensor-core MMA)

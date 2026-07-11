@@ -327,14 +327,19 @@ public class BatchedDecodeEngine {
                                       boolean paged, IntArray blockTable, int blockSize, int maxBlocksPerSlot, int numBlocks) {
         int R = Integer.getInteger("batch.decode.requests", 4 * B);
         int minN = Integer.getInteger("batch.decode.minN", Math.max(1, nDecode / 2));
-        // refill=true → continuous (admit into a freed slot immediately);
-        // refill=false → static-wave baseline (idle until the whole wave finishes, then reload).
         boolean refill = Boolean.parseBoolean(System.getProperty("batch.decode.refill", "true"));
+        // Prefix caching: the shared prompt prefix (block-aligned) is prefilled ONCE into
+        // pinned blocks; every request points its block-table prefix rows at them and
+        // starts at pos = sharedPrefixLen — skipping the prefix's prefill entirely.
+        boolean prefixCache = paged && Boolean.parseBoolean(System.getProperty("batch.decode.prefixCache", "false"));
         int promptLen = prompt.size();
+        int sharedPrefixLen = prefixCache ? ((promptLen - 1) / blockSize) * blockSize : 0;
+        int prefixBlocks = sharedPrefixLen / blockSize;
 
-        // Paged KV block allocator: free list of physical blocks + per-slot held blocks.
         java.util.ArrayDeque<Integer> freeBlocks = new java.util.ArrayDeque<>();
-        List<List<Integer>> slotBlocks = new ArrayList<>();
+        List<List<Integer>> slotBlocks = new ArrayList<>();  // PRIVATE blocks per slot (freed on evict)
+        int[] allocedUpTo = new int[B];                       // highest logical block mapped for a slot
+        int[] sharedBlocks = new int[Math.max(1, prefixBlocks)];
         int peakBlocks = 0;
         if (paged) {
             for (int i = 0; i < numBlocks; i++) {
@@ -344,13 +349,6 @@ public class BatchedDecodeEngine {
                 slotBlocks.add(new ArrayList<>());
             }
         }
-        java.util.Random wl = new java.util.Random(7);
-        java.util.ArrayDeque<Integer> queue = new java.util.ArrayDeque<>();
-        for (int i = 0; i < R; i++) {
-            queue.add(minN + wl.nextInt(Math.max(1, nDecode - minN + 1)));
-        }
-        System.out.printf("[continuous] requests=%d maxGen∈[%d,%d] B=%d%n", R, minN, nDecode, B);
-
         int[] promptPos = new int[B], pos = new int[B], curTok = new int[B], maxGen = new int[B];
         boolean[] decoding = new boolean[B], active = new boolean[B];
         List<List<Integer>> gen = new ArrayList<>();
@@ -358,59 +356,106 @@ public class BatchedDecodeEngine {
             gen.add(new ArrayList<>());
         }
         List<int[]> completed = new ArrayList<>();
-        for (int b = 0; b < B; b++) {
-            if (!queue.isEmpty()) {
-                maxGen[b] = queue.poll();
-                active[b] = true;
+
+        java.util.Random wl = new java.util.Random(7);
+        java.util.ArrayDeque<Integer> queue = new java.util.ArrayDeque<>();
+        for (int i = 0; i < R; i++) {
+            queue.add(minN + wl.nextInt(Math.max(1, nDecode - minN + 1)));
+        }
+        System.out.printf("[continuous] requests=%d maxGen∈[%d,%d] B=%d%s%n", R, minN, nDecode, B,
+                prefixCache ? " prefixCache sharedPrefix=" + sharedPrefixLen + " tok" : "");
+
+        // ── One-time shared-prefix prefill into pinned blocks ────────────────────
+        if (prefixCache && sharedPrefixLen > 0) {
+            for (int lb = 0; lb < prefixBlocks; lb++) {
+                sharedBlocks[lb] = freeBlocks.poll();          // pinned: never returned
+                blockTable.set(0 * maxBlocksPerSlot + lb, sharedBlocks[lb]);
+            }
+            for (int b = 1; b < B; b++) {
+                blockTable.set(b * maxBlocksPerSlot, numBlocks);  // scratch
+            }
+            for (int t = 0; t < sharedPrefixLen; t++) {
+                int tok = prompt.get(t);
+                MemorySegment.copy(embTable, (long) tok * dimBytes, embBatchSeg, 0L, dimBytes);
+                for (int b = 1; b < B; b++) {
+                    MemorySegment.copy(embTable, (long) prompt.get(0) * dimBytes, embBatchSeg, (long) b * dimBytes, dimBytes);
+                }
+                seqPositions.set(0, t);
+                for (int b = 1; b < B; b++) {
+                    seqPositions.set(b, 0);
+                }
+                runStep(plan, gs, nLayers, logitsIdx, false, cudaGraphs);
             }
         }
 
         int warm = cudaGraphs ? 4 : 0;
-        long steps = 0, genTokens = 0, busySlotSteps = 0, timedNs = 0, timedGen = 0, timedBusy = 0, timedSteps = 0;
+        long steps = 0, genTokens = 0, timedNs = 0, timedGen = 0, timedBusy = 0, timedSteps = 0, prefillTokens = 0;
         long tTimed = 0;
         while (true) {
+            // ── Admission (single site) ──────────────────────────────────────────
             boolean anyActive = false;
             for (int b = 0; b < B; b++) {
                 if (active[b]) { anyActive = true; break; }
             }
-            if (!anyActive) {
-                if (queue.isEmpty()) {
-                    break;
-                }
-                // static-wave baseline: whole wave drained → load the next wave.
+            boolean admitNow = refill || !anyActive;   // continuous: fill any gap; static-wave: only whole new wave
+            if (admitNow) {
                 for (int b = 0; b < B; b++) {
-                    if (!queue.isEmpty()) {
+                    if (!active[b] && !queue.isEmpty()) {
                         maxGen[b] = queue.poll();
-                        promptPos[b] = 0;
-                        pos[b] = 0;
-                        decoding[b] = false;
+                        gen.get(b).clear();
                         active[b] = true;
+                        decoding[b] = false;
+                        if (paged) {
+                            slotBlocks.get(b).clear();
+                        }
+                        if (prefixCache && sharedPrefixLen > 0) {   // reuse the shared prefix
+                            for (int lb = 0; lb < prefixBlocks; lb++) {
+                                blockTable.set(b * maxBlocksPerSlot + lb, sharedBlocks[lb]);
+                            }
+                            allocedUpTo[b] = prefixBlocks - 1;
+                            promptPos[b] = sharedPrefixLen;
+                            pos[b] = sharedPrefixLen;
+                        } else {
+                            allocedUpTo[b] = -1;
+                            promptPos[b] = 0;
+                            pos[b] = 0;
+                        }
                     }
                 }
             }
+            anyActive = false;
+            for (int b = 0; b < B; b++) {
+                if (active[b]) { anyActive = true; break; }
+            }
+            if (!anyActive) {
+                break;
+            }
+
+            // ── Fill embeddings + positions + block allocation ───────────────────
             for (int b = 0; b < B; b++) {
                 int tok = active[b] ? (decoding[b] ? curTok[b] : prompt.get(promptPos[b])) : prompt.get(0);
                 MemorySegment.copy(embTable, (long) tok * dimBytes, embBatchSeg, (long) b * dimBytes, dimBytes);
                 seqPositions.set(b, active[b] ? pos[b] : 0);
                 if (paged) {
-                    if (active[b]) {                               // ensure a physical block for this position
+                    if (active[b]) {
                         int lb = pos[b] / blockSize;
-                        List<Integer> sb = slotBlocks.get(b);
-                        while (sb.size() <= lb) {
+                        while (allocedUpTo[b] < lb) {
                             if (freeBlocks.isEmpty()) {
                                 throw new IllegalStateException("KV block pool exhausted (" + numBlocks
                                         + "); raise -Dbatch.decode.blocks");
                             }
                             int phys = freeBlocks.poll();
-                            blockTable.set(b * maxBlocksPerSlot + sb.size(), phys);
-                            sb.add(phys);
+                            allocedUpTo[b]++;
+                            blockTable.set(b * maxBlocksPerSlot + allocedUpTo[b], phys);
+                            slotBlocks.get(b).add(phys);
                             peakBlocks = Math.max(peakBlocks, numBlocks - freeBlocks.size());
                         }
-                    } else {                                       // inactive slot dumps into the scratch block
-                        blockTable.set(b * maxBlocksPerSlot, numBlocks);
+                    } else {
+                        blockTable.set(b * maxBlocksPerSlot, numBlocks);  // inactive → scratch
                     }
                 }
             }
+
             long t0 = System.nanoTime();
             runStep(plan, gs, nLayers, logitsIdx, true, cudaGraphs);
             long dt = System.nanoTime() - t0;
@@ -426,7 +471,8 @@ public class BatchedDecodeEngine {
                 boolean produced = false;
                 int nt = 0;
                 if (!decoding[b]) {
-                    if (promptPos[b] == promptLen - 1) {          // just fed the last prompt token
+                    prefillTokens++;
+                    if (promptPos[b] == promptLen - 1) {
                         nt = argmaxRow(logitsBatch, b, vocab);
                         decoding[b] = true;
                         produced = true;
@@ -445,23 +491,14 @@ public class BatchedDecodeEngine {
                     boolean stop = stopTokens.contains(nt) || gen.get(b).size() >= maxGen[b];
                     if (stop) {
                         completed.add(gen.get(b).stream().mapToInt(Integer::intValue).toArray());
-                        gen.get(b).clear();
-                        if (paged) {                               // return this request's blocks to the pool
+                        if (paged) {                               // free PRIVATE blocks only (prefix is pinned)
                             freeBlocks.addAll(slotBlocks.get(b));
                             slotBlocks.get(b).clear();
                         }
-                        if (refill && !queue.isEmpty()) {          // continuous: admit next request now
-                            maxGen[b] = queue.poll();
-                            promptPos[b] = 0;
-                            pos[b] = 0;
-                            decoding[b] = false;
-                        } else {                                    // static-wave: idle until wave ends
-                            active[b] = false;
-                        }
+                        active[b] = false;
                     }
                 }
             }
-            busySlotSteps += stepBusy;
             if (steps > warm) {
                 if (timedSteps == 0) {
                     tTimed = System.nanoTime();
@@ -507,6 +544,12 @@ public class BatchedDecodeEngine {
         if (paged) {
             System.out.printf("[paged] peak blocks in use %d / %d pool (%.0f%%); full contiguous reservation would need %d%n",
                     peakBlocks, numBlocks, 100.0 * peakBlocks / numBlocks, B * maxBlocksPerSlot);
+        }
+        if (prefixCache && sharedPrefixLen > 0) {
+            long prefillNoCache = (long) R * promptLen;
+            System.out.printf("[prefix] shared prefix %d tok prefilled once (%d blocks pinned); prefill tokens %d vs %d without cache (%.1f%% saved)%n",
+                    sharedPrefixLen, prefixBlocks, prefillTokens, prefillNoCache,
+                    100.0 * (prefillNoCache - prefillTokens) / prefillNoCache);
         }
     }
 
