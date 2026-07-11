@@ -389,7 +389,7 @@ public class BatchedDecodeEngine {
         }
 
         int warm = cudaGraphs ? 4 : 0;
-        long steps = 0, genTokens = 0, timedNs = 0, timedGen = 0, timedBusy = 0, timedSteps = 0, prefillTokens = 0;
+        long steps = 0, genTokens = 0, timedNs = 0, timedGen = 0, timedBusy = 0, timedSteps = 0, prefillTokens = 0, logitsSkipped = 0;
         long tTimed = 0;
         while (true) {
             // ── Admission (single site) ──────────────────────────────────────────
@@ -456,8 +456,22 @@ public class BatchedDecodeEngine {
                 }
             }
 
+            // Logits are only needed by slots that SAMPLE this step: any decoding slot,
+            // or a prefill slot feeding its last prompt token. If a whole step is pure
+            // prefill (common with long prompts), skip the full-vocab logits GEMM.
+            boolean needLogits = false;
+            for (int b = 0; b < B; b++) {
+                if (active[b] && (decoding[b] || promptPos[b] == promptLen - 1)) {
+                    needLogits = true;
+                    break;
+                }
+            }
+            if (!needLogits) {
+                logitsSkipped++;
+            }
+
             long t0 = System.nanoTime();
-            runStep(plan, gs, nLayers, logitsIdx, true, cudaGraphs);
+            runStep(plan, gs, nLayers, logitsIdx, needLogits, cudaGraphs);
             long dt = System.nanoTime() - t0;
             steps++;
 
@@ -537,7 +551,8 @@ public class BatchedDecodeEngine {
 
         double sec = wallNs / 1e9;
         double util = timedSteps > 0 ? (double) timedBusy / (timedSteps * B) : 0.0;
-        System.out.printf("[perf] continuous: %d steps, %d gen tokens over %.2f s%n", steps, genTokens, sec);
+        System.out.printf("[perf] continuous: %d steps (%d logits-skipped, %.0f%%), %d gen tokens over %.2f s%n",
+                steps, logitsSkipped, 100.0 * logitsSkipped / Math.max(1, steps), genTokens, sec);
         System.out.printf("[perf] generated %.0f tok/s | %.1f requests/s | slot utilization %.1f%% | per-step %.2f ms%n",
                 timedGen / sec, completed.size() / (wallNs / 1e9), util * 100.0,
                 timedSteps > 0 ? timedNs / 1e6 / timedSteps : 0.0);
