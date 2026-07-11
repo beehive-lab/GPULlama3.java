@@ -51,6 +51,10 @@ public class Qwen3FP16LayersBatchDecodeMMA {
     private final FloatArray keyCacheBatch;
     private final FloatArray valueCacheBatch;
     private final IntArray seqPositions;
+    private final boolean paged;
+    private final IntArray blockTable;
+    private final int blockSize;
+    private final int maxBlocksPerSlot;
     private final List<ImmutableTaskGraph> layerITGs;
     private String lastLayerTaskGraphID;
 
@@ -58,6 +62,20 @@ public class Qwen3FP16LayersBatchDecodeMMA {
                                          Qwen3Configuration config, int batchSize, int decodeCtx,
                                          FloatArray keyCacheBatch, FloatArray valueCacheBatch,
                                          IntArray seqPositions) {
+        this(state, weights, config, batchSize, decodeCtx, keyCacheBatch, valueCacheBatch, seqPositions,
+                null, 0, 0);
+    }
+
+    /** Paged constructor: keyCacheBatch/valueCacheBatch are the shared block pools. */
+    public Qwen3FP16LayersBatchDecodeMMA(Qwen3State state, Qwen3TornadoWeights weights,
+                                         Qwen3Configuration config, int batchSize, int decodeCtx,
+                                         FloatArray keyCacheBatch, FloatArray valueCacheBatch,
+                                         IntArray seqPositions,
+                                         IntArray blockTable, int blockSize, int maxBlocksPerSlot) {
+        this.paged = blockTable != null;
+        this.blockTable = blockTable;
+        this.blockSize = blockSize;
+        this.maxBlocksPerSlot = maxBlocksPerSlot;
         this.state = state;
         this.weights = weights;
         this.config = config;
@@ -89,6 +107,9 @@ public class Qwen3FP16LayersBatchDecodeMMA {
 
         if (layerIndex == 0) {
             g.transferToDevice(DataTransferMode.EVERY_EXECUTION, seqPositions);
+            if (paged) {
+                g.transferToDevice(DataTransferMode.EVERY_EXECUTION, blockTable);
+            }
             g.transferToDevice(DataTransferMode.FIRST_EXECUTION,
                     context,
                     state.attnScaleBatch, state.ffnScaleBatch,
@@ -100,6 +121,9 @@ public class Qwen3FP16LayersBatchDecodeMMA {
             g.consumeFromDevice("prefillActivation", state.wrapXBatch);
         } else {
             String pred = "batchDecodeLayer_" + (layerIndex - 1);
+            if (paged) {
+                g.consumeFromDevice(pred, context, blockTable);
+            }
             g.consumeFromDevice(pred,
                     context,
                     state.wrapXBatch,
@@ -153,21 +177,39 @@ public class Qwen3FP16LayersBatchDecodeMMA {
                 config.numberOfHeads(), nHeadKv, nEmbdHead,
                 qDim, kvDim, config.rmsNormEps());
 
-        // DECODE: per-slot position + per-slot KV region.
-        g.task("batch_rope_kv",
-                Qwen3Kernels::batchedDecodeRopeWithKVCacheQwen3Packed,
-                context, seqPositions,
-                state.qkvResultBatch,
-                keyCacheBatch, valueCacheBatch,
-                kvDim, nEmbdHead, layerIndex, config.numberOfLayers(), decodeCtx, qDim);
+        // DECODE: per-slot position + per-slot KV region (paged via block table, or contiguous).
+        if (paged) {
+            int blockCfg = blockSize | (maxBlocksPerSlot << 16);
+            g.task("batch_rope_kv",
+                    Qwen3Kernels::batchedDecodePagedRopeWithKVCacheQwen3Packed,
+                    context, seqPositions, blockTable,
+                    state.qkvResultBatch, keyCacheBatch, valueCacheBatch,
+                    kvDim, nEmbdHead, layerIndex, config.numberOfLayers(), blockCfg, qDim);
 
-        g.task("batch_attention",
-                TransformerBatchPrefillKernels::batchedDecodeAttentionFP16Out,
-                context, seqPositions,
-                state.qkvResultBatch, keyCacheBatch, valueCacheBatch,
-                state.attnOutFP16,
-                config.numberOfHeads(), nEmbdHead,
-                kvDim, gqa, layerIndex, config.numberOfLayers(), decodeCtx, qDim);
+            // Shared paged attention: qDim == nHeads*nEmbdHead for Qwen3.
+            g.task("batch_attention",
+                    TransformerBatchPrefillKernels::batchedDecodePagedAttentionFP16Out,
+                    context, seqPositions, blockTable,
+                    state.qkvResultBatch, keyCacheBatch, valueCacheBatch,
+                    state.attnOutFP16,
+                    config.numberOfHeads(), nEmbdHead,
+                    kvDim, gqa, layerIndex, config.numberOfLayers(), blockCfg);
+        } else {
+            g.task("batch_rope_kv",
+                    Qwen3Kernels::batchedDecodeRopeWithKVCacheQwen3Packed,
+                    context, seqPositions,
+                    state.qkvResultBatch,
+                    keyCacheBatch, valueCacheBatch,
+                    kvDim, nEmbdHead, layerIndex, config.numberOfLayers(), decodeCtx, qDim);
+
+            g.task("batch_attention",
+                    TransformerBatchPrefillKernels::batchedDecodeAttentionFP16Out,
+                    context, seqPositions,
+                    state.qkvResultBatch, keyCacheBatch, valueCacheBatch,
+                    state.attnOutFP16,
+                    config.numberOfHeads(), nEmbdHead,
+                    kvDim, gqa, layerIndex, config.numberOfLayers(), decodeCtx, qDim);
+        }
 
         g.task("woProj", TransformerBatchPrefillKernels::gemmMMA,
                 context, state.attnOutFP16,

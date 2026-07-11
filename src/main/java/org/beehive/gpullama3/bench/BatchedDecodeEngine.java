@@ -112,9 +112,6 @@ public class BatchedDecodeEngine {
         IntArray blockTable = null;
         long kvElems;
         if (paged) {
-            if (isQwen3) {
-                throw new IllegalStateException("paged KV currently wired for LLaMA only");
-            }
             // +1 scratch block: inactive slots still execute the KV kernels every step,
             // so they must dump into a reserved block, never a live one.
             kvElems = (long) (numBlocks + 1) * numLayers * blockSize * kvDim;
@@ -143,10 +140,13 @@ public class BatchedDecodeEngine {
         String lastLayerId;
         java.util.function.Consumer<GridScheduler> updateLayerSched;
         if (isQwen3) {
-            Qwen3FP16LayersBatchDecodeMMA q = new Qwen3FP16LayersBatchDecodeMMA(
-                    (org.beehive.gpullama3.inference.state.Qwen3State) state,
-                    (org.beehive.gpullama3.inference.weights.tornado.Qwen3TornadoWeights) weights,
-                    (Qwen3Configuration) config, B, decodeCtx, keyCacheBatch, valueCacheBatch, seqPositions);
+            var qState = (org.beehive.gpullama3.inference.state.Qwen3State) state;
+            var qWeights = (org.beehive.gpullama3.inference.weights.tornado.Qwen3TornadoWeights) weights;
+            Qwen3FP16LayersBatchDecodeMMA q = paged
+                    ? new Qwen3FP16LayersBatchDecodeMMA(qState, qWeights, (Qwen3Configuration) config, B, decodeCtx,
+                        keyCacheBatch, valueCacheBatch, seqPositions, blockTable, blockSize, maxBlocksPerSlot)
+                    : new Qwen3FP16LayersBatchDecodeMMA(qState, qWeights, (Qwen3Configuration) config, B, decodeCtx,
+                        keyCacheBatch, valueCacheBatch, seqPositions);
             layerITGs = q.getLayerImmutableTaskGraphs();
             lastLayerId = q.getLastLayerTaskGraphID();
             updateLayerSched = q::updateGridScheduler;

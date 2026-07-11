@@ -207,7 +207,7 @@ so identical token counts and all outputs mutually prefix-consistent):
 draining each wave to its longest request. The gap widens with more length variance.
 Correctness under scheduling = all completed outputs are mutually prefix-consistent.
 
-## PagedAttention (`-Dbatch.decode.paged=true`, LLaMA)
+## PagedAttention (`-Dbatch.decode.paged=true`, LLaMA + Qwen3)
 
 The contiguous KV cache reserves the full `ctx` per slot — `B·ctx` token-slots even
 when most sequences are short. Paging stores KV in a **shared pool of fixed-size blocks**
@@ -253,6 +253,18 @@ blocks) instead of 512×, and its KV blocks are shared. Output still bit-exact (
 requests mutually prefix-consistent). The win scales with prefix length / request count. The
 prefix is block-aligned down (`sharedPrefixLen = ⌊(promptLen-1)/blockSize⌋·blockSize`) so a
 request only ever writes into its own private blocks; shared blocks stay read-only.
+
+The full stack (batched decode → continuous → paging → prefix caching) runs on **Qwen3**
+as well (Qwen3 adds a split-half paged RoPE kernel; the paged flash kernel is shared since
+`qDim == nHeads·nEmbdHead`). Qwen3-1.7B, 256-request continuous+paged workload, 48-tok
+shared prompt:
+
+| Qwen3-1.7B | steps | gen tok/s | requests/s | peak KV blocks |
+|--|------:|----------:|-----------:|---------------:|
+| paged, no prefix cache | 405 | 465 | 13.6 | 296 |
+| **paged + prefix cache** | **193** | **949** | **27.7** | **151** |
+
++104% throughput and prefix sharing also halves peak KV blocks (296→151), all bit-exact.
 
 ## Reproduce
 
