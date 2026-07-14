@@ -485,7 +485,7 @@ def create_parser() -> argparse.ArgumentParser:
     bench_group.add_argument(
         "--bench-args",
         default="",
-        help='Extra benchmark options, e.g. "-p 512 -n 128 -r 5 -o md" (see LlamaBench)',
+        help='Extra benchmark options (use --bench-args="..."), e.g. "-p 512 -n 128 -d 0,4096 -r 5 -o md" (see LlamaBench)',
     )
 
     verbose_group = parser.add_argument_group("TornadoVM Execution Verbose")

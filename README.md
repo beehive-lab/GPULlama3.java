@@ -479,12 +479,14 @@ llama-tornado --gpu --cuda --model model1.gguf --bench
 
 # multiple models, custom matrix, CSV
 llama-tornado --gpu --cuda --model model1.gguf --bench \
-    --bench-args "-m model2.gguf -p 256,512 -n 64,128 -pg 512,128 -r 5 -o csv"
+    --bench-args="-m model2.gguf -p 256,512 -n 64,128 -pg 512,128 -d 0,4096 -r 5 -o csv"
 ```
 
-Benchmark options (`--bench-args`): `-m` extra models (comma/repeatable), `-p` prompt sizes,
-`-n` generation lengths, `-pg pp,tg` combined tests, `-r` repetitions, `-o md|csv|json`,
-`--no-warmup`.
+Benchmark options (`--bench-args="..."` — use the `=` form): `-m` extra models
+(comma/repeatable), `-p` prompt sizes, `-n` generation lengths, `-pg pp,tg` combined tests,
+`-d` context depths (untimed KV prefill of `d` positions before each timed test, e.g.
+`tg128@d4096`), `-r` repetitions, `-o md|csv|json|jsonl|sql`, `-oe <fmt>` second format to
+stderr, `--delay <s>` pause between tests, `--no-warmup`.
 
 Example output (RTX 4090, CUDA backend):
 
