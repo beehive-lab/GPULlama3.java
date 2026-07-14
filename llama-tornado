@@ -200,7 +200,9 @@ class LlamaRunner:
             [
                 "-cp",
                 self._find_llama_jar(),
-                "org.beehive.gpullama3.LlamaApp",
+                "org.beehive.gpullama3.server.OpenAIServer"
+                if getattr(args, "server", False)
+                else "org.beehive.gpullama3.LlamaApp",
             ]
         )
         cmd.extend(module_config)
@@ -227,6 +229,12 @@ class LlamaRunner:
 
     def _add_llama_args(self, cmd: List[str], args: argparse.Namespace) -> List[str]:
         """Add LLaMA-specific arguments to the command."""
+        if getattr(args, "server", False):
+            # OpenAI server mode: the server parses only --model / --port / --gpu.
+            srv = ["--model", args.model_path, "--port", str(getattr(args, "port", 8080))]
+            if args.use_gpu:
+                srv.append("--gpu")
+            return cmd + srv
         llama_args = [
             "-m",
             args.model_path,
@@ -466,6 +474,11 @@ def create_parser() -> argparse.ArgumentParser:
         default=None,
         help="Directory for profiler output",
     )
+
+    # OpenAI-compatible server
+    server_group = parser.add_argument_group("OpenAI-compatible server")
+    server_group.add_argument("--server", action="store_true", help="Run the OpenAI-compatible HTTP server instead of inference")
+    server_group.add_argument("--port", type=int, default=8080, help="Server port (default 8080)")
 
     # TornadoVM Execution Verbose options
     verbose_group = parser.add_argument_group("TornadoVM Execution Verbose")
