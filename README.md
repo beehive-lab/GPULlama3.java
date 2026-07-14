@@ -484,6 +484,9 @@ llama-tornado --gpu --cuda --model model1.gguf --bench \
 
 Benchmark options (`--bench-args="..."` — use the `=` form): `-m` extra models
 (comma/repeatable), `-p` prompt sizes, `-n` generation lengths, `-pg pp,tg` combined tests,
+`-b` prompt-processing batch size — when >1, `pp` tokens run through the batched-prefill
+tensor-core (MMA) path, `b` tokens per forward (compute-bound, the llama-bench `-b`);
+generation stays single-token decode. Supported models: Llama / Qwen3 / Mistral (FP16).
 `-d` context depths (untimed KV prefill of `d` positions before each timed test, e.g.
 `tg128@d4096`), `-r` repetitions, `-o md|csv|json|jsonl|sql`, `-oe <fmt>` second format to
 stderr, `--delay <s>` pause between tests, `--no-warmup`.

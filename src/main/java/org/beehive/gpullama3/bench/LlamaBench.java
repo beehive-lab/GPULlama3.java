@@ -2,9 +2,13 @@ package org.beehive.gpullama3.bench;
 
 import org.beehive.gpullama3.Options;
 import org.beehive.gpullama3.inference.InferenceCore;
+import org.beehive.gpullama3.inference.InferenceCoreBatchPrefillDecode;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlan;
+import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanBatchPrefillDecode;
+
+import java.util.Arrays;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -31,6 +35,8 @@ import static org.beehive.gpullama3.model.loader.ModelLoader.loadModel;
  *   -m  model.gguf[,model2.gguf]   models (repeatable / comma-separated)
  *   -p  512[,1024]                 prompt-processing sizes       (default 512)
  *   -n  128[,256]                  generation lengths            (default 128)
+ *   -b  1                          prompt-processing batch (>1 = batched-prefill MMA path,
+ *                                  compute-bound pp; Llama/Qwen3/Mistral FP16)
  *   -pg 512,128                    combined prompt+gen test      (repeatable)
  *   -d  0[,4096]                   context depths: untimed KV prefill of d positions
  *                                  before each timed test (llama-bench -d)
@@ -60,6 +66,20 @@ public class LlamaBench {
     public static void main(String[] args) throws Exception {
         System.setProperty("llama.enableTornadoVM", "true");
 
+        // Pre-scan -b: the batched-prefill plan + state buffers are gated on these system
+        // properties, read once at class-init — set BEFORE any TornadoVM/State class loads.
+        int batch = 1;
+        for (int i = 0; i < args.length - 1; i++) {
+            if (args[i].equals("-b") || args[i].equals("--batch-size")) {
+                batch = Integer.parseInt(args[i + 1]);
+            }
+        }
+        if (batch > 1) {
+            System.setProperty("llama.withPrefillDecode", "true");
+            System.setProperty("llama.prefillBatchSize", String.valueOf(batch));
+        }
+        final int batchSize = batch;
+
         List<String> models = new ArrayList<>();
         List<Integer> pps = new ArrayList<>();
         List<Integer> tgs = new ArrayList<>();
@@ -80,6 +100,7 @@ public class LlamaBench {
                     String[] parts = args[++i].split("[,+]");
                     pgs.add(new int[] { Integer.parseInt(parts[0]), Integer.parseInt(parts[1]) });
                 }
+                case "-b", "--batch-size" -> i++; // consumed in pre-scan
                 case "-d", "--n-depth" -> { for (String v : args[++i].split(",")) depths.add(Integer.parseInt(v)); }
                 case "-r", "--repetitions" -> reps = Integer.parseInt(args[++i]);
                 case "-o", "--output" -> out = args[++i];
@@ -122,7 +143,12 @@ public class LlamaBench {
 
         List<Result> results = new ArrayList<>();
         for (String modelPath : models) {
-            results.addAll(benchModel(modelPath, tests, reps, warmup, delay));
+            try {
+                results.addAll(benchModel(modelPath, tests, reps, warmup, delay, batchSize));
+            } catch (Throwable e) {
+                System.err.printf(Locale.ROOT, "[bench] %s FAILED (batch=%d unsupported for this model?): %s%n",
+                        modelPath, batchSize, e);
+            }
         }
 
         print(out, results, System.out);
@@ -143,10 +169,10 @@ public class LlamaBench {
         }
     }
 
-    static List<Result> benchModel(String modelPath, List<TestSpec> tests, int reps, boolean warmup, int delay) throws Exception {
+    static List<Result> benchModel(String modelPath, List<TestSpec> tests, int reps, boolean warmup, int delay, int batch) throws Exception {
         Path path = Paths.get(modelPath);
         int maxCtx = tests.stream().mapToInt(t -> t.depth() + t.tokens()).max().orElse(1024) + 8;
-        Options options = new Options(path, "bench", null, null, false, 0.0f, 1.0f, 42, maxCtx, false, false, true, false, 1);
+        Options options = new Options(path, "bench", null, null, false, 0.0f, 1.0f, 42, maxCtx, false, false, true, batch > 1, batch);
         Model model = loadModel(options);
         State state = model.createNewState();
         TornadoVMMasterPlan plan = TornadoVMMasterPlan.initializeTornadoVMPlan(state, model);
@@ -172,11 +198,11 @@ public class LlamaBench {
                 Thread.sleep(delay * 1000L);
             }
             if (warmup) {
-                runTest(model, state, plan, toks, t); // untimed
+                runTest(model, state, plan, toks, t, batch); // untimed
             }
             double[] samples = new double[reps];
             for (int r = 0; r < reps; r++) {
-                samples[r] = runTest(model, state, plan, toks, t);
+                samples[r] = runTest(model, state, plan, toks, t, batch);
             }
             double avg = 0;
             for (double s : samples) {
@@ -188,8 +214,9 @@ public class LlamaBench {
                 var += (s - avg) * (s - avg);
             }
             double stddev = samples.length > 1 ? Math.sqrt(var / (samples.length - 1)) : 0.0;
-            results.add(new Result(name, quant, sizeGiB, paramsB, backend, t.name(), avg, stddev, samples));
-            System.err.printf(Locale.ROOT, "[bench] %-28s %-12s %8.2f ± %.2f t/s%n", name, t.name(), avg, stddev);
+            String testName = batch > 1 ? t.name() + " b" + batch : t.name();
+            results.add(new Result(name, quant, sizeGiB, paramsB, backend, testName, avg, stddev, samples));
+            System.err.printf(Locale.ROOT, "[bench] %-28s %-14s %8.2f ± %.2f t/s%n", name, testName, avg, stddev);
         }
         plan.freeTornadoExecutionPlan();
         return results;
@@ -198,19 +225,51 @@ public class LlamaBench {
     /**
      * One timed repetition: fresh sequence from position 0 (KV overwritten). With a depth d,
      * d positions are prefilled untimed first and the timed window runs at positions
-     * d..d+tokens (llama-bench {@code -d}: measures throughput at context depth). Returns tokens/s.
+     * d..d+tokens (llama-bench {@code -d}: measures throughput at context depth).
+     *
+     * <p>With {@code batch > 1} the prompt-processing tokens (nPrompt) run through the
+     * batched-prefill MMA path — {@code batch} tokens per forward, compute-bound (llama-bench
+     * {@code -b}) — while generation tokens (nGen) stay single-token decode. Returns tokens/s.</p>
      */
-    static double runTest(Model model, State state, TornadoVMMasterPlan plan, int[] toks, TestSpec t) {
-        for (int pos = 0; pos < t.depth(); pos++) {
-            InferenceCore.forwardTornadoVM(model, state, toks[pos], pos, plan);
-        }
-        int total = t.tokens();
+    static double runTest(Model model, State state, TornadoVMMasterPlan plan, int[] toks, TestSpec t, int batch) {
+        // Untimed depth prefill.
+        prefill(model, state, plan, toks, 0, t.depth(), batch);
+
+        int base = t.depth();
         long t0 = System.nanoTime();
-        for (int pos = t.depth(); pos < t.depth() + total; pos++) {
-            InferenceCore.forwardTornadoVM(model, state, toks[pos], pos, plan);
+        // Prompt processing: batched-prefill chunks when batch>1, else single-token.
+        prefill(model, state, plan, toks, base, t.nPrompt(), batch);
+        // Generation: always single-token decode over the growing KV cache.
+        for (int i = 0; i < t.nGen(); i++) {
+            int pos = base + t.nPrompt() + i;
+            if (batch > 1) {
+                InferenceCoreBatchPrefillDecode.forwardTornadoVMDecode(model, state, toks[pos], pos,
+                        (TornadoVMMasterPlanBatchPrefillDecode) plan);
+            } else {
+                InferenceCore.forwardTornadoVM(model, state, toks[pos], pos, plan);
+            }
         }
         long t1 = System.nanoTime();
-        return total / ((t1 - t0) / 1e9);
+        return t.tokens() / ((t1 - t0) / 1e9);
+    }
+
+    /** Feed {@code count} tokens from {@code toks[start..]} at positions {@code start..} (prefill). */
+    static void prefill(Model model, State state, TornadoVMMasterPlan plan, int[] toks, int start, int count, int batch) {
+        if (count <= 0) {
+            return;
+        }
+        if (batch > 1) {
+            var bp = (TornadoVMMasterPlanBatchPrefillDecode) plan;
+            for (int off = 0; off < count; off += batch) {
+                int chunkSize = Math.min(batch, count - off);
+                int[] chunk = Arrays.copyOfRange(toks, start + off, start + off + chunkSize);
+                InferenceCoreBatchPrefillDecode.batchForwardTornadoVMPrefill(model, state, chunk, start + off, chunkSize, bp);
+            }
+        } else {
+            for (int i = 0; i < count; i++) {
+                InferenceCore.forwardTornadoVM(model, state, toks[start + i], start + i, plan);
+            }
+        }
     }
 
     /** Rough parameter count from file size + quantization (F16 = 2 B/param, Q8_0 = 34/32 B/param). */
