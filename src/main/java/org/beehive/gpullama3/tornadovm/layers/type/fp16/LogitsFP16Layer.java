@@ -17,6 +17,17 @@ import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
 public class LogitsFP16Layer extends AbstractLogitsTaskGraph {
 
+    /** Local workgroup size for the single-workgroup on-device argmax. */
+    private static final int SAMPLE_LOCAL = 256;
+
+    /**
+     * On-device greedy sampling: append a GPU argmax over the logits and transfer only the
+     * sampled token id (1 int) to the host instead of the full vocab logits row. Opt-in via
+     * {@code -Dllama.deviceSample=true}; only valid for greedy decoding (LlamaApp disables it
+     * for temperature &gt; 0 and non-FP16 models, which still need the full logits host-side).
+     */
+    public static final boolean DEVICE_SAMPLE = Boolean.getBoolean("llama.deviceSample");
+
     public LogitsFP16Layer(String name, State state, Weights weights, Configuration config,
             String lastTaskGraphID, SchedulerType schedulerType) {
         super(name, state, weights, config, lastTaskGraphID, schedulerType);
@@ -92,8 +103,22 @@ public class LogitsFP16Layer extends AbstractLogitsTaskGraph {
                 config.vocabularySize(),                       // output dimension
                 LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS);
 
-        // === Transfer Results to Host ===
-        logits.transferToHost(DataTransferMode.EVERY_EXECUTION, state.wrapLogits);
+        // === Sampling / result transfer ===
+        if (DEVICE_SAMPLE) {
+            // Greedy argmax on the GPU; only the token id crosses to the host (the full
+            // vocab logits row stays device-side — no big D2H copy, no host scan).
+            logits.transferToDevice(DataTransferMode.FIRST_EXECUTION, state.sampledToken);
+            logits.task("argmax_sample",
+                    TransformerComputeKernels::argmaxLogits,
+                    context,
+                    state.wrapLogits,
+                    state.sampledToken,
+                    config.vocabularySize(),
+                    SAMPLE_LOCAL);
+            logits.transferToHost(DataTransferMode.EVERY_EXECUTION, state.sampledToken);
+        } else {
+            logits.transferToHost(DataTransferMode.EVERY_EXECUTION, state.wrapLogits);
+        }
         configureAdditionalPersists(logits);
         return logits;
     }
@@ -108,6 +133,11 @@ public class LogitsFP16Layer extends AbstractLogitsTaskGraph {
         tornadoForwardScheduler.addWorkerGrid("logits.rms_reduce", logitsRMS);
         tornadoForwardScheduler.addWorkerGrid("logits.rms_apply_fp16", logitsRMS);
         tornadoForwardScheduler.addWorkerGrid("logits.vocab_proj", vocabWorker);
+        if (DEVICE_SAMPLE) {
+            var argmaxWorker = new WorkerGrid1D(SAMPLE_LOCAL);   // one workgroup
+            argmaxWorker.setLocalWork(SAMPLE_LOCAL, 1, 1);
+            tornadoForwardScheduler.addWorkerGrid("logits.argmax_sample", argmaxWorker);
+        }
         return tornadoForwardScheduler;
     }
 

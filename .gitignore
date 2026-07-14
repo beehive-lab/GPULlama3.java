@@ -67,3 +67,4 @@ logs/target/
 .project
 .classpath
 .vscode/
+external/

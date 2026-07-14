@@ -7,6 +7,7 @@ import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.Model;
 import org.beehive.gpullama3.tokenizer.Tokenizer;
 import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlan;
+import org.beehive.gpullama3.tornadovm.layers.type.fp16.LogitsFP16Layer;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
 import java.io.ByteArrayOutputStream;
@@ -36,6 +37,19 @@ public final class InferenceEngine {
 
     private InferenceEngine() {
         //prevent instantiation
+    }
+
+    /**
+     * Greedy next-token pick for the GPU FP16 path. With {@code -Dllama.deviceSample=true}
+     * the argmax already ran on the device and the token id sits in {@code state.sampledToken};
+     * read it directly (the full logits row never left the GPU). Otherwise fall back to the
+     * host sampler over the transferred logits.
+     */
+    private static int sampleTokenGpu(State state, Sampler sampler, Object logits) {
+        if (LogitsFP16Layer.DEVICE_SAMPLE) {
+            return state.sampledToken.get(0);
+        }
+        return sampler.sampleToken(logits);
     }
 
     /**
@@ -328,7 +342,7 @@ public final class InferenceEngine {
                 }
 
                 // Sample next token - use GPU sampling if available
-                nextToken = sampler.sampleToken(logits);
+                nextToken = sampleTokenGpu(state, sampler, logits);
 
                 // Add token consumer support
                 if (onTokenGenerated != null) {
@@ -422,7 +436,7 @@ public final class InferenceEngine {
             }
 
             // Sample the next token
-            nextToken = sampler.sampleToken(state.wrapLogits);
+            nextToken = sampleTokenGpu(state, sampler, state.wrapLogits);
 
             // Output the token if echo is enabled
             if (echo) {
