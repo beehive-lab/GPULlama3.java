@@ -56,6 +56,32 @@ import static org.beehive.gpullama3.model.loader.ModelLoader.loadModel;
  *   java -Dllama.prefillBatchSize=32 -Dbatch.decode.B=32 -Dbatch.decode.ctx=512 \
  *        -Dbatch.decode.n=64 ... BatchedDecodeEngine --model llama-3.2-1b-fp16.gguf --prompt "..."
  * </pre>
+ *
+ * <h2>Reproduce (step by step)</h2>
+ * <ol>
+ *   <li>Build a TornadoVM with the CUDA backend + MMA {@code KernelContext} API
+ *       ({@code make BACKEND=cuda}); tested on TornadoVM 5.0.1-jdk21-dev, JDK 21.</li>
+ *   <li>Build this project:
+ *       {@code mvn -Pjdk21 -Dtornadovm.base.version=5.0.1 -Djdk.version.suffix=-jdk21-dev clean package -DskipTests}</li>
+ *   <li>Take {@code llama-tornado --show-command ...}, swap the main class to this
+ *       engine, and prepend the {@code -Dbatch.decode.*} flags below. Keep
+ *       {@code -Dllama.prefillBatchSize} equal to {@code -Dbatch.decode.B}.</li>
+ * </ol>
+ * <p>Qwen3, static batch (all B streams bit-exact vs single-stream greedy):</p>
+ * <pre>
+ *   -Dllama.prefillBatchSize=32 -Dbatch.decode.B=32 -Dbatch.decode.ctx=512 -Dbatch.decode.n=64 \
+ *   BatchedDecodeEngine -m Qwen3-1.7B-f16.gguf -p "What is the capital of France?" --instruct
+ *   # verify: "all 32 streams identical (== single-stream greedy ref): true"
+ * </pre>
+ * <p>Qwen3, continuous multi-request serving (paged KV + prefix cache):</p>
+ * <pre>
+ *   -Dllama.prefillBatchSize=16 -Dbatch.decode.B=16 -Dbatch.decode.ctx=512 -Dbatch.decode.n=64 \
+ *   -Dbatch.decode.continuous=true -Dbatch.decode.paged=true -Dbatch.decode.prefixCache=true \
+ *   -Dbatch.decode.requests=128 \
+ *   BatchedDecodeEngine -m Qwen3-1.7B-f16.gguf -p "What is the capital of France?" --instruct
+ *   # verify: "128 requests completed, all mutually prefix-consistent (greedy): true"
+ * </pre>
+ * <p>Each run prints {@code [verify] ...: true} (correctness) and {@code [perf] ...} (throughput).</p>
  */
 public class BatchedDecodeEngine {
 

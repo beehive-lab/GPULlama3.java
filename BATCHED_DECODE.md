@@ -287,6 +287,42 @@ for temperature sampling (which still needs logits on the host).
 
 ## Reproduce
 
+### Qwen3 quick start (copy-paste)
+
+After building TornadoVM (CUDA backend) and this project (steps 1–3 below), take
+`llama-tornado --show-command …`, swap the main class to
+`org.beehive.gpullama3.bench.BatchedDecodeEngine`, and prepend the flags. Keep
+`-Dllama.prefillBatchSize` equal to `-Dbatch.decode.B`.
+
+```bash
+# A) static batch — all B streams bit-exact vs single-stream greedy
+-Dllama.prefillBatchSize=32 -Dbatch.decode.B=32 -Dbatch.decode.ctx=512 -Dbatch.decode.n=64 \
+  ... BatchedDecodeEngine -m Qwen3-1.7B-f16.gguf -p "What is the capital of France?" --instruct
+#  → [verify] all 32 streams identical (== single-stream greedy ref): true
+
+# B) continuous multi-request serving — paged KV + prefix cache
+-Dllama.prefillBatchSize=16 -Dbatch.decode.B=16 -Dbatch.decode.ctx=512 -Dbatch.decode.n=64 \
+  -Dbatch.decode.continuous=true -Dbatch.decode.paged=true -Dbatch.decode.prefixCache=true \
+  -Dbatch.decode.requests=128 \
+  ... BatchedDecodeEngine -m Qwen3-1.7B-f16.gguf -p "What is the capital of France?" --instruct
+#  → [verify] 128 requests completed, all mutually prefix-consistent (greedy): true
+```
+
+Verified fresh (RTX 4090, TornadoVM 5.0.1-jdk21-dev, JDK 21) — every row bit-exact /
+prefix-consistent:
+
+| model | mode | throughput | correctness |
+|-------|------|-----------:|-------------|
+| Qwen3-1.7B | static B=8 | 198 tok/s | all streams identical |
+| Qwen3-1.7B | static B=16 | 402 tok/s | all streams identical |
+| Qwen3-1.7B | static B=32 | **801 tok/s** (32×) | all streams identical |
+| Qwen3-1.7B | continuous B=16, R=128, paged+prefix | 301 tok/s · 6.2 req/s · 95.8% util | all prefix-consistent |
+| Qwen3-4B | static B=16 | 217 tok/s | all streams identical |
+| Qwen3-4B | static B=32 | **424 tok/s** (32×) | all streams identical |
+
+Per-stream tok/s stays flat as B grows (1.7B ~25, 4B ~13.5): the MMA tile runs 128
+rows regardless of B, so batching is effectively free until B=128.
+
 ### 1. TornadoVM (CUDA backend + tensor-core MMA)
 
 Requires a TornadoVM with the **CUDA backend** and the **MMA `KernelContext`** API
