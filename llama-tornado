@@ -230,10 +230,10 @@ class LlamaRunner:
     def _add_llama_args(self, cmd: List[str], args: argparse.Namespace) -> List[str]:
         """Add LLaMA-specific arguments to the command."""
         if getattr(args, "bench", False):
-            # llama-bench mode: model(s) + benchmark options only.
-            bench_args = ["-m", args.model_path]
-            if args.bench_args:
-                bench_args.extend(args.bench_args.split())
+            # llama-bench mode: model(s) + benchmark options only. If --bench-args already
+            # supplies -m, use those verbatim (don't also prepend --model → duplicate rows).
+            extra = args.bench_args.split() if args.bench_args else []
+            bench_args = extra if ("-m" in extra or "--model" in extra) else ["-m", args.model_path] + extra
             return cmd + bench_args
         llama_args = [
             "-m",
