@@ -184,7 +184,7 @@ class LlamaRunner:
                 [
                     f"@{self.tornado_sdk}/etc/exportLists/cuda-exports",
                     "--add-modules",
-                    "ALL-SYSTEM,jdk.incubator.vector,tornado.runtime,tornado.annotation,tornado.drivers.common,tornado.drivers.cuda",
+                    "ALL-SYSTEM,jdk.incubator.vector,tornado.runtime,tornado.annotation,tornado.drivers.common,tornado.drivers.cuda,tornado.cublas",
                 ]
             )
         elif args.backend == Backend.METAL:

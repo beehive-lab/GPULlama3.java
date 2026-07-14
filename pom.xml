@@ -68,6 +68,11 @@
                 <artifactId>tornado-runtime</artifactId>
                 <version>${tornadovm.version}</version>
             </dependency>
+            <dependency>
+                <groupId>io.github.beehive-lab</groupId>
+                <artifactId>tornado-cublas</artifactId>
+                <version>${tornadovm.version}</version>
+            </dependency>
         </dependencies>
 
         <build>
