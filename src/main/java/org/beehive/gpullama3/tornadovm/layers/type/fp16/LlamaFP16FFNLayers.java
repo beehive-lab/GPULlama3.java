@@ -203,19 +203,35 @@ public class LlamaFP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Llama
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
 
         // RoPE + KV Cache
-        unifiedLayer.task("rope_and_kv_cache",
-                TransformerComputeKernelsLayered::ropeRotationWithCacheCopy,
-                context,
-                state.positionHolder,
-                state.wrapQ,                 // Q (in/out)
-                state.wrapK,                 // K (in/out)
-                state.wrapV,                 // V (in only)
-                state.wrapKeyCache,          // Key cache (out)
-                state.wrapValueCache,        // Value cache (out)
-                config.kvDim(),
-                config.headSize(),
-                layerIndex,
-                config.contextLength());
+        if (useFp16KVCache()) {
+            unifiedLayer.task("rope_and_kv_cache",
+                    TransformerComputeKernelsLayered::ropeRotationWithCacheCopyFP16,
+                    context,
+                    state.positionHolder,
+                    state.wrapQ,                 // Q (in/out)
+                    state.wrapK,                 // K (in/out)
+                    state.wrapV,                 // V (in only)
+                    state.wrapKeyCacheFP16,      // Key cache (out, FP16)
+                    state.wrapValueCacheFP16,    // Value cache (out, FP16)
+                    config.kvDim(),
+                    config.headSize(),
+                    layerIndex,
+                    config.contextLength());
+        } else {
+            unifiedLayer.task("rope_and_kv_cache",
+                    TransformerComputeKernelsLayered::ropeRotationWithCacheCopy,
+                    context,
+                    state.positionHolder,
+                    state.wrapQ,                 // Q (in/out)
+                    state.wrapK,                 // K (in/out)
+                    state.wrapV,                 // V (in only)
+                    state.wrapKeyCache,          // Key cache (out)
+                    state.wrapValueCache,        // Value cache (out)
+                    config.kvDim(),
+                    config.headSize(),
+                    layerIndex,
+                    config.contextLength());
+        }
         // Attention
         configureAttention(unifiedLayer, layerIndex);
         // Output Projection (Wo) with residual
@@ -258,8 +274,13 @@ public class LlamaFP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Llama
                 weights.w2Layered[layerIndex].asHalfFloatArray(),
                 config.hiddenDim(), config.dim(), LOCAL_WORK_GROUP_SIZE_ALLOC);
 
-        unifiedLayer.persistOnDevice(state.wrapX, state.wrapKeyCache,
-                state.wrapValueCache);
+        if (useFp16KVCache()) {
+            unifiedLayer.persistOnDevice(state.wrapX, state.wrapKeyCacheFP16,
+                    state.wrapValueCacheFP16);
+        } else {
+            unifiedLayer.persistOnDevice(state.wrapX, state.wrapKeyCache,
+                    state.wrapValueCache);
+        }
 
         return unifiedLayer;
     }
@@ -284,6 +305,8 @@ public class LlamaFP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Llama
     }
 
     protected TaskGraph configureLayerDataTransfers(TaskGraph unifiedLayer, int layerIndex) {
+        Object keyCache = useFp16KVCache() ? state.wrapKeyCacheFP16 : state.wrapKeyCache;
+        Object valueCache = useFp16KVCache() ? state.wrapValueCacheFP16 : state.wrapValueCache;
         if (layerIndex == 0) {
             // First layer: Transfer initial data to device (one-time transfer)
             unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION,
@@ -298,7 +321,7 @@ public class LlamaFP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Llama
                     // QKV vectors
                     state.wrapQ, state.wrapK, state.wrapV,
                     // KV cache
-                    state.wrapKeyCache, state.wrapValueCache,
+                    keyCache, valueCache,
                     // Attention & FFN buffers
                     state.wrapAtt, state.wrapHb, state.wrapXbFP16);
         } else {
@@ -314,7 +337,7 @@ public class LlamaFP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Llama
                     // QKV vectors
                     state.wrapQ, state.wrapK, state.wrapV,
                     // KV cache
-                    state.wrapKeyCache, state.wrapValueCache,
+                    keyCache, valueCache,
                     // Attention & FFN buffers
                     state.wrapAtt, state.wrapHb,
                     // Position & misc
@@ -324,7 +347,40 @@ public class LlamaFP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Llama
     }
 
     private TaskGraph configureAttention(TaskGraph unifiedLayer, int layerIndex) {
-        if (schedulerType == SchedulerType.NVIDIA) {
+        if (useFp16KVCache()) {
+            // Flash Attention over the half-precision KV cache (FP32 accumulation).
+            // The scalar-read variant is an evaluation aid; the packed variant is the default.
+            if (State.FP16_KV_SCALAR) {
+                return unifiedLayer.task("attention",
+                        TransformerComputeKernelsLayered::processHeadsFlashAttentionFP16Scalar,
+                        context,
+                        state.wrapQ,
+                        state.wrapKeyCacheFP16,
+                        state.wrapValueCacheFP16,
+                        state.wrapXb,
+                        config.numberOfHeads(),
+                        config.headSize(),
+                        config.kvDim(),
+                        config.kvMul(),
+                        state.positionHolder,
+                        layerIndex,
+                        config.contextLength());
+            }
+            return unifiedLayer.task("attention",
+                    TransformerComputeKernelsLayered::processHeadsFlashAttentionFP16,
+                    context,
+                    state.wrapQ,
+                    state.wrapKeyCacheFP16,
+                    state.wrapValueCacheFP16,
+                    state.wrapXb,
+                    config.numberOfHeads(),
+                    config.headSize(),
+                    config.kvDim(),
+                    config.kvMul(),
+                    state.positionHolder,
+                    layerIndex,
+                    config.contextLength());
+        } else if (schedulerType == SchedulerType.NVIDIA) {
             // Flash Attention (optimized for NVIDIA GPUs)
             return unifiedLayer.task("attention",
                     TransformerComputeKernelsLayered::processHeadsFlashAttention,

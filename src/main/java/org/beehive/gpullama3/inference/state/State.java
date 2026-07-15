@@ -27,6 +27,19 @@ import uk.ac.manchester.tornado.api.types.arrays.IntArray;
  */
 public abstract class State {
 
+    /**
+     * When set ({@code -Dllama.kvcache.fp16=true}), model states that support it additionally
+     * allocate half-precision KV caches, and the NVIDIA decode path reads/writes those instead of
+     * the FP32 ones (halving KV bandwidth; accumulation stays FP32).
+     */
+    public static final boolean USE_FP16_KV = Boolean.getBoolean("llama.kvcache.fp16");
+
+    /**
+     * Evaluation aid: with the FP16 KV cache active, read it with scalar half loads instead of
+     * packed half2 loads ({@code -Dllama.kvcache.fp16.scalar=true}) to isolate the packed-load gain.
+     */
+    public static final boolean FP16_KV_SCALAR = Boolean.getBoolean("llama.kvcache.fp16.scalar");
+
     // current wave of activations
     public final FloatTensor x;         // activation at current time stamp (dim,)
     public final FloatTensor xb;        // same, but inside a residual branch (dim,)
@@ -58,6 +71,8 @@ public abstract class State {
     public final FloatArray wrapAtt;        // FloatArray wrapper for the attention scores, optimized for TornadoVM.
     public final FloatArray wrapKeyCache;   // FloatArray wrapper for the key cache, optimized for TornadoVM.
     public final FloatArray wrapValueCache; // FloatArray wrapper for the value cache, optimized for TornadoVM.
+    public final HalfFloatArray wrapKeyCacheFP16;   // Optional half-precision key cache (see USE_FP16_KV); null unless enabled.
+    public final HalfFloatArray wrapValueCacheFP16; // Optional half-precision value cache (see USE_FP16_KV); null unless enabled.
     public final IntArray positionHolder;
 
     public TornadoNativeArray embeddingX;
@@ -135,6 +150,8 @@ public abstract class State {
         // dim vs kvdim
         this.wrapKeyCache = fields.wrapKeyCache;
         this.wrapValueCache = fields.wrapValueCache;
+        this.wrapKeyCacheFP16 = fields.wrapKeyCacheFP16;
+        this.wrapValueCacheFP16 = fields.wrapValueCacheFP16;
         this.wrapAtt = fields.wrapAtt;
         this.positionHolder = fields.positionHolder;
 
@@ -218,6 +235,7 @@ public abstract class State {
         public FloatTensor[] keyCache, valueCache;
         public FloatArray wrapX, wrapXb, wrapXb2, wrapHb, wrapHb2, wrapLogits;
         public FloatArray wrapQ, wrapK, wrapV, wrapAtt, wrapKeyCache, wrapValueCache;
+        public HalfFloatArray wrapKeyCacheFP16, wrapValueCacheFP16;
         public IntArray positionHolder;
         public FloatArray temp, tempFFN, tempLogits;
         public TornadoNativeArray embeddingX;

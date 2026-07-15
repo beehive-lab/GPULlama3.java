@@ -361,6 +361,68 @@ public class Qwen3Kernels {
     }
 
     /**
+     * FP16 KV cache variant of {@link #ropeRotationWithCacheCopy}. Qwen3's rotation pairs sit a
+     * half-head apart (split-half layout), so the cache writes stay scalar half stores; the win is
+     * the halved cache footprint read back by the attention kernels.
+     */
+    public static void ropeRotationWithCacheCopyFP16(
+            KernelContext context,
+            IntArray positionHolder,
+            FloatArray q,               // Q vector (in/out)
+            FloatArray k,               // K vector (in/out)
+            FloatArray v,               // V vector (in only)
+            HalfFloatArray keyCache,    // Key cache (out)
+            HalfFloatArray valueCache,  // Value cache (out)
+            int numberOfKeyValueHeads,
+            int nEmbdHead,
+            int nEmbdGqa,
+            int layer,
+            int contextLength) {
+
+        int h = context.globalIdx;
+        int ic = context.globalIdy;
+
+        int pos = positionHolder.get(0);
+        int rotn = h < numberOfKeyValueHeads ? 2 : 1;
+        int poffset = h * nEmbdHead;
+        int nComplEmbdHead = nEmbdHead / 2;
+
+        float theta = 1000000.0f;
+        int i = ic * 2;
+        float freq = 1.0f / TornadoMath.pow(theta, (float) i / (float) nEmbdHead);
+
+        float val = pos * freq;
+        float fcr = TornadoMath.cos(val);
+        float fci = TornadoMath.sin(val);
+
+        // Rotate Q (all heads)
+        float v0q = q.get(poffset + ic);
+        float v1q = q.get(poffset + ic + nComplEmbdHead);
+        q.set(poffset + ic, v0q * fcr - v1q * fci);
+        q.set(poffset + ic + nComplEmbdHead, v0q * fci + v1q * fcr);
+
+        // Rotate K and copy K/V to cache (only for KV heads)
+        if (rotn > 1 && (poffset + ic + nComplEmbdHead) < k.getSize()) {
+            float v0k = k.get(poffset + ic);
+            float v1k = k.get(poffset + ic + nComplEmbdHead);
+            float rotatedK0 = v0k * fcr - v1k * fci;
+            float rotatedK1 = v0k * fci + v1k * fcr;
+
+            k.set(poffset + ic, rotatedK0);
+            k.set(poffset + ic + nComplEmbdHead, rotatedK1);
+
+            int cacheOffset = layer * contextLength * nEmbdGqa + pos * nEmbdGqa;
+            int kvIdx = h * nEmbdHead;
+
+            keyCache.set(cacheOffset + kvIdx + ic, new HalfFloat(rotatedK0));
+            keyCache.set(cacheOffset + kvIdx + ic + nComplEmbdHead, new HalfFloat(rotatedK1));
+
+            valueCache.set(cacheOffset + kvIdx + ic, new HalfFloat(v.get(poffset + ic)));
+            valueCache.set(cacheOffset + kvIdx + ic + nComplEmbdHead, new HalfFloat(v.get(poffset + ic + nComplEmbdHead)));
+        }
+    }
+
+    /**
      * Fused Q/K/V matrix-vector multiplication for Qwen3 GQA.
      * Q has full head dimension, K/V have reduced KV head dimension.
      *

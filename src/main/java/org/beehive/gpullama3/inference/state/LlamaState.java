@@ -3,6 +3,7 @@ package org.beehive.gpullama3.inference.state;
 import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
 import org.beehive.gpullama3.tensor.standard.FloatTensor;
 import org.beehive.gpullama3.model.Configuration;
+import uk.ac.manchester.tornado.api.types.HalfFloat;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
@@ -70,6 +71,12 @@ public final class LlamaState extends State {
         fields.wrapValueCache = new FloatArray(config.contextLength() * kvDim * config.numberOfLayers());
         fields.wrapValueCache.init(0.f);
         fields.wrapKeyCache.init(0.f);
+        if (USE_FP16_KV) {
+            fields.wrapKeyCacheFP16 = new HalfFloatArray(config.contextLength() * kvDim * config.numberOfLayers());
+            fields.wrapValueCacheFP16 = new HalfFloatArray(config.contextLength() * kvDim * config.numberOfLayers());
+            fields.wrapKeyCacheFP16.init(new HalfFloat(0.f));
+            fields.wrapValueCacheFP16.init(new HalfFloat(0.f));
+        }
         fields.wrapAtt = new FloatArray(config.numberOfHeads() * config.contextLength());
         fields.positionHolder = new IntArray(1);
 

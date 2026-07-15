@@ -25,6 +25,15 @@ public class Qwen3FP16FFNLayersDecode extends Qwen3FP16FFNLayers {
         super(taskGraph, state, weights, config, schedulerType);
     }
 
+    /**
+     * The prefill/decode graph variants share the FP32 KV cache with the batch-prefill layers,
+     * so the FP16 KV cache path (standard single-token mode only) is disabled here.
+     */
+    @Override
+    protected boolean useFp16KVCache() {
+        return false;
+    }
+
     @Override
     protected String predecessorGraphName(int layerIndex) {
         return (layerIndex == 0) ? "decodeActivation" : "layer_" + (layerIndex - 1);

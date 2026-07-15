@@ -37,6 +37,15 @@ public class LlamaFP16FFNLayersDecode extends LlamaFP16FFNLayers {
      * Must match the {@code TaskGraph} names used in
      * {@code buildDecodeActivationGraph()} and {@code createFFNLayerTaskGraph()}.</p>
      */
+    /**
+     * The prefill/decode graph variants share the FP32 KV cache with the batch-prefill layers,
+     * so the FP16 KV cache path (standard single-token mode only) is disabled here.
+     */
+    @Override
+    protected boolean useFp16KVCache() {
+        return false;
+    }
+
     @Override
     protected String predecessorGraphName(int layerIndex) {
         return (layerIndex == 0) ? "decodeActivation" : "layer_" + (layerIndex - 1);
