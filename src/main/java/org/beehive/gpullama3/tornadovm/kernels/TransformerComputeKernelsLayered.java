@@ -8,6 +8,7 @@ import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.Int8Array;
+import uk.ac.manchester.tornado.api.types.vectors.Half2;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
 
 public class TransformerComputeKernelsLayered {
@@ -542,6 +543,47 @@ public class TransformerComputeKernelsLayered {
     }
 
     /**
+     * FP16 KV cache variant of {@link #ropeRotationWithCacheCopy}: the rotated K pair and the V pair
+     * are packed to half precision and written to the caches with single 32-bit stores.
+     * Requires kvDim to be even (adjacent-pair indices stay even).
+     */
+    public static void ropeRotationWithCacheCopyFP16(KernelContext context, IntArray positionHolder, FloatArray sq, FloatArray sk, FloatArray sv, HalfFloatArray keyCache, HalfFloatArray valueCache,
+            int kvDim, int headSize, int layer, int contextLength) {
+
+        int i = context.globalIdx * 2;
+        int pos = positionHolder.get(0);
+
+        if (i + 1 < sq.getSize()) {
+            int head_dim = i % headSize;
+            float freq = 1.0f / TornadoMath.pow(50000.0f, head_dim / (float) headSize);
+            float val = pos * freq;
+            float fcr = TornadoMath.cos(val);
+            float fci = TornadoMath.sin(val);
+
+            // Rotate Q
+            float v0q = sq.get(i);
+            float v1q = sq.get(i + 1);
+            sq.set(i, v0q * fcr - v1q * fci);
+            sq.set(i + 1, v0q * fci + v1q * fcr);
+
+            // Rotate K AND write to cache (only for kvDim elements)
+            if (i + 1 < kvDim) {
+                float v0k = sk.get(i);
+                float v1k = sk.get(i + 1);
+                float rotated0 = v0k * fcr - v1k * fci;
+                float rotated1 = v0k * fci + v1k * fcr;
+
+                sk.set(i, rotated0);
+                sk.set(i + 1, rotated1);
+
+                int cacheOffset = layer * contextLength * kvDim + pos * kvDim;
+                keyCache.setHalf2(cacheOffset + i, Half2.fromFloats(rotated0, rotated1));
+                valueCache.setHalf2(cacheOffset + i, Half2.fromFloats(sv.get(i), sv.get(i + 1)));
+            }
+        }
+    }
+
+    /**
      * RoPE rotation using precomputed frequency tables (cos/sin) instead of on-the-fly computation.
      * Required for models with non-standard RoPE (e.g., YaRN scaling in Devstral 2).
      */
@@ -900,6 +942,227 @@ public class TransformerComputeKernelsLayered {
 
         // Normalize and write final results
         float normFactor = (sumExp > 0.0f) ? (1.0f / sumExp) : 0.0f; // Avoid division by zero, return 0 if sumExp is 0
+        for (int d = tid; d < headSize; d += localSize) {
+            xb.set(h * headSize + d, output[d] * normFactor);
+        }
+    }
+
+    /**
+     * FP16 KV cache variant of {@link #processHeadsFlashAttention}. K/V tiles are read from the
+     * half-precision caches with packed 32-bit loads ({@code getHalf2}) and expanded to FP32 in
+     * shared memory; all score/softmax/output arithmetic stays FP32. Requires even headSize.
+     */
+    public static void processHeadsFlashAttentionFP16(KernelContext context, FloatArray q, HalfFloatArray key_cache, HalfFloatArray value_cache, FloatArray xb, int nHeads, int headSize, int kvDim,
+            int kvMul, IntArray positionHolder, int layer, int contextLength) {
+
+        int tid = context.localIdx;
+        int h = context.groupIdx;
+        int localSize = context.localGroupSizeX;
+
+        if (h >= nHeads) {
+            return;
+        }
+
+        int pos = positionHolder.get(0);
+        int loff = layer * contextLength * kvDim;
+        int kvHeadIdx = h / kvMul;
+        int BLOCK_SIZE_C = 16;
+
+        float[] q_shared = context.allocateFloatLocalArray(headSize);
+        float[] k_tile = context.allocateFloatLocalArray(BLOCK_SIZE_C * headSize);
+        float[] v_tile = context.allocateFloatLocalArray(BLOCK_SIZE_C * headSize);
+        float[] s_tile = context.allocateFloatLocalArray(BLOCK_SIZE_C);
+        float[] shared_tile_max_holder = context.allocateFloatLocalArray(1);
+
+        float maxScore = Float.NEGATIVE_INFINITY;
+        float sumExp = 0.0f;
+
+        float[] output = new float[headSize];
+        for (int i = 0; i < headSize; i++) {
+            output[i] = 0.0f;
+        }
+
+        for (int i = tid; i < headSize; i += localSize) {
+            q_shared[i] = q.get(h * headSize + i);
+        }
+
+        context.localBarrier();
+
+        for (int tileC = 0; tileC <= pos; tileC += BLOCK_SIZE_C) {
+            int tileEnd = Math.min(tileC + BLOCK_SIZE_C - 1, pos);
+
+            // Packed 32-bit FP16 pair loads; expand to FP32 tiles in shared memory.
+            for (int tIdxInSeq = tileC + tid; tIdxInSeq <= tileEnd; tIdxInSeq += localSize) {
+                int tileMemOffset = (tIdxInSeq - tileC) * headSize;
+                int kvBase = loff + tIdxInSeq * kvDim + kvHeadIdx * headSize;
+                for (int d = 0; d < headSize; d += 2) {
+                    Half2 kPair = key_cache.getHalf2(kvBase + d);
+                    Half2 vPair = value_cache.getHalf2(kvBase + d);
+                    k_tile[tileMemOffset + d] = Half2.lowFloat(kPair);
+                    k_tile[tileMemOffset + d + 1] = Half2.highFloat(kPair);
+                    v_tile[tileMemOffset + d] = Half2.lowFloat(vPair);
+                    v_tile[tileMemOffset + d + 1] = Half2.highFloat(vPair);
+                }
+            }
+
+            context.localBarrier();
+
+            for (int tIdxInSeq = tileC + tid; tIdxInSeq <= tileEnd; tIdxInSeq += localSize) {
+                int score_idx_in_tile = tIdxInSeq - tileC;
+
+                float score = 0.0f;
+                for (int d = 0; d < headSize; d++) {
+                    score += q_shared[d] * k_tile[score_idx_in_tile * headSize + d];
+                }
+                score /= TornadoMath.sqrt(headSize);
+                s_tile[score_idx_in_tile] = score;
+            }
+
+            context.localBarrier();
+
+            float tileLocalMax = Float.NEGATIVE_INFINITY;
+            for (int i = 0; i <= tileEnd - tileC; i++) {
+                if (s_tile[i] > tileLocalMax) {
+                    tileLocalMax = s_tile[i];
+                }
+            }
+
+            if (tid == 0) {
+                shared_tile_max_holder[0] = tileLocalMax;
+            }
+            context.localBarrier();
+            float currentTileMax = shared_tile_max_holder[0];
+
+            float newMax = Math.max(maxScore, currentTileMax);
+            if (newMax != maxScore && maxScore != Float.NEGATIVE_INFINITY) {
+                float scale = TornadoMath.exp(maxScore - newMax);
+                sumExp *= scale;
+                for (int d = 0; d < headSize; d++) {
+                    output[d] *= scale;
+                }
+            }
+            maxScore = newMax;
+
+            for (int t_idx_in_s_tile = 0; t_idx_in_s_tile <= tileEnd - tileC; t_idx_in_s_tile++) {
+                float expScore = TornadoMath.exp(s_tile[t_idx_in_s_tile] - maxScore);
+                sumExp += expScore;
+
+                for (int d = 0; d < headSize; d++) {
+                    output[d] += expScore * v_tile[t_idx_in_s_tile * headSize + d];
+                }
+            }
+            context.localBarrier();
+        }
+
+        float normFactor = (sumExp > 0.0f) ? (1.0f / sumExp) : 0.0f;
+        for (int d = tid; d < headSize; d += localSize) {
+            xb.set(h * headSize + d, output[d] * normFactor);
+        }
+    }
+
+    /**
+     * Scalar-read FP16 KV cache variant of {@link #processHeadsFlashAttentionFP16}: identical
+     * computation, but the K/V tiles are read one half element at a time. Used to isolate the
+     * benefit of the packed loads from the benefit of the halved cache footprint.
+     */
+    public static void processHeadsFlashAttentionFP16Scalar(KernelContext context, FloatArray q, HalfFloatArray key_cache, HalfFloatArray value_cache, FloatArray xb, int nHeads, int headSize,
+            int kvDim, int kvMul, IntArray positionHolder, int layer, int contextLength) {
+
+        int tid = context.localIdx;
+        int h = context.groupIdx;
+        int localSize = context.localGroupSizeX;
+
+        if (h >= nHeads) {
+            return;
+        }
+
+        int pos = positionHolder.get(0);
+        int loff = layer * contextLength * kvDim;
+        int kvHeadIdx = h / kvMul;
+        int BLOCK_SIZE_C = 16;
+
+        float[] q_shared = context.allocateFloatLocalArray(headSize);
+        float[] k_tile = context.allocateFloatLocalArray(BLOCK_SIZE_C * headSize);
+        float[] v_tile = context.allocateFloatLocalArray(BLOCK_SIZE_C * headSize);
+        float[] s_tile = context.allocateFloatLocalArray(BLOCK_SIZE_C);
+        float[] shared_tile_max_holder = context.allocateFloatLocalArray(1);
+
+        float maxScore = Float.NEGATIVE_INFINITY;
+        float sumExp = 0.0f;
+
+        float[] output = new float[headSize];
+        for (int i = 0; i < headSize; i++) {
+            output[i] = 0.0f;
+        }
+
+        for (int i = tid; i < headSize; i += localSize) {
+            q_shared[i] = q.get(h * headSize + i);
+        }
+
+        context.localBarrier();
+
+        for (int tileC = 0; tileC <= pos; tileC += BLOCK_SIZE_C) {
+            int tileEnd = Math.min(tileC + BLOCK_SIZE_C - 1, pos);
+
+            for (int tIdxInSeq = tileC + tid; tIdxInSeq <= tileEnd; tIdxInSeq += localSize) {
+                int tileMemOffset = (tIdxInSeq - tileC) * headSize;
+                int kvBase = loff + tIdxInSeq * kvDim + kvHeadIdx * headSize;
+                for (int d = 0; d < headSize; d++) {
+                    k_tile[tileMemOffset + d] = key_cache.get(kvBase + d).getFloat32();
+                    v_tile[tileMemOffset + d] = value_cache.get(kvBase + d).getFloat32();
+                }
+            }
+
+            context.localBarrier();
+
+            for (int tIdxInSeq = tileC + tid; tIdxInSeq <= tileEnd; tIdxInSeq += localSize) {
+                int score_idx_in_tile = tIdxInSeq - tileC;
+
+                float score = 0.0f;
+                for (int d = 0; d < headSize; d++) {
+                    score += q_shared[d] * k_tile[score_idx_in_tile * headSize + d];
+                }
+                score /= TornadoMath.sqrt(headSize);
+                s_tile[score_idx_in_tile] = score;
+            }
+
+            context.localBarrier();
+
+            float tileLocalMax = Float.NEGATIVE_INFINITY;
+            for (int i = 0; i <= tileEnd - tileC; i++) {
+                if (s_tile[i] > tileLocalMax) {
+                    tileLocalMax = s_tile[i];
+                }
+            }
+
+            if (tid == 0) {
+                shared_tile_max_holder[0] = tileLocalMax;
+            }
+            context.localBarrier();
+            float currentTileMax = shared_tile_max_holder[0];
+
+            float newMax = Math.max(maxScore, currentTileMax);
+            if (newMax != maxScore && maxScore != Float.NEGATIVE_INFINITY) {
+                float scale = TornadoMath.exp(maxScore - newMax);
+                sumExp *= scale;
+                for (int d = 0; d < headSize; d++) {
+                    output[d] *= scale;
+                }
+            }
+            maxScore = newMax;
+
+            for (int t_idx_in_s_tile = 0; t_idx_in_s_tile <= tileEnd - tileC; t_idx_in_s_tile++) {
+                float expScore = TornadoMath.exp(s_tile[t_idx_in_s_tile] - maxScore);
+                sumExp += expScore;
+
+                for (int d = 0; d < headSize; d++) {
+                    output[d] += expScore * v_tile[t_idx_in_s_tile * headSize + d];
+                }
+            }
+            context.localBarrier();
+        }
+
+        float normFactor = (sumExp > 0.0f) ? (1.0f / sumExp) : 0.0f;
         for (int d = tid; d < headSize; d += localSize) {
             xb.set(h * headSize + d, output[d] * normFactor);
         }
@@ -1349,6 +1612,126 @@ public class TransformerComputeKernelsLayered {
                 acc += corrShared[t] * accShared[t * headSize + d];
             }
             att.set(outBase + d, acc); // unnormalized partial numerator (relative to block max M)
+        }
+        if (tid == 0) {
+            att.set(mBase + s, M);
+            att.set(lBase + s, L);
+        }
+    }
+
+    /**
+     * FP16 KV cache variant of {@link #processHeadsFlashAttentionSplitKV}. K/V rows are read from
+     * the half-precision caches with packed 32-bit loads and expanded to FP32; the online-softmax
+     * accumulation stays FP32. Pairs with {@link #combineSplitKVAttention} unchanged.
+     */
+    public static void processHeadsFlashAttentionSplitKVFP16(KernelContext context, FloatArray q, HalfFloatArray key_cache, HalfFloatArray value_cache, FloatArray att, int nHeads, int headSize,
+            int kvDim, int kvMul, IntArray positionHolder, int layer, int contextLength, int nSplits) {
+
+        final int MAX_HEAD_SIZE = 128;
+        final int MAX_LOCAL_SIZE = 64;
+
+        int tid = context.localIdx;
+        int g = context.groupIdx;            // 0 .. nHeads*nSplits - 1
+        int localSize = context.localGroupSizeX;
+        int h = g / nSplits;
+        int s = g % nSplits;
+
+        if (h >= nHeads) {
+            return;
+        }
+
+        int pos = positionHolder.get(0);
+        int seqLen = pos + 1;
+        int chunk = (seqLen + nSplits - 1) / nSplits;
+        int startPos = s * chunk;
+        int endPos = Math.min(startPos + chunk, seqLen);   // exclusive
+
+        int loff = layer * contextLength * kvDim;
+        int kvHeadIdx = h / kvMul;
+        float invSqrt = 1.0f / TornadoMath.sqrt(headSize);
+
+        float[] q_shared = context.allocateFloatLocalArray(MAX_HEAD_SIZE);
+        float[] accShared = context.allocateFloatLocalArray(MAX_LOCAL_SIZE * MAX_HEAD_SIZE);
+        float[] mShared = context.allocateFloatLocalArray(MAX_LOCAL_SIZE);
+        float[] lShared = context.allocateFloatLocalArray(MAX_LOCAL_SIZE);
+        float[] corrShared = context.allocateFloatLocalArray(MAX_LOCAL_SIZE);
+        float[] bcast = context.allocateFloatLocalArray(1);
+
+        int headBase = h * nSplits * (headSize + 2);
+        int outBase = headBase + s * headSize;
+        int mBase = headBase + nSplits * headSize;
+        int lBase = mBase + nSplits;
+
+        for (int i = tid; i < headSize; i += localSize) {
+            q_shared[i] = q.get(h * headSize + i);
+        }
+        int rowBase = tid * headSize;
+        for (int d = 0; d < headSize; d++) {
+            accShared[rowBase + d] = 0.0f;
+        }
+        context.localBarrier();
+
+        // Strided scan over this split's position chunk (no barriers).
+        float m = Float.NEGATIVE_INFINITY;
+        float l = 0.0f;
+        for (int p = startPos + tid; p < endPos; p += localSize) {
+            int base = loff + p * kvDim + kvHeadIdx * headSize;
+            float score = 0.0f;
+            for (int d = 0; d < headSize; d += 2) {
+                Half2 kPair = key_cache.getHalf2(base + d);
+                score += q_shared[d] * Half2.lowFloat(kPair);
+                score += q_shared[d + 1] * Half2.highFloat(kPair);
+            }
+            score *= invSqrt;
+            float newM = Math.max(m, score);
+            float corr = (m == Float.NEGATIVE_INFINITY) ? 0.0f : TornadoMath.exp(m - newM);
+            float e = TornadoMath.exp(score - newM);
+            for (int d = 0; d < headSize; d += 2) {
+                Half2 vPair = value_cache.getHalf2(base + d);
+                accShared[rowBase + d] = accShared[rowBase + d] * corr + e * Half2.lowFloat(vPair);
+                accShared[rowBase + d + 1] = accShared[rowBase + d + 1] * corr + e * Half2.highFloat(vPair);
+            }
+            l = l * corr + e;
+            m = newM;
+        }
+        mShared[tid] = m;
+        lShared[tid] = l;
+        context.localBarrier();
+
+        // Block max.
+        if (tid == 0) {
+            float blockMax = Float.NEGATIVE_INFINITY;
+            for (int t = 0; t < localSize; t++) {
+                if (mShared[t] > blockMax) {
+                    blockMax = mShared[t];
+                }
+            }
+            bcast[0] = blockMax;
+        }
+        context.localBarrier();
+        float M = bcast[0];
+
+        corrShared[tid] = (mShared[tid] == Float.NEGATIVE_INFINITY) ? 0.0f : TornadoMath.exp(mShared[tid] - M);
+        context.localBarrier();
+
+        // Block sum L = Σ_t l_t · corr_t.
+        if (tid == 0) {
+            float blockSum = 0.0f;
+            for (int t = 0; t < localSize; t++) {
+                blockSum += lShared[t] * corrShared[t];
+            }
+            bcast[0] = blockSum;
+        }
+        context.localBarrier();
+        float L = bcast[0];
+
+        // Write UNNORMALIZED partial numerator (relative to block max M), plus M and L for the combine.
+        for (int d = tid; d < headSize; d += localSize) {
+            float acc = 0.0f;
+            for (int t = 0; t < localSize; t++) {
+                acc += corrShared[t] * accShared[t * headSize + d];
+            }
+            att.set(outBase + d, acc);
         }
         if (tid == 0) {
             att.set(mBase + s, M);
