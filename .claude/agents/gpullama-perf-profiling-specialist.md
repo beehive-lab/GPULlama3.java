@@ -54,6 +54,14 @@ Enable via `llama-tornado` flags directly — no separate tool install needed:
 Use this as the default first pass before reaching for nsys/ncu — it's already wired into the
 launcher and needs no separate capture/import step.
 
+Summarize the resulting profiler log into a phase/task kernel-time breakdown with:
+```bash
+scripts/summarize_tornado_profiler.py <profiler_log> --top 20
+```
+This splits kernel time into `prefill`/`decode`/`other` phases and ranks tasks by total kernel
+time within each — use it to decide whether a regression is prefill-side, decode-side, or a
+specific task before reaching for nsys/ncu.
+
 ## Local Project Context
 
 Treat the current working directory as the GPULlama3 repository root unless the user says otherwise.
