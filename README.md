@@ -63,25 +63,6 @@ Grab a ready-to-run model from the [Hugging Face collections](#-model-collection
 
 -----------
 
-## 📊 Performance
-
-Tokens/s, single-stream decode, FP16. Java entering the AI world with JVM features that make it fast: GPU acceleration, the Vector API, and high-performance off-heap memory.
-
-| Vendor / Backend           | Hardware   | Llama-3.2-1B (FP16) | Llama-3.2-3B (FP16) | Status |
-|:--------------------------:|:----------:|:-------------------:|:-------------------:|:------:|
-| **NVIDIA / PTX · CUDA**    | RTX 3070   | 66 tok/s            | 55.46 tok/s         | ✅ |
-|                            | RTX 4090   | 86.11 tok/s         | 75.32 tok/s         | ✅ |
-|                            | RTX 5090   | 117.65 tok/s        | 112.68 tok/s        | ✅ |
-|                            | L4 Tensor  | 52.96 tok/s         | 22.68 tok/s         | ✅ |
-| **Intel / OpenCL**         | Arc A770   | 15.65 tok/s         | 7.02 tok/s          | WIP |
-| **Apple Silicon / Metal**  | M3 Pro     | 14.04 tok/s         | 6.78 tok/s          | WIP |
-|                            | M4 Pro     | 16.77 tok/s         | 8.56 tok/s          | WIP |
-| **AMD / OpenCL**           | Radeon RX  | WIP                 | WIP                 | WIP |
-
-> TornadoVM ships a native [Metal](https://developer.apple.com/metal/) backend for GPU-accelerated inference on Apple Silicon.
-
------------
-
 ## 🧩 Serving: OpenAI-compatible (preview)
 
 GPULlama3.java is growing into a **serving engine** — the vLLM-style path for the JVM. These land through active pull requests; try them from the linked branches today:
