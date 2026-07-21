@@ -66,7 +66,8 @@ GPULlama3ChatModel model = GPULlama3ChatModel.builder()
 Ensure you have the following installed and configured:
 
 - **Java 21**: Required for Vector API support & TornadoVM.
-- [TornadoVM](https://github.com/beehive-lab/TornadoVM) with OpenCL or PTX backends.
+- [TornadoVM](https://github.com/beehive-lab/TornadoVM) with OpenCL, PTX, or CUDA backends.
+  - The `--cuda` backend requires a TornadoVM build that includes the CUDA backend from [TornadoVM PR #861](https://github.com/beehive-lab/TornadoVM/pull/861). This project currently builds against TornadoVM `5.0.0-jdk21-dev`.
 - GCC/G++ 13 or newer: Required to build and run TornadoVM native components.
 
 ### Install, Build, and Run
@@ -305,6 +306,12 @@ Run a model with a text prompt:
 ./llama-tornado --gpu --verbose-init --opencl --model beehive-llama-3.2-1b-instruct-fp16.gguf --prompt "Explain the benefits of GPU acceleration."
 ```
 
+Select a backend explicitly with `--opencl`, `--ptx`, or `--cuda` (NVIDIA), or `--metal` (Apple Silicon). For example, to run on the CUDA backend:
+
+```bash
+./llama-tornado --gpu --cuda --model beehive-llama-3.2-1b-instruct-fp16.gguf --prompt "Explain the benefits of GPU acceleration."
+```
+
 #### GPU Execution (FP16 Model)
 Enable GPU acceleration with Q8_0 quantization:
 ```bash
@@ -393,7 +400,7 @@ Supported command-line options include:
 ```bash
 cmd ➜ llama-tornado --help
 usage: llama-tornado [-h] --model MODEL_PATH [--prompt PROMPT] [-sp SYSTEM_PROMPT] [--temperature TEMPERATURE] [--top-p TOP_P] [--seed SEED] [-n MAX_TOKENS]
-                     [--stream STREAM] [--echo ECHO] [-i] [--instruct] [--gpu] [--opencl] [--ptx] [--gpu-memory GPU_MEMORY] [--heap-min HEAP_MIN] [--heap-max HEAP_MAX]
+                     [--stream STREAM] [--echo ECHO] [-i] [--instruct] [--gpu] [--opencl] [--ptx] [--cuda] [--metal] [--gpu-memory GPU_MEMORY] [--heap-min HEAP_MIN] [--heap-max HEAP_MAX]
                      [--debug] [--profiler] [--profiler-dump-dir PROFILER_DUMP_DIR] [--print-bytecodes] [--print-threads] [--print-kernel] [--full-dump]
                      [--show-command] [--execute-after-show] [--opencl-flags OPENCL_FLAGS] [--max-wait-events MAX_WAIT_EVENTS] [--verbose]
 
@@ -424,7 +431,9 @@ Mode Selection:
 Hardware Configuration:
   --gpu                 Enable GPU acceleration (default: False)
   --opencl              Use OpenCL backend (default) (default: None)
-  --ptx                 Use PTX/CUDA backend (default: None)
+  --ptx                 Use PTX backend (default: None)
+  --cuda                Use CUDA backend (requires TornadoVM built with the CUDA backend) (default: None)
+  --metal               Use Apple Metal backend (macOS only) (default: None)
   --gpu-memory GPU_MEMORY
                         GPU memory allocation (default: 7GB)
   --heap-min HEAP_MIN   Minimum JVM heap size (default: 20g)
@@ -480,9 +489,9 @@ View TornadoVM's internal behavior:
   - **Support for GGUF format models** with full FP16 and partial support for Q8_0 and Q4_0 quantization.
   - **Instruction-following and chat modes** for various use cases.
   - **Interactive CLI** with `--interactive` and `--instruct` modes.
-  - **Flexible backend switching** - choose OpenCL or PTX at runtime (need to build TornadoVM with both enabled).
+  - **Flexible backend switching** - choose OpenCL, PTX, or CUDA at runtime (need to build TornadoVM with the chosen backends enabled).
   - **Cross-platform compatibility**:
-    - ✅ NVIDIA GPUs (OpenCL & PTX )
+    - ✅ NVIDIA GPUs (OpenCL, PTX & CUDA)
     - ✅ Intel GPUs (OpenCL)
     - ✅ Apple GPUs (OpenCL)
 

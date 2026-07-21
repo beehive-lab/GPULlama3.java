@@ -14,7 +14,9 @@ import org.beehive.gpullama3.tornadovm.layers.type.q8_0.Qwen3Q8_0FFNLayers;
 import org.beehive.gpullama3.tornadovm.layers.type.q8_0.decode.LogitsQ8_0LayerDecode;
 import org.beehive.gpullama3.tornadovm.layers.type.q8_0.decode.Qwen3Q8_0FFNLayersDecode;
 import org.beehive.gpullama3.tornadovm.layers.type.q8_0.decode.Qwen3Q8_0FFNLayersPrefillDecode;
+import org.beehive.gpullama3.tornadovm.layers.type.q8_0.prefill.Qwen3Q8_0LayersBatchPrefillMMA;
 import org.beehive.gpullama3.tornadovm.layers.type.q8_0.prefill.Qwen3Q8_0LayersBatchPrefill;
+import org.beehive.gpullama3.tornadovm.TensorCoreSupport;
 import org.beehive.gpullama3.tornadovm.plan.components.BatchPrefillDecodeForwardPlanComponents;
 import org.beehive.gpullama3.tornadovm.plan.components.activation.BatchDecodeActivation;
 import org.beehive.gpullama3.tornadovm.plan.components.activation.BatchPrefillActivation;
@@ -76,6 +78,9 @@ public class Qwen3Q8_0PlanComponents implements BatchPrefillDecodeForwardPlanCom
 
     @Override
     public BatchPrefillTransformerLayerTaskGraphs batchPrefillTransformerLayers(int batchSize) {
+        if (TensorCoreSupport.isTensorCoreCapableBackend()) {
+            return new Qwen3Q8_0LayersBatchPrefillMMA(state, weights, config, batchSize);
+        }
         return new Qwen3Q8_0LayersBatchPrefill(state, weights, config, batchSize);
     }
 

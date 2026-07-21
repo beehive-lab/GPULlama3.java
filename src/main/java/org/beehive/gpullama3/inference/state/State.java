@@ -85,6 +85,16 @@ public abstract class State {
     public final FloatArray attnScaleBatch;         // B        (per-token RMS scale, attn)
     public final FloatArray ffnScaleBatch;          // B        (per-token RMS scale, FFN)
     public final IntArray batchStartPosHolder;      // 1      (start position of chunk)
+    public final HalfFloatArray normedXFFNFP16;
+    public final FloatArray ffnGateResult;
+    public final FloatArray ffnUpResult;
+    public final HalfFloatArray xbFP16Batch;
+    public final HalfFloatArray attnOutFP16;
+    public final FloatArray woOut;
+    public final HalfFloatArray wrapHbFP16Batch;
+    public final FloatArray w2Out;
+    public final FloatArray qkvResultBatch;       // B × (dim + 2*kvDim), packed [q|k|v] rows
+    public final FloatArray gateUpResultBatch;    // B × 2*hiddenDim, packed [gate|up] rows
 
     protected State(Configuration config, int batchsize) {
         this.batchsize = batchsize;
@@ -135,11 +145,16 @@ public abstract class State {
 
         int gpuBatchSize = Integer.getInteger("llama.prefillBatchSize", 1);
         if (gpuBatchSize > 1) {
+            // The tensor-core GEMM kernels operate on full 128-row M tiles
+            // (BM = 128). Pad the GEMM-adjacent activation buffers so any
+            // batch size launches whole tiles; rows >= gpuBatchSize hold
+            // garbage and are never read by the non-GEMM kernels.
+            int paddedGpuBatch = (gpuBatchSize + 127) & ~127;
             int qDim  = batchQDim(config);
             int kvDim = batchKvDim(config);
             this.embeddingXBatch = new HalfFloatArray(gpuBatchSize * config.dim());
             this.wrapXBatch = new FloatArray(gpuBatchSize * config.dim());
-            this.wrapXbFP16Batch = new HalfFloatArray(gpuBatchSize * config.dim());
+            this.wrapXbFP16Batch = new HalfFloatArray(paddedGpuBatch * config.dim());
             this.wrapQBatch = new FloatArray(gpuBatchSize * qDim);
             this.wrapKBatch = new FloatArray(gpuBatchSize * kvDim);
             this.wrapVBatch = new FloatArray(gpuBatchSize * kvDim);
@@ -148,6 +163,17 @@ public abstract class State {
             this.attnScaleBatch = new FloatArray(gpuBatchSize);
             this.ffnScaleBatch = new FloatArray(gpuBatchSize);
             this.batchStartPosHolder = new IntArray(1);
+            this.normedXFFNFP16 = new HalfFloatArray(paddedGpuBatch * config.dim());
+            this.ffnGateResult  = new FloatArray(gpuBatchSize * config.hiddenDim());
+            this.ffnUpResult    = new FloatArray(gpuBatchSize * config.hiddenDim());
+
+            this.xbFP16Batch = new HalfFloatArray(gpuBatchSize * config.dim());
+            this.attnOutFP16 = new HalfFloatArray(paddedGpuBatch * qDim);   // qDim == dim for Llama; qDim = nHeads*headDim for Qwen3
+            this.woOut = new FloatArray(paddedGpuBatch * config.dim());
+            this.wrapHbFP16Batch = new HalfFloatArray(paddedGpuBatch * config.hiddenDim());
+            this.w2Out = new FloatArray(paddedGpuBatch * config.dim());
+            this.qkvResultBatch = new FloatArray(paddedGpuBatch * (qDim + 2 * kvDim));
+            this.gateUpResultBatch = new FloatArray(paddedGpuBatch * 2 * config.hiddenDim());
         } else {
             this.embeddingXBatch = null;
             this.wrapXBatch = null;
@@ -160,6 +186,16 @@ public abstract class State {
             this.attnScaleBatch = null;
             this.ffnScaleBatch = null;
             this.batchStartPosHolder = null;
+            this.normedXFFNFP16 = null;
+            this.ffnGateResult  = null;
+            this.ffnUpResult    = null;
+            this.xbFP16Batch = null;
+            this.attnOutFP16 = null;
+            this.woOut = null;
+            this.wrapHbFP16Batch = null;
+            this.w2Out = null;
+            this.qkvResultBatch = null;
+            this.gateUpResultBatch = null;
         }
     }
 
