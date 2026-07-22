@@ -33,8 +33,17 @@ public class LogitsFP16LayerDecode extends LogitsFP16Layer {
         super(name, state, weights, config, lastTaskGraphID, schedulerType);
     }
 
+    /** The KV cache objects the decode layers actually persist (FP16 when that path is active). */
+    private Object keyCache() {
+        return (State.USE_FP16_KV && state.wrapKeyCacheFP16 != null) ? state.wrapKeyCacheFP16 : state.wrapKeyCache;
+    }
+
+    private Object valueCache() {
+        return (State.USE_FP16_KV && state.wrapValueCacheFP16 != null) ? state.wrapValueCacheFP16 : state.wrapValueCache;
+    }
+
     /**
-     * Prepends {@code consumeFromDevice(lastTaskGraphID, wrapKeyCache, wrapValueCache)} before all tasks.
+     * Prepends {@code consumeFromDevice(lastTaskGraphID, keyCache, valueCache)} before all tasks.
      *
      * <p>Must use the named-source form so that {@code updatePersistedObjectState()} adds the KV cache
      * to the source-keyed map. Without the source name, the fallback in {@code updatePersistedObjectState}
@@ -43,12 +52,12 @@ public class LogitsFP16LayerDecode extends LogitsFP16Layer {
      */
     @Override
     protected void configureAdditionalConsumes(TaskGraph logits) {
-        logits.consumeFromDevice(lastTaskGraphID, state.wrapKeyCache, state.wrapValueCache);
+        logits.consumeFromDevice(lastTaskGraphID, keyCache(), valueCache());
     }
 
-    /** Appends {@code persistOnDevice(wrapKeyCache, wrapValueCache)} after {@code transferToHost}. */
+    /** Appends {@code persistOnDevice(keyCache, valueCache)} after {@code transferToHost}. */
     @Override
     protected void configureAdditionalPersists(TaskGraph logits) {
-        logits.persistOnDevice(state.wrapKeyCache, state.wrapValueCache);
+        logits.persistOnDevice(keyCache(), valueCache());
     }
 }

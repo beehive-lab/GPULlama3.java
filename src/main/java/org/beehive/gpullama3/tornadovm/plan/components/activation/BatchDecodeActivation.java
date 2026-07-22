@@ -35,8 +35,11 @@ public class BatchDecodeActivation implements ActivationTaskGraph {
     // @formatter:off
     private TaskGraph buildGraph(KernelContext ctx, State state,
                                  String lastBatchLayerId, boolean isQ8) {
+        boolean fp16KV = State.USE_FP16_KV && state.wrapKeyCacheFP16 != null;
+        Object keyCache = fp16KV ? state.wrapKeyCacheFP16 : state.wrapKeyCache;
+        Object valueCache = fp16KV ? state.wrapValueCacheFP16 : state.wrapValueCache;
         TaskGraph tg = new TaskGraph("decodeActivation")
-                .consumeFromDevice(lastBatchLayerId, state.wrapKeyCache, state.wrapValueCache)
+                .consumeFromDevice(lastBatchLayerId, keyCache, valueCache)
                 .transferToDevice(DataTransferMode.EVERY_EXECUTION, state.embeddingX);
         if (isQ8) {
             tg.task("updateX", TransformerComputeKernels::convertQ8_0toFP32, ctx,
@@ -47,7 +50,7 @@ public class BatchDecodeActivation implements ActivationTaskGraph {
                                                                                 (HalfFloatArray) state.embeddingX,
                                                                                 state.wrapX);
         }
-        return tg.persistOnDevice(state.wrapX, state.wrapKeyCache, state.wrapValueCache);
+        return tg.persistOnDevice(state.wrapX, keyCache, valueCache);
     }
     // @formatter:on
 
