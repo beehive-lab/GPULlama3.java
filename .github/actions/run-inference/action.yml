@@ -43,7 +43,8 @@ runs:
         METRICS_FILE: ${{ inputs.metrics_file }}
       run: |
         # Run inference and emit raw metrics JSON via JAVA_TOOL_OPTIONS
-        ./llama-tornado --gpu --${{ inputs.backend }} \
+        # Backend (opencl/ptx/cuda) is auto-detected from $TORNADOVM_HOME/etc/tornado.backend
+        ./llama-tornado --gpu \
           --model $MODELS_DIR/${{ inputs.model_file }} \
           --prompt "${{ inputs.prompt }}" \
           ${{ inputs.flags }}
