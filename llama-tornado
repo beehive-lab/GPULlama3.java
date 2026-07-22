@@ -240,11 +240,18 @@ class LlamaRunner:
                 ]
             )
 
+        if getattr(args, "server", False):
+            main_class = "org.beehive.gpullama3.server.OpenAIServer"
+        elif getattr(args, "bench", False):
+            main_class = "org.beehive.gpullama3.bench.LlamaBench"
+        else:
+            main_class = "org.beehive.gpullama3.LlamaApp"
+
         module_config.extend(
             [
                 "-cp",
                 self._find_llama_jar(),
-                "org.beehive.gpullama3.LlamaApp",
+                main_class,
             ]
         )
         cmd.extend(module_config)
@@ -271,6 +278,18 @@ class LlamaRunner:
 
     def _add_llama_args(self, cmd: List[str], args: argparse.Namespace) -> List[str]:
         """Add LLaMA-specific arguments to the command."""
+        if getattr(args, "server", False):
+            # OpenAI server mode: the server parses only --model / --port / --gpu.
+            srv = ["--model", args.model_path, "--port", str(getattr(args, "port", 8080))]
+            if args.use_gpu:
+                srv.append("--gpu")
+            return cmd + srv
+        if getattr(args, "bench", False):
+            # llama-bench mode: model(s) + benchmark options only. If --bench-args already
+            # supplies -m, use those verbatim (don't also prepend --model → duplicate rows).
+            extra = args.bench_args.split() if args.bench_args else []
+            bench_args = extra if ("-m" in extra or "--model" in extra) else ["-m", args.model_path] + extra
+            return cmd + bench_args
         llama_args = [
             "-m",
             args.model_path,
@@ -476,6 +495,24 @@ def create_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=True,
         help="Run in instruction mode (default)",
+    )
+
+    # OpenAI-compatible server
+    server_group = parser.add_argument_group("OpenAI-compatible server")
+    server_group.add_argument("--server", action="store_true", help="Run the OpenAI-compatible HTTP server instead of inference")
+    server_group.add_argument("--port", type=int, default=8080, help="Server port (default 8080)")
+
+    # Benchmark (llama-bench style)
+    bench_group = parser.add_argument_group("Benchmark (llama-bench style)")
+    bench_group.add_argument(
+        "--bench",
+        action="store_true",
+        help="Run the llama-bench-style benchmark (bench.LlamaBench) instead of inference",
+    )
+    bench_group.add_argument(
+        "--bench-args",
+        default="",
+        help='Extra benchmark options (use --bench-args="..."), e.g. "-p 512 -n 128 -d 0,4096 -r 5 -o md" (see LlamaBench)',
     )
 
     # Hardware configuration

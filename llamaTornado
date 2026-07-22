@@ -20,7 +20,8 @@ record Config(
     boolean printBytecodes, boolean threads, boolean printKernel,
     boolean fullDump, boolean verboseInit,
     boolean showCommand, boolean executeAfterShow,
-    String openclFlags, int maxWaitEvents, boolean verbose
+    String openclFlags, int maxWaitEvents, boolean verbose,
+    boolean bench, String benchArgs
 ) {}
 
 Config parseArgs(String[] args, Backend detectedBackend) {
@@ -54,6 +55,8 @@ Config parseArgs(String[] args, Backend detectedBackend) {
     String openclFlags = "-cl-denorms-are-zero -cl-no-signed-zeros -cl-finite-math-only";
     int maxWaitEvents = 32000;
     boolean verbose = false;
+    boolean bench = false;
+    String benchArgs = "";
 
     for (int i = 0; i < args.length; i++) {
         switch (args[i]) {
@@ -91,6 +94,8 @@ Config parseArgs(String[] args, Backend detectedBackend) {
             case "--opencl-flags" -> openclFlags = args[++i];
             case "--max-wait-events" -> maxWaitEvents = Integer.parseInt(args[++i]);
             case "--verbose", "-v" -> verbose = true;
+            case "--bench" -> bench = true;
+            case "--bench-args" -> benchArgs = args[++i];
             default -> {
                 System.err.println("Unknown option: " + args[i]);
                 System.exit(1);
@@ -116,7 +121,8 @@ Config parseArgs(String[] args, Backend detectedBackend) {
     return new Config(modelPath, prompt, systemPrompt, temperature, topP, seed, maxTokens,
             stream, echo, interactive, instruct, useGpu, backend, gpuMemory, heapMin, heapMax, directMemory,
             debug, profiler, profilerDumpDir, printBytecodes, threads, printKernel, fullDump,
-            verboseInit, showCommand, executeAfterShow, openclFlags, maxWaitEvents, verbose);
+            verboseInit, showCommand, executeAfterShow, openclFlags, maxWaitEvents, verbose,
+            bench, benchArgs);
 }
 
 String parseAndScale(String memoryValue, int multiplier) {
@@ -172,6 +178,10 @@ void printUsage() {
               --show-command          Display the full Java command
               --execute-after-show    Execute after showing command
               --verbose, -v           Verbose output
+
+            Benchmark (llama-bench style):
+              --bench                 Run the llama-bench-style benchmark instead of inference
+              --bench-args <str>      Extra benchmark options, e.g. "-p 512 -n 128 -r 5 -o md"
 
               -help                   Show this help
               -version                Show version
@@ -343,7 +353,25 @@ List<String> buildCommand(Config cfg, String javaHome, String tornadoSdk, String
         }
     }
 
-    cmd.addAll(List.of("-cp", findLlamaJar(llamaRoot), "org.beehive.gpullama3.LlamaApp"));
+    String mainClass = cfg.bench()
+        ? "org.beehive.gpullama3.bench.LlamaBench"
+        : "org.beehive.gpullama3.LlamaApp";
+    cmd.addAll(List.of("-cp", findLlamaJar(llamaRoot), mainClass));
+
+    if (cfg.bench()) {
+        // llama-bench mode: model(s) + benchmark options only. If --bench-args already
+        // supplies -m, use those verbatim (don't also prepend --model → duplicate rows).
+        var extra = cfg.benchArgs() == null || cfg.benchArgs().isBlank()
+            ? List.<String>of()
+            : List.of(cfg.benchArgs().trim().split("\\s+"));
+        if (extra.contains("-m") || extra.contains("--model")) {
+            cmd.addAll(extra);
+        } else {
+            cmd.addAll(List.of("-m", cfg.modelPath()));
+            cmd.addAll(extra);
+        }
+        return cmd;
+    }
 
     // LLaMA arguments
     cmd.addAll(List.of(
