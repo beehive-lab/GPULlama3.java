@@ -84,6 +84,35 @@ When testing a feature flag, change one variable at a time and keep the baseline
 structurally identical to the treatment command — differences beyond the flag under test
 invalidate the comparison.
 
+## Pre-Flight Checks (do these before trusting ANY A/B)
+
+1. **Stale jar check.** `llama-tornado` picks the jar by reverse-sorting
+   `target/gpu-llama3-*.jar`; after a build-suffix change (e.g. `-Djdk.version.suffix`),
+   a leftover jar from the old suffix can sort ABOVE the fresh one and both "sides" of the
+   A/B silently run identical old code. Before a flag comparison: `ls -la target/*.jar`,
+   delete stale jars, and confirm the surviving jar's mtime postdates the last build.
+2. **Flag liveness check.** Prove the flag under test actually reaches the JVM and changes
+   behavior (a cheap probe run where the flag has an observable effect) before spending a
+   full sweep on it. A flag that is silently ignored produces a perfectly clean null result.
+3. **GPU idle check.** Kill leftover `java` processes between runs and confirm
+   `nvidia-smi` is back to idle memory. Never put the target process name literally inside
+   a `pkill -f` command line that also does other work — `pkill -f` matches your own shell's
+   command string and kills it.
+
+## Flag Ladders (preferred over isolated pairs)
+
+When several stacked optimizations exist, benchmark them as a cumulative ladder from the
+pre-feature baseline (A → A+f1 → A+f1+f2 → ...) and report BOTH the per-step delta and the
+cumulative delta vs baseline. This attributes the gain to the right layer; an isolated pair
+at the top of the stack can show "no gain" purely because a lower layer already captured it.
+
+Depth caveat: decode tok/s decays with KV depth, so two runs of different generated length
+are NOT comparable. For equal-length runs use `-Dllama.bench.ignoreEos=true` (disables the
+stop-token break so generation runs to `--max-tokens`); without it, models stop early at
+their end-of-turn token and comparisons are rough estimates only. Flag-gated attention/KV
+optimizations also pay off more at depth — a null result at shallow depth (~512) does not
+rule out a win at 2048.
+
 ## When Results Point to a Bottleneck
 
 State whether the limiting factor looks memory-bound, compute-bound, launch-overhead-bound,

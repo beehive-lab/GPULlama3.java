@@ -85,6 +85,30 @@ Classify bottlenecks as:
 
 Never report a numeric claim without citing the artifact that produced it.
 
+## Two Cheap Cross-Checks (run these before nsys)
+
+Both need only the profiler dump plus the metrics JSON of a plain (non-profiler) run:
+
+1. **Kernel-time vs wall-time gap.** Sum profiler kernel time over the run and divide by
+   generated tokens; compare against wall ms/token from a NON-profiler run of the same
+   config (profiler runs distort wall time). If kernel-ms/token is well below wall
+   ms/token (e.g. half), the difference is inter-kernel gap — launch overhead, dispatch,
+   many small kernels — and the run is launch-overhead-bound no matter what the kernel
+   shares say. Optimizing the top kernel cannot recover that gap; graphs/fusion can.
+2. **Bandwidth roofline sanity.** Decode streams the full weight set once per token:
+   effective BW = (weights bytes) / (wall s/token). Compare against realistic device
+   GEMV bandwidth (~80% of peak). Near roofline → memory-bound, only fewer bytes
+   (quantization) helps; far below roofline with GEMV-dominated kernel shares → the
+   headroom is in gaps or kernel inefficiency, not in the data volume.
+
+## Cross-Model Share Table
+
+When profiling several models, present one table: rows = task type (strip `layer_N.`
+prefixes and sum across layers), columns = models, cells = % of total kernel time. Group
+related tasks (attention + attention_combine; all RMS variants). This exposes which task
+family is the common bottleneck and how it scales with model size far better than five
+separate top-10 lists.
+
 ## Bottleneck Method
 
 Do not preload a model-specific bottleneck map. Derive it for the current task:
