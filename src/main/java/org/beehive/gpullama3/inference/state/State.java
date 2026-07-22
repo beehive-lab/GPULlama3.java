@@ -40,6 +40,14 @@ public abstract class State {
      */
     public static final boolean FP16_KV_SCALAR = Boolean.getBoolean("llama.kvcache.fp16.scalar");
 
+    /**
+     * With the FP16 KV cache and split-KV attention active, keep the K·Q score accumulation packed
+     * ({@code -Dllama.attention.deepHalf2=true}): Q is staged once per workgroup as a __half2
+     * local-memory tile and each K pair is consumed with a single __hfma2, converting to FP32 only
+     * once per row (llama.cpp fattn-vec style) instead of per pair.
+     */
+    public static final boolean ATTENTION_DEEP_HALF2 = Boolean.getBoolean("llama.attention.deepHalf2");
+
     // current wave of activations
     public final FloatTensor x;         // activation at current time stamp (dim,)
     public final FloatTensor xb;        // same, but inside a residual branch (dim,)

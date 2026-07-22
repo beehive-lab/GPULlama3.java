@@ -59,10 +59,15 @@ public class TransformerComputeKernelsLayered {
         int rowOffsetW3 = rowId * dim;
 
         // === W1 matmul with inline normalization ===
+        // Weights are read as packed FP16 pairs (single 32-bit loads); dim is even for all
+        // supported models, so the pair indices stay even as getHalf2 requires.
         float sum1 = 0.0f;
-        for (int j = localId; j < dim; j += localWorkGroupSize) {
-            float normalized = rmsWeights.get(j) * scale * x.get(j);
-            sum1 += w1.get(rowOffsetW1 + j).getFloat32() * normalized;
+        for (int j = localId * 2; j < dim; j += localWorkGroupSize * 2) {
+            float normalized0 = rmsWeights.get(j) * scale * x.get(j);
+            float normalized1 = rmsWeights.get(j + 1) * scale * x.get(j + 1);
+            Half2 pairW1 = w1.getHalf2(rowOffsetW1 + j);
+            sum1 += Half2.lowFloat(pairW1) * normalized0;
+            sum1 += Half2.highFloat(pairW1) * normalized1;
         }
 
         localSum[localId] = sum1;
@@ -78,9 +83,12 @@ public class TransformerComputeKernelsLayered {
 
         // === W3 matmul with inline normalization (same computation) ===
         float sum3 = 0.0f;
-        for (int j = localId; j < dim; j += localWorkGroupSize) {
-            float normalized = rmsWeights.get(j) * scale * x.get(j);
-            sum3 += w3.get(rowOffsetW3 + j).getFloat32() * normalized;
+        for (int j = localId * 2; j < dim; j += localWorkGroupSize * 2) {
+            float normalized0 = rmsWeights.get(j) * scale * x.get(j);
+            float normalized1 = rmsWeights.get(j + 1) * scale * x.get(j + 1);
+            Half2 pairW3 = w3.getHalf2(rowOffsetW3 + j);
+            sum3 += Half2.lowFloat(pairW3) * normalized0;
+            sum3 += Half2.highFloat(pairW3) * normalized1;
         }
 
         localSum[localId] = sum3;
@@ -1740,6 +1748,130 @@ public class TransformerComputeKernelsLayered {
     }
 
     /**
+     * Deep-half2 variant of {@link #processHeadsFlashAttentionSplitKVFP16}: the K·Q score loop
+     * stays packed end-to-end (llama.cpp fattn-vec style). Q is converted once per workgroup into
+     * a __half2 local-memory tile, each K pair is consumed with a single __hfma2 into a packed
+     * accumulator, and the pair sums are expanded to FP32 once per row instead of once per pair.
+     * The V/softmax state stays FP32 (it accumulates across the whole position chunk).
+     */
+    public static void processHeadsFlashAttentionSplitKVFP16Packed(KernelContext context, FloatArray q, HalfFloatArray key_cache, HalfFloatArray value_cache, FloatArray att, int nHeads,
+            int headSize, int kvDim, int kvMul, IntArray positionHolder, int layer, int contextLength, int nSplits) {
+
+        final int MAX_HEAD_SIZE = 128;
+        final int MAX_LOCAL_SIZE = 64;
+
+        int tid = context.localIdx;
+        int g = context.groupIdx;            // 0 .. nHeads*nSplits - 1
+        int localSize = context.localGroupSizeX;
+        int h = g / nSplits;
+        int s = g % nSplits;
+
+        if (h >= nHeads) {
+            return;
+        }
+
+        int pos = positionHolder.get(0);
+        int seqLen = pos + 1;
+        int chunk = (seqLen + nSplits - 1) / nSplits;
+        int startPos = s * chunk;
+        int endPos = Math.min(startPos + chunk, seqLen);   // exclusive
+
+        int loff = layer * contextLength * kvDim;
+        int kvHeadIdx = h / kvMul;
+        float invSqrt = 1.0f / TornadoMath.sqrt(headSize);
+
+        Half2[] qPacked = context.allocateHalf2LocalArray(MAX_HEAD_SIZE / 2);
+        float[] accShared = context.allocateFloatLocalArray(MAX_LOCAL_SIZE * MAX_HEAD_SIZE);
+        float[] mShared = context.allocateFloatLocalArray(MAX_LOCAL_SIZE);
+        float[] lShared = context.allocateFloatLocalArray(MAX_LOCAL_SIZE);
+        float[] corrShared = context.allocateFloatLocalArray(MAX_LOCAL_SIZE);
+        float[] bcast = context.allocateFloatLocalArray(1);
+
+        int headBase = h * nSplits * (headSize + 2);
+        int outBase = headBase + s * headSize;
+        int mBase = headBase + nSplits * headSize;
+        int lBase = mBase + nSplits;
+
+        // Stage Q once as packed FP16 pairs; the per-pair conversion cost is paid once per
+        // workgroup instead of the score loop paying two half->float expansions per K pair.
+        for (int i = tid; i < headSize / 2; i += localSize) {
+            qPacked[i] = Half2.fromFloats(q.get(h * headSize + i * 2), q.get(h * headSize + i * 2 + 1));
+        }
+        int rowBase = tid * headSize;
+        for (int d = 0; d < headSize; d++) {
+            accShared[rowBase + d] = 0.0f;
+        }
+        context.localBarrier();
+
+        // Strided scan over this split's position chunk (no barriers).
+        float m = Float.NEGATIVE_INFINITY;
+        float l = 0.0f;
+        for (int p = startPos + tid; p < endPos; p += localSize) {
+            int base = loff + p * kvDim + kvHeadIdx * headSize;
+            // Packed K·Q: one 32-bit load + one __hfma2 per pair; the two FP16 lane sums
+            // (over headSize/2 <= 64 terms each) are expanded to FP32 once per row.
+            Half2 scoreAcc = Half2.fromFloats(0.0f, 0.0f);
+            for (int d = 0; d < headSize; d += 2) {
+                scoreAcc = Half2.fma(key_cache.getHalf2(base + d), qPacked[d >> 1], scoreAcc);
+            }
+            float score = (Half2.lowFloat(scoreAcc) + Half2.highFloat(scoreAcc)) * invSqrt;
+            float newM = Math.max(m, score);
+            float corr = (m == Float.NEGATIVE_INFINITY) ? 0.0f : TornadoMath.exp(m - newM);
+            float e = TornadoMath.exp(score - newM);
+            for (int d = 0; d < headSize; d += 2) {
+                Half2 vPair = value_cache.getHalf2(base + d);
+                accShared[rowBase + d] = accShared[rowBase + d] * corr + e * Half2.lowFloat(vPair);
+                accShared[rowBase + d + 1] = accShared[rowBase + d + 1] * corr + e * Half2.highFloat(vPair);
+            }
+            l = l * corr + e;
+            m = newM;
+        }
+        mShared[tid] = m;
+        lShared[tid] = l;
+        context.localBarrier();
+
+        // Block max.
+        if (tid == 0) {
+            float blockMax = Float.NEGATIVE_INFINITY;
+            for (int t = 0; t < localSize; t++) {
+                if (mShared[t] > blockMax) {
+                    blockMax = mShared[t];
+                }
+            }
+            bcast[0] = blockMax;
+        }
+        context.localBarrier();
+        float M = bcast[0];
+
+        corrShared[tid] = (mShared[tid] == Float.NEGATIVE_INFINITY) ? 0.0f : TornadoMath.exp(mShared[tid] - M);
+        context.localBarrier();
+
+        // Block sum L = Σ_t l_t · corr_t.
+        if (tid == 0) {
+            float blockSum = 0.0f;
+            for (int t = 0; t < localSize; t++) {
+                blockSum += lShared[t] * corrShared[t];
+            }
+            bcast[0] = blockSum;
+        }
+        context.localBarrier();
+        float L = bcast[0];
+
+        // Write UNNORMALIZED partial numerator (relative to block max M), plus M and L for the combine.
+        for (int d = tid; d < headSize; d += localSize) {
+            float acc = 0.0f;
+            for (int t = 0; t < localSize; t++) {
+                acc += corrShared[t] * accShared[t * headSize + d];
+            }
+            att.set(outBase + d, acc);
+        }
+        if (tid == 0) {
+            att.set(mBase + s, M);
+            att.set(lBase + s, L);
+        }
+    }
+
+    /**
      * Qwen3-family decode attention, split-KV (flash-decoding) phase 2: combine.
      *
      * <p>One workgroup per query head. Reads the {@code nSplits} partial states
@@ -2078,8 +2210,12 @@ public class TransformerComputeKernelsLayered {
             int rowOffset = rowId * dim;
 
             float partialSum = 0.0f;
-            for (int j = localId; j < dim; j += localWorkGroupSize) {
-                partialSum += wq.get(rowOffset + j).getFloat32() * x.get(j).getFloat32();
+            // Packed FP16 pair loads for both the weight row and the FP16 input, multiplied
+            // with the packed __hmul2 intrinsic; accumulation stays FP32. dim is even.
+            for (int j = localId * 2; j < dim; j += localWorkGroupSize * 2) {
+                Half2 product = Half2.mult(wq.getHalf2(rowOffset + j), x.getHalf2(j));
+                partialSum += Half2.lowFloat(product);
+                partialSum += Half2.highFloat(product);
             }
 
             localSum[localId] = partialSum;
@@ -2102,8 +2238,12 @@ public class TransformerComputeKernelsLayered {
             int rowOffset = kRow * dim;
 
             float partialSum = 0.0f;
-            for (int j = localId; j < dim; j += localWorkGroupSize) {
-                partialSum += wk.get(rowOffset + j).getFloat32() * x.get(j).getFloat32();
+            // Packed FP16 pair loads for both the weight row and the FP16 input, multiplied
+            // with the packed __hmul2 intrinsic; accumulation stays FP32. dim is even.
+            for (int j = localId * 2; j < dim; j += localWorkGroupSize * 2) {
+                Half2 product = Half2.mult(wk.getHalf2(rowOffset + j), x.getHalf2(j));
+                partialSum += Half2.lowFloat(product);
+                partialSum += Half2.highFloat(product);
             }
 
             localSum[localId] = partialSum;
@@ -2126,8 +2266,12 @@ public class TransformerComputeKernelsLayered {
             int rowOffset = vRow * dim;
 
             float partialSum = 0.0f;
-            for (int j = localId; j < dim; j += localWorkGroupSize) {
-                partialSum += wv.get(rowOffset + j).getFloat32() * x.get(j).getFloat32();
+            // Packed FP16 pair loads for both the weight row and the FP16 input, multiplied
+            // with the packed __hmul2 intrinsic; accumulation stays FP32. dim is even.
+            for (int j = localId * 2; j < dim; j += localWorkGroupSize * 2) {
+                Half2 product = Half2.mult(wv.getHalf2(rowOffset + j), x.getHalf2(j));
+                partialSum += Half2.lowFloat(product);
+                partialSum += Half2.highFloat(product);
             }
 
             localSum[localId] = partialSum;
@@ -2557,11 +2701,21 @@ public class TransformerComputeKernelsLayered {
 
         int rowOffset = rowId * n;
 
-        // Each thread calculates partial dot product
+        // Each thread accumulates over consecutive FP16 pairs read with a single packed
+        // 32-bit load; consecutive threads read consecutive pairs, so a warp still issues
+        // fully coalesced 128-byte transactions with half the memory instructions.
+        // Rows start at rowId * n with n even for all supported models, so pair indices
+        // stay even (4-byte aligned) as required by getHalf2.
         float partialSum = 0.0f;
-        for (int j = localId; j < n; j += localSize) {
+        int nEven = n & ~1;
+        for (int j = localId * 2; j < nEven; j += localSize * 2) {
             int matrixIdx = rowOffset + j;
-            partialSum += w.get(matrixIdx).getFloat32() * x.get(j);
+            Half2 pair = w.getHalf2(matrixIdx);
+            partialSum += Half2.lowFloat(pair) * x.get(j);
+            partialSum += Half2.highFloat(pair) * x.get(j + 1);
+        }
+        if (nEven != n && localId == 0) {
+            partialSum += w.get(rowOffset + nEven).getFloat32() * x.get(nEven);
         }
 
         // Store partial sum in local memory
@@ -2706,15 +2860,18 @@ public class TransformerComputeKernelsLayered {
 
         int rowOffset = rowId * n;
 
-        HalfFloat partialSum = new HalfFloat(0f);
-        for (int j = localId; j < n; j += localSize) {
+        // Both operands are FP16: read them as packed pairs (single 32-bit loads), multiply
+        // with the packed __hmul2 intrinsic and accumulate in FP32. n is even.
+        float partialSum = 0.0f;
+        for (int j = localId * 2; j < n; j += localSize * 2) {
             int matrixIdx = rowOffset + j;
-            HalfFloat mul = HalfFloat.mult(w.get(matrixIdx), x.get(j));
-            partialSum = HalfFloat.add(partialSum, mul);
+            Half2 product = Half2.mult(w.getHalf2(matrixIdx), x.getHalf2(j));
+            partialSum += Half2.lowFloat(product);
+            partialSum += Half2.highFloat(product);
         }
 
         // Store partial sum in local memory
-        localSum[localId] = partialSum.getHalfFloatValue();
+        localSum[localId] = partialSum;
         context.localBarrier();
 
         // Parallel reduction within workgroup

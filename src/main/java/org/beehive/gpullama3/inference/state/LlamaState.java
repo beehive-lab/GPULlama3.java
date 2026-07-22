@@ -22,8 +22,15 @@ import java.util.stream.Stream;
  */
 public final class LlamaState extends State {
 
+    /** Number of KV splits per head for opt-in split-KV decode attention. */
+    public static final int SPLIT_KV = Integer.getInteger("llama.attention.splitKv.count", 8);
+
+    // Split-KV attention scratch: per (head, split) partial numerator [headSize] plus block max/sum.
+    public final FloatArray wrapAttSplit;
+
     public LlamaState(Configuration config, int batchsize) {
         super(config, batchsize);
+        this.wrapAttSplit = new FloatArray(config.numberOfHeads() * SPLIT_KV * (config.headSize() + 2));
     }
 
     @Override
