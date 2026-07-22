@@ -80,10 +80,11 @@ export JAVA_TOOL_OPTIONS="-Dllama.metrics.format=json -Dllama.metrics.output=fil
 unset JAVA_TOOL_OPTIONS
 ```
 
-`llama-tornado` auto-detects the backend from `$TORNADOVM_HOME/etc/tornado.backend` — there is no
-`--opencl`/`--ptx`/`--cuda`/`--metal` flag. To benchmark a specific backend, point `TORNADOVM_HOME`
-at an SDK built for that backend (e.g. via `scripts/benchmark_backends.sh`, which rebuilds
-TornadoVM per backend and re-sources its env before each `llama-tornado` call).
+`llama-tornado` auto-detects the backend from `$TORNADOVM_HOME/etc/tornado.backend`. To benchmark
+a specific backend, either point `TORNADOVM_HOME` at an SDK built for that backend (e.g. via
+`scripts/benchmark_backends.sh`, which rebuilds TornadoVM per backend and re-sources its env
+before each `llama-tornado` call), or, if the current SDK has more than one backend installed,
+pass `--opencl`/`--ptx`/`--cuda`/`--metal` to pin one without a separate SDK/rebuild.
 
 When testing a feature flag, change one variable at a time and keep the baseline command
 structurally identical to the treatment command — differences beyond the flag under test

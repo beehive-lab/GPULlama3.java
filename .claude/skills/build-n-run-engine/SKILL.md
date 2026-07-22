@@ -76,8 +76,11 @@ Before using any `llama-tornado` flag you are not 100% certain about, run `--hel
 ## Running GPULlama3.java
 
 `./llama-tornado --model <path> [options]`. The TornadoVM backend is auto-detected from the
-installed SDK (`$TORNADOVM_HOME/etc/tornado.backend`) — there is no `--opencl`/`--ptx`/`--cuda`/`--metal`
-flag to pass; to run on a different backend, point `TORNADOVM_HOME` at an SDK built for it.
+installed SDK (`$TORNADOVM_HOME/etc/tornado.backend`); to run on a different backend, point
+`TORNADOVM_HOME` at an SDK built for it. If the current SDK was built with more than one backend
+(e.g. a `cuda-opencl` build), pass `--opencl`/`--ptx`/`--cuda`/`--metal` to force one of the
+installed ones instead — these error out if the requested backend isn't part of the SDK, and
+are a no-op (redundant but harmless) on a single-backend SDK.
 
 ### Core options
 
@@ -87,6 +90,7 @@ flag to pass; to run on a different backend, point `TORNADOVM_HOME` at an SDK bu
 | `--prompt "..."` | single-shot generation |
 | `-i` / `--interactive` | chat loop instead of one-shot |
 | `--gpu` | required for GPU acceleration; omit to run CPU-only |
+| `--opencl`/`--ptx`/`--cuda`/`--metal` | rarely needed — only to force a backend when the SDK has more than one installed |
 | `--gpu-memory 15GB`/`20GB` | bump from default 14GB for 3B/8B models — avoids OOM |
 | `--temperature`, `--top-p`, `--seed`, `-n` | standard sampling knobs |
 | `-sp/--system-prompt` | instruct-mode framing |

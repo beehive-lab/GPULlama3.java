@@ -310,7 +310,15 @@ Run a model with a text prompt:
 ```
 
 The script prints which backend it detected, e.g. `Detected TornadoVM backend: cuda (from .../etc/tornado.backend)`.
-To run against a different backend, point `TORNADOVM_HOME` at an SDK built for that backend instead.
+To run against a different backend, point `TORNADOVM_HOME` at an SDK built for that backend instead - or,
+if your SDK was built with more than one backend (e.g. `cuda-opencl`), pass `--opencl`/`--ptx`/`--cuda`/`--metal`
+to force one of the installed backends without needing a separate SDK:
+
+```bash
+./llama-tornado --gpu --opencl --model beehive-llama-3.2-1b-instruct-fp16.gguf --prompt "Explain the benefits of GPU acceleration."
+```
+
+These flags error out if the requested backend isn't part of the installed SDK.
 
 #### GPU Execution (FP16 Model)
 Enable GPU acceleration with Q8_0 quantization:
@@ -324,6 +332,13 @@ Enable GPU acceleration with Q8_0 quantization:
 
 ```bash
 ./llamaTornado --gpu --verbose-init --model /Users/abien/work/workspaces/llms/Mistral-7B-Instruct-v0.3.Q8_0.gguf --prompt "what is java"
+```
+
+Same backend auto-detection as `llama-tornado`, including the `--opencl`/`--ptx`/`--cuda`/`--metal`
+override for SDKs built with more than one backend:
+
+```bash
+./llamaTornado --gpu --opencl --model /Users/abien/work/workspaces/llms/Mistral-7B-Instruct-v0.3.Q8_0.gguf --prompt "what is java"
 ```
 
 -----------
@@ -403,10 +418,10 @@ usage: llama-tornado [-h] --model MODEL_PATH [--prompt PROMPT]
                      [--top-p TOP_P] [--seed SEED] [-n MAX_TOKENS]
                      [--stream STREAM] [--echo ECHO] [--suffix SUFFIX] [-i]
                      [--instruct] [--server] [--port PORT] [--bench]
-                     [--bench-args BENCH_ARGS] [--gpu]
-                     [--gpu-memory GPU_MEMORY] [--heap-min HEAP_MIN]
-                     [--heap-max HEAP_MAX] [--debug] [--profiler]
-                     [--profiler-dump-dir PROFILER_DUMP_DIR]
+                     [--bench-args BENCH_ARGS] [--gpu] [--opencl] [--ptx]
+                     [--cuda] [--metal] [--gpu-memory GPU_MEMORY]
+                     [--heap-min HEAP_MIN] [--heap-max HEAP_MAX] [--debug]
+                     [--profiler] [--profiler-dump-dir PROFILER_DUMP_DIR]
                      [--print-bytecodes] [--print-threads] [--print-kernel]
                      [--full-dump] [--verbose-init] [--show-command]
                      [--execute-after-show] [--with-prefill-decode]
@@ -452,6 +467,10 @@ Benchmark (llama-bench style):
 
 Hardware Configuration:
   --gpu                 Enable GPU acceleration (default: False)
+  --opencl              Force the OpenCL backend when the installed TornadoVM SDK has more than one (default: auto-detected) (default: None)
+  --ptx                 Force the PTX backend when the installed TornadoVM SDK has more than one (default: auto-detected) (default: None)
+  --cuda                Force the CUDA backend when the installed TornadoVM SDK has more than one (default: auto-detected) (default: None)
+  --metal               Force the Metal backend when the installed TornadoVM SDK has more than one (default: auto-detected) (default: None)
   --gpu-memory GPU_MEMORY
                         GPU memory allocation (default: 14GB)
   --heap-min HEAP_MIN   Minimum JVM heap size (default: 20g)
