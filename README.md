@@ -479,6 +479,8 @@ java ... org.beehive.gpullama3.server.OpenAIServer --model model.gguf --port 808
 Endpoints: `POST /v1/chat/completions`, `POST /v1/completions`, `GET /v1/models`, `GET /health`.
 
 ```bash
+curl http://localhost:8080/
+
 curl http://localhost:8080/v1/chat/completions -H 'Content-Type: application/json' \
   -d '{"messages":[{"role":"user","content":"Capital of France?"}],"max_tokens":16}'
 
