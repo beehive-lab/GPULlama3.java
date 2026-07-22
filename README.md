@@ -465,6 +465,34 @@ Advanced Options:
 
 ```
 
+## 🔌 OpenAI-compatible server (`--server`)
+
+Serve the model behind the HTTP API OpenAI clients already speak — no external dependencies
+(JDK `HttpServer`), streaming (SSE) and non-streaming.
+
+```bash
+llama-tornado --gpu --cuda --model model.gguf --server --port 8080
+# or directly:
+java ... org.beehive.gpullama3.server.OpenAIServer --model model.gguf --port 8080 --gpu
+```
+
+Endpoints: `POST /v1/chat/completions`, `POST /v1/completions`, `GET /v1/models`, `GET /health`.
+
+```bash
+curl http://localhost:8080/
+
+curl http://localhost:8080/v1/chat/completions -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"Capital of France?"}],"max_tokens":16}'
+
+# streaming
+curl -N http://localhost:8080/v1/chat/completions -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"Tell me a joke"}],"stream":true}'
+```
+
+Any OpenAI SDK works by pointing `base_url` at the server. Generation is serialized on one GPU
+context (requests queue); the reusable core is `server/InferenceService`. Smoke test:
+`scripts/server-smoke-test.sh http://localhost:8080`.
+
 ## 📊 Benchmarking (`--bench`, llama-bench style)
 
 A [llama-bench](https://github.com/ggml-org/llama.cpp/tree/master/tools/llama-bench)-equivalent
