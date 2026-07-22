@@ -42,11 +42,14 @@ public final class OpenAIServer {
 
     private final InferenceService service;
     private final String servedModel;
+    private final boolean gpu;
+    private int port;
     private final AtomicLong seq = new AtomicLong();
 
-    public OpenAIServer(InferenceService service, String servedModel) {
+    public OpenAIServer(InferenceService service, String servedModel, boolean gpu) {
         this.service = service;
         this.servedModel = servedModel;
+        this.gpu = gpu;
     }
 
     public static void main(String[] args) throws IOException {
@@ -75,12 +78,14 @@ public final class OpenAIServer {
         InferenceService service = new InferenceService(model, gpu);
         String served = path.getFileName().toString().replaceAll("\\.gguf$", "");
 
-        OpenAIServer server = new OpenAIServer(service, served);
+        OpenAIServer server = new OpenAIServer(service, served, gpu);
         server.start(port);
     }
 
     public void start(int port) throws IOException {
+        this.port = port;
         HttpServer http = HttpServer.create(new InetSocketAddress(port), 0);
+        http.createContext("/", this::handleIndex);
         http.createContext("/health", this::handleHealth);
         http.createContext("/v1/models", this::handleModels);
         http.createContext("/v1/chat/completions", ex -> handleCompletion(ex, true));
@@ -93,6 +98,97 @@ public final class OpenAIServer {
     }
 
     // ── Endpoints ─────────────────────────────────────────────────────────────
+
+    private void handleIndex(HttpExchange ex) throws IOException {
+        if (!"/".equals(ex.getRequestURI().getPath())) {
+            sendError(ex, 404, "Not found");
+            return;
+        }
+        byte[] bytes = INDEX_HTML
+                .replace("{{model}}", servedModel)
+                .replace("{{backend}}", gpu ? "GPU (TornadoVM)" : "CPU")
+                .replace("{{port}}", String.valueOf(port))
+                .getBytes(StandardCharsets.UTF_8);
+        ex.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
+        ex.sendResponseHeaders(200, bytes.length);
+        try (OutputStream os = ex.getResponseBody()) {
+            os.write(bytes);
+        }
+    }
+
+    private static final String INDEX_HTML = """
+            <!doctype html>
+            <html lang="en">
+            <head>
+            <meta charset="utf-8">
+            <title>GPULlama3.java server</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+              body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+                     max-width: 780px; margin: 40px auto; padding: 0 20px; line-height: 1.5; color: #1a1a1a; }
+              h1 { font-size: 1.5rem; margin-bottom: 0; }
+              .sub { color: #666; margin-top: 4px; }
+              .badges span { display: inline-block; background: #eee; border-radius: 4px; padding: 2px 8px;
+                             margin: 4px 6px 0 0; font-size: 0.85rem; }
+              table { border-collapse: collapse; margin: 12px 0; }
+              td { padding: 3px 10px 3px 0; vertical-align: top; }
+              td.k { color: #666; }
+              code, pre { background: #f4f4f4; border-radius: 4px; }
+              code { padding: 1px 5px; }
+              pre { padding: 10px; overflow-x: auto; }
+              a { color: #0969da; }
+              hr { border: none; border-top: 1px solid #eee; margin: 24px 0; }
+              ul { padding-left: 20px; }
+            </style>
+            </head>
+            <body>
+              <h1>GPULlama3.java</h1>
+              <div class="sub">Local OpenAI-compatible inference server</div>
+
+              <table>
+                <tr><td class="k">Model</td><td><code>{{model}}</code></td></tr>
+                <tr><td class="k">Backend</td><td>{{backend}}</td></tr>
+                <tr><td class="k">Port</td><td>{{port}}</td></tr>
+              </table>
+
+              <p>
+                This is a local instance of
+                <a href="https://github.com/beehive-lab/GPULlama3.java" target="_blank">GPULlama3.java</a>,
+                a Llama3-family inference engine written in native Java and automatically accelerated on
+                GPUs with <a href="https://github.com/beehive-lab/TornadoVM" target="_blank">TornadoVM</a>.
+                It supports Llama3, Mistral, Devstral 2, Qwen2.5, Qwen3, Phi-3, IBM Granite 3.2+, and
+                IBM Granite 4.0 models in GGUF format, and is also used as the GPU inference engine behind
+                the <a href="https://docs.quarkiverse.io/quarkus-langchain4j/dev/gpullama3-chat-model.html" target="_blank">Quarkus</a>
+                and <a href="https://docs.langchain4j.dev/integrations/language-models/gpullama3-java" target="_blank">LangChain4j</a>
+                integrations.
+              </p>
+
+              <hr>
+
+              <h3>API endpoints</h3>
+              <ul>
+                <li><code>GET  /health</code> — liveness check</li>
+                <li><code>GET  /v1/models</code> — list the served model</li>
+                <li><code>POST /v1/chat/completions</code> — chat completions (supports <code>"stream": true</code> SSE)</li>
+                <li><code>POST /v1/completions</code> — text completions (supports <code>"stream": true</code> SSE)</li>
+              </ul>
+
+              <h3>Quick test</h3>
+              <pre><code>curl http://localhost:{{port}}/v1/chat/completions \\
+      -H "Content-Type: application/json" \\
+      -d '{
+            "model": "{{model}}",
+            "messages": [{"role": "user", "content": "Hello!"}]
+          }'</code></pre>
+
+              <p class="sub">
+                Any OpenAI-compatible client (e.g. the <code>openai</code> Python/Node SDK) can point its
+                base URL at this server. Generation runs on a single serialized GPU/CPU context, so
+                concurrent requests are queued and processed one at a time.
+              </p>
+            </body>
+            </html>
+            """;
 
     private void handleHealth(HttpExchange ex) throws IOException {
         sendJson(ex, 200, Map.of("status", "ok"));
