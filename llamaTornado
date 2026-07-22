@@ -5,7 +5,10 @@ import module java.logging;
 String name = MethodHandles.lookup().lookupClass().getName();
 String version = "2026-04-11.1";
 
-enum Backend { OPENCL, PTX, METAL }
+enum Backend { OPENCL, PTX, CUDA, METAL }
+
+// When an SDK is built with more than one backend, prefer in this order.
+List<Backend> BACKEND_PRIORITY = List.of(Backend.CUDA, Backend.PTX, Backend.OPENCL, Backend.METAL);
 
 record Config(
     String modelPath, String prompt, String systemPrompt,
@@ -20,7 +23,7 @@ record Config(
     String openclFlags, int maxWaitEvents, boolean verbose
 ) {}
 
-Config parseArgs(String[] args) {
+Config parseArgs(String[] args, Backend detectedBackend) {
     String modelPath = null;
     String prompt = null;
     String systemPrompt = null;
@@ -33,7 +36,7 @@ Config parseArgs(String[] args) {
     boolean interactive = false;
     boolean instruct = true;
     boolean useGpu = false;
-    Backend backend = Backend.OPENCL;
+    Backend backend = detectedBackend;
     String gpuMemory = "14GB";
     String heapMin = "20g";
     String heapMax = "20g";
@@ -66,9 +69,11 @@ Config parseArgs(String[] args) {
             case "-i", "--interactive" -> { interactive = true; instruct = false; }
             case "--instruct" -> instruct = true;
             case "--gpu" -> useGpu = true;
-            case "--opencl" -> backend = Backend.OPENCL;
-            case "--ptx" -> backend = Backend.PTX;
-            case "--metal" -> backend = Backend.METAL;
+            case "--opencl", "--ptx", "--cuda", "--metal" -> {
+                System.err.println(args[i] + " has been removed - the TornadoVM backend is now "
+                    + "auto-detected from TORNADOVM_HOME/etc/tornado.backend");
+                System.exit(1);
+            }
             case "--gpu-memory" -> gpuMemory = args[++i];
             case "--heap-min" -> heapMin = args[++i];
             case "--heap-max" -> heapMax = args[++i];
@@ -149,9 +154,7 @@ void printUsage() {
 
             Hardware:
               --gpu                   Enable GPU acceleration
-              --opencl                Use OpenCL backend (default)
-              --ptx                   Use PTX/CUDA backend
-              --metal                 Use Metal backend (macOS)
+                                       (backend is auto-detected from TORNADOVM_HOME/etc/tornado.backend)
               --gpu-memory <val>      GPU memory allocation (default: 14GB)
               --heap-min <val>        Min JVM heap (default: 20g)
               --heap-max <val>        Max JVM heap (default: 20g)
@@ -201,6 +204,60 @@ String findLlamaJar(String llamaRoot) {
 String modulePath(String tornadoSdk) {
     var sep = System.getProperty("os.name").toLowerCase().contains("win") ? ";" : ":";
     return "." + sep + tornadoSdk + "/share/java/tornado";
+}
+
+Backend detectBackend(String tornadoSdk) {
+    var backendFile = Path.of(tornadoSdk, "etc", "tornado.backend");
+    if (!Files.exists(backendFile)) {
+        System.err.println("Error: Could not detect TornadoVM backend - " + backendFile + " not found");
+        System.err.println("Note: this file is written by the TornadoVM installer; make sure TORNADOVM_HOME points at a valid SDK");
+        System.exit(1);
+    }
+
+    var nameMap = Map.of(
+        "opencl-backend", Backend.OPENCL,
+        "ptx-backend", Backend.PTX,
+        "cuda-backend", Backend.CUDA,
+        "metal-backend", Backend.METAL
+    );
+
+    var installedNames = new ArrayList<String>();
+    try {
+        for (var line : Files.readAllLines(backendFile)) {
+            line = line.strip();
+            if (line.startsWith("tornado.backends=")) {
+                for (var n : line.substring("tornado.backends=".length()).split(",")) {
+                    n = n.strip();
+                    if (!n.isEmpty()) installedNames.add(n);
+                }
+                break;
+            }
+        }
+    } catch (IOException e) {
+        System.err.println("Error reading " + backendFile + ": " + e.getMessage());
+        System.exit(1);
+    }
+
+    if (installedNames.isEmpty()) {
+        System.err.println("Error: No backends declared in " + backendFile);
+        System.exit(1);
+    }
+
+    var detected = new ArrayList<Backend>();
+    for (var n : installedNames) {
+        var b = nameMap.get(n);
+        if (b != null) detected.add(b);
+    }
+
+    if (detected.isEmpty()) {
+        System.err.println("Error: Unsupported backend(s) in " + backendFile + ": " + String.join(", ", installedNames));
+        System.exit(1);
+    }
+
+    for (var b : BACKEND_PRIORITY) {
+        if (detected.contains(b)) return b;
+    }
+    return detected.getFirst();
 }
 
 List<String> buildCommand(Config cfg, String javaHome, String tornadoSdk, String llamaRoot) {
@@ -273,6 +330,11 @@ List<String> buildCommand(Config cfg, String javaHome, String tornadoSdk, String
             cmd.add("@" + tornadoSdk + "/etc/exportLists/ptx-exports");
             cmd.addAll(List.of("--add-modules",
                 "ALL-SYSTEM,jdk.incubator.vector,tornado.runtime,tornado.annotation,tornado.drivers.common,tornado.drivers.ptx"));
+        }
+        case CUDA -> {
+            cmd.add("@" + tornadoSdk + "/etc/exportLists/cuda-exports");
+            cmd.addAll(List.of("--add-modules",
+                "ALL-SYSTEM,jdk.incubator.vector,tornado.runtime,tornado.annotation,tornado.drivers.common,tornado.drivers.cuda"));
         }
         case METAL -> {
             cmd.add("@" + tornadoSdk + "/etc/exportLists/metal-exports");
@@ -347,7 +409,10 @@ void main(String... args) {
     var tornadoSdk = requireEnv("TORNADOVM_HOME");
     var llamaRoot = resolveLlamaRoot();
 
-    var cfg = parseArgs(args);
+    var backend = detectBackend(tornadoSdk);
+    IO.println("Detected TornadoVM backend: " + backend.toString().toLowerCase() + " (from " + tornadoSdk + "/etc/tornado.backend)");
+
+    var cfg = parseArgs(args, backend);
     var cmd = buildCommand(cfg, javaHome, tornadoSdk, llamaRoot);
 
     if (cfg.showCommand()) {

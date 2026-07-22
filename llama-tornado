@@ -2,6 +2,9 @@
 """
 llama-tornado: GPU-accelerated Java LLM runner with TornadoVM
 Run LLM models using OpenCL, PTX, CUDA, or Metal backends.
+
+The backend is auto-detected from the installed TornadoVM SDK
+(TORNADOVM_HOME/etc/tornado.backend) - no need to select it manually.
 """
 
 import argparse
@@ -21,6 +24,18 @@ class Backend(Enum):
     PTX = "ptx"
     CUDA = "cuda"
     METAL = "metal"
+
+
+# Maps the names TornadoVM writes to etc/tornado.backend to our Backend enum.
+BACKEND_NAME_MAP: Dict[str, Backend] = {
+    "opencl-backend": Backend.OPENCL,
+    "ptx-backend": Backend.PTX,
+    "cuda-backend": Backend.CUDA,
+    "metal-backend": Backend.METAL,
+}
+
+# When an SDK is built with more than one backend, prefer in this order.
+BACKEND_PRIORITY: List[Backend] = [Backend.CUDA, Backend.PTX, Backend.OPENCL, Backend.METAL]
 
 
 class LlamaRunner:
@@ -49,6 +64,35 @@ class LlamaRunner:
             if not Path(path).exists():
                 print(f"Error: {name} path does not exist: {path}")
                 sys.exit(1)
+
+    def detect_backend(self) -> Backend:
+        """Detect the TornadoVM backend from the installed SDK's tornado.backend file."""
+        backend_file = Path(self.tornado_sdk) / "etc" / "tornado.backend"
+        if not backend_file.exists():
+            print(f"Error: Could not detect TornadoVM backend - {backend_file} not found")
+            print("Note: this file is written by the TornadoVM installer; make sure TORNADOVM_HOME points at a valid SDK")
+            sys.exit(1)
+
+        installed_names: List[str] = []
+        for line in backend_file.read_text().splitlines():
+            line = line.strip()
+            if line.startswith("tornado.backends="):
+                installed_names = [b.strip() for b in line.split("=", 1)[1].split(",") if b.strip()]
+                break
+
+        if not installed_names:
+            print(f"Error: No backends declared in {backend_file}")
+            sys.exit(1)
+
+        detected = [BACKEND_NAME_MAP[n] for n in installed_names if n in BACKEND_NAME_MAP]
+        if not detected:
+            print(f"Error: Unsupported backend(s) in {backend_file}: {', '.join(installed_names)}")
+            sys.exit(1)
+
+        for backend in BACKEND_PRIORITY:
+            if backend in detected:
+                return backend
+        return detected[0]
 
     @staticmethod
     def module_path_colon_sep(paths: List[str]) -> str:
@@ -354,12 +398,28 @@ def load_env_from_script():
         sys.exit(1)
 
 
+class _RemovedBackendFlag(argparse.Action):
+    """Gives a clear error for the removed --opencl/--ptx/--cuda/--metal flags
+    instead of silently abbreviating to an unrelated option (e.g. --cuda -> --cuda-graphs)."""
+
+    def __init__(self, option_strings, dest, **kwargs):
+        kwargs["nargs"] = 0
+        super().__init__(option_strings, dest, **kwargs)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        parser.error(
+            f"{option_string} has been removed - the TornadoVM backend is now "
+            f"auto-detected from TORNADOVM_HOME/etc/tornado.backend"
+        )
+
+
 def create_parser() -> argparse.ArgumentParser:
     """Create and configure the argument parser."""
     parser = argparse.ArgumentParser(
         prog="llama-tornado",
         description="GPU-accelerated LLM runner using TornadoVM",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        allow_abbrev=False,
     )
 
     # Required arguments
@@ -423,34 +483,8 @@ def create_parser() -> argparse.ArgumentParser:
     hw_group.add_argument(
         "--gpu", dest="use_gpu", action="store_true", help="Enable GPU acceleration"
     )
-    hw_group.add_argument(
-        "--opencl",
-        dest="backend",
-        action="store_const",
-        const=Backend.OPENCL,
-        help="Use OpenCL backend (default)",
-    )
-    hw_group.add_argument(
-        "--ptx",
-        dest="backend",
-        action="store_const",
-        const=Backend.PTX,
-        help="Use PTX backend",
-    )
-    hw_group.add_argument(
-        "--cuda",
-        dest="backend",
-        action="store_const",
-        const=Backend.CUDA,
-        help="Use CUDA backend (requires TornadoVM built with the CUDA backend)",
-    )
-    hw_group.add_argument(
-        "--metal",
-        dest="backend",
-        action="store_const",
-        const=Backend.METAL,
-        help="Use Apple Metal backend (macOS only, requires TornadoVM 4.0+)",
-    )
+    for flag in ("--opencl", "--ptx", "--cuda", "--metal"):
+        hw_group.add_argument(flag, action=_RemovedBackendFlag, help=argparse.SUPPRESS)
     hw_group.add_argument("--gpu-memory", default="14GB", help="GPU memory allocation")
     hw_group.add_argument("--heap-min", default="20g", help="Minimum JVM heap size")
     hw_group.add_argument("--heap-max", default="20g", help="Maximum JVM heap size")
@@ -576,16 +610,15 @@ def main():
     if args.seed is None:
         args.seed = int(time.time())
 
-    # Set default backend to OpenCL if not specified
-    if not hasattr(args, "backend") or args.backend is None:
-        args.backend = Backend.OPENCL
-
     # Handle mode selection logic
     if args.interactive:
         args.instruct = False
 
-    # Create and run the LLaMA runner
+    # Create the LLaMA runner and auto-detect the TornadoVM backend
     runner = LlamaRunner()
+    args.backend = runner.detect_backend()
+    print(f"Detected TornadoVM backend: {args.backend.value} (from {runner.tornado_sdk}/etc/tornado.backend)")
+
     return runner.run(args)
 
 
