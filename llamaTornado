@@ -7,8 +7,36 @@ String version = "2026-04-11.1";
 
 enum Backend { OPENCL, PTX, CUDA, METAL }
 
-// When an SDK is built with more than one backend, prefer in this order.
+// When an SDK is built with more than one backend, prefer in this order. Also
+// determines which backend becomes TornadoVM's default device (driver 0) - see
+// BACKEND_PRIORITY_PROPERTY below.
 List<Backend> BACKEND_PRIORITY = List.of(Backend.CUDA, Backend.PTX, Backend.OPENCL, Backend.METAL);
+
+Map<Backend, String> BACKEND_EXPORTS_FILE = Map.of(
+    Backend.OPENCL, "opencl-exports",
+    Backend.PTX, "ptx-exports",
+    Backend.CUDA, "cuda-exports",
+    Backend.METAL, "metal-exports"
+);
+
+Map<Backend, String> BACKEND_MODULE_NAME = Map.of(
+    Backend.OPENCL, "tornado.drivers.opencl",
+    Backend.PTX, "tornado.drivers.ptx",
+    Backend.CUDA, "tornado.drivers.cuda",
+    Backend.METAL, "tornado.drivers.metal"
+);
+
+// TornadoVM system property that ranks each backend for "driver 0" (default
+// device) selection when more than one backend is loaded - see
+// TornadoOptions.*_BACKEND_PRIORITY. Defaults there favor OpenCL (10) over
+// everything else (0), which doesn't match BACKEND_PRIORITY above, so we set
+// these explicitly whenever more than one backend is installed.
+Map<Backend, String> BACKEND_PRIORITY_PROPERTY = Map.of(
+    Backend.OPENCL, "tornado.opencl.priority",
+    Backend.PTX, "tornado.ptx.priority",
+    Backend.CUDA, "tornado.cuda.priority",
+    Backend.METAL, "tornado.metal.priority"
+);
 
 record Config(
     String modelPath, String prompt, String systemPrompt,
@@ -216,7 +244,7 @@ String modulePath(String tornadoSdk) {
     return "." + sep + tornadoSdk + "/share/java/tornado";
 }
 
-Backend detectBackend(String tornadoSdk) {
+List<Backend> detectInstalledBackends(String tornadoSdk) {
     var backendFile = Path.of(tornadoSdk, "etc", "tornado.backend");
     if (!Files.exists(backendFile)) {
         System.err.println("Error: Could not detect TornadoVM backend - " + backendFile + " not found");
@@ -253,24 +281,28 @@ Backend detectBackend(String tornadoSdk) {
         System.exit(1);
     }
 
-    var detected = new ArrayList<Backend>();
+    var installed = new ArrayList<Backend>();
     for (var n : installedNames) {
         var b = nameMap.get(n);
-        if (b != null) detected.add(b);
+        if (b != null) installed.add(b);
     }
 
-    if (detected.isEmpty()) {
+    if (installed.isEmpty()) {
         System.err.println("Error: Unsupported backend(s) in " + backendFile + ": " + String.join(", ", installedNames));
         System.exit(1);
     }
 
-    for (var b : BACKEND_PRIORITY) {
-        if (detected.contains(b)) return b;
-    }
-    return detected.getFirst();
+    return installed;
 }
 
-List<String> buildCommand(Config cfg, String javaHome, String tornadoSdk, String llamaRoot) {
+Backend selectPrimaryBackend(List<Backend> installed) {
+    for (var b : BACKEND_PRIORITY) {
+        if (installed.contains(b)) return b;
+    }
+    return installed.getFirst();
+}
+
+List<String> buildCommand(Config cfg, String javaHome, String tornadoSdk, String llamaRoot, List<Backend> installedBackends) {
     var cmd = new ArrayList<String>();
 
     cmd.addAll(List.of(
@@ -320,38 +352,40 @@ List<String> buildCommand(Config cfg, String javaHome, String tornadoSdk, String
         "-Dtornado.eventpool.maxwaitevents=" + cfg.maxWaitEvents()
     ));
 
-    if (cfg.backend() == Backend.OPENCL) {
+    if (installedBackends.contains(Backend.OPENCL)) {
         cmd.add("-Dtornado.opencl.compiler.flags=" + cfg.openclFlags());
     }
 
-    // Module configuration
+    if (installedBackends.size() > 1) {
+        // More than one backend is loaded, so pin TornadoVM's own driver-0
+        // (default device) selection to match cfg.backend() - otherwise it
+        // falls back to its own defaults (OpenCL beats everything else).
+        int n = BACKEND_PRIORITY.size();
+        for (int rank = 0; rank < n; rank++) {
+            var b = BACKEND_PRIORITY.get(rank);
+            if (installedBackends.contains(b)) {
+                cmd.add("-D" + BACKEND_PRIORITY_PROPERTY.get(b) + "=" + (n - rank));
+            }
+        }
+    }
+
+    // Module configuration - TornadoCoreRuntime tries to initialize every
+    // backend listed in tornado.backend at startup (not just cfg.backend()),
+    // so every installed backend needs its exports and driver module here or
+    // it fails with an IllegalAccessError.
     cmd.addAll(List.of(
         "--upgrade-module-path", tornadoSdk + "/share/java/graalJars",
         "@" + tornadoSdk + "/etc/exportLists/common-exports"
     ));
 
-    switch (cfg.backend()) {
-        case OPENCL -> {
-            cmd.add("@" + tornadoSdk + "/etc/exportLists/opencl-exports");
-            cmd.addAll(List.of("--add-modules",
-                "ALL-SYSTEM,jdk.incubator.vector,tornado.runtime,tornado.annotation,tornado.drivers.common,tornado.drivers.opencl"));
-        }
-        case PTX -> {
-            cmd.add("@" + tornadoSdk + "/etc/exportLists/ptx-exports");
-            cmd.addAll(List.of("--add-modules",
-                "ALL-SYSTEM,jdk.incubator.vector,tornado.runtime,tornado.annotation,tornado.drivers.common,tornado.drivers.ptx"));
-        }
-        case CUDA -> {
-            cmd.add("@" + tornadoSdk + "/etc/exportLists/cuda-exports");
-            cmd.addAll(List.of("--add-modules",
-                "ALL-SYSTEM,jdk.incubator.vector,tornado.runtime,tornado.annotation,tornado.drivers.common,tornado.drivers.cuda"));
-        }
-        case METAL -> {
-            cmd.add("@" + tornadoSdk + "/etc/exportLists/metal-exports");
-            cmd.addAll(List.of("--add-modules",
-                "ALL-SYSTEM,jdk.incubator.vector,tornado.runtime,tornado.annotation,tornado.drivers.common,tornado.drivers.metal"));
-        }
+    var addModules = new ArrayList<>(List.of(
+        "ALL-SYSTEM", "jdk.incubator.vector", "tornado.runtime", "tornado.annotation", "tornado.drivers.common"
+    ));
+    for (var b : installedBackends) {
+        cmd.add("@" + tornadoSdk + "/etc/exportLists/" + BACKEND_EXPORTS_FILE.get(b));
+        addModules.add(BACKEND_MODULE_NAME.get(b));
     }
+    cmd.addAll(List.of("--add-modules", String.join(",", addModules)));
 
     String mainClass = cfg.bench()
         ? "org.beehive.gpullama3.bench.LlamaBench"
@@ -437,11 +471,17 @@ void main(String... args) {
     var tornadoSdk = requireEnv("TORNADOVM_HOME");
     var llamaRoot = resolveLlamaRoot();
 
-    var backend = detectBackend(tornadoSdk);
-    IO.println("Detected TornadoVM backend: " + backend.toString().toLowerCase() + " (from " + tornadoSdk + "/etc/tornado.backend)");
+    var installedBackends = detectInstalledBackends(tornadoSdk);
+    var backend = selectPrimaryBackend(installedBackends);
+    if (installedBackends.size() > 1) {
+        var names = String.join(", ", installedBackends.stream().map(b -> b.toString().toLowerCase()).toList());
+        IO.println("Detected TornadoVM backends: " + names + " (from " + tornadoSdk + "/etc/tornado.backend) - using " + backend.toString().toLowerCase());
+    } else {
+        IO.println("Detected TornadoVM backend: " + backend.toString().toLowerCase() + " (from " + tornadoSdk + "/etc/tornado.backend)");
+    }
 
     var cfg = parseArgs(args, backend);
-    var cmd = buildCommand(cfg, javaHome, tornadoSdk, llamaRoot);
+    var cmd = buildCommand(cfg, javaHome, tornadoSdk, llamaRoot, installedBackends);
 
     if (cfg.showCommand()) {
         IO.println("Full Java command:");

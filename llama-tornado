@@ -34,7 +34,35 @@ BACKEND_NAME_MAP: Dict[str, Backend] = {
     "metal-backend": Backend.METAL,
 }
 
-# When an SDK is built with more than one backend, prefer in this order.
+BACKEND_EXPORTS_FILE: Dict[Backend, str] = {
+    Backend.OPENCL: "opencl-exports",
+    Backend.PTX: "ptx-exports",
+    Backend.CUDA: "cuda-exports",
+    Backend.METAL: "metal-exports",
+}
+
+BACKEND_MODULE_NAME: Dict[Backend, str] = {
+    Backend.OPENCL: "tornado.drivers.opencl",
+    Backend.PTX: "tornado.drivers.ptx",
+    Backend.CUDA: "tornado.drivers.cuda",
+    Backend.METAL: "tornado.drivers.metal",
+}
+
+# TornadoVM system property that ranks each backend for "driver 0" (default
+# device) selection when more than one backend is loaded - see
+# TornadoOptions.*_BACKEND_PRIORITY. Defaults there favor OpenCL (10) over
+# everything else (0), which doesn't match BACKEND_PRIORITY below, so we set
+# these explicitly whenever more than one backend is installed.
+BACKEND_PRIORITY_PROPERTY: Dict[Backend, str] = {
+    Backend.OPENCL: "tornado.opencl.priority",
+    Backend.PTX: "tornado.ptx.priority",
+    Backend.CUDA: "tornado.cuda.priority",
+    Backend.METAL: "tornado.metal.priority",
+}
+
+# When an SDK is built with more than one backend, prefer this one for
+# properties that need a single "primary" backend (e.g. the printed message,
+# and which backend becomes TornadoVM's default device).
 BACKEND_PRIORITY: List[Backend] = [Backend.CUDA, Backend.PTX, Backend.OPENCL, Backend.METAL]
 
 
@@ -65,8 +93,8 @@ class LlamaRunner:
                 print(f"Error: {name} path does not exist: {path}")
                 sys.exit(1)
 
-    def detect_backend(self) -> Backend:
-        """Detect the TornadoVM backend from the installed SDK's tornado.backend file."""
+    def detect_installed_backends(self) -> List[Backend]:
+        """Return every backend the installed TornadoVM SDK was built with (tornado.backend order)."""
         backend_file = Path(self.tornado_sdk) / "etc" / "tornado.backend"
         if not backend_file.exists():
             print(f"Error: Could not detect TornadoVM backend - {backend_file} not found")
@@ -84,15 +112,20 @@ class LlamaRunner:
             print(f"Error: No backends declared in {backend_file}")
             sys.exit(1)
 
-        detected = [BACKEND_NAME_MAP[n] for n in installed_names if n in BACKEND_NAME_MAP]
-        if not detected:
+        installed = [BACKEND_NAME_MAP[n] for n in installed_names if n in BACKEND_NAME_MAP]
+        if not installed:
             print(f"Error: Unsupported backend(s) in {backend_file}: {', '.join(installed_names)}")
             sys.exit(1)
 
+        return installed
+
+    @staticmethod
+    def select_primary_backend(installed: List[Backend]) -> Backend:
+        """Pick which installed backend to report/default to when the SDK has more than one."""
         for backend in BACKEND_PRIORITY:
-            if backend in detected:
+            if backend in installed:
                 return backend
-        return detected[0]
+        return installed[0]
 
     @staticmethod
     def module_path_colon_sep(paths: List[str]) -> str:
@@ -196,49 +229,39 @@ class LlamaRunner:
         cmd.extend(tornado_runtime_config)
 
         # Backend-specific configuration
-        if args.backend == Backend.OPENCL:
+        if Backend.OPENCL in args.installed_backends:
             # OpenCL specific flags
             cmd.append(f"-Dtornado.opencl.compiler.flags={args.opencl_flags}")
 
-        # Module configuration - varies by backend
+        if len(args.installed_backends) > 1:
+            # More than one backend is loaded, so pin TornadoVM's own driver-0
+            # (default device) selection to match args.backend - otherwise it
+            # falls back to its own defaults (OpenCL beats everything else).
+            n = len(BACKEND_PRIORITY)
+            for rank, backend in enumerate(BACKEND_PRIORITY):
+                if backend in args.installed_backends:
+                    cmd.append(f"-D{BACKEND_PRIORITY_PROPERTY[backend]}={n - rank}")
+
+        # Module configuration - TornadoCoreRuntime tries to initialize every
+        # backend listed in tornado.backend at startup (not just the one we
+        # picked as primary), so every installed backend needs its exports and
+        # driver module here or it fails with an IllegalAccessError.
         module_config = [
             f"--upgrade-module-path",
             f"{self.tornado_sdk}/share/java/graalJars",
             f"@{self.tornado_sdk}/etc/exportLists/common-exports",
         ]
-        # Add backend-specific exports and modules
-        if args.backend == Backend.OPENCL:
-            module_config.extend(
-                [
-                    f"@{self.tornado_sdk}/etc/exportLists/opencl-exports",
-                    "--add-modules",
-                    "ALL-SYSTEM,jdk.incubator.vector,tornado.runtime,tornado.annotation,tornado.drivers.common,tornado.drivers.opencl",
-                ]
-            )
-        elif args.backend == Backend.PTX:
-            module_config.extend(
-                [
-                    f"@{self.tornado_sdk}/etc/exportLists/ptx-exports",
-                    "--add-modules",
-                    "ALL-SYSTEM,jdk.incubator.vector,tornado.runtime,tornado.annotation,tornado.drivers.common,tornado.drivers.ptx",
-                ]
-            )
-        elif args.backend == Backend.CUDA:
-            module_config.extend(
-                [
-                    f"@{self.tornado_sdk}/etc/exportLists/cuda-exports",
-                    "--add-modules",
-                    "ALL-SYSTEM,jdk.incubator.vector,tornado.runtime,tornado.annotation,tornado.drivers.common,tornado.drivers.cuda",
-                ]
-            )
-        elif args.backend == Backend.METAL:
-            module_config.extend(
-                [
-                    f"@{self.tornado_sdk}/etc/exportLists/metal-exports",
-                    "--add-modules",
-                    "ALL-SYSTEM,jdk.incubator.vector,tornado.runtime,tornado.annotation,tornado.drivers.common,tornado.drivers.metal",
-                ]
-            )
+        add_modules = [
+            "ALL-SYSTEM",
+            "jdk.incubator.vector",
+            "tornado.runtime",
+            "tornado.annotation",
+            "tornado.drivers.common",
+        ]
+        for backend in args.installed_backends:
+            module_config.append(f"@{self.tornado_sdk}/etc/exportLists/{BACKEND_EXPORTS_FILE[backend]}")
+            add_modules.append(BACKEND_MODULE_NAME[backend])
+        module_config.extend(["--add-modules", ",".join(add_modules)])
 
         if getattr(args, "server", False):
             main_class = "org.beehive.gpullama3.server.OpenAIServer"
@@ -651,10 +674,19 @@ def main():
     if args.interactive:
         args.instruct = False
 
-    # Create the LLaMA runner and auto-detect the TornadoVM backend
+    # Create the LLaMA runner and auto-detect the TornadoVM backend(s)
     runner = LlamaRunner()
-    args.backend = runner.detect_backend()
-    print(f"Detected TornadoVM backend: {args.backend.value} (from {runner.tornado_sdk}/etc/tornado.backend)")
+    installed_backends = runner.detect_installed_backends()
+    args.installed_backends = installed_backends
+    args.backend = runner.select_primary_backend(installed_backends)
+    if len(installed_backends) > 1:
+        names = ", ".join(b.value for b in installed_backends)
+        print(
+            f"Detected TornadoVM backends: {names} (from {runner.tornado_sdk}/etc/tornado.backend) "
+            f"- using {args.backend.value}"
+        )
+    else:
+        print(f"Detected TornadoVM backend: {args.backend.value} (from {runner.tornado_sdk}/etc/tornado.backend)")
 
     return runner.run(args)
 
