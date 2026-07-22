@@ -34,6 +34,9 @@ import java.util.function.IntConsumer;
  */
 public final class InferenceEngine {
 
+    /** Benchmarking aid: keep decoding past the stop token so every run generates the same token count. */
+    private static final boolean IGNORE_EOS = Boolean.getBoolean("llama.bench.ignoreEos");
+
     private InferenceEngine() {
         //prevent instantiation
     }
@@ -344,7 +347,7 @@ public final class InferenceEngine {
                 generatedTokens.add(nextToken);
 
                 // Check stop condition
-                if (stopTokens.contains(nextToken)) {
+                if (!IGNORE_EOS && stopTokens.contains(nextToken)) {
                     break;
                 }
             }
@@ -438,7 +441,7 @@ public final class InferenceEngine {
             }
 
             // Check for stop condition
-            if (stopTokens.contains(nextToken)) {
+            if (!IGNORE_EOS && stopTokens.contains(nextToken)) {
                 break;
             }
 
