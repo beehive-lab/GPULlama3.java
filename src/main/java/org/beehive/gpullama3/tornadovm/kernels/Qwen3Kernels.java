@@ -8,6 +8,7 @@ import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
+import uk.ac.manchester.tornado.api.types.vectors.Half2;
 
 // @formatter:off
 public class Qwen3Kernels {
@@ -456,8 +457,11 @@ public class Qwen3Kernels {
             int rowOffset = rowId * inputDim;
 
             float partialSum = 0.0f;
-            for (int j = localId; j < inputDim; j += localWorkGroupSize) {
-                partialSum += wq.get(rowOffset + j).getFloat32() * x.get(j);
+            // Packed FP16 pair loads (single 32-bit load per pair); inputDim is even.
+            for (int j = localId * 2; j < inputDim; j += localWorkGroupSize * 2) {
+                Half2 pair = wq.getHalf2(rowOffset + j);
+                partialSum += Half2.lowFloat(pair) * x.get(j);
+                partialSum += Half2.highFloat(pair) * x.get(j + 1);
             }
 
             localSum[localId] = partialSum;
@@ -480,8 +484,11 @@ public class Qwen3Kernels {
             int rowOffset = kRow * inputDim;
 
             float partialSum = 0.0f;
-            for (int j = localId; j < inputDim; j += localWorkGroupSize) {
-                partialSum += wk.get(rowOffset + j).getFloat32() * x.get(j);
+            // Packed FP16 pair loads (single 32-bit load per pair); inputDim is even.
+            for (int j = localId * 2; j < inputDim; j += localWorkGroupSize * 2) {
+                Half2 pair = wk.getHalf2(rowOffset + j);
+                partialSum += Half2.lowFloat(pair) * x.get(j);
+                partialSum += Half2.highFloat(pair) * x.get(j + 1);
             }
 
             localSum[localId] = partialSum;
@@ -504,8 +511,11 @@ public class Qwen3Kernels {
             int rowOffset = vRow * inputDim;
 
             float partialSum = 0.0f;
-            for (int j = localId; j < inputDim; j += localWorkGroupSize) {
-                partialSum += wv.get(rowOffset + j).getFloat32() * x.get(j);
+            // Packed FP16 pair loads (single 32-bit load per pair); inputDim is even.
+            for (int j = localId * 2; j < inputDim; j += localWorkGroupSize * 2) {
+                Half2 pair = wv.getHalf2(rowOffset + j);
+                partialSum += Half2.lowFloat(pair) * x.get(j);
+                partialSum += Half2.highFloat(pair) * x.get(j + 1);
             }
 
             localSum[localId] = partialSum;
@@ -557,9 +567,13 @@ public class Qwen3Kernels {
             int rowOffset = rowId * inputDim;
 
             float partialSum = 0.0f;
-            for (int j = localId; j < inputDim; j += localWorkGroupSize) {
-                float normalized = rmsWeights.get(j) * scale * x.get(j);
-                partialSum += wq.get(rowOffset + j).getFloat32() * normalized;
+            // Packed FP16 pair loads (single 32-bit load per pair); inputDim is even.
+            for (int j = localId * 2; j < inputDim; j += localWorkGroupSize * 2) {
+                float normalized0 = rmsWeights.get(j) * scale * x.get(j);
+                float normalized1 = rmsWeights.get(j + 1) * scale * x.get(j + 1);
+                Half2 pair = wq.getHalf2(rowOffset + j);
+                partialSum += Half2.lowFloat(pair) * normalized0;
+                partialSum += Half2.highFloat(pair) * normalized1;
             }
 
             localSum[localId] = partialSum;
@@ -582,9 +596,13 @@ public class Qwen3Kernels {
             int rowOffset = kRow * inputDim;
 
             float partialSum = 0.0f;
-            for (int j = localId; j < inputDim; j += localWorkGroupSize) {
-                float normalized = rmsWeights.get(j) * scale * x.get(j);
-                partialSum += wk.get(rowOffset + j).getFloat32() * normalized;
+            // Packed FP16 pair loads (single 32-bit load per pair); inputDim is even.
+            for (int j = localId * 2; j < inputDim; j += localWorkGroupSize * 2) {
+                float normalized0 = rmsWeights.get(j) * scale * x.get(j);
+                float normalized1 = rmsWeights.get(j + 1) * scale * x.get(j + 1);
+                Half2 pair = wk.getHalf2(rowOffset + j);
+                partialSum += Half2.lowFloat(pair) * normalized0;
+                partialSum += Half2.highFloat(pair) * normalized1;
             }
 
             localSum[localId] = partialSum;
@@ -607,9 +625,13 @@ public class Qwen3Kernels {
             int rowOffset = vRow * inputDim;
 
             float partialSum = 0.0f;
-            for (int j = localId; j < inputDim; j += localWorkGroupSize) {
-                float normalized = rmsWeights.get(j) * scale * x.get(j);
-                partialSum += wv.get(rowOffset + j).getFloat32() * normalized;
+            // Packed FP16 pair loads (single 32-bit load per pair); inputDim is even.
+            for (int j = localId * 2; j < inputDim; j += localWorkGroupSize * 2) {
+                float normalized0 = rmsWeights.get(j) * scale * x.get(j);
+                float normalized1 = rmsWeights.get(j + 1) * scale * x.get(j + 1);
+                Half2 pair = wv.getHalf2(rowOffset + j);
+                partialSum += Half2.lowFloat(pair) * normalized0;
+                partialSum += Half2.highFloat(pair) * normalized1;
             }
 
             localSum[localId] = partialSum;
@@ -1572,6 +1594,66 @@ public class Qwen3Kernels {
             wrapKeyCache.set(cacheOff + ic + halfEmbdHead, rotK1);
             wrapValueCache.set(cacheOff + ic,                qkvBatch.get(vHeadBase + ic));
             wrapValueCache.set(cacheOff + ic + halfEmbdHead, qkvBatch.get(vHeadBase + ic + halfEmbdHead));
+        }
+    }
+
+    /**
+     * {@link #batchedRopeWithKVCacheQwen3Packed} writing a half-precision KV cache.
+     *
+     * <p>Qwen3's split-half RoPE pairs element {@code ic} with {@code ic + nEmbdHead/2},
+     * which are not adjacent, so the cache writes stay scalar.</p>
+     */
+    public static void batchedRopeWithKVCacheQwen3PackedFP16(
+            KernelContext context,
+            IntArray batchStartPosHolder,
+            FloatArray qkvBatch,
+            HalfFloatArray wrapKeyCache,
+            HalfFloatArray wrapValueCache,
+            int kvDim,
+            int nEmbdHead,
+            int layerIndex,
+            int contextLength,
+            int qDim) {
+
+        int globalIdx = context.globalIdx;
+        int halfQDim = qDim / 2;
+        int batchIdx = globalIdx / halfQDim;
+        int pairIdx = globalIdx % halfQDim;
+        int qkvStride = qDim + 2 * kvDim;
+
+        int pos = batchStartPosHolder.get(0) + batchIdx;
+
+        int halfEmbdHead = nEmbdHead / 2;
+        int ic      = pairIdx % halfEmbdHead;
+        int headIdx = pairIdx / halfEmbdHead;
+
+        float freq = 1.0f / TornadoMath.pow(1000000.0f, 2.0f * ic / (float) nEmbdHead);
+        float val  = pos * freq;
+        float fcr  = TornadoMath.cos(val);
+        float fci  = TornadoMath.sin(val);
+
+        // Rotate Q in place (packed offset 0)
+        int qHeadBase = batchIdx * qkvStride + headIdx * nEmbdHead;
+        float v0q = qkvBatch.get(qHeadBase + ic);
+        float v1q = qkvBatch.get(qHeadBase + ic + halfEmbdHead);
+        qkvBatch.set(qHeadBase + ic,                v0q * fcr - v1q * fci);
+        qkvBatch.set(qHeadBase + ic + halfEmbdHead, v0q * fci + v1q * fcr);
+
+        // Rotate K (packed offset qDim) and write K,V to the half-precision cache
+        if (pairIdx < kvDim / 2) {
+            int kHeadIdx  = pairIdx / halfEmbdHead;
+            int kHeadBase = batchIdx * qkvStride + qDim + kHeadIdx * nEmbdHead;
+            int vHeadBase = batchIdx * qkvStride + qDim + kvDim + kHeadIdx * nEmbdHead;
+            float v0k = qkvBatch.get(kHeadBase + ic);
+            float v1k = qkvBatch.get(kHeadBase + ic + halfEmbdHead);
+            float rotK0 = v0k * fcr - v1k * fci;
+            float rotK1 = v0k * fci + v1k * fcr;
+
+            int cacheOff = layerIndex * contextLength * kvDim + pos * kvDim + kHeadIdx * nEmbdHead;
+            wrapKeyCache.set(cacheOff + ic,                new HalfFloat(rotK0));
+            wrapKeyCache.set(cacheOff + ic + halfEmbdHead, new HalfFloat(rotK1));
+            wrapValueCache.set(cacheOff + ic,                new HalfFloat(qkvBatch.get(vHeadBase + ic)));
+            wrapValueCache.set(cacheOff + ic + halfEmbdHead, new HalfFloat(qkvBatch.get(vHeadBase + ic + halfEmbdHead)));
         }
     }
 

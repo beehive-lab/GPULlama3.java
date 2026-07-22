@@ -34,7 +34,7 @@ public final class Qwen3State extends State {
     public FloatArray wrapAttSplit;
 
     /** Number of KV splits per head for split-KV (flash-decoding) decode attention. */
-    public static final int SPLIT_KV = 8;
+    public static final int SPLIT_KV = Integer.getInteger("llama.attention.splitKv.count", 8);
 
     public Qwen3State(Configuration config, int batchsize) {
         super(config, batchsize);

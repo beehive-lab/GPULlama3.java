@@ -1,6 +1,7 @@
 package org.beehive.gpullama3.tornadovm.layers.type.fp16;
 
 import org.beehive.gpullama3.inference.state.Qwen3State;
+import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.tornado.Qwen3TornadoWeights;
 import org.beehive.gpullama3.model.qwen3.Qwen3Configuration;
 import org.beehive.gpullama3.tornadovm.kernels.Qwen3Kernels;
@@ -346,7 +347,9 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
         // Phase 1: split each head's KV range across attentionSplits workgroups; partials -> wrapAttSplit.
         if (useFp16KVCache()) {
             unifiedLayer.task("attention",
-                    TransformerComputeKernelsLayered::processHeadsFlashAttentionSplitKVFP16,
+                    State.ATTENTION_DEEP_HALF2
+                            ? TransformerComputeKernelsLayered::processHeadsFlashAttentionSplitKVFP16Packed
+                            : TransformerComputeKernelsLayered::processHeadsFlashAttentionSplitKVFP16,
                     context,
                     qwen3State.wrapQ,                 // query vectors
                     qwen3State.wrapKeyCacheFP16,      // key cache (FP16)
