@@ -402,9 +402,11 @@ usage: llama-tornado [-h] --model MODEL_PATH [--prompt PROMPT]
                      [-sp SYSTEM_PROMPT] [--temperature TEMPERATURE]
                      [--top-p TOP_P] [--seed SEED] [-n MAX_TOKENS]
                      [--stream STREAM] [--echo ECHO] [--suffix SUFFIX] [-i]
-                     [--instruct] [--gpu] [--gpu-memory GPU_MEMORY]
-                     [--heap-min HEAP_MIN] [--heap-max HEAP_MAX] [--debug]
-                     [--profiler] [--profiler-dump-dir PROFILER_DUMP_DIR]
+                     [--instruct] [--server] [--port PORT] [--bench]
+                     [--bench-args BENCH_ARGS] [--gpu]
+                     [--gpu-memory GPU_MEMORY] [--heap-min HEAP_MIN]
+                     [--heap-max HEAP_MAX] [--debug] [--profiler]
+                     [--profiler-dump-dir PROFILER_DUMP_DIR]
                      [--print-bytecodes] [--print-threads] [--print-kernel]
                      [--full-dump] [--verbose-init] [--show-command]
                      [--execute-after-show] [--with-prefill-decode]
@@ -438,6 +440,15 @@ LLaMA Configuration:
 Mode Selection:
   -i, --interactive     Run in interactive/chat mode (default: False)
   --instruct            Run in instruction mode (default) (default: True)
+
+OpenAI-compatible server:
+  --server              Run the OpenAI-compatible HTTP server instead of inference (default: False)
+  --port PORT           Server port (default 8080) (default: 8080)
+
+Benchmark (llama-bench style):
+  --bench               Run the llama-bench-style benchmark (bench.LlamaBench) instead of inference (default: False)
+  --bench-args BENCH_ARGS
+                        Extra benchmark options (use --bench-args="..."), e.g. "-p 512 -n 128 -d 0,4096 -r 5 -o md" (see LlamaBench) (default: )
 
 Hardware Configuration:
   --gpu                 Enable GPU acceleration (default: False)
@@ -487,7 +498,7 @@ Serve the model behind the HTTP API OpenAI clients already speak — no external
 (JDK `HttpServer`), streaming (SSE) and non-streaming.
 
 ```bash
-llama-tornado --gpu --cuda --model model.gguf --server --port 8080
+llama-tornado --gpu --model model.gguf --server --port 8080
 # or directly:
 java ... org.beehive.gpullama3.server.OpenAIServer --model model.gguf --port 8080 --gpu
 ```
@@ -519,10 +530,10 @@ the forward pass only (no tokenization, no sampling), matching llama-bench metho
 
 ```bash
 # defaults: -p 512 -n 128 -r 5, markdown output
-llama-tornado --gpu --cuda --model model1.gguf --bench
+llama-tornado --gpu --model model1.gguf --bench
 
 # multiple models, custom matrix, CSV
-llama-tornado --gpu --cuda --model model1.gguf --bench \
+llama-tornado --gpu --model model1.gguf --bench \
     --bench-args="-m model2.gguf -p 256,512 -n 64,128 -pg 512,128 -d 0,4096 -r 5 -o csv"
 ```
 
