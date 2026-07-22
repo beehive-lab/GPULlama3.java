@@ -237,8 +237,11 @@ class LlamaRunner:
             # More than one backend is loaded, so pin TornadoVM's own driver-0
             # (default device) selection to match args.backend - otherwise it
             # falls back to its own defaults (OpenCL beats everything else).
-            n = len(BACKEND_PRIORITY)
-            for rank, backend in enumerate(BACKEND_PRIORITY):
+            # args.backend goes first (whether auto-picked or --backend
+            # override), then the rest of BACKEND_PRIORITY as a tiebreak.
+            effective_priority = [args.backend] + [b for b in BACKEND_PRIORITY if b != args.backend]
+            n = len(effective_priority)
+            for rank, backend in enumerate(effective_priority):
                 if backend in args.installed_backends:
                     cmd.append(f"-D{BACKEND_PRIORITY_PROPERTY[backend]}={n - rank}")
 
@@ -440,21 +443,6 @@ def load_env_from_script():
         sys.exit(1)
 
 
-class _RemovedBackendFlag(argparse.Action):
-    """Gives a clear error for the removed --opencl/--ptx/--cuda/--metal flags
-    instead of silently abbreviating to an unrelated option (e.g. --cuda -> --cuda-graphs)."""
-
-    def __init__(self, option_strings, dest, **kwargs):
-        kwargs["nargs"] = 0
-        super().__init__(option_strings, dest, **kwargs)
-
-    def __call__(self, parser, namespace, values, option_string=None):
-        parser.error(
-            f"{option_string} has been removed - the TornadoVM backend is now "
-            f"auto-detected from TORNADOVM_HOME/etc/tornado.backend"
-        )
-
-
 def create_parser() -> argparse.ArgumentParser:
     """Create and configure the argument parser."""
     parser = argparse.ArgumentParser(
@@ -543,8 +531,22 @@ def create_parser() -> argparse.ArgumentParser:
     hw_group.add_argument(
         "--gpu", dest="use_gpu", action="store_true", help="Enable GPU acceleration"
     )
-    for flag in ("--opencl", "--ptx", "--cuda", "--metal"):
-        hw_group.add_argument(flag, action=_RemovedBackendFlag, help=argparse.SUPPRESS)
+    hw_group.add_argument(
+        "--opencl", dest="backend_override", action="store_const", const=Backend.OPENCL,
+        help="Force the OpenCL backend when the installed TornadoVM SDK has more than one (default: auto-detected)",
+    )
+    hw_group.add_argument(
+        "--ptx", dest="backend_override", action="store_const", const=Backend.PTX,
+        help="Force the PTX backend when the installed TornadoVM SDK has more than one (default: auto-detected)",
+    )
+    hw_group.add_argument(
+        "--cuda", dest="backend_override", action="store_const", const=Backend.CUDA,
+        help="Force the CUDA backend when the installed TornadoVM SDK has more than one (default: auto-detected)",
+    )
+    hw_group.add_argument(
+        "--metal", dest="backend_override", action="store_const", const=Backend.METAL,
+        help="Force the Metal backend when the installed TornadoVM SDK has more than one (default: auto-detected)",
+    )
     hw_group.add_argument("--gpu-memory", default="14GB", help="GPU memory allocation")
     hw_group.add_argument("--heap-min", default="20g", help="Minimum JVM heap size")
     hw_group.add_argument("--heap-max", default="20g", help="Maximum JVM heap size")
@@ -678,12 +680,25 @@ def main():
     runner = LlamaRunner()
     installed_backends = runner.detect_installed_backends()
     args.installed_backends = installed_backends
-    args.backend = runner.select_primary_backend(installed_backends)
+
+    overridden = False
+    if args.backend_override is not None:
+        requested = args.backend_override
+        if requested not in installed_backends:
+            installed_names = ", ".join(b.value for b in installed_backends)
+            print(f"Error: --{requested.value} requested, but the installed TornadoVM SDK only has: {installed_names}")
+            sys.exit(1)
+        args.backend = requested
+        overridden = True
+    else:
+        args.backend = runner.select_primary_backend(installed_backends)
+
     if len(installed_backends) > 1:
         names = ", ".join(b.value for b in installed_backends)
+        reason = f"requested via --{args.backend.value}" if overridden else "auto-selected"
         print(
             f"Detected TornadoVM backends: {names} (from {runner.tornado_sdk}/etc/tornado.backend) "
-            f"- using {args.backend.value}"
+            f"- using {args.backend.value} ({reason})"
         )
     else:
         print(f"Detected TornadoVM backend: {args.backend.value} (from {runner.tornado_sdk}/etc/tornado.backend)")

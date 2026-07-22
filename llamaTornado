@@ -42,7 +42,7 @@ record Config(
     String modelPath, String prompt, String systemPrompt,
     double temperature, double topP, long seed, int maxTokens,
     boolean stream, boolean echo, boolean interactive, boolean instruct,
-    boolean useGpu, Backend backend, String gpuMemory,
+    boolean useGpu, Backend backend, boolean backendOverridden, String gpuMemory,
     String heapMin, String heapMax, String directMemory,
     boolean debug, boolean profiler, String profilerDumpDir,
     boolean printBytecodes, boolean threads, boolean printKernel,
@@ -52,7 +52,7 @@ record Config(
     boolean bench, String benchArgs
 ) {}
 
-Config parseArgs(String[] args, Backend detectedBackend) {
+Config parseArgs(String[] args, List<Backend> installedBackends) {
     String modelPath = null;
     String prompt = null;
     String systemPrompt = null;
@@ -65,7 +65,7 @@ Config parseArgs(String[] args, Backend detectedBackend) {
     boolean interactive = false;
     boolean instruct = true;
     boolean useGpu = false;
-    Backend backend = detectedBackend;
+    Backend backendOverride = null;
     String gpuMemory = "14GB";
     String heapMin = "20g";
     String heapMax = "20g";
@@ -100,11 +100,10 @@ Config parseArgs(String[] args, Backend detectedBackend) {
             case "-i", "--interactive" -> { interactive = true; instruct = false; }
             case "--instruct" -> instruct = true;
             case "--gpu" -> useGpu = true;
-            case "--opencl", "--ptx", "--cuda", "--metal" -> {
-                System.err.println(args[i] + " has been removed - the TornadoVM backend is now "
-                    + "auto-detected from TORNADOVM_HOME/etc/tornado.backend");
-                System.exit(1);
-            }
+            case "--opencl" -> backendOverride = Backend.OPENCL;
+            case "--ptx" -> backendOverride = Backend.PTX;
+            case "--cuda" -> backendOverride = Backend.CUDA;
+            case "--metal" -> backendOverride = Backend.METAL;
             case "--gpu-memory" -> gpuMemory = args[++i];
             case "--heap-min" -> heapMin = args[++i];
             case "--heap-max" -> heapMax = args[++i];
@@ -146,8 +145,24 @@ Config parseArgs(String[] args, Backend detectedBackend) {
         directMemory = parseAndScale(heapMax, 3);
     }
 
+    Backend backend;
+    boolean backendOverridden;
+    if (backendOverride != null) {
+        if (!installedBackends.contains(backendOverride)) {
+            var names = String.join(", ", installedBackends.stream().map(b -> b.toString().toLowerCase()).toList());
+            System.err.println("Error: --" + backendOverride.toString().toLowerCase()
+                + " requested, but the installed TornadoVM SDK only has: " + names);
+            System.exit(1);
+        }
+        backend = backendOverride;
+        backendOverridden = true;
+    } else {
+        backend = selectPrimaryBackend(installedBackends);
+        backendOverridden = false;
+    }
+
     return new Config(modelPath, prompt, systemPrompt, temperature, topP, seed, maxTokens,
-            stream, echo, interactive, instruct, useGpu, backend, gpuMemory, heapMin, heapMax, directMemory,
+            stream, echo, interactive, instruct, useGpu, backend, backendOverridden, gpuMemory, heapMin, heapMax, directMemory,
             debug, profiler, profilerDumpDir, printBytecodes, threads, printKernel, fullDump,
             verboseInit, showCommand, executeAfterShow, openclFlags, maxWaitEvents, verbose,
             bench, benchArgs);
@@ -189,6 +204,10 @@ void printUsage() {
             Hardware:
               --gpu                   Enable GPU acceleration
                                        (backend is auto-detected from TORNADOVM_HOME/etc/tornado.backend)
+              --opencl                Force the OpenCL backend if the SDK has more than one
+              --ptx                   Force the PTX backend if the SDK has more than one
+              --cuda                  Force the CUDA backend if the SDK has more than one
+              --metal                 Force the Metal backend if the SDK has more than one
               --gpu-memory <val>      GPU memory allocation (default: 14GB)
               --heap-min <val>        Min JVM heap (default: 20g)
               --heap-max <val>        Max JVM heap (default: 20g)
@@ -360,9 +379,17 @@ List<String> buildCommand(Config cfg, String javaHome, String tornadoSdk, String
         // More than one backend is loaded, so pin TornadoVM's own driver-0
         // (default device) selection to match cfg.backend() - otherwise it
         // falls back to its own defaults (OpenCL beats everything else).
-        int n = BACKEND_PRIORITY.size();
+        // cfg.backend() goes first (whether auto-picked or --opencl/--ptx/
+        // --cuda/--metal override), then the rest of BACKEND_PRIORITY as a
+        // tiebreak.
+        var effectivePriority = new ArrayList<Backend>();
+        effectivePriority.add(cfg.backend());
+        for (var b : BACKEND_PRIORITY) {
+            if (b != cfg.backend()) effectivePriority.add(b);
+        }
+        int n = effectivePriority.size();
         for (int rank = 0; rank < n; rank++) {
-            var b = BACKEND_PRIORITY.get(rank);
+            var b = effectivePriority.get(rank);
             if (installedBackends.contains(b)) {
                 cmd.add("-D" + BACKEND_PRIORITY_PROPERTY.get(b) + "=" + (n - rank));
             }
@@ -472,15 +499,16 @@ void main(String... args) {
     var llamaRoot = resolveLlamaRoot();
 
     var installedBackends = detectInstalledBackends(tornadoSdk);
-    var backend = selectPrimaryBackend(installedBackends);
+    var cfg = parseArgs(args, installedBackends);
+    var backend = cfg.backend();
     if (installedBackends.size() > 1) {
         var names = String.join(", ", installedBackends.stream().map(b -> b.toString().toLowerCase()).toList());
-        IO.println("Detected TornadoVM backends: " + names + " (from " + tornadoSdk + "/etc/tornado.backend) - using " + backend.toString().toLowerCase());
+        var reason = cfg.backendOverridden() ? "requested via --" + backend.toString().toLowerCase() : "auto-selected";
+        IO.println("Detected TornadoVM backends: " + names + " (from " + tornadoSdk + "/etc/tornado.backend) - using " + backend.toString().toLowerCase() + " (" + reason + ")");
     } else {
         IO.println("Detected TornadoVM backend: " + backend.toString().toLowerCase() + " (from " + tornadoSdk + "/etc/tornado.backend)");
     }
 
-    var cfg = parseArgs(args, backend);
     var cmd = buildCommand(cfg, javaHome, tornadoSdk, llamaRoot, installedBackends);
 
     if (cfg.showCommand()) {
