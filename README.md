@@ -493,6 +493,41 @@ Any OpenAI SDK works by pointing `base_url` at the server. Generation is seriali
 context (requests queue); the reusable core is `server/InferenceService`. Smoke test:
 `scripts/server-smoke-test.sh http://localhost:8080`.
 
+## 📊 Benchmarking (`--bench`, llama-bench style)
+
+A [llama-bench](https://github.com/ggml-org/llama.cpp/tree/master/tools/llama-bench)-equivalent
+benchmark for the GPU forward path: a cartesian matrix of tests over one or more models —
+prompt processing (`pp N`), token generation (`tg N`) and combined (`pg`) — each repeated
+`-r` times after an untimed warmup, reported as **average tokens/s ± stddev**. Timings cover
+the forward pass only (no tokenization, no sampling), matching llama-bench methodology.
+
+```bash
+# defaults: -p 512 -n 128 -r 5, markdown output
+llama-tornado --gpu --cuda --model model1.gguf --bench
+
+# multiple models, custom matrix, CSV
+llama-tornado --gpu --cuda --model model1.gguf --bench \
+    --bench-args="-m model2.gguf -p 256,512 -n 64,128 -pg 512,128 -d 0,4096 -r 5 -o csv"
+```
+
+Benchmark options (`--bench-args="..."` — use the `=` form): `-m` extra models
+(comma/repeatable), `-p` prompt sizes, `-n` generation lengths, `-pg pp,tg` combined tests,
+`-b` prompt-processing batch size — when >1, `pp` tokens run through the batched-prefill
+tensor-core (MMA) path, `b` tokens per forward (compute-bound, the llama-bench `-b`);
+generation stays single-token decode. Supported models: Llama / Qwen3 / Mistral (FP16).
+`-d` context depths (untimed KV prefill of `d` positions before each timed test, e.g.
+`tg128@d4096`), `-r` repetitions, `-o md|csv|json|jsonl|sql`, `-oe <fmt>` second format to
+stderr, `--delay <s>` pause between tests, `--no-warmup`.
+
+Example output (RTX 4090, CUDA backend):
+
+| model | quant | size | params | backend | test | t/s |
+| ----- | ----- | ---: | -----: | ------- | ---- | --: |
+| beehive-llama-3.2-1b-instruct-fp16 | FP16 | 2.31 GiB | 1.24 B | TornadoVM CUDA | pp512 | 86.62 ± 2.18 |
+| beehive-llama-3.2-1b-instruct-fp16 | FP16 | 2.31 GiB | 1.24 B | TornadoVM CUDA | tg128 | 101.72 ± 0.43 |
+| Qwen3-1.7B-f16 | FP16 | 3.79 GiB | 2.03 B | TornadoVM CUDA | pp512 | 57.29 ± 0.18 |
+| Qwen3-1.7B-f16 | FP16 | 3.79 GiB | 2.03 B | TornadoVM CUDA | tg128 | 57.71 ± 0.10 |
+
 ## Debug & Profiling Options
 View TornadoVM's internal behavior:
 ```bash

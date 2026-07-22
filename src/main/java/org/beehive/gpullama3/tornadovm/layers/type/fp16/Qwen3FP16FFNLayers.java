@@ -59,6 +59,8 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
     @Override
     public GridScheduler updateGridScheduler(GridScheduler gridScheduler) {
         WorkerGrid rmsNormWorker = WorkerGridFactory.createRmsNormWorker(config.dim(), state.localSize);
+        // Single-workgroup grid for the race-free NVIDIA-path RMS reduction (global == local).
+        WorkerGrid rmsSingleGroupWorker = WorkerGridFactory.createRmsNormWorker(state.localSize, state.localSize);
         WorkerGrid ropeWorker = WorkerGridFactory.createRoPEWorker(config.numberOfHeads(), nEmbdHead);
         // Split-KV attention launches nHeads*nSplits workgroups (one per head-split) followed by a combine
         // pass over nHeads workgroups.
@@ -85,7 +87,8 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
         // Map workers to tasks for each layer (in task execution order)
         for (int i = 0; i < config.numberOfLayers(); i++) {
             // === Attention Block ===
-            gridScheduler.addWorkerGrid("layer_" + i + ".attn_rms_reduce", rmsNormWorker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".attn_rms_reduce",
+                    shouldUseFinalNormalization() ? rmsNormWorker : rmsSingleGroupWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".attn_rms_qkv_projection", fusedQKVWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".qk_rmsnorm", qkRmsNormWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWorker);
@@ -93,7 +96,8 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
             gridScheduler.addWorkerGrid("layer_" + i + ".attention_combine", attentionCombineWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".attn_output_proj", matmul1Worker);
             // === FFN Block ===
-            gridScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce", rmsNormWorker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce",
+                    shouldUseFinalNormalization() ? rmsNormWorker : rmsSingleGroupWorker);
             if (shouldUseFinalNormalization()) {
                 gridScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_finalize", rmsNormWorker);
             }
@@ -230,6 +234,18 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
         // ═══════════════════════════════════════════════════════════════════════
 
         // RMS Normalization - compute scale factor
+        if (!shouldUseFinalNormalization()) {
+            // NVIDIA path: single-workgroup reduction. The multi-workgroup kernel relies on a
+            // racy cross-workgroup combine (no finalize task on this path) — see kernel javadoc.
+            unifiedLayer.task("attn_rms_reduce",
+                    TransformerComputeKernelsLayered::reductionOneBlockWithLayerSingleGroup,
+                    context,
+                    qwen3State.temp,
+                    qwen3State.wrapX,
+                    config.dim(),
+                    config.rmsNormEps(),
+                    qwen3State.localSize);
+        } else
         unifiedLayer.task("attn_rms_reduce",
                 TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
                 context,
@@ -361,6 +377,17 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
         // ═══════════════════════════════════════════════════════════════════════
 
         // RMS Normalization - compute scale factor
+        if (!shouldUseFinalNormalization()) {
+            // NVIDIA path: single-workgroup reduction (race-free) — see attn_rms_reduce.
+            unifiedLayer.task("ffn_rms_reduce",
+                    TransformerComputeKernelsLayered::reductionOneBlockWithLayerSingleGroup,
+                    context,
+                    qwen3State.tempFFN,
+                    qwen3State.wrapX,
+                    config.dim(),
+                    config.rmsNormEps(),
+                    qwen3State.localSize);
+        } else
         unifiedLayer.task("ffn_rms_reduce",
                 TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
                 context,

@@ -2489,6 +2489,44 @@ public class TransformerComputeKernelsLayered {
         return localSum[0];
     }
 
+    /**
+     * Race-free RMS-norm reduction in ONE workgroup: threads stride over the input, reduce in
+     * local memory, and lane 0 writes the final scale factor to {@code output[0]}.
+     *
+     * <p>The multi-workgroup variant ({@code reductionOneBlockWithLayer}) has workgroup 0
+     * combining the other workgroups' partial sums with <em>no inter-workgroup
+     * synchronization</em> — a data race. On the CUDA backend the race outcome is
+     * schedule/compilation dependent: e.g. Qwen3-1.7B reads stale partials on every layer
+     * (wrong normalization scale → garbage output) while Llama-1B and Qwen3-4B happen to win
+     * the race. The NON_NVIDIA scheduler avoids the race with a separate
+     * {@code reductionFinalNormalization} task; this kernel is the NVIDIA-path equivalent.
+     * Launch with exactly one workgroup: {@code global == local == localMemSize}.</p>
+     */
+    public static void reductionOneBlockWithLayerSingleGroup(KernelContext context, FloatArray output, FloatArray x, int size, float ermsNorm, int localMemSize) {
+        int lid = context.localIdx;
+        int groupSize = context.localGroupSizeX;
+        float[] localX = context.allocateFloatLocalArray(localMemSize);
+
+        float partial = 0.0f;
+        for (int j = lid; j < size; j += groupSize) {
+            float v = x.get(j);
+            partial += v * v;
+        }
+        localX[lid] = partial;
+
+        for (int stride = groupSize / 2; stride > 0; stride /= 2) {
+            context.localBarrier();
+            if (lid < stride) {
+                localX[lid] += localX[lid + stride];
+            }
+        }
+
+        if (lid == 0) {
+            float ss = localX[0] / size + ermsNorm;
+            output.set(0, 1.0f / TornadoMath.sqrt(ss));
+        }
+    }
+
     // Second kernel - Combines partial sums and computes final normalization
     public static void reductionFinalNormalization(KernelContext context, FloatArray output, int size, float ermsNorm) {
         int gid = context.globalIdx;
