@@ -76,9 +76,14 @@ Results land under `perf-results/<timestamp>/`.
 
 ```bash
 export JAVA_TOOL_OPTIONS="-Dllama.metrics.format=json -Dllama.metrics.output=file -Dllama.metrics.file=<metrics.json>"
-./llama-tornado <backend-flags> --model <llama-or-qwen3.gguf> --prompt <prompt> --verbose-init --max-tokens 2048 --seed <seed> <runtime-flags>
+./llama-tornado --gpu --model <llama-or-qwen3.gguf> --prompt <prompt> --verbose-init --max-tokens 2048 --seed <seed> <runtime-flags>
 unset JAVA_TOOL_OPTIONS
 ```
+
+`llama-tornado` auto-detects the backend from `$TORNADOVM_HOME/etc/tornado.backend` — there is no
+`--opencl`/`--ptx`/`--cuda`/`--metal` flag. To benchmark a specific backend, point `TORNADOVM_HOME`
+at an SDK built for that backend (e.g. via `scripts/benchmark_backends.sh`, which rebuilds
+TornadoVM per backend and re-sources its env before each `llama-tornado` call).
 
 When testing a feature flag, change one variable at a time and keep the baseline command
 structurally identical to the treatment command — differences beyond the flag under test

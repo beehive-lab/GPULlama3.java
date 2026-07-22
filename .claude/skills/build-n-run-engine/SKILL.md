@@ -63,9 +63,10 @@ If this prints usage instead of erroring, the build succeeded and the launcher i
 
 ### Step 6: (Optional) Smoke-test a run
 
-Only if a GGUF model path is available. Prefer `--cuda` (CUDA backend) on NVIDIA GPUs:
+Only if a GGUF model path is available. The backend (OpenCL/PTX/CUDA/Metal) is
+auto-detected from `$TORNADOVM_HOME/etc/tornado.backend` — no backend flag needed:
 ```bash
-./llama-tornado --gpu --cuda --verbose-init --model <path-to-model.gguf> --prompt "write a matmul in Java" --max-tokens 2048
+./llama-tornado --gpu --verbose-init --model <path-to-model.gguf> --prompt "write a matmul in Java" --max-tokens 2048
 ```
 
 ## MANDATORY: Use --help When Uncertain About Flags
@@ -74,7 +75,9 @@ Before using any `llama-tornado` flag you are not 100% certain about, run `--hel
 
 ## Running GPULlama3.java
 
-`./llama-tornado --model <path> [options]`. On NVIDIA GPUs, prefer `--cuda` (CUDA backend) over `--opencl` (default) unless the user asks for OpenCL specifically or is on non-NVIDIA hardware.
+`./llama-tornado --model <path> [options]`. The TornadoVM backend is auto-detected from the
+installed SDK (`$TORNADOVM_HOME/etc/tornado.backend`) — there is no `--opencl`/`--ptx`/`--cuda`/`--metal`
+flag to pass; to run on a different backend, point `TORNADOVM_HOME` at an SDK built for it.
 
 ### Core options
 
@@ -84,9 +87,6 @@ Before using any `llama-tornado` flag you are not 100% certain about, run `--hel
 | `--prompt "..."` | single-shot generation |
 | `-i` / `--interactive` | chat loop instead of one-shot |
 | `--gpu` | required for GPU acceleration; omit to run CPU-only |
-| `--ptx` | CUDA backend on NVIDIA — **prefer this by default** |
-| `--opencl` | cross-vendor fallback (default if no backend flag given) |
-| `--metal` | Apple Silicon only, TornadoVM 4.0+ |
 | `--gpu-memory 15GB`/`20GB` | bump from default 14GB for 3B/8B models — avoids OOM |
 | `--temperature`, `--top-p`, `--seed`, `-n` | standard sampling knobs |
 | `-sp/--system-prompt` | instruct-mode framing |
@@ -111,15 +111,15 @@ Before using any `llama-tornado` flag you are not 100% certain about, run `--hel
 ### Typical invocations
 
 ```bash
-# quick single-shot GPU test, CUDA backend (preferred)
-./llama-tornado --gpu --ptx --model model.gguf --prompt "..."
+# quick single-shot GPU test (backend auto-detected from TORNADOVM_HOME)
+./llama-tornado --gpu --model model.gguf --prompt "..."
 
-# interactive chat, CUDA backend
-./llama-tornado --gpu --ptx -i --model model.gguf
+# interactive chat
+./llama-tornado --gpu -i --model model.gguf
 
 # bigger model, needs more GPU mem
-./llama-tornado --gpu --ptx --model llama-3.2-8b-instruct-fp16.gguf --gpu-memory 20GB --prompt "..."
+./llama-tornado --gpu --model llama-3.2-8b-instruct-fp16.gguf --gpu-memory 20GB --prompt "..."
 
-# benchmarking prefill/decode split with CUDA graphs
-./llama-tornado --gpu --ptx --model model.gguf --with-prefill-decode --cuda-graphs --profiler --profiler-dump-dir ./perf-results --prompt "..."
+# benchmarking prefill/decode split with CUDA graphs (needs a PTX-backend TORNADOVM_HOME)
+./llama-tornado --gpu --model model.gguf --with-prefill-decode --cuda-graphs --profiler --profiler-dump-dir ./perf-results --prompt "..."
 ```
