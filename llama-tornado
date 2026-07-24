@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
 llama-tornado: GPU-accelerated Java LLM runner with TornadoVM
-Run LLM models using either OpenCL or PTX backends.
+Run LLM models using OpenCL, PTX, CUDA, or Metal backends.
+
+The backend is auto-detected from the installed TornadoVM SDK
+(TORNADOVM_HOME/etc/tornado.backend) - no need to select it manually.
 """
 
 import argparse
@@ -19,7 +22,48 @@ from enum import Enum
 class Backend(Enum):
     OPENCL = "opencl"
     PTX = "ptx"
+    CUDA = "cuda"
     METAL = "metal"
+
+
+# Maps the names TornadoVM writes to etc/tornado.backend to our Backend enum.
+BACKEND_NAME_MAP: Dict[str, Backend] = {
+    "opencl-backend": Backend.OPENCL,
+    "ptx-backend": Backend.PTX,
+    "cuda-backend": Backend.CUDA,
+    "metal-backend": Backend.METAL,
+}
+
+BACKEND_EXPORTS_FILE: Dict[Backend, str] = {
+    Backend.OPENCL: "opencl-exports",
+    Backend.PTX: "ptx-exports",
+    Backend.CUDA: "cuda-exports",
+    Backend.METAL: "metal-exports",
+}
+
+BACKEND_MODULE_NAME: Dict[Backend, str] = {
+    Backend.OPENCL: "tornado.drivers.opencl",
+    Backend.PTX: "tornado.drivers.ptx",
+    Backend.CUDA: "tornado.drivers.cuda",
+    Backend.METAL: "tornado.drivers.metal",
+}
+
+# TornadoVM system property that ranks each backend for "driver 0" (default
+# device) selection when more than one backend is loaded - see
+# TornadoOptions.*_BACKEND_PRIORITY. Defaults there favor OpenCL (10) over
+# everything else (0), which doesn't match BACKEND_PRIORITY below, so we set
+# these explicitly whenever more than one backend is installed.
+BACKEND_PRIORITY_PROPERTY: Dict[Backend, str] = {
+    Backend.OPENCL: "tornado.opencl.priority",
+    Backend.PTX: "tornado.ptx.priority",
+    Backend.CUDA: "tornado.cuda.priority",
+    Backend.METAL: "tornado.metal.priority",
+}
+
+# When an SDK is built with more than one backend, prefer this one for
+# properties that need a single "primary" backend (e.g. the printed message,
+# and which backend becomes TornadoVM's default device).
+BACKEND_PRIORITY: List[Backend] = [Backend.CUDA, Backend.PTX, Backend.OPENCL, Backend.METAL]
 
 
 class LlamaRunner:
@@ -48,6 +92,40 @@ class LlamaRunner:
             if not Path(path).exists():
                 print(f"Error: {name} path does not exist: {path}")
                 sys.exit(1)
+
+    def detect_installed_backends(self) -> List[Backend]:
+        """Return every backend the installed TornadoVM SDK was built with (tornado.backend order)."""
+        backend_file = Path(self.tornado_sdk) / "etc" / "tornado.backend"
+        if not backend_file.exists():
+            print(f"Error: Could not detect TornadoVM backend - {backend_file} not found")
+            print("Note: this file is written by the TornadoVM installer; make sure TORNADOVM_HOME points at a valid SDK")
+            sys.exit(1)
+
+        installed_names: List[str] = []
+        for line in backend_file.read_text().splitlines():
+            line = line.strip()
+            if line.startswith("tornado.backends="):
+                installed_names = [b.strip() for b in line.split("=", 1)[1].split(",") if b.strip()]
+                break
+
+        if not installed_names:
+            print(f"Error: No backends declared in {backend_file}")
+            sys.exit(1)
+
+        installed = [BACKEND_NAME_MAP[n] for n in installed_names if n in BACKEND_NAME_MAP]
+        if not installed:
+            print(f"Error: Unsupported backend(s) in {backend_file}: {', '.join(installed_names)}")
+            sys.exit(1)
+
+        return installed
+
+    @staticmethod
+    def select_primary_backend(installed: List[Backend]) -> Backend:
+        """Pick which installed backend to report/default to when the SDK has more than one."""
+        for backend in BACKEND_PRIORITY:
+            if backend in installed:
+                return backend
+        return installed[0]
 
     @staticmethod
     def module_path_colon_sep(paths: List[str]) -> str:
@@ -151,47 +229,55 @@ class LlamaRunner:
         cmd.extend(tornado_runtime_config)
 
         # Backend-specific configuration
-        if args.backend == Backend.OPENCL:
+        if Backend.OPENCL in args.installed_backends:
             # OpenCL specific flags
             cmd.append(f"-Dtornado.opencl.compiler.flags={args.opencl_flags}")
 
-        # Module configuration - varies by backend
+        if len(args.installed_backends) > 1:
+            # More than one backend is loaded, so pin TornadoVM's own driver-0
+            # (default device) selection to match args.backend - otherwise it
+            # falls back to its own defaults (OpenCL beats everything else).
+            # args.backend goes first (whether auto-picked or --backend
+            # override), then the rest of BACKEND_PRIORITY as a tiebreak.
+            effective_priority = [args.backend] + [b for b in BACKEND_PRIORITY if b != args.backend]
+            n = len(effective_priority)
+            for rank, backend in enumerate(effective_priority):
+                if backend in args.installed_backends:
+                    cmd.append(f"-D{BACKEND_PRIORITY_PROPERTY[backend]}={n - rank}")
+
+        # Module configuration - TornadoCoreRuntime tries to initialize every
+        # backend listed in tornado.backend at startup (not just the one we
+        # picked as primary), so every installed backend needs its exports and
+        # driver module here or it fails with an IllegalAccessError.
         module_config = [
             f"--upgrade-module-path",
             f"{self.tornado_sdk}/share/java/graalJars",
             f"@{self.tornado_sdk}/etc/exportLists/common-exports",
         ]
-        # Add backend-specific exports and modules
-        if args.backend == Backend.OPENCL:
-            module_config.extend(
-                [
-                    f"@{self.tornado_sdk}/etc/exportLists/opencl-exports",
-                    "--add-modules",
-                    "ALL-SYSTEM,jdk.incubator.vector,tornado.runtime,tornado.annotation,tornado.drivers.common,tornado.drivers.opencl",
-                ]
-            )
-        elif args.backend == Backend.PTX:
-            module_config.extend(
-                [
-                    f"@{self.tornado_sdk}/etc/exportLists/ptx-exports",
-                    "--add-modules",
-                    "ALL-SYSTEM,jdk.incubator.vector,tornado.runtime,tornado.annotation,tornado.drivers.common,tornado.drivers.ptx",
-                ]
-            )
-        elif args.backend == Backend.METAL:
-            module_config.extend(
-                [
-                    f"@{self.tornado_sdk}/etc/exportLists/metal-exports",
-                    "--add-modules",
-                    "ALL-SYSTEM,jdk.incubator.vector,tornado.runtime,tornado.annotation,tornado.drivers.common,tornado.drivers.metal",
-                ]
-            )
+        add_modules = [
+            "ALL-SYSTEM",
+            "jdk.incubator.vector",
+            "tornado.runtime",
+            "tornado.annotation",
+            "tornado.drivers.common",
+        ]
+        for backend in args.installed_backends:
+            module_config.append(f"@{self.tornado_sdk}/etc/exportLists/{BACKEND_EXPORTS_FILE[backend]}")
+            add_modules.append(BACKEND_MODULE_NAME[backend])
+        module_config.extend(["--add-modules", ",".join(add_modules)])
+
+        if getattr(args, "server", False):
+            main_class = "org.beehive.gpullama3.server.OpenAIServer"
+        elif getattr(args, "bench", False):
+            main_class = "org.beehive.gpullama3.bench.LlamaBench"
+        else:
+            main_class = "org.beehive.gpullama3.LlamaApp"
 
         module_config.extend(
             [
                 "-cp",
                 self._find_llama_jar(),
-                "org.beehive.gpullama3.LlamaApp",
+                main_class,
             ]
         )
         cmd.extend(module_config)
@@ -218,6 +304,18 @@ class LlamaRunner:
 
     def _add_llama_args(self, cmd: List[str], args: argparse.Namespace) -> List[str]:
         """Add LLaMA-specific arguments to the command."""
+        if getattr(args, "server", False):
+            # OpenAI server mode: the server parses only --model / --port / --gpu.
+            srv = ["--model", args.model_path, "--port", str(getattr(args, "port", 8080))]
+            if args.use_gpu:
+                srv.append("--gpu")
+            return cmd + srv
+        if getattr(args, "bench", False):
+            # llama-bench mode: model(s) + benchmark options only. If --bench-args already
+            # supplies -m, use those verbatim (don't also prepend --model → duplicate rows).
+            extra = args.bench_args.split() if args.bench_args else []
+            bench_args = extra if ("-m" in extra or "--model" in extra) else ["-m", args.model_path] + extra
+            return cmd + bench_args
         llama_args = [
             "-m",
             args.model_path,
@@ -351,6 +449,7 @@ def create_parser() -> argparse.ArgumentParser:
         prog="llama-tornado",
         description="GPU-accelerated LLM runner using TornadoVM",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        allow_abbrev=False,
     )
 
     # Required arguments
@@ -409,31 +508,44 @@ def create_parser() -> argparse.ArgumentParser:
         help="Run in instruction mode (default)",
     )
 
+    # OpenAI-compatible server
+    server_group = parser.add_argument_group("OpenAI-compatible server")
+    server_group.add_argument("--server", action="store_true", help="Run the OpenAI-compatible HTTP server instead of inference")
+    server_group.add_argument("--port", type=int, default=8080, help="Server port (default 8080)")
+
+    # Benchmark (llama-bench style)
+    bench_group = parser.add_argument_group("Benchmark (llama-bench style)")
+    bench_group.add_argument(
+        "--bench",
+        action="store_true",
+        help="Run the llama-bench-style benchmark (bench.LlamaBench) instead of inference",
+    )
+    bench_group.add_argument(
+        "--bench-args",
+        default="",
+        help='Extra benchmark options (use --bench-args="..."), e.g. "-p 512 -n 128 -d 0,4096 -r 5 -o md" (see LlamaBench)',
+    )
+
     # Hardware configuration
     hw_group = parser.add_argument_group("Hardware Configuration")
     hw_group.add_argument(
         "--gpu", dest="use_gpu", action="store_true", help="Enable GPU acceleration"
     )
     hw_group.add_argument(
-        "--opencl",
-        dest="backend",
-        action="store_const",
-        const=Backend.OPENCL,
-        help="Use OpenCL backend (default)",
+        "--opencl", dest="backend_override", action="store_const", const=Backend.OPENCL,
+        help="Force the OpenCL backend when the installed TornadoVM SDK has more than one (default: auto-detected)",
     )
     hw_group.add_argument(
-        "--ptx",
-        dest="backend",
-        action="store_const",
-        const=Backend.PTX,
-        help="Use PTX/CUDA backend",
+        "--ptx", dest="backend_override", action="store_const", const=Backend.PTX,
+        help="Force the PTX backend when the installed TornadoVM SDK has more than one (default: auto-detected)",
     )
     hw_group.add_argument(
-        "--metal",
-        dest="backend",
-        action="store_const",
-        const=Backend.METAL,
-        help="Use Apple Metal backend (macOS only, requires TornadoVM 4.0+)",
+        "--cuda", dest="backend_override", action="store_const", const=Backend.CUDA,
+        help="Force the CUDA backend when the installed TornadoVM SDK has more than one (default: auto-detected)",
+    )
+    hw_group.add_argument(
+        "--metal", dest="backend_override", action="store_const", const=Backend.METAL,
+        help="Force the Metal backend when the installed TornadoVM SDK has more than one (default: auto-detected)",
     )
     hw_group.add_argument("--gpu-memory", default="14GB", help="GPU memory allocation")
     hw_group.add_argument("--heap-min", default="20g", help="Minimum JVM heap size")
@@ -560,16 +672,37 @@ def main():
     if args.seed is None:
         args.seed = int(time.time())
 
-    # Set default backend to OpenCL if not specified
-    if not hasattr(args, "backend") or args.backend is None:
-        args.backend = Backend.OPENCL
-
     # Handle mode selection logic
     if args.interactive:
         args.instruct = False
 
-    # Create and run the LLaMA runner
+    # Create the LLaMA runner and auto-detect the TornadoVM backend(s)
     runner = LlamaRunner()
+    installed_backends = runner.detect_installed_backends()
+    args.installed_backends = installed_backends
+
+    overridden = False
+    if args.backend_override is not None:
+        requested = args.backend_override
+        if requested not in installed_backends:
+            installed_names = ", ".join(b.value for b in installed_backends)
+            print(f"Error: --{requested.value} requested, but the installed TornadoVM SDK only has: {installed_names}")
+            sys.exit(1)
+        args.backend = requested
+        overridden = True
+    else:
+        args.backend = runner.select_primary_backend(installed_backends)
+
+    if len(installed_backends) > 1:
+        names = ", ".join(b.value for b in installed_backends)
+        reason = f"requested via --{args.backend.value}" if overridden else "auto-selected"
+        print(
+            f"Detected TornadoVM backends: {names} (from {runner.tornado_sdk}/etc/tornado.backend) "
+            f"- using {args.backend.value} ({reason})"
+        )
+    else:
+        print(f"Detected TornadoVM backend: {args.backend.value} (from {runner.tornado_sdk}/etc/tornado.backend)")
+
     return runner.run(args)
 
 

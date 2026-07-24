@@ -117,7 +117,7 @@ run_inference() {
     export JAVA_TOOL_OPTIONS="-Dllama.metrics.format=json -Dllama.metrics.output=file -Dllama.metrics.file=$metrics_file"
     # shellcheck disable=SC2086
     ( cd "$LLAMA_ROOT_DIR" && \
-      ./llama-tornado --gpu --"$backend" \
+      ./llama-tornado --gpu \
         --model "$MODELS_DIR/$model_file" \
         --prompt "$PROMPT" \
         --max-tokens "$MAX_TOKENS" \

@@ -3,7 +3,7 @@ description: Build TornadoVM develop once per backend and reuse across runs via 
 
 inputs:
   backend:
-    description: 'TornadoVM backend to build (opencl or ptx)'
+    description: 'TornadoVM backend to build (opencl, ptx, or cuda)'
     required: true
 
 runs:

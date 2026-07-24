@@ -40,9 +40,9 @@ Builds on [Llama3.java](https://github.com/mukel/llama3.java) by [Alfonso² Pete
 ## Why GPULlama3.java
 
 - 🟦 **Pure Java, all the way down.** Transformer kernels are written in Java and accelerated by TornadoVM — no CUDA C, no hand-written JNI. Debug and build with the toolchain you already have.
-- 🌍 **Write once, run on any GPU.** NVIDIA (CUDA / PTX), Intel & AMD (OpenCL), Apple Silicon (Metal). Switch backends with a flag, not a rebuild.
+- 🌍 **Write once, run on any GPU.** NVIDIA (CUDA / PTX), Intel & AMD (OpenCL), Apple Silicon (Metal). Backend is auto-detected from your TornadoVM SDK — switch with a flag, not a rebuild.
 - 🔌 **Drop-in for the Java AI stack.** Official [LangChain4j](https://docs.langchain4j.dev/integrations/language-models/gpullama3-java) provider (since v1.7.1) and [Quarkus](https://docs.quarkiverse.io/quarkus-langchain4j/dev/gpullama3-chat-model.html) inference engine.
-- ⚡ **Built to serve.** OpenAI-compatible HTTP server, batched decode, and on-device sampling (see [Serving](#-serving-openai-compatible-preview)).
+- ⚡ **Built to serve.** OpenAI-compatible HTTP server, llama-bench-style benchmarking, and tensor-core (MMA) batch prefill (see [Serving](#-serving-openai-compatible-preview)).
 - 📦 **Many models, one runtime.** Llama 3, Mistral, Qwen 2.5 / Qwen 3, Phi-3, IBM Granite 3.3 / 4.0, DeepSeek-R1-Distill — all in GGUF.
 
 -----------
@@ -65,13 +65,13 @@ Grab a ready-to-run model from the [Hugging Face collections](#-model-collection
 
 ## 🧩 Serving: OpenAI-compatible (preview)
 
-GPULlama3.java is growing into a **serving engine** — the vLLM-style path for the JVM. These land through active pull requests; try them from the linked branches today:
+GPULlama3.java is growing into a **serving engine** — the vLLM-style path for the JVM:
 
-- 🌐 **OpenAI-compatible server** — `llama-tornado --server` exposes `/v1/chat/completions` and `/v1/completions` with streaming and zero external dependencies. Point any OpenAI client at `localhost`. ([PR #135](https://github.com/beehive-lab/GPULlama3.java/pull/135))
-- 🧮 **On-device greedy sampling** — argmax on the GPU keeps logits device-side, cutting device→host traffic by ~500× per token. ([PR #134](https://github.com/beehive-lab/GPULlama3.java/pull/134))
-- 📚 **Static batched decode** — B independent sequences per step for up to **41× aggregate throughput** (Llama & Qwen3). ([PR #129](https://github.com/beehive-lab/GPULlama3.java/pull/129))
-- 🎯 **Tensor-core (MMA) batch prefill** on the CUDA backend, FP16 & Q8_0. ([PR #127](https://github.com/beehive-lab/GPULlama3.java/pull/127))
-- 📈 **llama-bench-style benchmarking** — `llama-tornado --bench` reports a pp/tg matrix with avg±stddev in md/csv/json. ([PR #133](https://github.com/beehive-lab/GPULlama3.java/pull/133))
+- 🌐 **OpenAI-compatible server** — `llama-tornado --server` exposes `/v1/chat/completions` and `/v1/completions` with streaming and zero external dependencies. Point any OpenAI client at `localhost`. See [OpenAI-compatible server](#-openai-compatible-server---server) below.
+- 🎯 **Tensor-core (MMA) batch prefill** on the CUDA backend, FP16 & Q8_0 — `--with-prefill-decode --batch-prefill-size N`.
+- 📈 **llama-bench-style benchmarking** — `llama-tornado --bench` reports a pp/tg matrix with avg±stddev in md/csv/json/jsonl/sql. See [Benchmarking](#-benchmarking---bench-llama-bench-style) below.
+- 🧮 **On-device greedy sampling** *(landing next)* — argmax on the GPU keeps logits device-side, cutting device→host traffic by ~500× per token. ([PR #134](https://github.com/beehive-lab/GPULlama3.java/pull/134))
+- 📚 **Static batched decode** *(landing next)* — B independent sequences per step for up to **41× aggregate throughput** (Llama & Qwen3). ([PR #129](https://github.com/beehive-lab/GPULlama3.java/pull/129))
 
 -----------
 
@@ -117,7 +117,7 @@ GPULlama3ChatModel model = GPULlama3ChatModel.builder()
 ### Prerequisites
 
 - **Java 21** — required for the Vector API & TornadoVM (Java 25 supported via the `-jdk25` artifact / `llamaTornado` script).
-- **[TornadoVM](https://github.com/beehive-lab/TornadoVM)** with an OpenCL, PTX, or CUDA backend. The `--cuda` backend needs a TornadoVM build with the CUDA backend ([PR #861](https://github.com/beehive-lab/TornadoVM/pull/861)); this project builds against TornadoVM `5.0.0-jdk21-dev`.
+- **[TornadoVM](https://github.com/beehive-lab/TornadoVM)** with an OpenCL, PTX, CUDA, or Metal backend. `llama-tornado`/`llamaTornado` auto-detect whichever backend your installed SDK was built with.
 - **GCC/G++ 13+** — to build TornadoVM's native components.
 
 ### Get TornadoVM (SDKMAN!, recommended)
@@ -139,15 +139,18 @@ git clone https://github.com/beehive-lab/GPULlama3.java.git
 
 ## ▶️ Running the CLI
 
-Use the `llama-tornado` script with `--gpu`. Pick a backend with `--opencl`, `--ptx`, `--cuda` (NVIDIA), or `--metal` (Apple Silicon).
+Use the `llama-tornado` script with `--gpu`. The backend (OpenCL, PTX, CUDA, or Metal) is auto-detected from
+your installed TornadoVM SDK (`TORNADOVM_HOME/etc/tornado.backend`) — no need to select it manually. If your
+SDK was built with more than one backend, force one with `--opencl`, `--ptx`, `--cuda` (NVIDIA), or `--metal`
+(Apple Silicon); forcing a backend that isn't part of the installed SDK errors out.
 
 ```bash
-# Basic GPU inference (OpenCL)
-./llama-tornado --gpu --verbose-init --opencl \
+# Basic GPU inference — backend auto-detected
+./llama-tornado --gpu --verbose-init \
   --model beehive-llama-3.2-1b-instruct-fp16.gguf \
   --prompt "Explain the benefits of GPU acceleration."
 
-# CUDA backend
+# Force a specific backend (only needed for multi-backend SDKs)
 ./llama-tornado --gpu --cuda \
   --model beehive-llama-3.2-1b-instruct-fp16.gguf \
   --prompt "Explain the benefits of GPU acceleration."
@@ -157,7 +160,8 @@ Swap in any tested model — e.g. `beehive-llama-3.2-3b-instruct-fp16.gguf` or `
 
 ### `llamaTornado` — zero-dependency Java 25 script
 
-A single-file Java 25 launcher that replaces the Python script (needs `java 25+` on your PATH):
+Same backend auto-detection as `llama-tornado`. A single-file Java 25 launcher that replaces the Python
+script (needs `java 25+` on your PATH):
 
 ```bash
 ./llamaTornado --gpu --verbose-init --metal \
@@ -192,7 +196,7 @@ Fully containerized GPU inference via pre-built images ([docker-gpullama3.java](
 docker run --rm -it --gpus all -v "$PWD":/data \
   beehivelab/gpullama3.java-nvidia-openjdk-opencl \
   /gpullama3/GPULlama3.java/llama-tornado \
-  --gpu --verbose-init --opencl \
+  --gpu --verbose-init \
   --model /data/Llama-3.2-1B-Instruct.FP16.gguf --prompt "Tell me a joke"
 ```
 
@@ -219,12 +223,12 @@ Formats: GGUF · FP16 (full), Q8_0 & Q4_0 (partial).
 
 ## 💾 GPU memory
 
-Default device allocation is **7GB**. Larger models need more — raise it with `--gpu-memory`:
+Default device allocation is **14GB**. Larger models need more — raise it with `--gpu-memory`:
 
 | Model size | Recommended | Flag |
 |------------|-------------|------|
-| 1B  | 7GB (default) | — |
-| 3–7B | 15GB | `--gpu-memory 15GB` |
+| 1B  | 14GB (default) | — |
+| 3–7B | 15GB+ | `--gpu-memory 15GB` |
 | 8B+ | 20GB+ | `--gpu-memory 20GB` |
 
 ```bash
@@ -257,24 +261,30 @@ llama-tornado --gpu --model beehive-llama-3.2-1b-instruct-fp16.gguf \
 usage: llama-tornado [-h] --model MODEL_PATH [--prompt PROMPT] [-sp SYSTEM_PROMPT]
                      [--temperature TEMPERATURE] [--top-p TOP_P] [--seed SEED] [-n MAX_TOKENS]
                      [--stream STREAM] [--echo ECHO] [-i] [--instruct]
+                     [--server] [--port PORT] [--bench] [--bench-args BENCH_ARGS]
                      [--gpu] [--opencl] [--ptx] [--cuda] [--metal]
                      [--gpu-memory GPU_MEMORY] [--heap-min HEAP_MIN] [--heap-max HEAP_MAX]
                      [--debug] [--profiler] [--profiler-dump-dir DIR]
                      [--print-bytecodes] [--print-threads] [--print-kernel] [--full-dump]
                      [--show-command] [--execute-after-show]
+                     [--with-prefill-decode] [--batch-prefill-size N] [--cuda-graphs]
                      [--opencl-flags FLAGS] [--max-wait-events N] [--verbose]
 
 LLaMA Configuration:  --prompt, -sp/--system-prompt, --temperature (0.0–2.0, default 0.1),
                       --top-p (default 0.95), --seed, -n/--max-tokens (default 512),
                       --stream (default True), --echo (default False), --suffix (FIM/Codestral)
 Mode Selection:       -i/--interactive, --instruct (default)
-Hardware:             --gpu, --opencl (default), --ptx, --cuda, --metal,
-                      --gpu-memory (default 7GB), --heap-min/--heap-max (default 20g)
+OpenAI server:        --server (run the HTTP server instead of inference), --port (default 8080)
+Benchmark:            --bench (llama-bench-style matrix), --bench-args="..." (see Benchmarking below)
+Hardware:             --gpu, --opencl/--ptx/--cuda/--metal (auto-detected; force one of the installed
+                      backends), --gpu-memory (default 14GB), --heap-min/--heap-max (default 20g)
 Debug & Profiling:    --debug, --profiler, --profiler-dump-dir,
                       --print-bytecodes, --print-threads, --print-kernel, --full-dump, --verbose-init
 Command Display:      --show-command, --execute-after-show
-Advanced:             --opencl-flags (default: -cl-denorms-are-zero -cl-no-signed-zeros
-                      -cl-finite-math-only), --max-wait-events (default 32000), --verbose/-v
+Prefill-Decode:       --with-prefill-decode, --batch-prefill-size N (tensor-core MMA batch prefill,
+                      FP16 & Q8_0)
+Advanced:             --cuda-graphs (PTX backend only), --opencl-flags (default: -cl-denorms-are-zero
+                      -cl-no-signed-zeros -cl-finite-math-only), --max-wait-events (default 32000), --verbose/-v
 ```
 
 </details>
@@ -292,9 +302,10 @@ Advanced:             --opencl-flags (default: -cl-denorms-are-zero -cl-no-signe
 
 - ✅ **GGUF models** — full FP16, partial Q8_0 / Q4_0.
 - ✅ **Chat, instruction, and interactive** modes (`--interactive`, `--instruct`).
-- ✅ **Runtime backend switching** — OpenCL / PTX / CUDA / Metal (build TornadoVM with the backends you need).
+- ✅ **Automatic backend detection** — `llama-tornado`/`llamaTornado` detect and use whichever backend (OpenCL, PTX, CUDA, or Metal) your installed TornadoVM SDK was built with; override with `--opencl`/`--ptx`/`--cuda`/`--metal`.
 - ✅ **Cross-platform**: NVIDIA (OpenCL · PTX · CUDA), Intel (OpenCL), Apple (OpenCL · Metal).
-- 🧩 **Serving** — OpenAI-compatible API, batched decode, on-device sampling (preview; see [Serving](#-serving-openai-compatible-preview)).
+- ✅ **Serving** — OpenAI-compatible API, llama-bench-style benchmarking, tensor-core (MMA) batch prefill.
+- 🧩 **Coming next** — static batched decode, on-device sampling (preview; see [Serving](#-serving-openai-compatible-preview)).
 
 📄 [Transformer optimizations in TornadoVM](docs/TORNADOVM_TRANSFORMER_OPTIMIZATIONS.md) · 🧭 [Project roadmap](docs/GPULlama3_ROADMAP.md)
 
