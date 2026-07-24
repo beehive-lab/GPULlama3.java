@@ -1,6 +1,7 @@
 package org.beehive.gpullama3.model.format;
 
 import org.beehive.gpullama3.tokenizer.DevstralTokenizer;
+import org.beehive.gpullama3.tokenizer.Gemma4Tokenizer;
 import org.beehive.gpullama3.tokenizer.GraniteTokenizer;
 import org.beehive.gpullama3.tokenizer.LlamaTokenizer;
 import org.beehive.gpullama3.tokenizer.MistralTokenizer;
@@ -17,6 +18,7 @@ public interface ChatFormat {
     static ChatFormat create(Object tokenizer, ChatTokens chatTokens) {
         return switch (tokenizer) {
             case DevstralTokenizer devstralTokenizer -> new DevstralChatFormat(devstralTokenizer);
+            case Gemma4Tokenizer gemma4Tokenizer -> new Gemma4ChatFormat(gemma4Tokenizer);
             case GraniteTokenizer graniteTokenizer -> new GraniteChatFormat(graniteTokenizer);
             case LlamaTokenizer llamaTokenizer -> new LlamaChatFormat(llamaTokenizer);
             case MistralTokenizer mistralTokenizer -> new MistralChatFormat(mistralTokenizer);

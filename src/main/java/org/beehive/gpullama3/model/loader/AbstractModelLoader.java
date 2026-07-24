@@ -41,6 +41,7 @@ public abstract class AbstractModelLoader<M extends Model, C extends Configurati
         int modelQuantizationAsInt = (int) metadata.get("general.file_type");
         return switch (modelQuantizationAsInt) {
             case 1 -> "FP16";
+            case 32 -> "FP16"; // MOSTLY_BF16 (treated like FP16 for activation buffers)
             case 7 -> "Q8_0";
             case 14, 15 -> "Q8_0"; // Q4_K_S, Q4_K_M (K-quants use Q8_0 activations)
             case 16, 17 -> "Q8_0"; // Q5_K_S, Q5_K_M
@@ -56,6 +57,7 @@ public abstract class AbstractModelLoader<M extends Model, C extends Configurati
     protected static GGMLType effectiveGpuWeightType(GGMLType ggmlType) {
         return switch (ggmlType) {
             case F16, F32, Q8_0 -> ggmlType;
+            case BF16 -> GGMLType.F16; // widened to FP16 at load time; see ModelLoader#loadTornadoTensor
             case Q4_K, Q5_K, Q6_K -> GGMLType.Q8_0;
             default -> ggmlType;
         };
@@ -65,6 +67,7 @@ public abstract class AbstractModelLoader<M extends Model, C extends Configurati
         return switch (fileType) {
             case 0 -> "F32";
             case 1 -> "F16";
+            case 32 -> "BF16";
             case 7 -> "Q8_0";
             case 14 -> "Q4_K_S";
             case 15 -> "Q4_K_M";
