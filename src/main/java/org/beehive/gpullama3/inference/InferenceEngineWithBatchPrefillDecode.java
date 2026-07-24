@@ -36,6 +36,9 @@ import java.util.function.IntConsumer;
  */
 public final class InferenceEngineWithBatchPrefillDecode {
 
+    /** Benchmarking aid: keep decoding past the stop token so every run generates the same token count. */
+    private static final boolean IGNORE_EOS = Boolean.getBoolean("llama.bench.ignoreEos");
+
     private InferenceEngineWithBatchPrefillDecode() {
     }
 
@@ -128,7 +131,7 @@ public final class InferenceEngineWithBatchPrefillDecode {
                 onTokenGenerated.accept(nextToken);
             }
 
-            if (stopTokens.contains(nextToken)) {
+            if (!IGNORE_EOS && stopTokens.contains(nextToken)) {
                 break;
             }
 
@@ -233,7 +236,7 @@ public final class InferenceEngineWithBatchPrefillDecode {
                 onTokenGenerated.accept(nextToken);
             }
 
-            if (stopTokens.contains(nextToken)) {
+            if (!IGNORE_EOS && stopTokens.contains(nextToken)) {
                 break;
             }
 

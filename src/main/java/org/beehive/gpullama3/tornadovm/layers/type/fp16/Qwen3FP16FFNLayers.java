@@ -1,6 +1,7 @@
 package org.beehive.gpullama3.tornadovm.layers.type.fp16;
 
 import org.beehive.gpullama3.inference.state.Qwen3State;
+import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.tornado.Qwen3TornadoWeights;
 import org.beehive.gpullama3.model.qwen3.Qwen3Configuration;
 import org.beehive.gpullama3.tornadovm.kernels.Qwen3Kernels;
@@ -310,38 +311,75 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
                 config.rmsNormEps());    // epsilon
 
         // Fused RoPE Rotation + KV Cache Write
-        unifiedLayer.task("rope_and_kv_cache",
-                Qwen3Kernels::ropeRotationWithCacheCopy,
-                context,
-                qwen3State.positionHolder,    // current position
-                qwen3State.wrapQ,             // Q vectors (in/out, rotated)
-                qwen3State.wrapK,             // K vectors (in/out, rotated)
-                qwen3State.wrapV,             // V vectors (in only)
-                qwen3State.wrapKeyCache,      // key cache (out)
-                qwen3State.wrapValueCache,    // value cache (out)
-                config.numberOfKeyValueHeads(),   // nHeadKv
-                nEmbdHead,                    // head dimension
-                nEmbdGqa,                     // kvDim
-                layerIndex,                   // layer index for cache offset
-                config.contextLength()); // max sequence length
+        if (useFp16KVCache()) {
+            unifiedLayer.task("rope_and_kv_cache",
+                    Qwen3Kernels::ropeRotationWithCacheCopyFP16,
+                    context,
+                    qwen3State.positionHolder,        // current position
+                    qwen3State.wrapQ,                 // Q vectors (in/out, rotated)
+                    qwen3State.wrapK,                 // K vectors (in/out, rotated)
+                    qwen3State.wrapV,                 // V vectors (in only)
+                    qwen3State.wrapKeyCacheFP16,      // key cache (out, FP16)
+                    qwen3State.wrapValueCacheFP16,    // value cache (out, FP16)
+                    config.numberOfKeyValueHeads(),   // nHeadKv
+                    nEmbdHead,                    // head dimension
+                    nEmbdGqa,                     // kvDim
+                    layerIndex,                   // layer index for cache offset
+                    config.contextLength()); // max sequence length
+        } else {
+            unifiedLayer.task("rope_and_kv_cache",
+                    Qwen3Kernels::ropeRotationWithCacheCopy,
+                    context,
+                    qwen3State.positionHolder,    // current position
+                    qwen3State.wrapQ,             // Q vectors (in/out, rotated)
+                    qwen3State.wrapK,             // K vectors (in/out, rotated)
+                    qwen3State.wrapV,             // V vectors (in only)
+                    qwen3State.wrapKeyCache,      // key cache (out)
+                    qwen3State.wrapValueCache,    // value cache (out)
+                    config.numberOfKeyValueHeads(),   // nHeadKv
+                    nEmbdHead,                    // head dimension
+                    nEmbdGqa,                     // kvDim
+                    layerIndex,                   // layer index for cache offset
+                    config.contextLength()); // max sequence length
+        }
 
         // Split-KV (flash-decoding) attention.
         // Phase 1: split each head's KV range across attentionSplits workgroups; partials -> wrapAttSplit.
-        unifiedLayer.task("attention",
-                TransformerComputeKernelsLayered::processHeadsFlashAttentionSplitKV,
-                context,
-                qwen3State.wrapQ,             // query vectors
-                qwen3State.wrapKeyCache,      // key cache
-                qwen3State.wrapValueCache,    // value cache
-                qwen3State.wrapAttSplit,      // scratch: per-head split partials (compact layout)
-                config.numberOfHeads(),  // nHeads
-                nEmbdHead,                    // headSize
-                nEmbdGqa,                     // kvDim
-                gqa,                          // kvMul (nHeads / nHeadKv)
-                qwen3State.positionHolder,    // position
-                layerIndex,                   // layer index
-                config.contextLength(),  // context length
-                attentionSplits);             // number of KV splits per head
+        if (useFp16KVCache()) {
+            unifiedLayer.task("attention",
+                    State.ATTENTION_DEEP_HALF2
+                            ? TransformerComputeKernelsLayered::processHeadsFlashAttentionSplitKVFP16Packed
+                            : TransformerComputeKernelsLayered::processHeadsFlashAttentionSplitKVFP16,
+                    context,
+                    qwen3State.wrapQ,                 // query vectors
+                    qwen3State.wrapKeyCacheFP16,      // key cache (FP16)
+                    qwen3State.wrapValueCacheFP16,    // value cache (FP16)
+                    qwen3State.wrapAttSplit,      // scratch: per-head split partials (compact layout)
+                    config.numberOfHeads(),  // nHeads
+                    nEmbdHead,                    // headSize
+                    nEmbdGqa,                     // kvDim
+                    gqa,                          // kvMul (nHeads / nHeadKv)
+                    qwen3State.positionHolder,    // position
+                    layerIndex,                   // layer index
+                    config.contextLength(),  // context length
+                    attentionSplits);             // number of KV splits per head
+        } else {
+            unifiedLayer.task("attention",
+                    TransformerComputeKernelsLayered::processHeadsFlashAttentionSplitKV,
+                    context,
+                    qwen3State.wrapQ,             // query vectors
+                    qwen3State.wrapKeyCache,      // key cache
+                    qwen3State.wrapValueCache,    // value cache
+                    qwen3State.wrapAttSplit,      // scratch: per-head split partials (compact layout)
+                    config.numberOfHeads(),  // nHeads
+                    nEmbdHead,                    // headSize
+                    nEmbdGqa,                     // kvDim
+                    gqa,                          // kvMul (nHeads / nHeadKv)
+                    qwen3State.positionHolder,    // position
+                    layerIndex,                   // layer index
+                    config.contextLength(),  // context length
+                    attentionSplits);             // number of KV splits per head
+        }
         // Phase 2: combine the per-head split partials into the final attention output -> wrapXb.
         unifiedLayer.task("attention_combine",
                 TransformerComputeKernelsLayered::combineSplitKVAttention,
@@ -452,7 +490,11 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
                     config.dim(),            // output dim
                     LOCAL_WORK_GROUP_SIZE_ALLOC);
         }
-        unifiedLayer.persistOnDevice(qwen3State.wrapX, qwen3State.wrapKeyCache, qwen3State.wrapValueCache);
+        if (useFp16KVCache()) {
+            unifiedLayer.persistOnDevice(qwen3State.wrapX, qwen3State.wrapKeyCacheFP16, qwen3State.wrapValueCacheFP16);
+        } else {
+            unifiedLayer.persistOnDevice(qwen3State.wrapX, qwen3State.wrapKeyCache, qwen3State.wrapValueCache);
+        }
 
         return unifiedLayer;
     }
@@ -477,6 +519,8 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
      * Configure data transfers for first and subsequent layers
      */
     protected TaskGraph configureLayerDataTransfers(TaskGraph unifiedLayer, int layerIndex) {
+        Object keyCache = useFp16KVCache() ? qwen3State.wrapKeyCacheFP16 : qwen3State.wrapKeyCache;
+        Object valueCache = useFp16KVCache() ? qwen3State.wrapValueCacheFP16 : qwen3State.wrapValueCache;
         if (layerIndex == 0) {
             // First layer: Transfer temporary buffers and QKV state every execution
             unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION, qwen3State.positionHolder);
@@ -485,7 +529,7 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
             unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION, //
                     context, qwen3State.wrapXb, qwen3State.wrapXb2,  //
                     qwen3State.wrapQ, qwen3State.wrapK, qwen3State.wrapV, //
-                    qwen3State.wrapKeyCache, qwen3State.wrapValueCache,  //
+                    keyCache, valueCache,  //
                     qwen3State.wrapAtt, qwen3State.wrapHb );
             unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION, qwen3State.wrapAttSplit);
         } else {
@@ -496,8 +540,8 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
             String pred = "layer_" + (layerIndex - 1);
             unifiedLayer.consumeFromDevice(pred, context, qwen3State.wrapXb, qwen3State.wrapXb2, //
                     qwen3State.wrapQ, qwen3State.wrapK,  //
-                    qwen3State.wrapV, qwen3State.wrapKeyCache, //
-                    qwen3State.wrapValueCache, qwen3State.wrapAtt, //
+                    qwen3State.wrapV, keyCache, //
+                    valueCache, qwen3State.wrapAtt, //
                     qwen3State.wrapHb, qwen3State.positionHolder); //
             unifiedLayer.consumeFromDevice(pred, qwen3State.wrapAttSplit);
         }

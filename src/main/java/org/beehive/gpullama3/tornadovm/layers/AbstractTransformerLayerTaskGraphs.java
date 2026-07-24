@@ -91,4 +91,15 @@ public abstract class AbstractTransformerLayerTaskGraphs<W extends Weights, C ex
     protected boolean shouldUseFinalNormalization() {
         return schedulerType == SchedulerType.NON_NVIDIA;
     }
+
+    /**
+     * Whether this layer stack should use the half-precision KV cache: requested via
+     * {@code -Dllama.kvcache.fp16=true}, allocated by the model state, and running on the NVIDIA
+     * path (the FP16 kernels rely on packed half2 codegen in the CUDA backend). The packed
+     * accessors need even element indices, which holds for the (even) headSize/kvDim of the
+     * supported models.
+     */
+    protected boolean useFp16KVCache() {
+        return State.USE_FP16_KV && state.wrapKeyCacheFP16 != null && schedulerType == SchedulerType.NVIDIA;
+    }
 }

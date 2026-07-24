@@ -32,6 +32,8 @@ public class Qwen3FP16FFNLayersDecode extends Qwen3FP16FFNLayers {
 
     @Override
     protected TaskGraph configureLayerDataTransfers(TaskGraph layer, int layerIndex) {
+        Object keyCache = useFp16KVCache() ? qwen3State.wrapKeyCacheFP16 : qwen3State.wrapKeyCache;
+        Object valueCache = useFp16KVCache() ? qwen3State.wrapValueCacheFP16 : qwen3State.wrapValueCache;
         if (layerIndex == 0) {
             layer.transferToDevice(DataTransferMode.EVERY_EXECUTION,
                     qwen3State.positionHolder, qwen3State.temp, qwen3State.tempFFN);
@@ -42,15 +44,14 @@ public class Qwen3FP16FFNLayersDecode extends Qwen3FP16FFNLayers {
                     qwen3State.wrapAtt, qwen3State.wrapHb);
             layer.transferToDevice(DataTransferMode.FIRST_EXECUTION, qwen3State.wrapAttSplit);
             // KV cache already allocated by batch prefill; relay from decode activation graph.
-            layer.consumeFromDevice("decodeActivation",
-                    qwen3State.wrapKeyCache, qwen3State.wrapValueCache);
+            layer.consumeFromDevice("decodeActivation", keyCache, valueCache);
         } else {
             String pred = "layer_" + (layerIndex - 1);
             layer.consumeFromDevice(pred,
                     context,
                     qwen3State.wrapXb, qwen3State.wrapXb2,
                     qwen3State.wrapQ, qwen3State.wrapK, qwen3State.wrapV,
-                    qwen3State.wrapKeyCache, qwen3State.wrapValueCache,
+                    keyCache, valueCache,
                     qwen3State.wrapAtt, qwen3State.wrapHb,
                     qwen3State.positionHolder,
                     qwen3State.temp, qwen3State.tempFFN);

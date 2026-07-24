@@ -8,6 +8,7 @@ import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
+import uk.ac.manchester.tornado.api.types.vectors.Half2;
 
 /**
  * GPU kernels for batched prefill.
@@ -1505,6 +1506,300 @@ public final class TransformerBatchPrefillKernels {
                 acc0 += p * vTile[t * headSize + tid];
                 if (d1 < headSize) {
                     acc1 += p * vTile[t * headSize + d1];
+                }
+            }
+            context.localBarrier();
+        }
+
+        float norm = (sumExp > 0.0f) ? (1.0f / sumExp) : 0.0f;
+        int outOffset = batchIdx * dim + h * headSize;
+        attnOutFP16.set(outOffset + tid, new HalfFloat(acc0 * norm));
+        if (d1 < headSize) {
+            attnOutFP16.set(outOffset + d1, new HalfFloat(acc1 * norm));
+        }
+    }
+
+    // ── FP16 KV cache variants (batched prefill) ─────────────────────────────
+
+    /**
+     * {@link #batchedRopeWithKVCachePacked} writing a half-precision KV cache.
+     *
+     * <p>K/V pairs (i, i+1) are adjacent and i is even, so each write is a single
+     * packed 32-bit store.</p>
+     *
+     * Worker: B*(dim/2) global threads, localSize=512 (or less).
+     */
+    public static void batchedRopeWithKVCachePackedFP16(KernelContext context,
+                                                        IntArray batchStartPosHolder,
+                                                        FloatArray qkvBatch,
+                                                        HalfFloatArray wrapKeyCache,
+                                                        HalfFloatArray wrapValueCache,
+                                                        int kvDim, int headSize,
+                                                        int layerIndex, int contextLength, int dim) {
+        int globalIdx = context.globalIdx;
+        int halfDim = dim / 2;
+        int batchIdx = globalIdx / halfDim;
+        int pairIdx = globalIdx % halfDim;
+        int i = pairIdx * 2;
+        int qkvStride = dim + 2 * kvDim;
+
+        int pos = batchStartPosHolder.get(0) + batchIdx;
+        int qOffset = batchIdx * qkvStride;
+        int kOffset = batchIdx * qkvStride + dim;
+        int vOffset = batchIdx * qkvStride + dim + kvDim;
+
+        if (i + 1 < dim) {
+            int head_dim = i % headSize;
+            float freq = 1.0f / TornadoMath.pow(50000.0f, head_dim / (float) headSize);
+            float val = pos * freq;
+            float fcr = TornadoMath.cos(val);
+            float fci = TornadoMath.sin(val);
+
+            // Rotate Q in place
+            float v0q = qkvBatch.get(qOffset + i);
+            float v1q = qkvBatch.get(qOffset + i + 1);
+            qkvBatch.set(qOffset + i, v0q * fcr - v1q * fci);
+            qkvBatch.set(qOffset + i + 1, v0q * fci + v1q * fcr);
+
+            // Rotate K and write K,V to the half-precision cache
+            if (i + 1 < kvDim) {
+                float v0k = qkvBatch.get(kOffset + i);
+                float v1k = qkvBatch.get(kOffset + i + 1);
+                float rotK0 = v0k * fcr - v1k * fci;
+                float rotK1 = v0k * fci + v1k * fcr;
+
+                int cacheOff = layerIndex * contextLength * kvDim + pos * kvDim;
+                wrapKeyCache.setHalf2(cacheOff + i, Half2.fromFloats(rotK0, rotK1));
+                wrapValueCache.setHalf2(cacheOff + i,
+                        Half2.fromFloats(qkvBatch.get(vOffset + i), qkvBatch.get(vOffset + i + 1)));
+            }
+        }
+    }
+
+    /**
+     * {@link #batchedFlashAttentionFP16Out} reading a half-precision KV cache.
+     *
+     * <p>K/V tile loads are packed: each thread pulls two adjacent head dims per
+     * 32-bit load and unpacks them into the FP32 shared tiles, so accumulation and
+     * the online softmax are unchanged.</p>
+     *
+     * <p>Requires headSize <= 2*localSz (localSz = min(headSize, 128)).</p>
+     *
+     * Worker: B*nHeads workgroups × min(headSize,128) threads.
+     */
+    public static void batchedFlashAttentionFP16OutKVFP16(KernelContext context,
+                                                          IntArray batchStartPosHolder,
+                                                          FloatArray qkvBatch,
+                                                          HalfFloatArray wrapKeyCache,
+                                                          HalfFloatArray wrapValueCache,
+                                                          HalfFloatArray attnOutFP16,
+                                                          int nHeads, int headSize,
+                                                          int kvDim, int kvMul,
+                                                          int layerIndex, int contextLength, int dim) {
+        int tid = context.localIdx;
+        int groupId = context.groupIdx;
+        int localSz = context.localGroupSizeX;
+
+        int batchIdx = groupId / nHeads;
+        int h = groupId % nHeads;
+        int pos = batchStartPosHolder.get(0) + batchIdx;
+        int loff = layerIndex * contextLength * kvDim;
+        int kvHeadIdx = h / kvMul;
+        int BLOCK_C = 16;
+        int qkvStride = dim + 2 * kvDim;
+        int halfHead = headSize / 2;
+
+        float[] qShared = context.allocateFloatLocalArray(headSize);
+        float[] kTile = context.allocateFloatLocalArray(BLOCK_C * headSize);
+        float[] vTile = context.allocateFloatLocalArray(BLOCK_C * headSize);
+        float[] sTile = context.allocateFloatLocalArray(BLOCK_C);
+
+        // Load Q (rotated, from the packed QKV buffer) into shared memory
+        int qOffset = batchIdx * qkvStride + h * headSize;
+        for (int i = tid; i < headSize; i += localSz) {
+            qShared[i] = qkvBatch.get(qOffset + i);
+        }
+        context.localBarrier();
+
+        float maxScore = Float.NEGATIVE_INFINITY;
+        float sumExp = 0.0f;
+        float acc0 = 0.0f;
+        float acc1 = 0.0f;
+        int d1 = tid + localSz;
+
+        for (int tileC = 0; tileC <= pos; tileC += BLOCK_C) {
+            int tileEnd = Math.min(tileC + BLOCK_C - 1, pos);
+            int tileLen = tileEnd - tileC + 1;
+
+            // Load K/V tile — one packed 32-bit load per thread per pair of head dims
+            for (int idx = tid; idx < tileLen * halfHead; idx += localSz) {
+                int tInTile = idx / halfHead;
+                int dPair = (idx % halfHead) * 2;
+                int kvOff = loff + (tileC + tInTile) * kvDim + kvHeadIdx * headSize + dPair;
+                Half2 kPair = wrapKeyCache.getHalf2(kvOff);
+                Half2 vPair = wrapValueCache.getHalf2(kvOff);
+                int tileOff = tInTile * headSize + dPair;
+                kTile[tileOff] = Half2.lowFloat(kPair);
+                kTile[tileOff + 1] = Half2.highFloat(kPair);
+                vTile[tileOff] = Half2.lowFloat(vPair);
+                vTile[tileOff + 1] = Half2.highFloat(vPair);
+            }
+            context.localBarrier();
+
+            // Scores: one thread per key position in the tile
+            for (int t = tileC + tid; t <= tileEnd; t += localSz) {
+                int tInTile = t - tileC;
+                float score = 0.0f;
+                for (int d = 0; d < headSize; d++) {
+                    score += qShared[d] * kTile[tInTile * headSize + d];
+                }
+                sTile[tInTile] = score / TornadoMath.sqrt(headSize);
+            }
+            context.localBarrier();
+
+            float tileMax = Float.NEGATIVE_INFINITY;
+            for (int t = 0; t < tileLen; t++) {
+                if (sTile[t] > tileMax) {
+                    tileMax = sTile[t];
+                }
+            }
+
+            float newMax = Math.max(maxScore, tileMax);
+            if (maxScore != Float.NEGATIVE_INFINITY && newMax != maxScore) {
+                float corr = TornadoMath.exp(maxScore - newMax);
+                sumExp *= corr;
+                acc0 *= corr;
+                acc1 *= corr;
+            }
+            maxScore = newMax;
+
+            for (int t = 0; t < tileLen; t++) {
+                float p = TornadoMath.exp(sTile[t] - maxScore);
+                sumExp += p;
+                acc0 += p * vTile[t * headSize + tid];
+                if (d1 < headSize) {
+                    acc1 += p * vTile[t * headSize + d1];
+                }
+            }
+            context.localBarrier();
+        }
+
+        float norm = (sumExp > 0.0f) ? (1.0f / sumExp) : 0.0f;
+        int outOffset = batchIdx * dim + h * headSize;
+        attnOutFP16.set(outOffset + tid, new HalfFloat(acc0 * norm));
+        if (d1 < headSize) {
+            attnOutFP16.set(outOffset + d1, new HalfFloat(acc1 * norm));
+        }
+    }
+
+    /**
+     * {@link #batchedFlashAttentionFP16OutKVFP16} with packed __half2 shared-memory tiles.
+     *
+     * <p>K/V pairs stay packed from the 32-bit global load through the shared tile
+     * (halving the K/V tile footprint), Q is staged once as packed FP16 pairs, and the
+     * score loop consumes each pair with a single __hfma2 (llama.cpp fattn-tile style).
+     * The online softmax and the P·V accumulation stay FP32.</p>
+     *
+     * <p>Requires headSize <= 2*localSz (localSz = min(headSize, 128)).</p>
+     *
+     * Worker: B*nHeads workgroups × min(headSize,128) threads.
+     */
+    public static void batchedFlashAttentionFP16OutKVFP16PackedTile(KernelContext context,
+                                                                    IntArray batchStartPosHolder,
+                                                                    FloatArray qkvBatch,
+                                                                    HalfFloatArray wrapKeyCache,
+                                                                    HalfFloatArray wrapValueCache,
+                                                                    HalfFloatArray attnOutFP16,
+                                                                    int nHeads, int headSize,
+                                                                    int kvDim, int kvMul,
+                                                                    int layerIndex, int contextLength, int dim) {
+        int tid = context.localIdx;
+        int groupId = context.groupIdx;
+        int localSz = context.localGroupSizeX;
+
+        int batchIdx = groupId / nHeads;
+        int h = groupId % nHeads;
+        int pos = batchStartPosHolder.get(0) + batchIdx;
+        int loff = layerIndex * contextLength * kvDim;
+        int kvHeadIdx = h / kvMul;
+        int BLOCK_C = 16;
+        int qkvStride = dim + 2 * kvDim;
+        int halfHead = headSize / 2;
+
+        Half2[] qPacked = context.allocateHalf2LocalArray(64);            // headSize/2 <= 64
+        Half2[] kTile = context.allocateHalf2LocalArray(16 * 64);         // BLOCK_C * halfHead
+        Half2[] vTile = context.allocateHalf2LocalArray(16 * 64);
+        float[] sTile = context.allocateFloatLocalArray(BLOCK_C);
+
+        // Load Q (rotated, from the packed QKV buffer) into shared memory as packed pairs
+        int qOffset = batchIdx * qkvStride + h * headSize;
+        for (int i = tid; i < halfHead; i += localSz) {
+            qPacked[i] = Half2.fromFloats(qkvBatch.get(qOffset + i * 2), qkvBatch.get(qOffset + i * 2 + 1));
+        }
+        context.localBarrier();
+
+        float maxScore = Float.NEGATIVE_INFINITY;
+        float sumExp = 0.0f;
+        float acc0 = 0.0f;
+        float acc1 = 0.0f;
+        int d1 = tid + localSz;
+
+        for (int tileC = 0; tileC <= pos; tileC += BLOCK_C) {
+            int tileEnd = Math.min(tileC + BLOCK_C - 1, pos);
+            int tileLen = tileEnd - tileC + 1;
+
+            // Load K/V tile — packed 32-bit load into a packed __half2 tile, no expansion
+            for (int idx = tid; idx < tileLen * halfHead; idx += localSz) {
+                int tInTile = idx / halfHead;
+                int dPair = idx % halfHead;
+                int kvOff = loff + (tileC + tInTile) * kvDim + kvHeadIdx * headSize + dPair * 2;
+                int tileOff = tInTile * halfHead + dPair;
+                kTile[tileOff] = wrapKeyCache.getHalf2(kvOff);
+                vTile[tileOff] = wrapValueCache.getHalf2(kvOff);
+            }
+            context.localBarrier();
+
+            // Scores: one thread per key position; one __hfma2 per pair, expanded once per row
+            for (int t = tileC + tid; t <= tileEnd; t += localSz) {
+                int tInTile = t - tileC;
+                Half2 scoreAcc = Half2.fromFloats(0.0f, 0.0f);
+                for (int dp = 0; dp < halfHead; dp++) {
+                    scoreAcc = Half2.fma(kTile[tInTile * halfHead + dp], qPacked[dp], scoreAcc);
+                }
+                sTile[tInTile] = (Half2.lowFloat(scoreAcc) + Half2.highFloat(scoreAcc)) / TornadoMath.sqrt(headSize);
+            }
+            context.localBarrier();
+
+            float tileMax = Float.NEGATIVE_INFINITY;
+            for (int t = 0; t < tileLen; t++) {
+                if (sTile[t] > tileMax) {
+                    tileMax = sTile[t];
+                }
+            }
+
+            float newMax = Math.max(maxScore, tileMax);
+            if (maxScore != Float.NEGATIVE_INFINITY && newMax != maxScore) {
+                float corr = TornadoMath.exp(maxScore - newMax);
+                sumExp *= corr;
+                acc0 *= corr;
+                acc1 *= corr;
+            }
+            maxScore = newMax;
+
+            // P·V: each thread owns fixed head dims (tid, tid+localSz), so its lane within
+            // the packed pair is fixed; select low/high once per tile element.
+            int pair0 = tid >> 1;
+            boolean high0 = (tid & 1) == 1;
+            int pair1 = d1 >> 1;
+            boolean high1 = (d1 & 1) == 1;
+            for (int t = 0; t < tileLen; t++) {
+                float p = TornadoMath.exp(sTile[t] - maxScore);
+                sumExp += p;
+                Half2 v0 = vTile[t * halfHead + pair0];
+                acc0 += p * (high0 ? Half2.highFloat(v0) : Half2.lowFloat(v0));
+                if (d1 < headSize) {
+                    Half2 v1 = vTile[t * halfHead + pair1];
+                    acc1 += p * (high1 ? Half2.highFloat(v1) : Half2.lowFloat(v1));
                 }
             }
             context.localBarrier();

@@ -1,6 +1,7 @@
 package org.beehive.gpullama3.tornadovm.layers.type.fp16.prefill;
 
 import org.beehive.gpullama3.inference.state.Qwen3State;
+import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.tornado.Qwen3TornadoWeights;
 import org.beehive.gpullama3.model.qwen3.Qwen3Configuration;
 import org.beehive.gpullama3.tornadovm.kernels.Qwen3Kernels;
@@ -67,6 +68,14 @@ public class Qwen3FP16LayersBatchPrefillMMA implements BatchPrefillTransformerLa
     private final List<ImmutableTaskGraph> layerITGs;
     private String lastLayerTaskGraphID;
 
+    /**
+     * The batched-prefill graphs only run on the CUDA backend (tensor-core gated),
+     * which is the same backend the FP16 KV cache path targets.
+     */
+    private boolean useFp16KVCache() {
+        return State.USE_FP16_KV && state.wrapKeyCacheFP16 != null;
+    }
+
     public Qwen3FP16LayersBatchPrefillMMA(Qwen3State state, Qwen3TornadoWeights weights,
                                           Qwen3Configuration config, int batchSize) {
         this.state = state;
@@ -99,6 +108,9 @@ public class Qwen3FP16LayersBatchPrefillMMA implements BatchPrefillTransformerLa
         int dim    = config.dim();
         int hidDim = config.hiddenDim();
 
+        Object keyCache = useFp16KVCache() ? state.wrapKeyCacheFP16 : state.wrapKeyCache;
+        Object valueCache = useFp16KVCache() ? state.wrapValueCacheFP16 : state.wrapValueCache;
+
         // ── Data Transfers ─────────────────────────────────────────────────────
         if (layerIndex == 0) {
             batchPrefillLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION, state.batchStartPosHolder);
@@ -107,7 +119,7 @@ public class Qwen3FP16LayersBatchPrefillMMA implements BatchPrefillTransformerLa
                     state.attnScaleBatch, state.ffnScaleBatch,
                     state.wrapXbFP16Batch,
                     state.qkvResultBatch,
-                    state.wrapKeyCache, state.wrapValueCache,
+                    keyCache, valueCache,
                     state.normedXFFNFP16, state.gateUpResultBatch,
                     state.attnOutFP16, state.woOut, state.wrapHbFP16Batch, state.w2Out);
             batchPrefillLayer.consumeFromDevice("prefillActivation", state.wrapXBatch);
@@ -120,7 +132,7 @@ public class Qwen3FP16LayersBatchPrefillMMA implements BatchPrefillTransformerLa
                     state.attnScaleBatch, state.ffnScaleBatch,
                     state.wrapXbFP16Batch,
                     state.qkvResultBatch,
-                    state.wrapKeyCache, state.wrapValueCache,
+                    keyCache, valueCache,
                     state.normedXFFNFP16, state.gateUpResultBatch,
                     state.attnOutFP16, state.woOut, state.wrapHbFP16Batch, state.w2Out);
         }
@@ -169,23 +181,42 @@ public class Qwen3FP16LayersBatchPrefillMMA implements BatchPrefillTransformerLa
                 config.numberOfHeads(), nHeadKv, nEmbdHead,
                 qDim, kvDim, config.rmsNormEps());
 
-        batchPrefillLayer.task("batch_rope_kv",
-                Qwen3Kernels::batchedRopeWithKVCacheQwen3Packed,
-                context, state.batchStartPosHolder,
-                state.qkvResultBatch,
-                state.wrapKeyCache, state.wrapValueCache,
-                kvDim, nEmbdHead, layerIndex, config.contextLength(), qDim);
-
         // Register-partitioned flash attention over the packed buffer.
         // The 'dim' parameter doubles as the packed-Q stride base and the
         // attnOutFP16 row width — both are qDim for Qwen3.
-        batchPrefillLayer.task("batch_attention",
-                TransformerBatchPrefillKernels::batchedFlashAttentionFP16Out,
-                context, state.batchStartPosHolder,
-                state.qkvResultBatch, state.wrapKeyCache, state.wrapValueCache,
-                state.attnOutFP16,
-                config.numberOfHeads(), nEmbdHead,
-                kvDim, gqa, layerIndex, config.contextLength(), qDim);
+        if (useFp16KVCache()) {
+            batchPrefillLayer.task("batch_rope_kv",
+                    Qwen3Kernels::batchedRopeWithKVCacheQwen3PackedFP16,
+                    context, state.batchStartPosHolder,
+                    state.qkvResultBatch,
+                    state.wrapKeyCacheFP16, state.wrapValueCacheFP16,
+                    kvDim, nEmbdHead, layerIndex, config.contextLength(), qDim);
+
+            batchPrefillLayer.task("batch_attention",
+                    State.ATTENTION_DEEP_HALF2
+                            ? TransformerBatchPrefillKernels::batchedFlashAttentionFP16OutKVFP16PackedTile
+                            : TransformerBatchPrefillKernels::batchedFlashAttentionFP16OutKVFP16,
+                    context, state.batchStartPosHolder,
+                    state.qkvResultBatch, state.wrapKeyCacheFP16, state.wrapValueCacheFP16,
+                    state.attnOutFP16,
+                    config.numberOfHeads(), nEmbdHead,
+                    kvDim, gqa, layerIndex, config.contextLength(), qDim);
+        } else {
+            batchPrefillLayer.task("batch_rope_kv",
+                    Qwen3Kernels::batchedRopeWithKVCacheQwen3Packed,
+                    context, state.batchStartPosHolder,
+                    state.qkvResultBatch,
+                    state.wrapKeyCache, state.wrapValueCache,
+                    kvDim, nEmbdHead, layerIndex, config.contextLength(), qDim);
+
+            batchPrefillLayer.task("batch_attention",
+                    TransformerBatchPrefillKernels::batchedFlashAttentionFP16Out,
+                    context, state.batchStartPosHolder,
+                    state.qkvResultBatch, state.wrapKeyCache, state.wrapValueCache,
+                    state.attnOutFP16,
+                    config.numberOfHeads(), nEmbdHead,
+                    kvDim, gqa, layerIndex, config.contextLength(), qDim);
+        }
 
         // Output projection: [M=batch, N=dim, K=qDim]
         batchPrefillLayer.task("woProj", TransformerBatchPrefillKernels::gemmMMA,
@@ -222,7 +253,7 @@ public class Qwen3FP16LayersBatchPrefillMMA implements BatchPrefillTransformerLa
                 .task("w2Resid", TransformerBatchPrefillKernels::batchedResidualAddFP32,
                         context, state.wrapXBatch, state.w2Out);
 
-        batchPrefillLayer.persistOnDevice(state.wrapXBatch, state.wrapKeyCache, state.wrapValueCache);
+        batchPrefillLayer.persistOnDevice(state.wrapXBatch, keyCache, valueCache);
 
         return batchPrefillLayer;
     }

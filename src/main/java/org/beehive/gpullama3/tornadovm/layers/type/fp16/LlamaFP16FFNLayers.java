@@ -1,5 +1,6 @@
 package org.beehive.gpullama3.tornadovm.layers.type.fp16;
 
+import org.beehive.gpullama3.inference.state.LlamaState;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
 import org.beehive.gpullama3.model.llama.LlamaConfiguration;
@@ -14,9 +15,12 @@ import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
 public class LlamaFP16FFNLayers extends AbstractTransformerLayerTaskGraphs<LlamaTornadoWeights, LlamaConfiguration> {
+    private static final boolean SPLIT_KV_ATTENTION = Boolean.getBoolean("llama.attention.splitKv");
+    private final LlamaState llamaState;
 
     public LlamaFP16FFNLayers(String taskGraph, State state, LlamaTornadoWeights weights, LlamaConfiguration config, SchedulerType schedulerType) {
         super(taskGraph, state, weights, config, schedulerType);
+        this.llamaState = (LlamaState) state;
         setupFFNLayers();
     }
 
@@ -30,7 +34,9 @@ public class LlamaFP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Llama
         int configHiddenDimRowMajor = config.hiddenDim() * LOCAL_WORK_GROUP_SIZE_ALLOC;
         WorkerGrid configHiddenDimRowMajorWorker = WorkerGridFactory.genericWorker(configHiddenDimRowMajor, LOCAL_WORK_GROUP_SIZE_ALLOC);
 
-        WorkerGrid parallelAttentionWorker = WorkerGridFactory.createAttentionWorker(config.numberOfHeads(), config.headSize());
+        int attentionGroups = splitKvAttentionEnabled() ? config.numberOfHeads() * LlamaState.SPLIT_KV : config.numberOfHeads();
+        WorkerGrid parallelAttentionWorker = WorkerGridFactory.createAttentionWorker(attentionGroups, config.headSize());
+        WorkerGrid attentionCombineWorker = WorkerGridFactory.createAttentionWorker(config.numberOfHeads(), config.headSize());
 
         int fusedQKVRows = config.dim() + 2 * config.kvDim();
         int fusedQKVGlobal = fusedQKVRows * LOCAL_WORK_GROUP_SIZE_ALLOC;
@@ -45,6 +51,9 @@ public class LlamaFP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Llama
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".qkv_projection", fusedQKVWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWithCacheWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attention", parallelAttentionWorker);
+            if (splitKvAttentionEnabled()) {
+                tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attention_combine", attentionCombineWorker);
+            }
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_output_proj", configDimRowMajorGlobalWorker);
             // === FFN Block ===
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce", rmsNormWorker);
@@ -203,19 +212,35 @@ public class LlamaFP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Llama
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
 
         // RoPE + KV Cache
-        unifiedLayer.task("rope_and_kv_cache",
-                TransformerComputeKernelsLayered::ropeRotationWithCacheCopy,
-                context,
-                state.positionHolder,
-                state.wrapQ,                 // Q (in/out)
-                state.wrapK,                 // K (in/out)
-                state.wrapV,                 // V (in only)
-                state.wrapKeyCache,          // Key cache (out)
-                state.wrapValueCache,        // Value cache (out)
-                config.kvDim(),
-                config.headSize(),
-                layerIndex,
-                config.contextLength());
+        if (useFp16KVCache()) {
+            unifiedLayer.task("rope_and_kv_cache",
+                    TransformerComputeKernelsLayered::ropeRotationWithCacheCopyFP16,
+                    context,
+                    state.positionHolder,
+                    state.wrapQ,                 // Q (in/out)
+                    state.wrapK,                 // K (in/out)
+                    state.wrapV,                 // V (in only)
+                    state.wrapKeyCacheFP16,      // Key cache (out, FP16)
+                    state.wrapValueCacheFP16,    // Value cache (out, FP16)
+                    config.kvDim(),
+                    config.headSize(),
+                    layerIndex,
+                    config.contextLength());
+        } else {
+            unifiedLayer.task("rope_and_kv_cache",
+                    TransformerComputeKernelsLayered::ropeRotationWithCacheCopy,
+                    context,
+                    state.positionHolder,
+                    state.wrapQ,                 // Q (in/out)
+                    state.wrapK,                 // K (in/out)
+                    state.wrapV,                 // V (in only)
+                    state.wrapKeyCache,          // Key cache (out)
+                    state.wrapValueCache,        // Value cache (out)
+                    config.kvDim(),
+                    config.headSize(),
+                    layerIndex,
+                    config.contextLength());
+        }
         // Attention
         configureAttention(unifiedLayer, layerIndex);
         // Output Projection (Wo) with residual
@@ -258,8 +283,13 @@ public class LlamaFP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Llama
                 weights.w2Layered[layerIndex].asHalfFloatArray(),
                 config.hiddenDim(), config.dim(), LOCAL_WORK_GROUP_SIZE_ALLOC);
 
-        unifiedLayer.persistOnDevice(state.wrapX, state.wrapKeyCache,
-                state.wrapValueCache);
+        if (useFp16KVCache()) {
+            unifiedLayer.persistOnDevice(state.wrapX, state.wrapKeyCacheFP16,
+                    state.wrapValueCacheFP16);
+        } else {
+            unifiedLayer.persistOnDevice(state.wrapX, state.wrapKeyCache,
+                    state.wrapValueCache);
+        }
 
         return unifiedLayer;
     }
@@ -283,7 +313,13 @@ public class LlamaFP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Llama
         return (layerIndex == 0) ? "activationUpdate" : "layer_" + (layerIndex - 1);
     }
 
+    protected boolean splitKvAttentionEnabled() {
+        return SPLIT_KV_ATTENTION && schedulerType == SchedulerType.NVIDIA;
+    }
+
     protected TaskGraph configureLayerDataTransfers(TaskGraph unifiedLayer, int layerIndex) {
+        Object keyCache = useFp16KVCache() ? state.wrapKeyCacheFP16 : state.wrapKeyCache;
+        Object valueCache = useFp16KVCache() ? state.wrapValueCacheFP16 : state.wrapValueCache;
         if (layerIndex == 0) {
             // First layer: Transfer initial data to device (one-time transfer)
             unifiedLayer.transferToDevice(DataTransferMode.EVERY_EXECUTION,
@@ -298,9 +334,12 @@ public class LlamaFP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Llama
                     // QKV vectors
                     state.wrapQ, state.wrapK, state.wrapV,
                     // KV cache
-                    state.wrapKeyCache, state.wrapValueCache,
+                    keyCache, valueCache,
                     // Attention & FFN buffers
                     state.wrapAtt, state.wrapHb, state.wrapXbFP16);
+            if (splitKvAttentionEnabled()) {
+                unifiedLayer.transferToDevice(DataTransferMode.FIRST_EXECUTION, llamaState.wrapAttSplit);
+            }
         } else {
             // Subsequent layers: consume from the previous layer graph by name.
             // The no-arg consumeFromDevice form uses the current graph's own name as source key,
@@ -314,17 +353,98 @@ public class LlamaFP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Llama
                     // QKV vectors
                     state.wrapQ, state.wrapK, state.wrapV,
                     // KV cache
-                    state.wrapKeyCache, state.wrapValueCache,
+                    keyCache, valueCache,
                     // Attention & FFN buffers
                     state.wrapAtt, state.wrapHb,
                     // Position & misc
                     state.positionHolder, state.wrapXbFP16);
+            if (splitKvAttentionEnabled()) {
+                unifiedLayer.consumeFromDevice(pred, llamaState.wrapAttSplit);
+            }
         }
         return unifiedLayer;
     }
 
     private TaskGraph configureAttention(TaskGraph unifiedLayer, int layerIndex) {
-        if (schedulerType == SchedulerType.NVIDIA) {
+        if (splitKvAttentionEnabled()) {
+            if (useFp16KVCache()) {
+                unifiedLayer.task("attention",
+                        State.ATTENTION_DEEP_HALF2
+                                ? TransformerComputeKernelsLayered::processHeadsFlashAttentionSplitKVFP16Packed
+                                : TransformerComputeKernelsLayered::processHeadsFlashAttentionSplitKVFP16,
+                        context,
+                        state.wrapQ,
+                        state.wrapKeyCacheFP16,
+                        state.wrapValueCacheFP16,
+                        llamaState.wrapAttSplit,
+                        config.numberOfHeads(),
+                        config.headSize(),
+                        config.kvDim(),
+                        config.kvMul(),
+                        state.positionHolder,
+                        layerIndex,
+                        config.contextLength(),
+                        LlamaState.SPLIT_KV);
+            } else {
+                unifiedLayer.task("attention",
+                        TransformerComputeKernelsLayered::processHeadsFlashAttentionSplitKV,
+                        context,
+                        state.wrapQ,
+                        state.wrapKeyCache,
+                        state.wrapValueCache,
+                        llamaState.wrapAttSplit,
+                        config.numberOfHeads(),
+                        config.headSize(),
+                        config.kvDim(),
+                        config.kvMul(),
+                        state.positionHolder,
+                        layerIndex,
+                        config.contextLength(),
+                        LlamaState.SPLIT_KV);
+            }
+            return unifiedLayer.task("attention_combine",
+                    TransformerComputeKernelsLayered::combineSplitKVAttention,
+                    context,
+                    llamaState.wrapAttSplit,
+                    state.wrapXb,
+                    config.numberOfHeads(),
+                    config.headSize(),
+                    LlamaState.SPLIT_KV);
+        }
+        if (useFp16KVCache()) {
+            // Flash Attention over the half-precision KV cache (FP32 accumulation).
+            // The scalar-read variant is an evaluation aid; the packed variant is the default.
+            if (State.FP16_KV_SCALAR) {
+                return unifiedLayer.task("attention",
+                        TransformerComputeKernelsLayered::processHeadsFlashAttentionFP16Scalar,
+                        context,
+                        state.wrapQ,
+                        state.wrapKeyCacheFP16,
+                        state.wrapValueCacheFP16,
+                        state.wrapXb,
+                        config.numberOfHeads(),
+                        config.headSize(),
+                        config.kvDim(),
+                        config.kvMul(),
+                        state.positionHolder,
+                        layerIndex,
+                        config.contextLength());
+            }
+            return unifiedLayer.task("attention",
+                    TransformerComputeKernelsLayered::processHeadsFlashAttentionFP16,
+                    context,
+                    state.wrapQ,
+                    state.wrapKeyCacheFP16,
+                    state.wrapValueCacheFP16,
+                    state.wrapXb,
+                    config.numberOfHeads(),
+                    config.headSize(),
+                    config.kvDim(),
+                    config.kvMul(),
+                    state.positionHolder,
+                    layerIndex,
+                    config.contextLength());
+        } else if (schedulerType == SchedulerType.NVIDIA) {
             // Flash Attention (optimized for NVIDIA GPUs)
             return unifiedLayer.task("attention",
                     TransformerComputeKernelsLayered::processHeadsFlashAttention,

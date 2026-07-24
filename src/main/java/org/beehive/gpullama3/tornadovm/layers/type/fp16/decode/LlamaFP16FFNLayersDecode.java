@@ -44,6 +44,9 @@ public class LlamaFP16FFNLayersDecode extends LlamaFP16FFNLayers {
 
     @Override
     protected TaskGraph configureLayerDataTransfers(TaskGraph layer, int layerIndex) {
+        LlamaState llamaState = (LlamaState) state;
+        Object keyCache = useFp16KVCache() ? state.wrapKeyCacheFP16 : state.wrapKeyCache;
+        Object valueCache = useFp16KVCache() ? state.wrapValueCacheFP16 : state.wrapValueCache;
         if (layerIndex == 0) {
             // Same as parent layer 0, but wrapKeyCache/wrapValueCache come from device
             // (passed through by the decode activation graph, which relays them from
@@ -55,8 +58,11 @@ public class LlamaFP16FFNLayersDecode extends LlamaFP16FFNLayers {
                     state.wrapXb, state.wrapXb2,
                     state.wrapQ, state.wrapK, state.wrapV,
                     state.wrapAtt, state.wrapHb, state.wrapXbFP16);
+            if (splitKvAttentionEnabled()) {
+                layer.transferToDevice(DataTransferMode.FIRST_EXECUTION, llamaState.wrapAttSplit);
+            }
             // Explicit source — must match the TaskGraph name in buildDecodeActivationGraph().
-            layer.consumeFromDevice("decodeActivation", state.wrapKeyCache, state.wrapValueCache);
+            layer.consumeFromDevice("decodeActivation", keyCache, valueCache);
         } else {
             // Layers 1+: use explicit predecessor name for ALL consumed objects.
             // Calling super here would use the no-arg form (source key = own graph name),
@@ -66,9 +72,12 @@ public class LlamaFP16FFNLayersDecode extends LlamaFP16FFNLayers {
                     context,
                     state.wrapXb, state.wrapXb2,
                     state.wrapQ, state.wrapK, state.wrapV,
-                    state.wrapKeyCache, state.wrapValueCache,
+                    keyCache, valueCache,
                     state.wrapAtt, state.wrapHb,
                     state.positionHolder, state.wrapXbFP16);
+            if (splitKvAttentionEnabled()) {
+                layer.consumeFromDevice(pred, llamaState.wrapAttSplit);
+            }
         }
         return layer;
     }
