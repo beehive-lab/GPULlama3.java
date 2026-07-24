@@ -13,13 +13,37 @@ import org.beehive.gpullama3.tornadovm.layers.AbstractLogitsTaskGraph;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid1D;
+import uk.ac.manchester.tornado.api.annotations.Parallel;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
+import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
+import uk.ac.manchester.tornado.cublas.CuBlas;
+import uk.ac.manchester.tornado.cublas.CuBlasLt;
+import uk.ac.manchester.tornado.cublas.enums.CuBlasOperation;
 
 public class LogitsFP16Layer extends AbstractLogitsTaskGraph {
+
+    /**
+     * Vocabulary-projection backend for the logits matvec (hybrid-library experiment):
+     * {@code jit} (default: TornadoVM JIT matvec), {@code gemmEx} (cuBLAS GemmEx, FP16 in /
+     * FP32 out) or {@code lt} (cuBLASLt heuristic-selected FP16 matmul + FP16→FP32 copy task).
+     */
+    static final String LOGITS_LIB = System.getProperty("llama.logitsLib", "jit");
+
+    /** FP16 logits buffer for the cuBLASLt path (Lt FP16 matmul writes half precision). */
+    private HalfFloatArray wrapLogitsFP16;
 
     public LogitsFP16Layer(String name, State state, Weights weights, Configuration config,
             String lastTaskGraphID, SchedulerType schedulerType) {
         super(name, state, weights, config, lastTaskGraphID, schedulerType);
+    }
+
+    /** Elementwise FP16→FP32 copy (cuBLASLt path: the sampler reads FP32 logits on the host). */
+    public static void halfToFloat(FloatArray out, HalfFloatArray in, int size) {
+        for (@Parallel int i = 0; i < size; i++) {
+            float v = in.get(i).getFloat32();
+            out.set(i, v);
+        }
     }
 
     /**
@@ -82,15 +106,39 @@ public class LogitsFP16Layer extends AbstractLogitsTaskGraph {
                 state.tempLogits);       // scale factor from reduction
 
         // === Vocabulary Projection ===
-        logits.task("vocab_proj",
-                TransformerComputeKernelsLayered::matrixVectorGeneric,
-                context,
-                state.wrapXbFP16,                              // input (FP16)
-                state.wrapLogits,                              // output
-                weights.wclsByteArray.asHalfFloatArray(),      // vocabulary weights
-                config.dim(),                                  // input dimension
-                config.vocabularySize(),                       // output dimension
-                LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS);
+        // Row-major logits(vocab) = Wcls(vocab x dim) · x(dim). cuBLAS is column-major, so
+        // Wcls stored row-major is a (dim x vocab) column-major matrix and op(A)=TRANSPOSE
+        // recovers Wcls: gemm(OP_T, OP_N, m=vocab, n=1, k=dim, A=Wcls lda=dim, B=x ldb=dim,
+        // C=logits ldc=vocab).
+        switch (LOGITS_LIB) {
+            case "gemmEx" -> logits.libraryTask("vocab_proj", CuBlas::cublasGemmExFP16FP32,
+                    CuBlasOperation.CUBLAS_OP_T.operation(), CuBlasOperation.CUBLAS_OP_N.operation(),
+                    config.vocabularySize(), 1, config.dim(),
+                    1.0f, weights.wclsByteArray.asHalfFloatArray(), config.dim(),
+                    state.wrapXbFP16, config.dim(),
+                    0.0f, state.wrapLogits, config.vocabularySize());
+            case "lt" -> {
+                wrapLogitsFP16 = new HalfFloatArray(config.vocabularySize());
+                logits.transferToDevice(DataTransferMode.FIRST_EXECUTION, wrapLogitsFP16);
+                logits.libraryTask("vocab_proj", CuBlasLt::ltMatmulFP16,
+                        CuBlasOperation.CUBLAS_OP_T.operation(), CuBlasOperation.CUBLAS_OP_N.operation(),
+                        config.vocabularySize(), 1, config.dim(),
+                        1.0f, weights.wclsByteArray.asHalfFloatArray(), config.dim(),
+                        state.wrapXbFP16, config.dim(),
+                        0.0f, wrapLogitsFP16, config.vocabularySize());
+                logits.task("logits_f32", LogitsFP16Layer::halfToFloat,
+                        state.wrapLogits, wrapLogitsFP16, config.vocabularySize());
+            }
+            default -> logits.task("vocab_proj",
+                    TransformerComputeKernelsLayered::matrixVectorGeneric,
+                    context,
+                    state.wrapXbFP16,                              // input (FP16)
+                    state.wrapLogits,                              // output
+                    weights.wclsByteArray.asHalfFloatArray(),      // vocabulary weights
+                    config.dim(),                                  // input dimension
+                    config.vocabularySize(),                       // output dimension
+                    LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS);
+        }
 
         // === Transfer Results to Host ===
         logits.transferToHost(DataTransferMode.EVERY_EXECUTION, state.wrapLogits);
@@ -102,12 +150,14 @@ public class LogitsFP16Layer extends AbstractLogitsTaskGraph {
     @Override
     public GridScheduler updateGridScheduler(GridScheduler tornadoForwardScheduler) {
         var logitsRMS = WorkerGridFactory.createRmsNormWorker(config.dim(), rmsLocalSize());
-        var vocabSizeRowMajor = config.vocabularySize() * LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS;
-        var vocabWorker = new WorkerGrid1D(vocabSizeRowMajor);
-        vocabWorker.setLocalWork(LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS, 1, 1);
         tornadoForwardScheduler.addWorkerGrid("logits.rms_reduce", logitsRMS);
         tornadoForwardScheduler.addWorkerGrid("logits.rms_apply_fp16", logitsRMS);
-        tornadoForwardScheduler.addWorkerGrid("logits.vocab_proj", vocabWorker);
+        if (LOGITS_LIB.equals("jit")) {
+            var vocabSizeRowMajor = config.vocabularySize() * LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS;
+            var vocabWorker = new WorkerGrid1D(vocabSizeRowMajor);
+            vocabWorker.setLocalWork(LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS, 1, 1);
+            tornadoForwardScheduler.addWorkerGrid("logits.vocab_proj", vocabWorker);
+        }
         return tornadoForwardScheduler;
     }
 
