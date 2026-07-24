@@ -312,7 +312,7 @@ jobs:
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
-          ./llama-tornado --gpu --${{ matrix.backend.name }} \
+          ./llama-tornado --gpu \
             --model $MODELS_DIR/Llama-3.2-1B-Instruct-Q8_0.gguf \
             --prompt "Say hello" \
             --with-prefill-decode
@@ -336,7 +336,7 @@ jobs:
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
-          ./llama-tornado --gpu --${{ matrix.backend.name }} \
+          ./llama-tornado --gpu \
             --model $MODELS_DIR/Llama-3.2-1B-Instruct-Q8_0.gguf \
             --prompt "Say hello" \
             --with-prefill-decode --batch-prefill-size 32
@@ -362,7 +362,7 @@ jobs:
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
-          ./llama-tornado --gpu --ptx \
+          ./llama-tornado --gpu \
             --model $MODELS_DIR/Llama-3.2-1B-Instruct-Q8_0.gguf \
             --prompt "Say hello" \
             --with-prefill-decode \
@@ -388,7 +388,7 @@ jobs:
         run: |
           cd ${{ github.workspace }}
           export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
-          ./llama-tornado --gpu --ptx \
+          ./llama-tornado --gpu \
             --model $MODELS_DIR/Llama-3.2-1B-Instruct-Q8_0.gguf \
             --prompt "Say hello" \
             --with-prefill-decode --batch-prefill-size 32 \

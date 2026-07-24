@@ -51,6 +51,6 @@ for model in "${models[@]}"; do
 
   #java @argfile -cp /home/devoxx2025-demo/java-ai-demos/GPULlama3.java/target/gpu-llama3-0.2.2.jar org.beehive.gpullama3.LlamaApp --model "$model"  --stream true --echo false -p "Who are you?" --instruct
 
-   #./llama-tornado --gpu --opencl --model "$model" --prompt "Who are you?"
+   #./llama-tornado --gpu --model "$model" --prompt "Who are you?"
 done
 

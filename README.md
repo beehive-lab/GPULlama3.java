@@ -66,8 +66,8 @@ GPULlama3ChatModel model = GPULlama3ChatModel.builder()
 Ensure you have the following installed and configured:
 
 - **Java 21**: Required for Vector API support & TornadoVM.
-- [TornadoVM](https://github.com/beehive-lab/TornadoVM) with OpenCL, PTX, or CUDA backends.
-  - The `--cuda` backend requires a TornadoVM build that includes the CUDA backend from [TornadoVM PR #861](https://github.com/beehive-lab/TornadoVM/pull/861). This project currently builds against TornadoVM `5.0.0-jdk21-dev`.
+- [TornadoVM](https://github.com/beehive-lab/TornadoVM) with an OpenCL, PTX, CUDA, or Metal backend. `llama-tornado`/`llamaTornado` auto-detect whichever backend your installed SDK was built with.
+  - The CUDA backend requires a TornadoVM build that includes the CUDA backend from [TornadoVM PR #861](https://github.com/beehive-lab/TornadoVM/pull/861). This project currently builds against TornadoVM `5.0.0-jdk21-dev`.
 - GCC/G++ 13 or newer: Required to build and run TornadoVM native components.
 
 ### Install, Build, and Run
@@ -297,20 +297,28 @@ jbang LlamaTornadoCli.java -m beehive-llama-3.2-1b-instruct-fp16.gguf \
 
 To execute Llama3, or Mistral models with TornadoVM on GPUs use the `llama-tornado` script with the `--gpu` flag.
 
+The TornadoVM backend (OpenCL, PTX, CUDA, or Metal) is auto-detected from your installed
+TornadoVM SDK (`TORNADOVM_HOME/etc/tornado.backend`) - no need to select it manually.
+
 ### Usage Examples
 
 #### Basic Inference
 Run a model with a text prompt:
 
 ```bash
-./llama-tornado --gpu --verbose-init --opencl --model beehive-llama-3.2-1b-instruct-fp16.gguf --prompt "Explain the benefits of GPU acceleration."
+./llama-tornado --gpu --verbose-init --model beehive-llama-3.2-1b-instruct-fp16.gguf --prompt "Explain the benefits of GPU acceleration."
 ```
 
-Select a backend explicitly with `--opencl`, `--ptx`, or `--cuda` (NVIDIA), or `--metal` (Apple Silicon). For example, to run on the CUDA backend:
+The script prints which backend it detected, e.g. `Detected TornadoVM backend: cuda (from .../etc/tornado.backend)`.
+To run against a different backend, point `TORNADOVM_HOME` at an SDK built for that backend instead - or,
+if your SDK was built with more than one backend (e.g. `cuda-opencl`), pass `--opencl`/`--ptx`/`--cuda`/`--metal`
+to force one of the installed backends without needing a separate SDK:
 
 ```bash
-./llama-tornado --gpu --cuda --model beehive-llama-3.2-1b-instruct-fp16.gguf --prompt "Explain the benefits of GPU acceleration."
+./llama-tornado --gpu --opencl --model beehive-llama-3.2-1b-instruct-fp16.gguf --prompt "Explain the benefits of GPU acceleration."
 ```
+
+These flags error out if the requested backend isn't part of the installed SDK.
 
 #### GPU Execution (FP16 Model)
 Enable GPU acceleration with Q8_0 quantization:
@@ -323,7 +331,14 @@ Enable GPU acceleration with Q8_0 quantization:
 `llamaTornado` is a zero-dependency Java 25 single-file script that replaces the Python launcher. It requires `java 25+` on your PATH:
 
 ```bash
-./llamaTornado --gpu --verbose-init --metal --model /Users/abien/work/workspaces/llms/Mistral-7B-Instruct-v0.3.Q8_0.gguf --prompt "what is java"
+./llamaTornado --gpu --verbose-init --model /Users/abien/work/workspaces/llms/Mistral-7B-Instruct-v0.3.Q8_0.gguf --prompt "what is java"
+```
+
+Same backend auto-detection as `llama-tornado`, including the `--opencl`/`--ptx`/`--cuda`/`--metal`
+override for SDKs built with more than one backend:
+
+```bash
+./llamaTornado --gpu --opencl --model /Users/abien/work/workspaces/llms/Mistral-7B-Instruct-v0.3.Q8_0.gguf --prompt "what is java"
 ```
 
 -----------
@@ -348,7 +363,6 @@ docker run --rm -it --gpus all \
   beehivelab/gpullama3.java-nvidia-openjdk-opencl \
   /gpullama3/GPULlama3.java/llama-tornado \
   --gpu --verbose-init \
-  --opencl \
   --model /data/Llama-3.2-1B-Instruct.FP16.gguf \
   --prompt "Tell me a joke"
 ```
@@ -399,43 +413,66 @@ Supported command-line options include:
 
 ```bash
 cmd ➜ llama-tornado --help
-usage: llama-tornado [-h] --model MODEL_PATH [--prompt PROMPT] [-sp SYSTEM_PROMPT] [--temperature TEMPERATURE] [--top-p TOP_P] [--seed SEED] [-n MAX_TOKENS]
-                     [--stream STREAM] [--echo ECHO] [-i] [--instruct] [--gpu] [--opencl] [--ptx] [--cuda] [--metal] [--gpu-memory GPU_MEMORY] [--heap-min HEAP_MIN] [--heap-max HEAP_MAX]
-                     [--debug] [--profiler] [--profiler-dump-dir PROFILER_DUMP_DIR] [--print-bytecodes] [--print-threads] [--print-kernel] [--full-dump]
-                     [--show-command] [--execute-after-show] [--opencl-flags OPENCL_FLAGS] [--max-wait-events MAX_WAIT_EVENTS] [--verbose]
+usage: llama-tornado [-h] --model MODEL_PATH [--prompt PROMPT]
+                     [-sp SYSTEM_PROMPT] [--temperature TEMPERATURE]
+                     [--top-p TOP_P] [--seed SEED] [-n MAX_TOKENS]
+                     [--stream STREAM] [--echo ECHO] [--suffix SUFFIX] [-i]
+                     [--instruct] [--server] [--port PORT] [--bench]
+                     [--bench-args BENCH_ARGS] [--gpu] [--opencl] [--ptx]
+                     [--cuda] [--metal] [--gpu-memory GPU_MEMORY]
+                     [--heap-min HEAP_MIN] [--heap-max HEAP_MAX] [--debug]
+                     [--profiler] [--profiler-dump-dir PROFILER_DUMP_DIR]
+                     [--print-bytecodes] [--print-threads] [--print-kernel]
+                     [--full-dump] [--verbose-init] [--show-command]
+                     [--execute-after-show] [--with-prefill-decode]
+                     [--batch-prefill-size N] [--cuda-graphs]
+                     [--opencl-flags OPENCL_FLAGS]
+                     [--max-wait-events MAX_WAIT_EVENTS] [--verbose]
 
-GPU-accelerated LLaMA.java model runner using TornadoVM
+GPU-accelerated LLM runner using TornadoVM
+(the TornadoVM backend is auto-detected from TORNADOVM_HOME/etc/tornado.backend)
 
 options:
   -h, --help            show this help message and exit
-  --model MODEL_PATH    Path to the LLaMA model file (e.g., beehive-llama-3.2-8b-instruct-fp16.gguf) (default: None)
+  --model MODEL_PATH    Path to the LLM gguf file (e.g.,
+                        Llama-3.2-1B-Instruct-Q8_0.gguf)
 
 LLaMA Configuration:
   --prompt PROMPT       Input prompt for the model (default: None)
-  -sp SYSTEM_PROMPT, --system-prompt SYSTEM_PROMPT
+  -sp, --system-prompt SYSTEM_PROMPT
                         System prompt for the model (default: None)
   --temperature TEMPERATURE
                         Sampling temperature (0.0 to 2.0) (default: 0.1)
   --top-p TOP_P         Top-p sampling parameter (default: 0.95)
   --seed SEED           Random seed (default: current timestamp) (default: None)
-  -n MAX_TOKENS, --max-tokens MAX_TOKENS
+  -n, --max-tokens MAX_TOKENS
                         Maximum number of tokens to generate (default: 512)
   --stream STREAM       Enable streaming output (default: True)
   --echo ECHO           Echo the input prompt (default: False)
-  --suffix SUFFIX       Suffix for fill-in-the-middle request (Codestral) (default: None)
+  --suffix SUFFIX       Suffix for fill-in-the-middle request (Codestral)
+                        (default: None)
 
 Mode Selection:
   -i, --interactive     Run in interactive/chat mode (default: False)
   --instruct            Run in instruction mode (default) (default: True)
 
+OpenAI-compatible server:
+  --server              Run the OpenAI-compatible HTTP server instead of inference (default: False)
+  --port PORT           Server port (default 8080) (default: 8080)
+
+Benchmark (llama-bench style):
+  --bench               Run the llama-bench-style benchmark (bench.LlamaBench) instead of inference (default: False)
+  --bench-args BENCH_ARGS
+                        Extra benchmark options (use --bench-args="..."), e.g. "-p 512 -n 128 -d 0,4096 -r 5 -o md" (see LlamaBench) (default: )
+
 Hardware Configuration:
   --gpu                 Enable GPU acceleration (default: False)
-  --opencl              Use OpenCL backend (default) (default: None)
-  --ptx                 Use PTX backend (default: None)
-  --cuda                Use CUDA backend (requires TornadoVM built with the CUDA backend) (default: None)
-  --metal               Use Apple Metal backend (macOS only) (default: None)
+  --opencl              Force the OpenCL backend when the installed TornadoVM SDK has more than one (default: auto-detected) (default: None)
+  --ptx                 Force the PTX backend when the installed TornadoVM SDK has more than one (default: auto-detected) (default: None)
+  --cuda                Force the CUDA backend when the installed TornadoVM SDK has more than one (default: auto-detected) (default: None)
+  --metal               Force the Metal backend when the installed TornadoVM SDK has more than one (default: auto-detected) (default: None)
   --gpu-memory GPU_MEMORY
-                        GPU memory allocation (default: 7GB)
+                        GPU memory allocation (default: 14GB)
   --heap-min HEAP_MIN   Minimum JVM heap size (default: 20g)
   --heap-max HEAP_MAX   Maximum JVM heap size (default: 20g)
 
@@ -443,7 +480,7 @@ Debug and Profiling:
   --debug               Enable debug output (default: False)
   --profiler            Enable TornadoVM profiler (default: False)
   --profiler-dump-dir PROFILER_DUMP_DIR
-                        Directory for profiler output (default: /home/mikepapadim/repos/gpu-llama3.java/prof.json)
+                        Directory for profiler output (default: None)
 
 TornadoVM Execution Verbose:
   --print-bytecodes     Print bytecodes (tornado.print.bytecodes=true) (default: False)
@@ -455,6 +492,15 @@ TornadoVM Execution Verbose:
 Command Display Options:
   --show-command        Display the full Java command that will be executed (default: False)
   --execute-after-show  Execute the command after showing it (use with --show-command) (default: False)
+
+Prefill-Decode Optimizations:
+  --with-prefill-decode
+                        Enable single-token prefill decode (default: False)
+  --batch-prefill-size N
+                        Enable batching in prefill when --with-prefill-decode is active and N>1. (default: None)
+
+Advanced CUDA Features:
+  --cuda-graphs         Enable CUDA graph capture/replay (llama.cudaGraphs=true); PTX backend only. (default: False)
 
 Advanced Options:
   --opencl-flags OPENCL_FLAGS
@@ -471,7 +517,7 @@ Serve the model behind the HTTP API OpenAI clients already speak — no external
 (JDK `HttpServer`), streaming (SSE) and non-streaming.
 
 ```bash
-llama-tornado --gpu --cuda --model model.gguf --server --port 8080
+llama-tornado --gpu --model model.gguf --server --port 8080
 # or directly:
 java ... org.beehive.gpullama3.server.OpenAIServer --model model.gguf --port 8080 --gpu
 ```
@@ -503,10 +549,10 @@ the forward pass only (no tokenization, no sampling), matching llama-bench metho
 
 ```bash
 # defaults: -p 512 -n 128 -r 5, markdown output
-llama-tornado --gpu --cuda --model model1.gguf --bench
+llama-tornado --gpu --model model1.gguf --bench
 
 # multiple models, custom matrix, CSV
-llama-tornado --gpu --cuda --model model1.gguf --bench \
+llama-tornado --gpu --model model1.gguf --bench \
     --bench-args="-m model2.gguf -p 256,512 -n 64,128 -pg 512,128 -d 0,4096 -r 5 -o csv"
 ```
 
@@ -552,7 +598,7 @@ View TornadoVM's internal behavior:
   - **Support for GGUF format models** with full FP16 and partial support for Q8_0 and Q4_0 quantization.
   - **Instruction-following and chat modes** for various use cases.
   - **Interactive CLI** with `--interactive` and `--instruct` modes.
-  - **Flexible backend switching** - choose OpenCL, PTX, or CUDA at runtime (need to build TornadoVM with the chosen backends enabled).
+  - **Automatic backend detection** - `llama-tornado`/`llamaTornado` detect and use whichever backend (OpenCL, PTX, CUDA, or Metal) your installed TornadoVM SDK was built with.
   - **Cross-platform compatibility**:
     - ✅ NVIDIA GPUs (OpenCL, PTX & CUDA)
     - ✅ Intel GPUs (OpenCL)
