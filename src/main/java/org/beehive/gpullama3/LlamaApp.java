@@ -14,6 +14,29 @@ public class LlamaApp {
     public static final boolean USE_VECTOR_API = Boolean.parseBoolean(System.getProperty("llama.VectorAPI", "true"));   // Enable Java Vector API for CPU acceleration
     public static final boolean SHOW_PERF_INTERACTIVE = Boolean.parseBoolean(System.getProperty("llama.ShowPerfInteractive", "true")); // Show performance metrics in interactive mode
 
+    /**
+     * On-device greedy sampling ({@code -Dllama.deviceSample=true}) keeps the logits on the GPU
+     * and returns only the argmax token id. It is only valid on the GPU FP16 greedy path for the
+     * models whose decode loop reads {@code state.sampledToken} (Llama / Mistral / Qwen3). For any
+     * other configuration the host still needs the full logits row, so clear the flag here —
+     * before the logits task graph (which reads it as a static-final) is first built.
+     */
+    private static void guardDeviceSample(Model model, Options options) {
+        if (!Boolean.getBoolean("llama.deviceSample")) {
+            return;
+        }
+        boolean greedy = options.temperature() == 0.0f;
+        boolean fp16 = "FP16".equals(model.configuration().quantization());
+        var mt = model.getModelType();
+        boolean wiredLoop = mt == org.beehive.gpullama3.model.ModelType.LLAMA_3
+                || mt == org.beehive.gpullama3.model.ModelType.MISTRAL
+                || mt == org.beehive.gpullama3.model.ModelType.QWEN_3;
+        if (!(options.useTornadovm() && greedy && fp16 && wiredLoop)) {
+            System.err.println("[deviceSample] ignored — requires GPU + greedy (temperature 0) + FP16 + Llama/Mistral/Qwen3");
+            System.clearProperty("llama.deviceSample");
+        }
+    }
+
     private static void runSingleInstruction(Model model, Sampler sampler, Options options) {
         String response = model.runInstructOnce(sampler, options);
         System.out.println(response);
@@ -36,6 +59,7 @@ public class LlamaApp {
     static void main(String[] args) throws IOException {
         Options options = Options.parseOptions(args);
         Model model = loadModel(options);
+        guardDeviceSample(model, options);
         Sampler sampler = createSampler(model, options);
 
         if (options.interactive()) {

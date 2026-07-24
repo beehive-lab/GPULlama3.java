@@ -8,10 +8,52 @@ import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.IntArray;
 
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 
 public class TransformerComputeKernels {
+
+    /**
+     * On-device greedy sampling: single-workgroup argmax over the {@code vocab} logits.
+     * Each thread scans a strided slice tracking its local (max value, index); a local-memory
+     * tree reduction picks the global argmax and lane 0 writes the token id to {@code out[0]}.
+     * Lets the decode step transfer only that one int to the host instead of the whole
+     * vocab-sized logits row (D2H copy + host scan removed). Launch with one workgroup:
+     * {@code global == local == localMemSize}.
+     */
+    public static void argmaxLogits(KernelContext context, FloatArray logits, IntArray out, int vocab, int localMemSize) {
+        int tid = context.localIdx;
+        int localSz = context.localGroupSizeX;
+        float[] vals = context.allocateFloatLocalArray(localMemSize);
+        int[] idxs = context.allocateIntLocalArray(localMemSize);
+
+        float best = Float.NEGATIVE_INFINITY;
+        int bestIdx = 0;
+        for (int i = tid; i < vocab; i += localSz) {
+            float v = logits.get(i);
+            if (v > best) {
+                best = v;
+                bestIdx = i;
+            }
+        }
+        vals[tid] = best;
+        idxs[tid] = bestIdx;
+        context.localBarrier();
+
+        for (int s = localSz / 2; s > 0; s >>= 1) {
+            if (tid < s) {
+                if (vals[tid + s] > vals[tid]) {
+                    vals[tid] = vals[tid + s];
+                    idxs[tid] = idxs[tid + s];
+                }
+            }
+            context.localBarrier();
+        }
+        if (tid == 0) {
+            out.set(0, idxs[0]);
+        }
+    }
 
     /**
      * Default constructor for the TransformerComputeKernels class.

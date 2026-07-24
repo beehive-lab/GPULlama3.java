@@ -59,6 +59,9 @@ public abstract class State {
     public final FloatArray wrapKeyCache;   // FloatArray wrapper for the key cache, optimized for TornadoVM.
     public final FloatArray wrapValueCache; // FloatArray wrapper for the value cache, optimized for TornadoVM.
     public final IntArray positionHolder;
+    // On-device greedy sampling: the GPU argmax kernel writes the sampled token id here
+    // (element 0), so only 1 int crosses to the host instead of the full vocab logits row.
+    public final IntArray sampledToken = new IntArray(1);
 
     public TornadoNativeArray embeddingX;
 
