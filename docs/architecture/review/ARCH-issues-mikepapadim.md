@@ -28,6 +28,10 @@ open PR, and those are the ones worth settling first.
 | ARCH-13 | In-flight PRs are not sequenced against the phases | Medium |
 | ARCH-14 | Multi-device execution absent from the target architecture | Low |
 | ARCH-15 | Public API does not expose quantization of a loaded model | Low |
+| ARCH-16 | No metrics seam, and device-level metrics cannot flow to their consumer | High |
+| ARCH-17 | Observability is scheduled last, but earlier phases and the server need it now | Medium |
+| ARCH-18 | No logging policy for an embeddable library | Medium |
+| ARCH-19 | Serving-level metrics are undefined | Medium |
 
 ---
 
@@ -577,6 +581,161 @@ layer — the exact leak ADR-004 prohibits.
 
 **Impact:**
 `ModelInfo`; the runtime `DataType` introduced in phase 4; no behavioural change.
+
+**Status:**
+Open
+
+---
+
+## ARCH-16
+
+**Title:**
+No metrics seam, and device-level metrics cannot flow to their consumer
+
+**Section:**
+`target-architecture.md` § Layering; `migration-roadmap.md` § Phase 10 — Memory planning, diagnostics
+and developer experience
+
+**Severity:**
+High
+
+**Observation:**
+Observability appears once, in phase 10, whose affected packages include `auxiliary/metrics/` and whose
+scope is "diagnostics: which backend and device were chosen and why… where time goes (load / prefill /
+decode)". No layer in the architecture owns metric emission, and no type carries it. Meanwhile Rule 8's
+enforceable form forbids `..backend..` from depending on `..api..` or `..generation..`, so a metrics
+facility that lives in the API layer cannot be called from where device timings originate. TornadoVM
+already exposes per-execution device data (kernel time, copy-in/copy-out, device memory); no file in
+`main` references `ProfilerMode`, `getProfilerResult` or `TornadoProfiler`, so none of it is surfaced
+today.
+
+**Suggestion:**
+Define a metrics sink interface low in the stack (runtime layer, below the backend SPI's consumers) that
+the backend writes into and the API/engine read from, and state that the backend contributes device
+timings through it. Sink implementations (in-memory, bench recorder, exporter) live above; the interface
+does not.
+
+**Rationale:**
+Metrics have the opposite dependency direction to everything else in the design: the data is produced at
+the bottom and consumed at the top. If the seam is not placed explicitly below the producers, either the
+backend acquires an upward dependency — the exact thing the rules forbid — or device timings are simply
+never available, which is what the current state (profiler unused) shows happens by default. "Where time
+goes" cannot be answered for the GPU path without it.
+
+**Impact:**
+`auxiliary/RunMetrics` (today a static holder) and `auxiliary/metrics/`; the Tornado backend, which
+would gain a reporting call at execution boundaries; phase 10 scope; `TornadoProfilerResult` becomes
+reachable.
+
+**Status:**
+Open
+
+---
+
+## ARCH-17
+
+**Title:**
+Observability is scheduled last, but earlier phases and the server need it now
+
+**Section:**
+`migration-roadmap.md` § Phase dependency summary; § Phase 10
+
+**Severity:**
+Medium
+
+**Observation:**
+Observability work sits in phase 10 of 10. Principle 4 states that performance is a correctness
+criterion, and phases 3, 5, 6 and 7 all move execution-path code. The OpenAI-compatible server already
+exists and has no metrics surface.
+
+**Suggestion:**
+Split the phase: land the minimal metrics seam and a small set of counters/timers (load, prefill,
+decode, tokens/s) in an early phase alongside the guardrails, and keep memory planning, error-message
+work and exporters in phase 10.
+
+**Rationale:**
+Every phase that claims "no behaviour change" needs evidence, and per-phase evidence is exactly what a
+timer produces. Deferring the seam to the end means the phases that most need measurement run without
+it, and the server ships unobservable in the meantime. Related to ARCH-06 (numerical gate) and ARCH-11
+(benchmark gate), but distinct: those are CI gates for the refactor, this is runtime telemetry for
+users and operators.
+
+**Impact:**
+Phase ordering only; the seam itself is ARCH-16.
+
+**Status:**
+Open
+
+---
+
+## ARCH-18
+
+**Title:**
+No logging policy for an embeddable library
+
+**Section:**
+`vision.md` § Target users; `public-api.md` § What must never leak
+
+**Severity:**
+Medium
+
+**Observation:**
+The vision targets embedding in JVM applications (LangChain4j, Quarkus, user services). The documents
+say nothing about logging: no logging facade is named, and `pom.xml` declares no logging dependency. On
+`main`, `System.out` / `System.err` appear 65 times across 20 main-source files, including the
+generation loop.
+
+**Suggestion:**
+State a logging policy in the public-API document: the library emits through a facade (or a
+no-op-by-default interface it owns), never to `System.out`/`System.err`; console output belongs to the
+CLI integration only. Add it as a dependency rule with the current occurrences as the allowlist, the
+same way the TornadoVM-import rule works.
+
+**Rationale:**
+An embedded library that prints to stdout is unusable in a server: it corrupts structured logs and
+cannot be silenced or routed. This is the same class of concern as P2 (Model owns the application loop)
+and will otherwise be discovered by the first Quarkus user rather than by a rule.
+
+**Impact:**
+The 20 files containing console I/O, principally `Model.runInteractive` / `runInstructOnce`; the CLI,
+which keeps its printing; one new dependency rule and allowlist.
+
+**Status:**
+Open
+
+---
+
+## ARCH-19
+
+**Title:**
+Serving-level metrics are undefined
+
+**Section:**
+`migration-roadmap.md` § Phase 10; `public-api.md` § `GenerationResult`
+
+**Severity:**
+Medium
+
+**Observation:**
+The diagnostics scope is per-run and single-sequence: load, prefill, decode, chosen device and policy.
+There is no notion of the quantities that describe a serving system — time to first token, queue wait,
+batch occupancy, KV block utilisation, preemptions, admitted versus rejected requests.
+
+**Suggestion:**
+Define these as part of the engine tier proposed in ARCH-02, so the scheduler and KV manager emit them
+through the ARCH-16 seam, and expose the per-request subset (TTFT, queue wait, tokens generated) on the
+result type returned to callers.
+
+**Rationale:**
+These are the numbers that decide whether a batching scheduler and a block pool are working; without
+them, tuning batch size, block count or admission policy is guesswork, and a regression in occupancy is
+invisible while tokens/s for a single request looks unchanged. They also have to be designed with the
+engine — retrofitting queue-wait accounting after the scheduler exists means threading timestamps
+through code that was not built to carry them.
+
+**Impact:**
+The engine tier (ARCH-02) and the promotion of `bench/BatchedDecodeEngine` (ARCH-04); `GenerationResult`
+/ `GenerationMetrics`; the server's ability to report usage.
 
 **Status:**
 Open
