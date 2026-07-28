@@ -336,6 +336,121 @@ public final class TransformerBatchPrefillKernels {
         }
     }
 
+    /**
+     * Batched DECODE flash attention: B independent sequences, one query token
+     * each. Identical online-softmax math to {@link #batchedFlashAttention}, but
+     * each batch slot has its OWN KV cache region and its OWN position, so slot
+     * {@code b} attends positions {@code 0..seqPositions[b]} of its own cache —
+     * the shape produced by batching B concurrent decode requests.
+     *
+     * <p>KV cache layout: one contiguous region of {@code numLayers *
+     * contextLength * kvDim} per slot, so the base for slot b, layer L is
+     * {@code b*numLayers*contextLength*kvDim + L*contextLength*kvDim}.</p>
+     *
+     * <p>One workgroup per (batchIdx, head): {@code groupId = batchIdx*nHeads + h}.</p>
+     */
+    public static void batchedDecodeAttention(KernelContext context,
+                                              IntArray seqPositions,
+                                              FloatArray wrapQBatch,
+                                              FloatArray wrapKeyCache,
+                                              FloatArray wrapValueCache,
+                                              FloatArray wrapXbBatch,
+                                              int nHeads, int headSize,
+                                              int kvDim, int kvMul,
+                                              int layerIndex, int numLayers, int contextLength, int dim) {
+        int tid = context.localIdx;
+        int groupId = context.groupIdx;
+        int localSz = context.localGroupSizeX;
+
+        int batchIdx = groupId / nHeads;
+        int h = groupId % nHeads;
+        int pos = seqPositions.get(batchIdx);                                 // per-slot position
+        int loff = batchIdx * (numLayers * contextLength * kvDim) + layerIndex * contextLength * kvDim; // per-slot KV base
+        int kvHeadIdx = h / kvMul;
+        int BLOCK_C = 16;
+
+        float[] qShared = context.allocateFloatLocalArray(headSize);
+        float[] kTile = context.allocateFloatLocalArray(BLOCK_C * headSize);
+        float[] vTile = context.allocateFloatLocalArray(BLOCK_C * headSize);
+        float[] sTile = context.allocateFloatLocalArray(BLOCK_C);
+        float[] maxHolder = context.allocateFloatLocalArray(1);
+
+        int qOffset = batchIdx * dim + h * headSize;
+        for (int i = tid; i < headSize; i += localSz) {
+            qShared[i] = wrapQBatch.get(qOffset + i);
+        }
+        context.localBarrier();
+
+        float maxScore = Float.NEGATIVE_INFINITY;
+        float sumExp = 0.0f;
+        float[] output = new float[headSize];
+        for (int i = 0; i < headSize; i++) {
+            output[i] = 0.0f;
+        }
+
+        for (int tileC = 0; tileC <= pos; tileC += BLOCK_C) {
+            int tileEnd = Math.min(tileC + BLOCK_C - 1, pos);
+
+            for (int t = tileC + tid; t <= tileEnd; t += localSz) {
+                int tInTile = t - tileC;
+                int tileMOff = tInTile * headSize;
+                for (int d = 0; d < headSize; d++) {
+                    int kvOff = loff + t * kvDim + kvHeadIdx * headSize + d;
+                    kTile[tileMOff + d] = wrapKeyCache.get(kvOff);
+                    vTile[tileMOff + d] = wrapValueCache.get(kvOff);
+                }
+            }
+            context.localBarrier();
+
+            for (int t = tileC + tid; t <= tileEnd; t += localSz) {
+                int tInTile = t - tileC;
+                float score = 0.0f;
+                for (int d = 0; d < headSize; d++) {
+                    score += qShared[d] * kTile[tInTile * headSize + d];
+                }
+                sTile[tInTile] = score / TornadoMath.sqrt(headSize);
+            }
+            context.localBarrier();
+
+            float tileMax = Float.NEGATIVE_INFINITY;
+            for (int t = 0; t <= tileEnd - tileC; t++) {
+                if (sTile[t] > tileMax) {
+                    tileMax = sTile[t];
+                }
+            }
+            if (tid == 0) {
+                maxHolder[0] = tileMax;
+            }
+            context.localBarrier();
+            float curTileMax = maxHolder[0];
+
+            float newMax = Math.max(maxScore, curTileMax);
+            if (newMax != maxScore && maxScore != Float.NEGATIVE_INFINITY) {
+                float scale = TornadoMath.exp(maxScore - newMax);
+                sumExp *= scale;
+                for (int d = 0; d < headSize; d++) {
+                    output[d] *= scale;
+                }
+            }
+            maxScore = newMax;
+
+            for (int t = 0; t <= tileEnd - tileC; t++) {
+                float expScore = TornadoMath.exp(sTile[t] - maxScore);
+                sumExp += expScore;
+                for (int d = 0; d < headSize; d++) {
+                    output[d] += expScore * vTile[t * headSize + d];
+                }
+            }
+            context.localBarrier();
+        }
+
+        float norm = (sumExp > 0.0f) ? (1.0f / sumExp) : 0.0f;
+        int xbOffset = batchIdx * dim + h * headSize;
+        for (int d = tid; d < headSize; d += localSz) {
+            wrapXbBatch.set(xbOffset + d, output[d] * norm);
+        }
+    }
+
     // ── Output / FFN Projections ─────────────────────────────────────────────
 
     /**
@@ -1515,6 +1630,402 @@ public final class TransformerBatchPrefillKernels {
         attnOutFP16.set(outOffset + tid, new HalfFloat(acc0 * norm));
         if (d1 < headSize) {
             attnOutFP16.set(outOffset + d1, new HalfFloat(acc1 * norm));
+        }
+    }
+
+    // ── Batched DECODE variants (per-slot KV cache + per-slot position) ──────
+    //
+    // These two kernels are the only semantic delta between batched PREFILL (B
+    // tokens of ONE sequence, shared causal KV) and batched DECODE (B independent
+    // sequences, each with its own KV region and its own position). The math is
+    // identical to the *Packed / *FP16Out prefill kernels above; only the KV
+    // addressing changes:
+    //   pos  = seqPositions[batchIdx]                                  (per slot)
+    //   base = batchIdx*(numLayers*ctx*kvDim) + layer*ctx*kvDim        (per slot)
+    // The KV cache is therefore sized B*numLayers*contextLength*kvDim.
+
+    /**
+     * Per-slot RoPE + KV-cache write over the packed QKV buffer (decode).
+     *
+     * <p>Fork of {@link #batchedRopeWithKVCachePacked}: each batch slot rotates at
+     * its own position {@code seqPositions[batchIdx]} and writes K/V into its own
+     * KV region ({@code batchIdx} stride = {@code numLayers*contextLength*kvDim}).</p>
+     */
+    public static void batchedDecodeRopeWithKVCachePacked(KernelContext context,
+                                                          IntArray seqPositions,
+                                                          FloatArray qkvBatch,
+                                                          FloatArray wrapKeyCache,
+                                                          FloatArray wrapValueCache,
+                                                          int kvDim, int headSize,
+                                                          int layerIndex, int numLayers,
+                                                          int contextLength, int dim) {
+        int globalIdx = context.globalIdx;
+        int halfDim = dim / 2;
+        int batchIdx = globalIdx / halfDim;
+        int pairIdx = globalIdx % halfDim;
+        int i = pairIdx * 2;
+        int qkvStride = dim + 2 * kvDim;
+
+        int pos = seqPositions.get(batchIdx);
+        int qOffset = batchIdx * qkvStride;
+        int kOffset = batchIdx * qkvStride + dim;
+        int vOffset = batchIdx * qkvStride + dim + kvDim;
+
+        if (i + 1 < dim) {
+            int head_dim = i % headSize;
+            float freq = 1.0f / TornadoMath.pow(50000.0f, head_dim / (float) headSize);
+            float val = pos * freq;
+            float fcr = TornadoMath.cos(val);
+            float fci = TornadoMath.sin(val);
+
+            float v0q = qkvBatch.get(qOffset + i);
+            float v1q = qkvBatch.get(qOffset + i + 1);
+            qkvBatch.set(qOffset + i, v0q * fcr - v1q * fci);
+            qkvBatch.set(qOffset + i + 1, v0q * fci + v1q * fcr);
+
+            if (i + 1 < kvDim) {
+                float v0k = qkvBatch.get(kOffset + i);
+                float v1k = qkvBatch.get(kOffset + i + 1);
+                float rotK0 = v0k * fcr - v1k * fci;
+                float rotK1 = v0k * fci + v1k * fcr;
+
+                int slotBase = batchIdx * (numLayers * contextLength * kvDim);
+                int cacheOff = slotBase + layerIndex * contextLength * kvDim + pos * kvDim;
+                wrapKeyCache.set(cacheOff + i, rotK0);
+                wrapKeyCache.set(cacheOff + i + 1, rotK1);
+                wrapValueCache.set(cacheOff + i, qkvBatch.get(vOffset + i));
+                wrapValueCache.set(cacheOff + i + 1, qkvBatch.get(vOffset + i + 1));
+            }
+        }
+    }
+
+    /**
+     * Per-slot flash attention over the packed QKV buffer, FP16 output (decode).
+     *
+     * <p>Fork of {@link #batchedFlashAttentionFP16Out}: each batch slot attends
+     * over {@code 0..seqPositions[batchIdx]} of its OWN KV region. Same
+     * register-partitioned P·V accumulation and FP16 emission.</p>
+     *
+     * <p>Requires headSize <= 2*localSz (localSz = min(headSize, 128)).</p>
+     */
+    public static void batchedDecodeAttentionFP16Out(KernelContext context,
+                                                     IntArray seqPositions,
+                                                     FloatArray qkvBatch,
+                                                     FloatArray wrapKeyCache,
+                                                     FloatArray wrapValueCache,
+                                                     HalfFloatArray attnOutFP16,
+                                                     int nHeads, int headSize,
+                                                     int kvDim, int kvMul,
+                                                     int layerIndex, int numLayers,
+                                                     int contextLength, int dim) {
+        int tid = context.localIdx;
+        int groupId = context.groupIdx;
+        int localSz = context.localGroupSizeX;
+
+        int batchIdx = groupId / nHeads;
+        int h = groupId % nHeads;
+        int pos = seqPositions.get(batchIdx);
+        int loff = batchIdx * (numLayers * contextLength * kvDim) + layerIndex * contextLength * kvDim;
+        int kvHeadIdx = h / kvMul;
+        int BLOCK_C = 16;
+        int qkvStride = dim + 2 * kvDim;
+
+        float[] qShared = context.allocateFloatLocalArray(headSize);
+        float[] kTile = context.allocateFloatLocalArray(BLOCK_C * headSize);
+        float[] vTile = context.allocateFloatLocalArray(BLOCK_C * headSize);
+        float[] sTile = context.allocateFloatLocalArray(BLOCK_C);
+
+        int qOffset = batchIdx * qkvStride + h * headSize;
+        for (int i = tid; i < headSize; i += localSz) {
+            qShared[i] = qkvBatch.get(qOffset + i);
+        }
+        context.localBarrier();
+
+        float maxScore = Float.NEGATIVE_INFINITY;
+        float sumExp = 0.0f;
+        float acc0 = 0.0f;
+        float acc1 = 0.0f;
+        int d1 = tid + localSz;
+
+        for (int tileC = 0; tileC <= pos; tileC += BLOCK_C) {
+            int tileEnd = Math.min(tileC + BLOCK_C - 1, pos);
+            int tileLen = tileEnd - tileC + 1;
+
+            for (int idx = tid; idx < tileLen * headSize; idx += localSz) {
+                int tInTile = idx / headSize;
+                int d = idx % headSize;
+                int kvOff = loff + (tileC + tInTile) * kvDim + kvHeadIdx * headSize + d;
+                kTile[tInTile * headSize + d] = wrapKeyCache.get(kvOff);
+                vTile[tInTile * headSize + d] = wrapValueCache.get(kvOff);
+            }
+            context.localBarrier();
+
+            for (int t = tileC + tid; t <= tileEnd; t += localSz) {
+                int tInTile = t - tileC;
+                float score = 0.0f;
+                for (int d = 0; d < headSize; d++) {
+                    score += qShared[d] * kTile[tInTile * headSize + d];
+                }
+                sTile[tInTile] = score / TornadoMath.sqrt(headSize);
+            }
+            context.localBarrier();
+
+            float tileMax = Float.NEGATIVE_INFINITY;
+            for (int t = 0; t < tileLen; t++) {
+                if (sTile[t] > tileMax) {
+                    tileMax = sTile[t];
+                }
+            }
+
+            float newMax = Math.max(maxScore, tileMax);
+            if (maxScore != Float.NEGATIVE_INFINITY && newMax != maxScore) {
+                float corr = TornadoMath.exp(maxScore - newMax);
+                sumExp *= corr;
+                acc0 *= corr;
+                acc1 *= corr;
+            }
+            maxScore = newMax;
+
+            for (int t = 0; t < tileLen; t++) {
+                float p = TornadoMath.exp(sTile[t] - maxScore);
+                sumExp += p;
+                acc0 += p * vTile[t * headSize + tid];
+                if (d1 < headSize) {
+                    acc1 += p * vTile[t * headSize + d1];
+                }
+            }
+            context.localBarrier();
+        }
+
+        float norm = (sumExp > 0.0f) ? (1.0f / sumExp) : 0.0f;
+        int outOffset = batchIdx * dim + h * headSize;
+        attnOutFP16.set(outOffset + tid, new HalfFloat(acc0 * norm));
+        if (d1 < headSize) {
+            attnOutFP16.set(outOffset + d1, new HalfFloat(acc1 * norm));
+        }
+    }
+
+    // ── Paged KV variants (block-table indirection) ─────────────────────────
+    //
+    // KV lives in a global pool of fixed-size blocks. A block holds `blockSize`
+    // consecutive positions of ONE sequence across ALL layers:
+    //   pool[ physBlock*(numLayers*blockSize*kvDim) + layer*(blockSize*kvDim)
+    //         + (pos % blockSize)*kvDim + c ]
+    // The per-slot block table maps a logical block to a physical one:
+    //   physBlock = blockTable[batchIdx*maxBlocksPerSlot + pos/blockSize]
+    // This removes the fixed per-slot context reservation of the contiguous cache:
+    // slots draw blocks from a shared pool only for the tokens they actually hold,
+    // so the pool can be far smaller than B*ctx (and blocks can be shared for
+    // prefix caching).
+
+    /**
+     * Paged per-slot RoPE + KV write (Llama adjacent-pair). {@code blockCfg} packs
+     * {@code blockSize | (maxBlocksPerSlot << 16)} to stay within the task arg limit.
+     */
+    public static void batchedDecodePagedRopeWithKVCachePacked(KernelContext context,
+                                                              IntArray seqPositions,
+                                                              IntArray blockTable,
+                                                              FloatArray qkvBatch,
+                                                              FloatArray keyPool,
+                                                              FloatArray valuePool,
+                                                              int kvDim, int headSize,
+                                                              int layerIndex, int numLayers,
+                                                              int blockCfg, int dim) {
+        int blockSize = blockCfg & 0xFFFF;
+        int maxBlocksPerSlot = blockCfg >>> 16;
+        int globalIdx = context.globalIdx;
+        int halfDim = dim / 2;
+        int batchIdx = globalIdx / halfDim;
+        int pairIdx = globalIdx % halfDim;
+        int i = pairIdx * 2;
+        int qkvStride = dim + 2 * kvDim;
+
+        int pos = seqPositions.get(batchIdx);
+        int qOffset = batchIdx * qkvStride;
+        int kOffset = batchIdx * qkvStride + dim;
+        int vOffset = batchIdx * qkvStride + dim + kvDim;
+
+        if (i + 1 < dim) {
+            int head_dim = i % headSize;
+            float freq = 1.0f / TornadoMath.pow(50000.0f, head_dim / (float) headSize);
+            float val = pos * freq;
+            float fcr = TornadoMath.cos(val);
+            float fci = TornadoMath.sin(val);
+
+            float v0q = qkvBatch.get(qOffset + i);
+            float v1q = qkvBatch.get(qOffset + i + 1);
+            qkvBatch.set(qOffset + i, v0q * fcr - v1q * fci);
+            qkvBatch.set(qOffset + i + 1, v0q * fci + v1q * fcr);
+
+            if (i + 1 < kvDim) {
+                float v0k = qkvBatch.get(kOffset + i);
+                float v1k = qkvBatch.get(kOffset + i + 1);
+                float rotK0 = v0k * fcr - v1k * fci;
+                float rotK1 = v0k * fci + v1k * fcr;
+
+                int physBlock = blockTable.get(batchIdx * maxBlocksPerSlot + pos / blockSize);
+                int slotInBlock = pos % blockSize;
+                int cacheOff = physBlock * (numLayers * blockSize * kvDim)
+                        + layerIndex * (blockSize * kvDim) + slotInBlock * kvDim;
+                keyPool.set(cacheOff + i, rotK0);
+                keyPool.set(cacheOff + i + 1, rotK1);
+                valuePool.set(cacheOff + i, qkvBatch.get(vOffset + i));
+                valuePool.set(cacheOff + i + 1, qkvBatch.get(vOffset + i + 1));
+            }
+        }
+    }
+
+    /**
+     * Paged per-slot flash attention, FP16 output (Llama; {@code dim = nHeads*headSize}).
+     * {@code blockCfg} packs {@code blockSize | (maxBlocksPerSlot << 16)}.
+     */
+    public static void batchedDecodePagedAttentionFP16Out(KernelContext context,
+                                                          IntArray seqPositions,
+                                                          IntArray blockTable,
+                                                          FloatArray qkvBatch,
+                                                          FloatArray keyPool,
+                                                          FloatArray valuePool,
+                                                          HalfFloatArray attnOutFP16,
+                                                          int nHeads, int headSize,
+                                                          int kvDim, int kvMul,
+                                                          int layerIndex, int numLayers,
+                                                          int blockCfg) {
+        int blockSize = blockCfg & 0xFFFF;
+        int maxBlocksPerSlot = blockCfg >>> 16;
+        int dim = nHeads * headSize;
+        int tid = context.localIdx;
+        int groupId = context.groupIdx;
+        int localSz = context.localGroupSizeX;
+
+        int batchIdx = groupId / nHeads;
+        int h = groupId % nHeads;
+        int pos = seqPositions.get(batchIdx);
+        int layerOff = layerIndex * (blockSize * kvDim);
+        int kvHeadIdx = h / kvMul;
+        int BLOCK_C = 16;
+        int qkvStride = dim + 2 * kvDim;
+        int blockStride = numLayers * blockSize * kvDim;
+
+        float[] qShared = context.allocateFloatLocalArray(headSize);
+        float[] kTile = context.allocateFloatLocalArray(BLOCK_C * headSize);
+        float[] vTile = context.allocateFloatLocalArray(BLOCK_C * headSize);
+        float[] sTile = context.allocateFloatLocalArray(BLOCK_C);
+
+        int qOffset = batchIdx * qkvStride + h * headSize;
+        for (int i = tid; i < headSize; i += localSz) {
+            qShared[i] = qkvBatch.get(qOffset + i);
+        }
+        context.localBarrier();
+
+        float maxScore = Float.NEGATIVE_INFINITY;
+        float sumExp = 0.0f;
+        float acc0 = 0.0f;
+        float acc1 = 0.0f;
+        int d1 = tid + localSz;
+
+        for (int tileC = 0; tileC <= pos; tileC += BLOCK_C) {
+            int tileEnd = Math.min(tileC + BLOCK_C - 1, pos);
+            int tileLen = tileEnd - tileC + 1;
+
+            for (int idx = tid; idx < tileLen * headSize; idx += localSz) {
+                int tInTile = idx / headSize;
+                int d = idx % headSize;
+                int t = tileC + tInTile;
+                int physBlock = blockTable.get(batchIdx * maxBlocksPerSlot + t / blockSize);
+                int kvOff = physBlock * blockStride + layerOff + (t % blockSize) * kvDim + kvHeadIdx * headSize + d;
+                kTile[tInTile * headSize + d] = keyPool.get(kvOff);
+                vTile[tInTile * headSize + d] = valuePool.get(kvOff);
+            }
+            context.localBarrier();
+
+            for (int t = tileC + tid; t <= tileEnd; t += localSz) {
+                int tInTile = t - tileC;
+                float score = 0.0f;
+                for (int d = 0; d < headSize; d++) {
+                    score += qShared[d] * kTile[tInTile * headSize + d];
+                }
+                sTile[tInTile] = score / TornadoMath.sqrt(headSize);
+            }
+            context.localBarrier();
+
+            float tileMax = Float.NEGATIVE_INFINITY;
+            for (int t = 0; t < tileLen; t++) {
+                if (sTile[t] > tileMax) {
+                    tileMax = sTile[t];
+                }
+            }
+
+            float newMax = Math.max(maxScore, tileMax);
+            if (maxScore != Float.NEGATIVE_INFINITY && newMax != maxScore) {
+                float corr = TornadoMath.exp(maxScore - newMax);
+                sumExp *= corr;
+                acc0 *= corr;
+                acc1 *= corr;
+            }
+            maxScore = newMax;
+
+            for (int t = 0; t < tileLen; t++) {
+                float p = TornadoMath.exp(sTile[t] - maxScore);
+                sumExp += p;
+                acc0 += p * vTile[t * headSize + tid];
+                if (d1 < headSize) {
+                    acc1 += p * vTile[t * headSize + d1];
+                }
+            }
+            context.localBarrier();
+        }
+
+        float norm = (sumExp > 0.0f) ? (1.0f / sumExp) : 0.0f;
+        int outOffset = batchIdx * dim + h * headSize;
+        attnOutFP16.set(outOffset + tid, new HalfFloat(acc0 * norm));
+        if (d1 < headSize) {
+            attnOutFP16.set(outOffset + d1, new HalfFloat(acc1 * norm));
+        }
+    }
+
+    // ── On-device greedy sampling (argmax) ──────────────────────────────────
+
+    /**
+     * Per-row argmax over the batched logits: one workgroup per row reduces over the
+     * whole vocab and writes the winning token id to {@code outTokens[b]}. Keeps the
+     * full logits tensor on the GPU — only B integers cross to the host, instead of
+     * the paddedB×vocab (~65–78 MB) D2H copy + a CPU scan every step.
+     *
+     * Worker: B workgroups × localSize threads (localSize a power of two, e.g. 256).
+     */
+    public static void batchedArgmaxLogits(KernelContext context,
+                                           FloatArray logits, IntArray outTokens, int vocab) {
+        int b = context.groupIdx;
+        int tid = context.localIdx;
+        int localSz = context.localGroupSizeX;
+        float[] vals = context.allocateFloatLocalArray(256);
+        int[] idxs = context.allocateIntLocalArray(256);
+
+        int base = b * vocab;
+        float best = Float.NEGATIVE_INFINITY;
+        int bestIdx = 0;
+        for (int i = tid; i < vocab; i += localSz) {
+            float v = logits.get(base + i);
+            if (v > best) {
+                best = v;
+                bestIdx = i;
+            }
+        }
+        vals[tid] = best;
+        idxs[tid] = bestIdx;
+        context.localBarrier();
+
+        for (int s = localSz / 2; s > 0; s >>= 1) {
+            if (tid < s) {
+                if (vals[tid + s] > vals[tid]) {
+                    vals[tid] = vals[tid + s];
+                    idxs[tid] = idxs[tid + s];
+                }
+            }
+            context.localBarrier();
+        }
+        if (tid == 0) {
+            outTokens.set(b, idxs[0]);
         }
     }
 
