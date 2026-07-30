@@ -2,7 +2,14 @@
 
 ## Status
 
-**Proposed.** Not accepted. No record of maintainer approval exists in this repository.
+**Accepted** — 2026-07-30, following the ARCH-05 and ARCH-15 review on PR #140.
+
+Amended on acceptance:
+- `ModelInfo` exposes **both** weight dtype and compute dtype, since
+  `effectiveGpuWeightType` already collapses K-quants to Q8_0 for execution.
+- Which `DataType` values are reachable depends on the TornadoVM version: `FP8Array`
+  requires 5.1.0 and `BFloat16Array` requires 5.2.0, neither of which exists in the
+  pinned 5.0.0. See [the capability ledger](../tornadovm-capabilities.md).
 
 ## Context
 
@@ -133,7 +140,7 @@ step toward the general tensor library that
 
 ## Migration notes
 
-Corresponds to [roadmap phase 4](../migration-roadmap.md#phase-4--generic-tensor-metadata-and-gguf-isolation).
+Corresponds to [roadmap phase 4](../migration-roadmap.md#m4--datatype-and-gguf-isolation).
 Independent of [ADR-001](ADR-001-model-session-separation.md)'s state work, so the two
 can run in parallel.
 

@@ -2,7 +2,12 @@
 
 ## Status
 
-**Proposed.** Not accepted. No record of maintainer approval exists in this repository.
+**Accepted** — 2026-07-30, following the ARCH-01 and ARCH-07 review on PR #140.
+
+Amended on acceptance:
+- KV cache ownership is superseded by [ADR-005](ADR-005-kv-cache-ownership-and-leases.md):
+  storage belongs to an engine-scoped cache manager, and a session holds a lease.
+- The concurrency open question is resolved — see "Concurrency" below.
 
 ## Context
 
@@ -66,7 +71,7 @@ Concretely:
    policy/backend/device is not per-sequence state — but it must be internally
    synchronized and must not be a single mutable slot.)
 2. **The session owns the KV cache and position.** The KV cache is never model state
-   ([rule 7](../dependency-rules.md#rule-7--the-kv-cache-is-never-global-model-state)).
+   ([rule 7](../dependency-rules.md#rule-7--the-kv-cache-is-never-global-model-state-storage-is-managed-and-leased)).
 3. **Multiple sessions may share one loaded model** and one compiled program.
 4. **Invocation-scoped buffers are not stored globally.** Activation and scratch
    buffers belong to whatever the session or backend allocates for its own use, not to
@@ -87,7 +92,7 @@ Positive:
 - `InferenceService` becomes a thin wrapper over sessions rather than the only place
   that knows how to reuse a model.
 - Buffer lifetimes become explicit, which is a prerequisite for the memory planning in
-  [roadmap phase 10](../migration-roadmap.md#phase-10--memory-planning-diagnostics-and-developer-experience).
+  [roadmap phase 10](../migration-roadmap.md#m13--memory-planning-diagnostics-developer-experience).
 - `Model` stops depending on `TornadoVMMasterPlan`, clearing the `model/` entries from
   the [rule 2](../dependency-rules.md#rule-2--model-architecture-packages-do-not-import-tornadovm)
   allowlist.
@@ -103,32 +108,32 @@ Negative / costs:
   correct, but it means N sessions cost N KV caches. Memory planning becomes necessary
   rather than optional.
 
-## Concurrency
+## Concurrency — resolved
 
-This is the part that is **not** settled, and it should not be pretended otherwise.
+A loaded model is safe to read from many threads. A session is owned by one thread at a
+time. Several sessions may exist against one loaded model.
 
-What the decision guarantees: a loaded model is safe to read from many threads; a
-session is owned by one thread at a time.
+**Device-level concurrency comes from batching many sequences into one invocation of one
+compiled program**, driven by the engine tier
+([ADR-006](ADR-006-engine-tier.md)) — not from running one execution plan per session.
 
-What it does not settle: whether two sessions may **invoke concurrently** on one
-device. Three options:
+Three options were weighed when this ADR was drafted: serialized invocation, one plan per
+session, and batched multi-sequence decode. The third wins, and the reason the second
+loses is not the one originally assumed.
 
-1. **Serialized invocation** (today's behaviour, via `InferenceService`'s lock).
-   Simple, correct, no device work needed. Sessions are concurrent objects but
-   invocations queue. Throughput does not improve with more sessions.
-2. **Per-session device buffers and queues.** Each session gets its own activation and
-   KV buffers on device; invocations run on separate TornadoVM execution plans or
-   streams. Real concurrency, significantly more device memory, and it requires
-   understanding how TornadoVM shares or isolates device state between execution plans
-   — which needs investigation, not assumption.
-3. **Batched multi-sequence decode.** One invocation processes one token for each of N
-   sessions. Best device utilization, but it requires per-sequence KV cache addressing
-   in the attention kernels, which does not exist today.
+Concurrent independent `TornadoExecutionPlan`s **are** supported and tested —
+`tornado-unittests/.../multithreaded/TestMultiThreadedExecutionPlans` runs two plans in
+two threads on one device, 4 tests 0 failures on CUDA/RTX 4090. What rules the option out
+is memory: device buffers are per task graph, so two plans over the same weights hold two
+device copies — roughly 3.4 GB duplicated per concurrent session on a 3B-Q8 model
+([capability C2](../tornadovm-capabilities.md#c2--device-buffers-are-per-task-graph)).
 
-**Recommendation for the first implementation: option 1.** It matches current
-behaviour exactly, it is the smallest change, and it does not close off options 2 or 3.
-Sessions being independent objects is the prerequisite for all three; how invocations
-are scheduled can be decided later.
+Batched multi-sequence decode also no longer "does not exist today": PR #129 implements
+it, with per-sequence KV addressing through a block table.
+
+So: batching is a deliberate choice on memory grounds, and nothing here waits on upstream
+TornadoVM work. A session used without an engine runs one sequence at a time, which
+remains the simple path.
 
 ## Resource lifecycle
 
@@ -164,7 +169,7 @@ ordering mistakes are easy. Leaning towards throwing with a clear message.
 `InferenceService` today. Rejected as an end state because it does not separate
 sequence-lifetime from invocation-lifetime data — the wrapper would still hand out one
 object containing both. Acceptable as an *intermediate* step in
-[roadmap phase 2](../migration-roadmap.md#phase-2--public-api-façade-over-current-implementation).
+[roadmap phase 2](../migration-roadmap.md#m3--public-api-façade).
 
 **Put the KV cache on the model, keyed by session id.** Would avoid changing `State`.
 Rejected: it makes the model mutable and shared-mutable, which is the problem being
@@ -180,14 +185,14 @@ KV cache is a large device buffer written in place by kernels.
 
 ## Migration notes
 
-Corresponds to [roadmap phase 3](../migration-roadmap.md#phase-3--loaded-model-and-session-state-separation),
-after the phase 2 façade exists.
+Corresponds to [roadmap phase 3](../migration-roadmap.md#m6--session-and-state-split),
+after the M3 façade exists.
 
 Suggested order:
 
 1. Make `AbstractModel.tokenizer`, `weights` and `chatFormat` final. Trivial; do it in
    milestone 1.
-2. Introduce the session type in `api/`, wrapping today's `State` + plan (phase 2).
+2. Introduce the session type in `api/`, wrapping today's `State` + plan (M3).
    Behaviour identical to `InferenceService`.
 3. Move plan ownership from `Model` to the session; deprecate `tornadoVMPlan()` /
    `setTornadoVMPlan(...)` rather than deleting them.

@@ -42,7 +42,7 @@ public final class LocalModels {
 /** Immutable and thread-safe. Owns weights and cached compiled programs. */
 public interface LocalModel extends AutoCloseable {
 
-    ModelInfo info();                  // architecture, name, quantization, context length
+    ModelInfo info();                  // architecture, name, dtypes, context length
     ModelConfiguration configuration(); // read-only hyperparameters
 
     GenerationSession newSession();
@@ -64,7 +64,7 @@ requires that it be possible.
 ### `GenerationSession` — one sequence
 
 ```java
-/** One sequence. NOT thread-safe. Owns KV cache and activation buffers. */
+/** One sequence. NOT thread-safe. Holds a KV lease and its own invocation buffers. */
 public interface GenerationSession extends AutoCloseable {
 
     GenerationResult generate(GenerationRequest request);
@@ -72,12 +72,72 @@ public interface GenerationSession extends AutoCloseable {
     /** Current sequence position; how much context is consumed. */
     int position();
 
-    /** Discard sequence state and start fresh without reallocating. */
+    /**
+     * Discard sequence state and start fresh.
+     * Releases the current lease's private blocks; shared prefix blocks are
+     * refcounted and survive if another lease still references them.
+     */
     void reset();
 
-    @Override void close();            // releases KV cache and buffers
+    @Override void close();            // releases the lease and invocation buffers
 }
 ```
+
+The session **holds** a KV lease rather than owning cache storage — storage belongs to
+the engine's cache manager, so blocks can be shared between sequences (prefix reuse) and
+survive an individual session
+([ADR-005](decisions/ADR-005-kv-cache-ownership-and-leases.md)).
+
+### `LLMEngine` — concurrent serving
+
+The session API is the simple, single-sequence path. Serving many requests at once uses
+the engine tier instead:
+
+```java
+public interface LLMEngine extends AutoCloseable {
+
+    /** Non-blocking admission. Returns immediately; work happens in step(). */
+    RequestHandle addRequest(GenerationRequest request);
+
+    /** One batched iteration across all admitted sequences. */
+    StepResult step();
+
+    EngineMetrics metrics();     // TTFT, queue wait, occupancy, block utilization
+}
+```
+
+**The server uses the engine API, not the session API.** A blocking per-sequence call as
+the only entry point forces a server to serialize or to spawn a session per connection —
+which is what `InferenceService` does today behind a lock.
+
+**Device concurrency comes from batching, not from parallel plans.** Several
+`TornadoExecutionPlan`s can run concurrently — that is supported and tested — but device
+buffers are per task graph, so a plan per session duplicates the weights on device
+(~3.4 GB per concurrent session for a 3B-Q8 model). The engine therefore batches many
+sequences into one invocation of one compiled program. See
+[capability C2](tornadovm-capabilities.md#c2--device-buffers-are-per-task-graph).
+
+### `ModelInfo` — dtypes are public
+
+```java
+public interface ModelInfo {
+    String name();
+    String architecture();
+    int contextLength();
+
+    /** How the weights are stored for execution. Runtime DataType, never GGMLType. */
+    DataType weightType();
+
+    /** What the kernels compute in. Differs from weightType for K-quants. */
+    DataType computeType();
+}
+```
+
+Two dtypes rather than one, because they already differ:
+`AbstractModelLoader.effectiveGpuWeightType` collapses `Q4_K`/`Q5_K`/`Q6_K` to `Q8_0`,
+and `getModelQuantization` maps GGUF file types 14–18 to `"Q8_0"`. A "Q6_K model"
+executes as Q8_0. One field would mislead exactly the user asking in order to size a
+device.
 
 ### `GenerationRequest` / `GenerationResult`
 
@@ -282,20 +342,43 @@ Tornado-specific extension module may expose TornadoVM configuration to users wh
 explicitly want it. Depending on that module is a choice the user makes, not something
 the generic API imposes.
 
+## Logging policy
+
+**The library never writes to `System.out` or `System.err`.** It emits through a
+project-owned sink, no-op by default. Console output belongs to the CLI integration.
+
+```java
+public interface LogSink {
+    void log(Level level, String message, Object... args);
+
+    LogSink NOOP = (level, message, args) -> { };
+}
+```
+
+**No external logging facade dependency.** `pom.xml` declares no logging dependency and
+the project ships a shaded jar with native-image considerations; pulling SLF4J's
+dependency surface into a self-contained inference library buys little. An SLF4J bridge
+belongs in an integration module, for users who want it.
+
+Enforced by [Rule 16](dependency-rules.md#rule-16--no-console-io-outside-the-cli-integration),
+which ships with today's 20 offending files as a shrink-only allowlist.
+
 ## Compatibility note
 
 `ModelLoader.loadModel(Path, int, boolean, boolean)` and
 `Model.runInstructOnceLangChain4J(...)` are documented in the code as integration
 points for LangChain4j and Quarkus. They are existing public surface. The façade in
-[roadmap phase 2](migration-roadmap.md#phase-2--public-api-façade-over-current-implementation)
+[roadmap phase 2](migration-roadmap.md#m3--public-api-façade)
 must be added alongside them, and they should be deprecated with a documented
 replacement before any removal.
 
 ## Open questions
 
-1. Do sessions support concurrent invocation on one device, or is invocation
-   serialized?
-2. Is `ExecutionPolicy` a model-level or session-level choice?
+*Resolved during the ARCH review:* concurrency comes from engine batching, not parallel
+plans (ARCH-07); the session holds a lease rather than owning the cache (ARCH-01);
+`ModelInfo` exposes both dtypes (ARCH-15).
+
+1. Is `ExecutionPolicy` a model-level or session-level choice?
 3. How are chat templates exposed — is `ChatMessage` public API, or is prompt
    formatting an internal concern driven by model metadata?
 4. Should `GenerationSession` expose a lower-level `forward(token, position)` for

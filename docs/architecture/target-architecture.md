@@ -15,27 +15,33 @@ Terms used here are defined in [`terminology.md`](terminology.md).
                      |
                      v
             Public API and generation
-       (LocalModels, LocalModel, GenerationSession, sampling,
-                 stop conditions, streaming)
+       (LocalModels, LocalModel, GenerationSession, stop
+              conditions, streaming, detokenization)
+                     |
+                     v
+                   Engine
+     (LLMEngine, Scheduler, admission, KvCacheManager,
+              BlockPool, PrefixCache, serving metrics)
                      |
                      v
               Models and sessions
      (loaded model: architecture + configuration + weights;
-      session: sequence state + KV cache; model provider SPI)
+        session: sequence position + KV lease; provider SPI)
                      |
                      v
          Inference programs and operations
      (backend-neutral program description, program components,
-              reusable operation vocabulary)
+        reusable operation vocabulary — incl. Sample/ArgMax)
                      |
                      v
             Runtime, tensors and state
-     (tensor descriptors, DataType, buffer abstractions,
-       state layout, memory planning, execution policy)
+     (tensor descriptors, DataType, buffer abstractions, state
+      layout, memory planning, execution policy, metrics sink)
                      |
                      v
                  Backend SPI
-     (Backend, DeviceSelector, CompiledProgram, Invocation)
+     (Backend, DeviceSelector, CompiledProgram, Invocation,
+             buffer lifetimes, capacity query)
                      |
                      v
               TornadoVM backend
@@ -45,6 +51,14 @@ Terms used here are defined in [`terminology.md`](terminology.md).
                      v
         CUDA (PTX) / OpenCL / SPIR-V devices
 ```
+
+Two edges run against the arrows, both deliberately:
+
+- the **metrics sink** lives in the runtime layer and is written by backends, read by the
+  engine and API — the one designed upward-looking seam
+  ([Rule 17](dependency-rules.md#rule-17--metrics-flow-bottom-to-top-by-design));
+- **KV storage** is owned by the engine's cache manager and leased downward to sessions
+  ([Rule 7](dependency-rules.md#rule-7--the-kv-cache-is-never-global-model-state-storage-is-managed-and-leased)).
 
 Dependencies point **downward only**. A layer may depend on the layer below it and on
 layers further below; it must never depend on a layer above it. Sibling packages within
@@ -60,6 +74,40 @@ backend will run them — that is what makes an inference program backend-neutra
 backend SPI is the *narrow* interface through which those neutral descriptions become
 executable. The TornadoVM backend implements the SPI; nothing above the SPI knows it
 exists.
+
+## Engine tier
+
+The tier that owns work **across** sequences. Without it the architecture can only
+express "one request occupies one session occupies the device", which is the throughput
+ceiling the project is removing.
+
+```java
+public interface LLMEngine extends AutoCloseable {
+    RequestHandle addRequest(GenerationRequest request);   // non-blocking admission
+    StepResult step();                                     // one batched iteration
+}
+```
+
+Components:
+
+| Component | Owns |
+| --- | --- |
+| `Scheduler` | Admission, batch composition, preemption |
+| `KvCacheManager` | Block storage, leases, eviction |
+| `BlockPool` | The persistent pooled array backing KV blocks |
+| `PrefixCache` | Prefix-keyed shared blocks, refcounting |
+| serving metrics | TTFT, queue wait, occupancy, block utilization, admitted/rejected |
+
+**Device concurrency comes from batching inside one compiled program**, not from running
+several plans in parallel. Concurrent independent `TornadoExecutionPlan`s *are* supported
+and tested, but device buffers are per task graph, so two plans over the same weights hold
+two device copies — roughly 3.4 GB duplicated per concurrent session on a 3B-Q8 model.
+Batching is therefore an economic choice, not a workaround for a missing API. See
+[capability C2](tornadovm-capabilities.md#c2--device-buffers-are-per-task-graph) and
+[ADR-006](decisions/ADR-006-engine-tier.md).
+
+The seed for this tier already exists as `bench/BatchedDecodeEngine` (PR #129), which
+implements continuous batching, paged KV and prefix caching and measures them.
 
 ## High-level API
 
@@ -165,18 +213,19 @@ LocalModels.load(path, options)
 LoadedModel.newSession(sessionOptions)
     → resolve execution policy
     → obtain or reuse CompiledProgram for (architecture, policy, backend, device)
-    → allocate session state: KV cache + activation buffers, sized by context length
+    → acquire a KV lease from the engine's KvCacheManager
+    → allocate invocation buffers, sized by context length
     → GenerationSession (single sequence, not thread-safe)
 
 session.generate(request)
-    → prefill: ingest prompt tokens into KV cache
+    → prefill: ingest prompt tokens into the leased KV blocks
     → decode loop:
          bind invocation (input token, position, session state, outputs)
          invoke compiled program
          sample → emit → check stop conditions
     → GenerationResult
 
-session.close()   → release session state (KV cache, buffers)
+session.close()   → release the KV lease and invocation buffers
 model.close()     → release weights and cached compiled programs
 ```
 
@@ -186,14 +235,20 @@ Key points:
   token — this is already true today and must stay true;
 - compiled programs are keyed by (architecture, configuration shape, execution
   policy, backend, device) and can be shared between sessions of the same model;
-- session state is per-session and never shared;
-- closing a session must not invalidate the model or other sessions.
+- KV **storage** is owned by the cache manager; a session holds a **lease** — a block
+  table referencing blocks it does not own
+  ([ADR-005](decisions/ADR-005-kv-cache-ownership-and-leases.md));
+- invocation buffers are per-session and never shared;
+- closing a session must not invalidate the model or other sessions, and must not free
+  blocks another lease still references.
 
-**Open question — concurrency.** Multiple sessions sharing one compiled program on one
-device requires either serialized invocation (today's `InferenceService` lock) or
-per-session device buffers plus a device queue per session. The first is simple and
-matches current behaviour; the second is the real goal. This is unresolved and is
-called out in [ADR-001](decisions/ADR-001-model-session-separation.md).
+**Concurrency — resolved.** Sessions are independent objects; several may exist against
+one loaded model. Device-level concurrency is achieved by **batching many sequences into
+one invocation of one compiled program**, driven by the engine tier — not by running one
+plan per session. Concurrent plans are supported by TornadoVM and tested, but each task
+graph owns its own device buffers, so per-session plans duplicate the weights
+([capability C2](tornadovm-capabilities.md#c2--device-buffers-are-per-task-graph)).
+A session used without an engine runs one sequence at a time, which is the simple path.
 
 ## Logical versus compiled programs
 

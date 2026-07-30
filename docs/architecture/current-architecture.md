@@ -383,3 +383,37 @@ nothing supports two concurrent sequences against one loaded model.
 `Model` requires `tokenizer()`, `chatFormat()`, `generateTokens(...)`. `State`
 always allocates a KV cache. An embedding or classification model would have to
 implement or allocate all of it.
+
+### P12 — No telemetry, despite the data being available
+
+The project references none of TornadoVM's profiling API: zero occurrences of
+`ProfilerMode`, `getProfilerResult` or `TornadoProfiler` across all main sources. Device
+kernel time, host↔device transfer bytes, device memory usage and compile time are all
+produced by the runtime on request and discarded.
+
+What exists instead is `auxiliary/RunMetrics`, a static holder that prints to the console,
+plus `auxiliary/metrics/` renderers. There is no interface a backend could report into, so
+"where does time go on the GPU path" is currently unanswerable from inside the
+application. This is the default outcome when metrics have no designed seam — see
+[Rule 17](dependency-rules.md#rule-17--metrics-flow-bottom-to-top-by-design).
+
+### P13 — Console I/O in library code
+
+65 `System.out` / `System.err` occurrences across 20 main-source files, including the
+generation loop (`Model.runInteractive`, `Model.runInstructOnce`). `pom.xml` declares no
+logging dependency, so there is no facade to route through.
+
+For a library whose stated audience is embedders (LangChain4j, Quarkus, servers), printing
+to stdout corrupts structured logs and cannot be silenced. Same class of problem as P2.
+
+### P14 — The pinned TornadoVM version predates the capabilities the design assumes
+
+`pom.xml` pins `tornadovm.base.version` 5.0.0. Several capabilities this architecture
+depends on arrived later: `FP8Array` in 5.1.0, `BFloat16Array` in 5.2.0 (which PR #120's
+BF16 path needs), deterministic generated kernel source, a bytecode buffer sized to the
+graph, and two large runtime improvements (53 → 103 tok/s; start-up 11.5 s → 5.2 s).
+
+The gap is load-bearing rather than cosmetic: a position can look grounded against a
+development tree and be unreachable from what the project builds. Hence the version floor
+is [Phase 0](migration-roadmap.md#phase-0--tornadovm-version-floor) and the capability
+ledger carries a minimum-version column.

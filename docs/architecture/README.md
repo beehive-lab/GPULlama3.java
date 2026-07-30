@@ -25,12 +25,14 @@ These documents exist so that:
 | --- | --- | --- |
 | [`vision.md`](vision.md) | Mission, users, use cases, non-goals | Normative for scope |
 | [`current-architecture.md`](current-architecture.md) | The repository as it exists today | Descriptive |
-| [`target-architecture.md`](target-architecture.md) | Proposed layering and dependency direction | **Proposal** |
+| [`target-architecture.md`](target-architecture.md) | Layering and dependency direction | **Normative** |
 | [`terminology.md`](terminology.md) | Definitions used by all other documents | **Normative** |
 | [`dependency-rules.md`](dependency-rules.md) | Allowed/forbidden dependency directions | **Normative** |
-| [`public-api.md`](public-api.md) | Proposed developer-facing API surface | **Proposal** |
-| [`migration-roadmap.md`](migration-roadmap.md) | Incremental phases from today to target | **Proposal** |
-| [`decisions/`](decisions/README.md) | Architecture Decision Records | Status per ADR |
+| [`tornadovm-capabilities.md`](tornadovm-capabilities.md) | What TornadoVM provides, minimum versions, runtime constraints | **Normative** |
+| [`public-api.md`](public-api.md) | Developer-facing API surface | **Proposal** (names not final) |
+| [`migration-roadmap.md`](migration-roadmap.md) | Milestones from today to target | **Normative** |
+| [`decisions/`](decisions/README.md) | Architecture Decision Records | Accepted — see index |
+| [`review/`](review/) | Review history: the ARCH-01..19 issues and responses | Historical record |
 
 Read this way:
 
@@ -77,11 +79,27 @@ Every change to this directory goes through human review like any other change.
 
 ## Status of this baseline
 
-This is the **initial** baseline. It was written by inspecting the repository on the
-`refactor/framework-abstractions` branch. It contains:
+**Baseline v1.0 — agreed 2026-07-30.**
 
-- a description of what exists today;
-- proposals for what should exist;
-- explicitly labelled open questions.
+History: the initial baseline was written by inspecting the repository, reviewed as 19
+ARCH issues (PR #140), and both maintainers recorded a position on every issue. All 19
+were accepted, six with modifications. The resulting decisions are folded into the
+documents above; ADR-001 through ADR-006 are `Accepted`.
 
-Nothing in this directory has changed production code.
+The review record is preserved under [`review/`](review/) — the issues, the positions and
+the corrections. Two positions were reversed by evidence during review and are worth
+knowing about, because the corrected reasoning is now load-bearing:
+
+- concurrent execution plans on one device **are** supported; batching is chosen for
+  device-memory reasons instead
+  ([C2](tornadovm-capabilities.md#c2--device-buffers-are-per-task-graph));
+- the pinned TornadoVM version predates several capabilities the design assumes, which is
+  why a version floor is Phase 0.
+
+Nothing in this directory has changed production code. Implementation starts from
+[`migration-roadmap.md`](migration-roadmap.md).
+
+Every position here is grounded in a capability listed in
+[`tornadovm-capabilities.md`](tornadovm-capabilities.md). A proposal that depends on a
+capability absent from that ledger is not grounded, and must either be re-grounded or
+raised as an upstream TornadoVM proposal.

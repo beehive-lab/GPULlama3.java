@@ -2,7 +2,18 @@
 
 ## Status
 
-**Proposed.** Not accepted. No record of maintainer approval exists in this repository.
+**Accepted** — 2026-07-30, following the ARCH-03 and ARCH-05 review on PR #140.
+
+Amended on acceptance:
+- Sampling is admitted as an operation with a backend implementation
+  ([Rule 8b](../dependency-rules.md#rule-8b--sampling-is-an-operation-and-may-execute-on-the-device)).
+- Compiled-program identity depends on deterministic generated source. TornadoVM emitted
+  kernel source non-deterministically across JVM runs until #999, so the identity test only
+  holds from the adopted version floor onward — see
+  [capability C3](../tornadovm-capabilities.md#c3--generated-kernel-source-was-non-deterministic-before-52).
+- Operations are `DataType`-parameterized at the description and dispatch level, not inside
+  kernel bodies: TornadoVM compiles per concrete native array type and Java has no generics
+  over primitives.
 
 ## Context
 
@@ -151,8 +162,8 @@ accidentally compile inside a loop — the exact failure rule 13 exists to preve
 
 ## Migration notes
 
-Corresponds to [roadmap phase 6](../migration-roadmap.md#phase-6--logical-program-and-compiled-program-separation),
-after operations exist (phase 5) and state is separated (phase 3).
+Corresponds to [roadmap phase 6](../migration-roadmap.md#m9--program-and-compiled-program),
+after operations exist (M8) and state is separated (M6).
 
 Suggested order:
 
@@ -173,7 +184,7 @@ Suggested order:
    unchanged.
 
 `ExecutionMode` maps to the execution policy of
-[roadmap phase 7](../migration-roadmap.md#phase-7--consolidate-engine-variants-behind-execution-policies);
+[roadmap phase 7](../migration-roadmap.md#m10--execution-policy-consolidation);
 the two phases should agree on whether prefill and decode are two programs or one
 program with selectable components.
 

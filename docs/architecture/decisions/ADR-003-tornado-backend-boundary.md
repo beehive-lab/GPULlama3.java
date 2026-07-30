@@ -2,7 +2,17 @@
 
 ## Status
 
-**Proposed.** Not accepted. No record of maintainer approval exists in this repository.
+**Accepted** — 2026-07-30, following the ARCH-10 and ARCH-14 review on PR #140.
+
+Amended on acceptance:
+- An operation implementation may be backed either by a compiled program or by a **native
+  library task** (`TaskGraph.task(...)` with a library binding factory; `tornado-cublas`,
+  `tornado-cudnn`), chosen by the backend from device capabilities. No scheduled work:
+  PR #131 measured parity on the n=1 projection path (553.8 vs 550.6 µs, ~94% of peak
+  bandwidth), so libraries matter in the batched/MMA paths rather than in decode.
+- Multi-device is a seam, not a hypothetical: `withDevice(TornadoDevice)`, per-task
+  `withDevice(String, TornadoDevice)` and `withConcurrentDevices()` exist today, so an
+  invocation should be able to target a device *set*.
 
 ## Context
 
@@ -158,7 +168,7 @@ TornadoVM cannot be extended to do the job.
 
 ## Migration notes
 
-Corresponds to [roadmap phase 9](../migration-roadmap.md#phase-9--backend-and-device-spi),
+Corresponds to [roadmap phase 9](../migration-roadmap.md#m12--backend-and-device-spi),
 which includes the `tornadovm` → `backend.tornado` package move.
 
 Order that keeps each step reviewable:

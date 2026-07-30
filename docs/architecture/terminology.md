@@ -78,12 +78,74 @@ because non-transformer or non-autoregressive use cases must not be forced to ha
 
 ### KV cache
 
-The per-sequence cache of computed key and value projections, indexed by layer and
-position. **Belongs to a session, never to a loaded model.** Its capacity is fixed by
-the session's context length.
+The cache of computed key and value projections, indexed by layer and position.
+
+**Storage is owned by the KV cache manager, not by a session and never by a loaded
+model.** A session holds a *lease*. This wording matters: blocks may outlive a sequence
+and be shared between sequences, which is what makes paged attention and prefix reuse
+possible.
 
 Today: `State.keyCache` / `State.valueCache` (CPU) and `State.wrapKeyCache` /
-`wrapValueCache` (device).
+`wrapValueCache` (device) — per-`State`, with no manager.
+
+### KV cache manager
+
+Engine-scoped owner of KV block storage. Allocates the pool, hands out leases, reclaims
+blocks, enforces capacity, and pins blocks that are under a live lease.
+
+### Block pool
+
+The single persistent device array backing all KV blocks. One array, indexed in-kernel —
+not a set of separately allocated buffers. This is an invariant, not an implementation
+choice: `withCUDAGraph()` bakes device addresses into the captured graph, so re-pointing
+a slot's buffer between replays breaks replay
+([capability C1](tornadovm-capabilities.md#c1--cuda-graph-capture-fixes-device-addresses)).
+
+### Block table
+
+Per-sequence mapping from logical position to physical block in the pool. The attention
+kernel walks it, which is why shared-then-private block layouts need no kernel change.
+
+### Lease
+
+A session's claim on a set of blocks it does not own. Released on session close.
+Blocks under a live lease are pinned against eviction.
+
+### Slot
+
+One sequence's position within a batched step. B slots per invocation. Distinct from a
+session: a session is the user-facing sequence, a slot is its place in the current batch.
+
+### Prefix cache
+
+Engine-scoped map from token-prefix identity to shared KV blocks, so a repeated system
+prompt is prefilled once. Prefix identity must include model, dtype **and** position
+offset. Shared blocks are refcounted.
+
+### Admission
+
+The scheduler's decision to accept a request into the running batch, based on free
+blocks and device capacity. A request that cannot be admitted waits rather than failing.
+
+### Engine
+
+The tier owning work across sequences: admission, batch composition, KV management,
+prefix reuse, preemption. Sits above sessions, below the public API.
+
+**Not** the same as the existing `InferenceEngine` class, which is a generation loop.
+See [terms to avoid](#terms-to-avoid-or-use-carefully).
+
+### Scheduler
+
+The engine component deciding which sequences run in the next step, and which are
+preempted. Distinct from TornadoVM's `GridScheduler`, which sizes worker grids.
+
+### Time to first token (TTFT)
+
+Wall time from request admission to the first emitted token. Only reproducible if the
+record states whether the compiled-kernel cache was warm or cold — cache state moves
+start-up by seconds, dwarfing scheduling effects
+([capability C5](tornadovm-capabilities.md#c5--performance-history-has-version-sized-discontinuities)).
 
 ### Invocation
 
@@ -229,7 +291,9 @@ field. Qualify them or use the precise term.
 
 | Term | Problem | Use instead |
 | --- | --- | --- |
-| **engine** | Used for `InferenceEngine` (the generation loop), for the project as a whole, and colloquially for "the runtime". | *generation loop*, *inference program*, *backend* — say which. |
+| **engine** | Now three-way ambiguous: `InferenceEngine` (the generation loop), the new **engine tier** (scheduling across sequences), and the project as a whole. | *generation loop*, *engine tier*, *the project*. Never bare "engine" in a document. Renaming `InferenceEngine` is expected when the generation loop consolidates. |
+| **batch** | Batched *prefill* (one sequence, many prompt tokens — exists today) vs batched *decode* (many sequences, one token each — PR #129) vs TornadoVM's `withBatch()` (chunking large data). | *batch prefill*, *batch decode*, *TornadoVM data batching*. |
+| **slot / session** | A slot is a position in the current batch; a session is a user-facing sequence. B slots does not mean B sessions. | Say which. |
 | **runtime** | Means the TornadoVM runtime, the JVM, and GPULlama's own execution layer. | *TornadoVM runtime*, *JVM*, *execution layer*. |
 | **plan** | `ForwardPlan`, `TornadoVMMasterPlan`, `TornadoExecutionPlan`, and the informal "execution plan" all differ. | *compiled program*, *task graph*, *TornadoExecutionPlan* — be specific. |
 | **model** | Means the file on disk, the architecture family, the loaded weights, and the `Model` interface (which also runs chat loops). | *model file*, *model architecture*, *loaded model*. |

@@ -1,11 +1,13 @@
 # Dependency Rules
 
-**Status:** normative for direction; the concrete package names in the rule snippets
-are **proposed** and match [`target-architecture.md`](target-architecture.md), which
-does not exist in code yet. Until the packages exist, the rules are review criteria.
-Once they exist, they become ArchUnit tests.
+**Status: normative — agreed 2026-07-30.** The rules are binding for new code. The
+concrete package names in the snippets match
+[`target-architecture.md`](target-architecture.md) and do not exist in code yet: until a
+package exists its rule is a review criterion, and it becomes an ArchUnit test when the
+milestone that creates the package lands.
 
-Terms: [`terminology.md`](terminology.md).
+Terms: [`terminology.md`](terminology.md). Milestones:
+[`migration-roadmap.md`](migration-roadmap.md).
 
 ## Allowed dependency direction
 
@@ -98,10 +100,10 @@ noClasses()
 - `model.loader.*` builds TornadoVM tensors directly.
 
 **Migration considerations.** Removing the plan from `Model` is
-[ADR-001](decisions/ADR-001-model-session-separation.md) and roadmap phase 3; it is
+[ADR-001](decisions/ADR-001-model-session-separation.md) and milestone M6; it is
 blocked on having somewhere else for the plan to live (a session). `model/loader` is
 separable earlier: it can produce format-neutral tensor descriptors and let the
-backend materialize device storage (phase 4).
+backend materialize device storage (M4).
 
 ---
 
@@ -130,7 +132,7 @@ than program descriptions ([ADR-002](decisions/ADR-002-program-and-compiled-prog
 
 **Migration considerations.** The risk here is introducing the program layer as a thin
 rename of `ForwardPlanComponents`, which would import the Tornado types by accident.
-When phase 6 starts, write this ArchUnit rule **first**, then add the package.
+When M9 starts, write this ArchUnit rule **first**, then add the package.
 
 ---
 
@@ -161,7 +163,7 @@ noClasses()
   alongside the runtime tensor hierarchies.
 
 **Migration considerations.** Requires a runtime `DataType` first
-([ADR-004](decisions/ADR-004-tensor-and-format-separation.md), phase 4). The mapping
+([ADR-004](decisions/ADR-004-tensor-and-format-separation.md), M4). The mapping
 `GGMLType → DataType` is not one-to-one: `AbstractModelLoader.effectiveGpuWeightType`
 already collapses `Q4_K`/`Q5_K`/`Q6_K` to `Q8_0` for GPU execution, which is exactly
 the format→runtime mapping this rule wants to make explicit.
@@ -212,39 +214,58 @@ noClasses()
 `State` and one plan for the whole service and serializes access with a lock;
 `Model.runInteractive` creates a `State` and drives it inline.
 
-**Migration considerations.** Phase 3. The first version can keep serialized access
+**Migration considerations.** M6. The first version can keep serialized access
 (matching today's behaviour) while still moving ownership.
 
 ---
 
-## Rule 7 — The KV cache is never global model state
+## Rule 7 — The KV cache is never global model state; storage is managed and leased
 
-**Intent.** A KV cache belongs to one sequence. Attached to a model, it silently
-prevents concurrent sessions and makes correctness depend on call ordering.
+**Intent.** A KV cache must never hang off a loaded model — that prevents concurrent
+sessions and makes correctness depend on call ordering. But it must also not be *owned*
+by a single session, because paged attention and prefix sharing are defined by blocks
+outliving and being shared between sequences.
 
-**Allowed direction.** KV cache types are reachable only from session state.
+So: **KV storage is owned by a cache manager scoped to the engine, and leased to
+sessions.** A session holds a block table referencing blocks it does not own.
+
+**Allowed direction.** `engine.KvCacheManager` owns block storage. Sessions hold leases.
+Models reference neither.
 
 ```java
 noClasses()
     .that().resideInAnyPackage("..model..", "..program..")
     .should().dependOnClassesThat()
-    .haveSimpleNameContaining("KvCache");
+    .haveSimpleNameContaining("KvCache")
+    .orShould().dependOnClassesThat().haveSimpleNameContaining("BlockPool");
 ```
 
 **Violations today.** `State.keyCache` / `valueCache` and their device mirrors live on
-`State`, which is created by `Model.createNewState()` and passed around explicitly.
-The cache is not *on* the model today, which is good; the risk is that the current
-"one `State` per service" pattern in `InferenceService` hardens into a per-model cache.
+`State`, created by `Model.createNewState()`. The cache is not *on* the model, which is
+correct; the risk is that the "one `State` per service" pattern in `InferenceService`
+hardens into a per-model cache.
 
-**Migration considerations.** None blocking — this rule mainly prevents a regression.
+**Migration considerations.** M6 splits lease from storage rather than moving the
+cache wholesale into the session. See
+[ADR-005](decisions/ADR-005-kv-cache-ownership-and-leases.md), which also records the
+CUDA-graph invariant: the pool is one persistent array with in-kernel indexing, and
+leased blocks are pinned against eviction
+([capability C1](tornadovm-capabilities.md#c1--cuda-graph-capture-fixes-device-addresses)).
+
+**History.** This rule originally read "KV cache types are reachable only from session
+state", which made a shared block pool a violation and shared prefix blocks
+unrepresentable. Corrected during the ARCH-01 review.
 
 ---
 
-## Rule 8 — Generation and sampling are separate from forward execution
+## Rule 8a — Generation policy is separate from forward execution
 
-**Intent.** Embedding, classification and reranking models have no generation loop and
-no sampler. If forward execution depends on generation, those use cases cannot exist.
-It also keeps the model interface free of console and transport concerns.
+**Intent.** Embedding, classification and reranking models have no generation loop.
+If forward execution depends on generation, those use cases cannot exist. It also keeps
+the model interface free of console and transport concerns.
+
+Generation *policy* means: the token loop, stop conditions, streaming, transport,
+console I/O, prompt construction.
 
 **Allowed direction.** `generation.**` → `model.**` → `program.**`.
 Never `model.**` → `generation.**`.
@@ -266,10 +287,41 @@ noClasses()
 - `inference.sampler.Sampler.createSampler(Model, Options)` depends on both `Model`
   and the CLI options record.
 
-**Migration considerations.** Phase 2 introduces a façade that *calls* the existing
-default methods; phase 7 moves the loops out of `Model`. The default methods should be
-deprecated before removal because `runInstructOnceLangChain4J` is an external
-integration point.
+**Migration considerations.** The API façade *calls* the existing default methods; the
+execution-policy phase moves the loops out of `Model`. Deprecate before removal —
+`runInstructOnceLangChain4J` is an external integration point.
+
+---
+
+## Rule 8b — Sampling is an operation, and may execute on the device
+
+**Intent.** Sampling is *not* generation policy. It is an operation over logits, and a
+backend may legitimately implement it — on-device argmax removes a full logits-row
+transfer per token.
+
+This rule exists to stop Rule 8a from being read as "nothing in the backend may sample".
+
+**Allowed direction.** `Sample` / `ArgMax` are entries in the operation vocabulary
+(`program.op`), with backend implementations like any other operation. What a backend
+must **not** do is own the loop that decides *whether to keep sampling*.
+
+**Grounding.** On-device sampling already ships on `main`:
+`tornadovm.layers.type.fp16.LogitsFP16Layer.DEVICE_SAMPLE` runs argmax on device and
+writes `State.sampledToken`; `InferenceEngine.sampleTokenGpu` reads it instead of
+transferring the vocabulary row; `LlamaApp.guardDeviceSample` polices the preconditions.
+It is an ordinary TornadoVM task writing one `IntArray` element.
+
+**Non-violation note.** The device sampler is explicitly **not** a Rule 8a violation and
+must never be added to its allowlist. A rule that makes shipped, faster, correct code a
+violation either gets a permanent exemption — weakening every other rule — or drives a
+revert.
+
+**Relation to Rule 14.** Unchanged: core abstractions must not *require* a sampler.
+Sampling may exist; it may not be mandatory.
+
+**History.** Rules 8a and 8b were one rule whose enforceable form forbade
+`..backend..` → `..generation..`, making the existing device sampler a violation. Split
+during the ARCH-03 review.
 
 ---
 
@@ -435,7 +487,7 @@ noClasses()
 `generateTokens(...)` and `generateTokensGPU(...)` from every implementation. `State`
 always allocates a KV cache regardless of whether the model needs one.
 
-**Migration considerations.** Phase 3 and 7. A capability-interface split
+**Migration considerations.** M6 and M10. A capability-interface split
 (`TextGenerationModel extends LoadedModel`) is the likely mechanism, but the exact
 shape is an open question.
 
@@ -466,10 +518,118 @@ noClasses()
 - `Sampler.createSampler`;
 - new `State` and `Weights` subclasses.
 
-**Migration considerations.** Phase 8. `ModelType` is likely to survive as an internal
+**Migration considerations.** M5 and M11. `ModelType` is likely to survive as an internal
 identifier long after dispatch moves to providers; the rule targets *dispatch on* it,
 not its existence. Note that `ForwardPlanFactory` also casts `State` to family-specific
-subtypes, so removing the switch depends on the state work in phase 3.
+subtypes, so removing the switch depends on the state work in M6.
+
+---
+
+## Rule 16 — No console I/O outside the CLI integration
+
+**Intent.** The stated audience is developers embedding this in JVM applications
+(LangChain4j, Quarkus, servers). A library that prints to stdout corrupts structured
+logs and cannot be silenced or routed. This is the same class of problem as
+[P2](current-architecture.md#p2--model-also-owns-the-application-loop) — the model
+owning the application loop — and it will otherwise be discovered by the first embedder
+rather than by a rule.
+
+**Allowed direction.** Library code emits through a project-owned logging sink, no-op by
+default. Only the CLI integration writes to `System.out` / `System.err`.
+
+```java
+noClasses()
+    .that().resideOutsideOfPackage("..integration.cli..")
+    .should().callMethodWhere(target ->
+            target.getOwner().getName().equals("java.io.PrintStream")
+            && (target.getName().equals("println") || target.getName().equals("print")));
+```
+
+**No external logging facade.** The library owns a small sink interface rather than
+depending on SLF4J or similar. `pom.xml` declares no logging dependency today, and the
+project ships a shaded jar with native-image considerations; importing a facade's
+dependency surface into a self-contained inference library buys little. An optional
+SLF4J bridge belongs in an integration module. The sink composes with the metrics sink
+of [Rule 17](#rule-17--metrics-flow-bottom-to-top-by-design) — same shape, same
+direction, plausibly the same lifecycle.
+
+**Violations today.** 65 `System.out` / `System.err` occurrences across 20 main-source
+files, including the generation loop — principally `Model.runInteractive` and
+`Model.runInstructOnce`.
+
+**Migration considerations.** Ships with the 20 files as an enumerated allowlist under
+the standard shrink-only policy. The CLI keeps printing; that is its job.
+
+---
+
+## Rule 17 — Metrics flow bottom-to-top, by design
+
+**Intent.** Metrics are the one thing in this architecture with the *opposite*
+dependency direction to everything else: produced at the bottom (backend, device),
+consumed at the top (API, engine, operator). Rule 8a forbids `..backend..` → `..api..`,
+so a metrics facility placed in the API layer is un-callable from where the data
+originates. Without an explicit seam the outcome is either a forbidden upward dependency
+or — the actual default — device timings that are simply never surfaced.
+
+**Allowed direction.** A metrics **sink interface** lives in the runtime layer, below
+the backend SPI's consumers. Backends write to it; API and engine read from it. Sink
+implementations (in-memory, bench recorder, exporter) live above the interface.
+
+```java
+// Permitted, and deliberately so — the one upward-looking seam in the design.
+classes()
+    .that().resideInAPackage("..backend..")
+    .may().dependOnClassesThat().resideInAPackage("..runtime.metrics..");
+
+// Still forbidden: backends must not reach the sink implementations.
+noClasses()
+    .that().resideInAPackage("..backend..")
+    .should().dependOnClassesThat()
+    .resideInAnyPackage("..api..", "..generation..", "..integration..");
+```
+
+**This is a designed permission, not an allowlist entry.** The distinction is the whole
+point: an allowlist entry says "this violation is tolerated for now", which invites
+removal. A permitted edge says "this direction is correct here", which invites use.
+
+**Grounding.** TornadoVM already produces everything needed and we discard all of it —
+`withProfiler(ProfilerMode)` plus `TornadoExecutionResult.getProfilerResult()` yields
+device kernel time, host↔device transfer time and bytes, device memory usage and compile
+time. Zero references exist in main sources. See
+[the capability ledger](tornadovm-capabilities.md#available-capabilities).
+
+**Cost caveat, to be designed in.** `withProfiler(...)` is not free. The sink must be off
+by default on the decode path, with profiling opt-in per execution — otherwise telemetry
+is paid for per token.
+
+**Violations today.** No seam exists. `auxiliary/RunMetrics` is a static holder that
+prints; it becomes one sink implementation.
+
+---
+
+## Rule 18 — Engine tier direction
+
+**Intent.** The engine owns scheduling across sequences. It must sit above sessions and
+below the public API, so that both the CLI and the server can drive it.
+
+**Allowed direction.** `engine.**` → `model.**`, `session`, `program.**`, `runtime.**`.
+Never `model.**` or session types → `engine.**`.
+
+```java
+noClasses()
+    .that().resideInAnyPackage("..model..", "..program..", "..runtime..", "..backend..")
+    .should().dependOnClassesThat().resideInAPackage("..engine..");
+```
+
+**Rationale.** A session must remain usable without an engine — that is the simple
+single-sequence path. If sessions depend on the engine, the simple path acquires a
+scheduler it does not need.
+
+**Violations today.** No engine tier exists. `bench/BatchedDecodeEngine` (PR #129) is
+its seed and currently lives in a benchmark package.
+
+**Migration considerations.** See
+[ADR-006](decisions/ADR-006-engine-tier.md) and the engine milestone in the roadmap.
 
 ---
 
@@ -481,7 +641,7 @@ The first ArchUnit implementation will not pass on existing code. That is expect
 
 1. Every rule that cannot pass ships with an explicit, enumerated allowlist of the
    currently-violating classes — by fully qualified name, never by wildcard package.
-2. Each allowlist entry carries a comment naming the roadmap phase that removes it.
+2. Each allowlist entry carries a comment naming the milestone that removes it.
 3. The allowlist may **shrink** in any pull request. It may **not grow** without an
    ADR or an explicit maintainer decision recorded in the pull request.
 4. A rule with an empty allowlist has its allowlist deleted, not left as an empty list.
@@ -493,9 +653,37 @@ exempt the largest part of the codebase and make the rule meaningless.
 
 ## Rules not yet enforceable
 
-Rules 3, 6, 9, 10, 12, 14 and 15 reference packages or types that do not exist. They
-are review criteria until the corresponding roadmap phase creates the package, at which
+Rules 3, 6, 9, 10, 12, 14, 15, 17 and 18 reference packages or types that do not exist.
+They are review criteria until the corresponding milestone creates the package, at which
 point the ArchUnit test is added **before** the implementation.
 
-Rules 1, 2, 5, 7, 11 and 13 can be written against today's code — with allowlists —
-as part of [roadmap phase 1](migration-roadmap.md#phase-1--architecture-baseline-and-dependency-rules).
+Rules 1, 2, 5, 7, 8a, 11, 13 and 16 can be written against today's code — with
+allowlists — as part of
+[milestone M1](migration-roadmap.md#m1--guardrails-tests-only-no-production-code).
+
+Rule 8b is a non-violation clarification rather than a check: it exists to keep the
+device sampler off Rule 8a's allowlist.
+
+## Rule index
+
+| Rule | Subject | Enforceable now? |
+| --- | --- | --- |
+| 1 | TornadoVM confined to the Tornado backend | Yes, with allowlist |
+| 2 | Model packages free of TornadoVM | Yes, with allowlist |
+| 3 | Program interfaces free of TornadoVM | On package creation |
+| 4 | GGUF is a format concern | After `DataType` exists |
+| 5 | Models immutable | Yes, partially |
+| 6 | Sessions own mutable state | On session type |
+| 7 | KV storage managed and leased | Yes, as regression guard |
+| 8a | Generation policy out of the backend | Yes, with allowlist |
+| 8b | Sampling is an operation | Clarification, not a check |
+| 9 | Programs are backend-neutral | On package creation |
+| 10 | Compiled programs are backend-specific | On SPI |
+| 11 | `TaskGraph` / `TornadoExecutionPlan` confined | Yes |
+| 12 | Forward plans stay transitional | Yes |
+| 13 | No per-token compilation | Behavioural + test |
+| 14 | Core does not assume generation | On package creation |
+| 15 | No central model-type switches | On provider SPI |
+| 16 | No console I/O outside the CLI | Yes, with allowlist |
+| 17 | Metrics seam direction | On metrics package |
+| 18 | Engine tier direction | On engine package |

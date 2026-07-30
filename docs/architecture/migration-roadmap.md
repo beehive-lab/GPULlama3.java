@@ -1,415 +1,364 @@
-# Migration Roadmap
+# Implementation Roadmap
 
-**Status: proposal.** Phase order is a recommendation; scope and acceptance criteria
-are the parts to argue about in review.
+**Status: agreed.** This is the plan implementation work is measured against, following
+the ARCH-01..19 review on PR #140. Changing a milestone's objective or acceptance criteria
+needs an ADR; re-ordering work inside a milestone does not.
+
+Terms: [`terminology.md`](terminology.md). Rules: [`dependency-rules.md`](dependency-rules.md).
+Capabilities and version floors: [`tornadovm-capabilities.md`](tornadovm-capabilities.md).
 
 ## Principles
 
-1. **No rewrite.** The engine works. Every phase leaves it working.
-2. **No big-bang rename.** A repository-wide package rename or multi-module split as
-   step one would produce one unreviewable diff and prove nothing.
-3. **Rules before code.** Where a phase creates a new boundary, the ArchUnit rule for
-   that boundary lands first (with an allowlist), then the code.
-4. **Performance is a correctness criterion.** Every phase that touches the GPU path
-   states a benchmark acceptance criterion. The compile-once/execute-many property
-   ([rule 13](dependency-rules.md#rule-13--no-compilation-or-task-graph-construction-per-token))
-   is non-negotiable.
-5. **Additive first, removal later.** New surface is added alongside old surface; old
-   surface is deprecated with a replacement before removal.
+1. **No rewrite.** The engine works. Every milestone leaves it working.
+2. **No big-bang rename.** A repository-wide package rename or module split as step one
+   would produce one unreviewable diff and prove nothing.
+3. **Rules before code.** Where a milestone creates a boundary, the ArchUnit rule lands
+   first (with an allowlist), then the code.
+4. **Performance and numerics are correctness criteria**, with named gates — see
+   [Definition of done](#definition-of-done).
+5. **Additive first, removal later.** New surface lands beside old surface; old surface is
+   deprecated with a replacement before removal.
 
-## Recommended first milestone
+## Definition of done
 
-**Milestone 1 = Phase 1 + the additive half of Phase 2.** Low risk, no behaviour
-change, no GPU path change:
+Every milestone, without exception:
 
-- this architecture baseline (done — this directory);
-- ArchUnit test module with rules 1, 2, 5, 7, 11, 13 and enumerated allowlists;
-- the three trivially-final fields on `AbstractModel` made final;
-- a read-only façade (`LocalModels` / `LocalModel` / `GenerationSession`) that
-  delegates to existing `Model` methods without changing them.
-
-Deliberately **not** in milestone 1: package renames, module splits, `State`
-restructuring, `Model` interface changes, anything touching `tornadovm/**` internals.
+1. **Goldens bit-identical** for the pinned configuration (M1.4), run with
+   `-Dtornado.recover.bailout=False` — the default swallows exactly the failure class that
+   state-motion refactoring risks
+   ([C4](tornadovm-capabilities.md#c4--interpreter-bytecode-buffer-overflow-was-silent)).
+2. **Benchmark gate passes** on its tuple (M1.7).
+3. **ArchUnit allowlists shrank or stayed equal** — never grew.
+4. **Deprecations, not deletions**, wherever public surface changes.
 
 ---
 
-## Phase 1 — Architecture baseline and dependency rules
+## Phase 0 — TornadoVM version floor
 
-**Objective.** Write the target down and make the most important boundaries
-machine-checked, with the current violations enumerated rather than ignored.
+**Objective.** Adopt TornadoVM ≥ 5.2.x. Everything else assumes capabilities that are not
+reachable from the pinned version.
 
-**Affected.** `docs/architecture/**`; a new test source set for ArchUnit; `pom.xml`
-(test-scoped ArchUnit dependency only).
+**Affected.** `pom.xml` (`tornadovm.base.version` 5.0.0 → ≥5.2.x), the `llama-tornado`
+launcher, CI workflows, `Makefile`.
 
-**Non-goals.** No production code change. No package moves. No renames.
+**Why first.**
 
-**Acceptance criteria.**
-- Baseline documents exist and are reviewed by maintainers.
-- ArchUnit tests exist for rules 1, 2, 5, 7, 11, 13 and pass with allowlists.
-- Every allowlist entry is a fully-qualified class name with a phase reference; no
-  wildcard entries.
-- `mvn test` passes; build output is unchanged.
+| Needed | Present in 5.0.0? |
+| --- | --- |
+| `FP8Array` | No — 5.1.0 |
+| `BFloat16Array` (PR #120's BF16 path) | No — 5.2.0 |
+| Deterministic generated kernel source (compiled-program identity) | No — #999 |
+| Interpreter bytecode buffer sized to the graph | No — #1004 |
+| Wait-event matrix fix (53 → 103 tok/s) | No — #1002 |
+| On-disk cubin cache (start-up 11.5 s → 5.2 s) | No — #1008 |
 
-**Compatibility risks.** None — test-scope only.
+**Non-goals.** No use of the new dtypes yet. No behaviour change beyond what the bump
+itself brings.
 
-**Performance risks.** None.
+**Acceptance.** Build and launcher work on the new version; goldens generated **once** on
+the new floor and committed as the baseline; a fresh `perf-history.jsonl` entry recorded,
+since prior entries are not comparable.
 
-**Depends on.** Nothing.
+**Compatibility risks.** Medium — the launcher and CI pin versions in several places.
 
----
-
-## Phase 2 — Public API façade over current implementation
-
-**Objective.** Give users the intended API shape before the internals move, so the
-internals can move without breaking users again later.
-
-**Affected.** New `api/` package. Read-only use of `model/`, `inference/`,
-`tornadovm/`.
-
-**Scope.** `LocalModels`, `LocalModel`, `GenerationSession`, `GenerationRequest`,
-`GenerationResult`, `ModelOptions`, `SessionOptions` — all delegating to today's
-`ModelLoader.loadModel`, `Model.createNewState`,
-`TornadoVMMasterPlan.initializeTornadoVMPlan` and the `InferenceEngine*` loops.
-The façade's `GenerationSession` initially wraps one `State` + one plan, i.e. what
-`server.InferenceService` already does.
-
-**Non-goals.** No change to `Model`, `State`, `InferenceEngine*` or the plan
-hierarchy. No removal of `runInstructOnce` / `runInstructOnceLangChain4J`. No
-`Backend` or `InferenceProgram` types yet.
-
-**Acceptance criteria.**
-- The simple example in [`public-api.md`](public-api.md) compiles and runs on both
-  CPU and GPU paths.
-- No TornadoVM, GGUF or `Options` type appears in any `api/` signature.
-- Existing CLI, `OpenAIServer` and LangChain4j entry points behave identically.
-- Generated output is token-identical to the pre-phase build for a fixed seed.
-
-**Compatibility risks.** Low — additive. Risk is committing to names too early; hence
-the API should be marked experimental in Javadoc until phase 7.
-
-**Performance risks.** Low. Watch for the façade creating a `State` or a plan more
-than once per session.
-
-**Depends on.** Phase 1 (for the rules the façade must not violate).
+**Performance risks.** None negative; #1002 and #1008 are large improvements. The risk is
+*mistaking them for* refactor gains, which is why the gate tuple includes the version.
 
 ---
 
-## Phase 3 — Loaded-model and session-state separation
+## M1 — Guardrails (tests only, no production code)
 
-**Objective.** Make the loaded model immutable and move all per-sequence mutable state
-behind a session. This is the phase that unblocks concurrency and most later phases.
+**Objective.** Make the boundaries machine-checked and give every later milestone a
+numerical safety net. Nothing here can break the engine — it touches no production file.
 
-**Affected.** `model/Model`, `model/AbstractModel`, all family model classes,
-`inference/state/**`, `server/InferenceService`, `api/`.
+| Task | Detail | Acceptance |
+| --- | --- | --- |
+| M1.1 | ArchUnit test module, test-scoped dependency | `mvn test` passes; build output unchanged |
+| M1.2 | Rules 1, 2, 5, 7, 11 with enumerated allowlists | Fully-qualified class names, each with a milestone reference; no wildcards |
+| M1.3 | Rule 8a with allowlist; Rule 16 (console I/O) with its 20 files | New console I/O in library code fails the build |
+| M1.4 | **Golden logits** — Llama-3.2-1B × {FP16, Q8_0}, fixed prompt, greedy, pinned backend, `recover.bailout=False` | Re-run asserts bit-identical; goldens committed |
+| M1.5 | CPU↔GPU parity, tolerance `\|got − ref\| ≤ 1e-2·Σ\|wᵢaᵢ\| + 1e-3` | Passes on both backends |
+| M1.6 | Compiled-program identity test | One compile, ≥100 tokens, identity unchanged |
+| M1.7 | **Benchmark gate** — add `machine`, `gpu`, `tornadovm_version`, `cache_warm` fields to `perf-history.jsonl`; gate script | Compares against last green run of the same tuple; tolerance stated per tuple |
+| M1.8 | `AbstractModel.tokenizer` / `weights` / `chatFormat` final | Compiles; no behaviour change |
 
-**Scope.**
-- Remove `tornadoVMPlan()` / `setTornadoVMPlan(...)` from `Model`; the compiled
-  program moves to the session (or a model-owned cache keyed by policy/device).
-- Make `AbstractModel` fields final.
-- Split `State` into session-lifetime state (KV cache, position) and
-  invocation-lifetime buffers (activations, scratch).
-- Keep family-specific state (e.g. `Qwen3State.wrapAttSplit`) only where genuinely
-  required.
+**Non-goals.** No package renames. No `State` restructuring. No `Model` interface change.
 
-**Non-goals.** No move of `generateTokens` off `Model` yet (phase 7). No package
-renames. No new backend SPI. Not required to deliver concurrent sessions — only to
-stop preventing them.
+**Bit-exactness is per pinned tuple** (device, driver, TornadoVM version, backend, build)
+— not a blanket property. Cross-backend comparison uses M1.5's tolerance. Goldens are
+regenerated only by an explicit reviewed commit, never silently on failure.
 
-**Acceptance criteria.**
-- `Model` no longer references `TornadoVMMasterPlan`; dependency rule 2 allowlist
-  loses its `model/` entries.
-- Two sessions can be created against one loaded model and produce correct,
-  independent output (sequentially, at minimum).
-- `InferenceService` is reimplemented on top of the session type without behaviour
-  change.
-- Deterministic output unchanged for a fixed seed.
-
-**Compatibility risks.** **High** — `Model` is public surface used by LangChain4j and
-Quarkus integrations. Removed methods must be deprecated first with a documented
-replacement, and the integration repositories notified.
-
-**Performance risks.** **Medium.** Splitting `State` changes buffer allocation and
-possibly device transfer boundaries. Risks: extra allocation per invocation;
-losing buffer reuse; changing which buffers are marked for device transfer. Requires a
-tokens/second benchmark on both FP16 and Q8_0, single-token and prefill/decode paths,
-before and after.
-
-**Depends on.** Phase 2.
+**Depends on.** Phase 0.
 
 ---
 
-## Phase 4 — Generic tensor metadata and GGUF isolation
+## M2 — Metrics seam
 
-**Objective.** Introduce a runtime `DataType` and tensor descriptors, and confine
-GGUF/GGML to the loading path.
+**Objective.** Give metrics a home before the milestones that need evidence of "no
+behaviour change".
 
-**Affected.** `tensor/**`, `inference/weights/**`, `model/loader/**`, and the
-`GGMLType` dispatch in `tornadovm/plan/ForwardPlanFactory`.
+| Task | Detail | Acceptance |
+| --- | --- | --- |
+| M2.1 | Metrics sink interface in the runtime layer (Rule 17) | No dependency on api/generation; the permitted edge is explicit |
+| M2.2 | Tornado backend reports via `withProfiler(...)` + `getProfilerResult()` | Device kernel time, transfer bytes, device memory reach the sink |
+| M2.3 | Sink off by default on the decode path | Benchmarked: no tok/s change when disabled |
+| M2.4 | `RunMetrics` becomes one sink implementation | CLI output unchanged |
+| M2.5 | Counters: load, prefill, decode, tokens/s | Available programmatically, not only printed |
+| M2.6 | Logging sink (Rule 16), no-op by default | Rule 16 allowlist begins shrinking |
 
-**Scope.**
-- Add a runtime `DataType` (F32, F16, Q8_0, …) owned by the runtime layer.
-- Add tensor descriptors (dtype + shape/element count + layout) separate from storage.
-- Make loading an explicit mapping: `GGMLTensorEntry` → descriptor → backend storage.
-  The existing `AbstractModelLoader.effectiveGpuWeightType` collapse of
-  `Q4_K`/`Q5_K`/`Q6_K` → `Q8_0` becomes part of that mapping.
-- Move `GGUF`, `GGMLTensorEntry`, `MetadataValueType` into a format package.
+**Non-goals.** No exporters. No memory planning. Those are M13.
 
-**Non-goals.** No new file format support. No shaped-tensor arithmetic or broadcasting
-semantics. No change to how quantized kernels work. `FloatTensor` stays shapeless.
+**Grounding.** Every value comes from TornadoVM's existing profiler API, referenced
+nowhere in the project today.
 
-**Acceptance criteria.**
-- `Weights`, `FloatTensor` and `TornadoTensor` expose `DataType`, not `GGMLType`.
-- `ForwardPlanFactory` dispatches on `DataType`.
-- No type outside the format package references `GGMLType` or `GGUF`.
-- Dependency rule 4 passes with an empty or near-empty allowlist.
-- Loading time and memory footprint unchanged (measure both).
-
-**Compatibility risks.** Medium — `Weights.getWeightType()` and the tensor classes are
-public. `ModelLoader.loadTensor(GGMLTensorEntry)` is public and used by loaders.
-
-**Performance risks.** Low for execution; **watch model load time**, which is already
-tracked by `RunMetrics.setLoadDuration`. An extra descriptor layer must not add a copy.
-
-**Depends on.** Phase 1. Independent of phase 3, so the two can proceed in parallel.
+**Depends on.** M1.4 — the first production change happens with goldens already in place.
 
 ---
 
-## Phase 5 — Reusable transformer operation extraction
+## M3 — Public API façade
 
-**Objective.** Establish one named operation vocabulary (RMSNorm, RoPE, MatVec,
-Attention, SwiGLU, Softmax, ResidualAdd, EmbeddingLookup, VocabProjection) that both
-the CPU path and the TornadoVM path implement.
+**Objective.** Give users the intended surface before the internals move.
 
-**Affected.** New `program/op/` package; `inference/InferenceCore*`;
-`tornadovm/kernels/**`; `tornadovm/layers/**`.
+| Task | Detail | Acceptance |
+| --- | --- | --- |
+| M3.1 | `api/`: `LocalModels`, `LocalModel`, `GenerationSession`, `GenerationRequest/Result`, `ModelOptions`, `SessionOptions` | The simple example in `public-api.md` compiles and runs, CPU and GPU |
+| M3.2 | Delegate to existing `ModelLoader` / `InferenceEngine*` / `TornadoVMMasterPlan` | Token-identical output for a fixed seed |
+| M3.3 | Remove console I/O from library paths the façade reaches | Rule 16 allowlist shrinks |
+| M3.4 | Mark experimental in Javadoc | Removed in M13 |
 
-**Scope.** Define the operations and their parameters. Express the existing CPU
-forward passes and the existing task-graph builders in terms of them. Reduce the
-duplication between `InferenceCore`, `InferenceCoreWithPrefillDecode` and
-`InferenceCoreBatchPrefillDecode`.
+**Non-goals.** No change to `Model`, `State`, `InferenceEngine*` or the plan hierarchy.
+No removal of `runInstructOnce` / `runInstructOnceLangChain4J`.
 
-**Non-goals.** **Do not rewrite kernels.** Do not merge the CPU and GPU
-implementations — only the vocabulary is shared. Do not introduce an operator
-registry, a graph optimizer or fusion rules.
+**Compatibility risks.** Low — additive. The risk is committing to names early, hence the
+experimental marker.
 
-**Acceptance criteria.**
-- Each operation is defined once, independent of model family.
-- A model family's forward pass is expressible as a sequence of operations.
-- Kernel method bodies in `tornadovm/kernels/**` are unchanged or provably equivalent.
-- Tokens/second within noise of the previous phase on FP16 and Q8_0.
-
-**Compatibility risks.** Low — internal.
-
-**Performance risks.** **High if kernels are touched.** The mitigation is the
-non-goal above: this phase names and organizes, it does not rewrite compute. Any
-change to a kernel body in this phase should be rejected in review and deferred.
-
-**Depends on.** Phase 4 (operations are typed in terms of `DataType`).
+**Depends on.** M1.
 
 ---
 
-## Phase 6 — Logical program and compiled-program separation
+## M4 — DataType and GGUF isolation
 
-**Objective.** Introduce `InferenceProgram` (backend-neutral) and `CompiledProgram`
-(backend-specific), with the TornadoVM path as the first implementation of the latter.
+| Task | Detail | Acceptance |
+| --- | --- | --- |
+| M4.1 | Runtime `DataType` alongside `GGMLType` | Additive |
+| M4.2 | Explicit `GGMLType → DataType` mapping, seeded from `effectiveGpuWeightType` and `getModelQuantization` | Directly tested — first time this logic is visible |
+| M4.3 | `TensorDescriptor` (dtype + element count/shape + layout) | Loaders produce descriptors, then materialize storage |
+| M4.4 | `Weights` / `FloatTensor` / `TornadoTensor` expose `DataType`; deprecate `GGMLType` accessors | Rule 4 allowlist shrinks |
+| M4.5 | `ForwardPlanFactory` dispatches on `DataType` | Behaviour identical |
+| M4.6 | Move `GGUF`, `GGMLTensorEntry`, `MetadataValueType`, `GGMLType` to a format package | Rule 4 allowlist empty |
+| M4.7 | `ModelInfo` exposes weight **and** compute dtype | Reflects the K-quant → Q8_0 collapse honestly |
 
-**Affected.** New `program/` package; `tornadovm/plan/**`; `tornadovm/TornadoVMMasterPlan*`.
+**Non-goals.** No new file formats. No shaped-tensor algebra — `FloatTensor` stays
+shapeless. No change to how quantized kernels work.
 
-**Scope.**
-- `InferenceProgram` as an ordered list of program components — **not** a graph IR
-  ([ADR-002](decisions/ADR-002-program-and-compiled-program.md)).
-- `CompiledProgram` implemented by wrapping today's `TornadoVMMasterPlan` +
-  `ForwardPlan` + `TornadoExecutionPlan`.
-- `Invocation` binding inputs, outputs and session state.
-- `ForwardPlan` and `*ForwardPlanComponents` become internal to the Tornado backend.
+**Watch.** Model load time (`RunMetrics.setLoadDuration`) and resident memory, not
+throughput. The descriptor layer must not add a copy.
 
-**Non-goals.** No graph IR, no loop IR, no scheduling decisions moved out of
-TornadoVM, no second compiler. No change to the number or content of task graphs.
-
-**Acceptance criteria.**
-- `program/` has zero TornadoVM dependencies (rule 3 passes with no allowlist).
-- One `InferenceProgram` produces the same task graphs as today for a given
-  model + quantization + policy.
-- Compilation happens once per (model, policy, device); a test asserts compiled-program
-  identity is stable across ≥ 100 generated tokens (rule 13).
-- Tokens/second within noise.
-
-**Compatibility risks.** Low externally; high internally — this touches the whole
-`tornadovm/plan` tree.
-
-**Performance risks.** **Medium.** The failure mode is an indirection layer that turns
-one direct `execute()` into per-token allocation or lookup. Invocation must bind, not
-allocate.
-
-**Depends on.** Phases 3 and 5.
+**Depends on.** M1. Independent of M6, so the two can run in parallel.
 
 ---
 
-## Phase 7 — Consolidate engine variants behind execution policies
+## M5 — Model provider SPI, part A (detection and loading)
 
-**Objective.** Replace the three parallel engine/core variants and the static system
-properties with one generation loop parameterized by an explicit `ExecutionPolicy`.
+| Task | Detail | Acceptance |
+| --- | --- | --- |
+| M5.1 | `ModelProvider` SPI (`supports` / `load`), `ServiceLoader` discovery | — |
+| M5.2 | Per-family providers replacing `ModelType` load dispatch | All families load identically |
+| M5.3 | Replace `detectModelType` substring matching on `general.name` | An unsupported model gives a clear error, not a wrong-family load |
+| M5.4 | Migrate PR #120's family onto the SPI | Adding a family touches only new files + one registration |
 
-**Affected.** `inference/InferenceEngine*`, `inference/InferenceCore*`, `Options`,
-`Model` default methods, `model/llama/Llama` and siblings, `LlamaApp`.
+**Non-goals.** `ModelType` need not be deleted — it may remain an internal identifier.
+The `ForwardPlanFactory` branches are **not** in scope; they need the program layer (M11).
 
-**Scope.**
-- One generation loop; prefill/decode/batch-prefill become policy, not class identity.
-- `ExecutionPolicy` as a value passed at model or session creation, replacing
-  `llama.withPrefillDecode`, `llama.prefillBatchSize` and `llama.deviceSample` as
-  *class-initialization-time* `static final` reads.
-- Move `runInteractive` / `runInstructOnce` / `runInstructOnceLangChain4J` out of
-  `Model` into the CLI and integration layers.
-- Retire `Options.setProperty(...)` side effects in the record constructor.
-
-**Non-goals.** Do not remove the system properties as an *input* mechanism — the
-`llama-tornado` launcher and existing scripts pass them. They should configure a policy
-object rather than be read directly at class initialization.
-
-**Acceptance criteria.**
-- `InferenceEngineWithPrefillDecode` and `InferenceEngineWithBatchPrefillDecode` are
-  gone or reduced to thin deprecated delegates.
-- `Model` no longer performs console I/O and no longer imports `Options`.
-- Dependency rule 8 passes.
-- `LlamaApp.guardDeviceSample`'s class-initialization-ordering workaround is no longer
-  necessary.
-- All existing flag combinations produce identical output and comparable throughput.
-
-**Compatibility risks.** **High.** `Model.runInstructOnce*` are used by external
-integrations; the `llama-tornado` launcher, benchmark scripts under `scripts/` and CI
-all pass `llama.*` properties. Deprecate, do not delete, and keep property parsing
-working.
-
-**Performance risks.** **Medium.** Today's static `final` flags are constant-folded by
-the JIT. Moving to instance fields on a hot path could cost measurably. Mitigation:
-resolve policy once per session, not per token; benchmark the decode loop specifically.
-
-**Depends on.** Phases 3 and 6.
+**Depends on.** M4.
 
 ---
 
-## Phase 8 — Model provider SPI
+## M6 — Session and state split
 
-**Objective.** Adding a model architecture means adding a provider, not editing central
+**The highest-risk milestone.** It touches every builder in `tornadovm/layers/**`.
+
+| Task | Detail | Acceptance |
+| --- | --- | --- |
+| M6.1 | Session type owning sequence position and holding a KV lease | Two sessions from one model produce correct independent output |
+| M6.2 | `KvCacheManager` + `BlockPool`, single-lease, behaviour-identical (ADR-005) | Goldens bit-identical |
+| M6.3 | Remove plan ownership from `Model`; deprecate `tornadoVMPlan()` / `setTornadoVMPlan` | Rule 2 allowlist loses its `model/` entries |
+| M6.4 | Split `State`: KV behind the lease; activations and scratch stay per-session | Gate green on FP16 + Q8_0, single-token + prefill/decode |
+| M6.5 | Reimplement `InferenceService` on the session type | Server behaviour unchanged |
+| M6.6 | Keep family-specific state only where required (e.g. `Qwen3State.wrapAttSplit`) | Each surviving field justified in review |
+
+**The pool is one persistent array with in-kernel indexing** — an invariant, not a choice.
+Handing a slot a different buffer per step breaks CUDA-graph replay, and
+`recover.bailout=true` turns that into wrong output rather than an error
+([C1](tornadovm-capabilities.md#c1--cuda-graph-capture-fixes-device-addresses)).
+
+**Compatibility risks.** High — `Model` is used by LangChain4j and Quarkus integrations.
+Deprecate first, notify those repositories.
+
+**Performance risks.** Medium — buffer allocation and device-transfer boundaries move.
+
+**Depends on.** M1; **PR #138 must land first** (KV layout before KV ownership).
+
+---
+
+## M7 — Engine tier
+
+| Task | Detail | Acceptance |
+| --- | --- | --- |
+| M7.1 | Promote #129's paged mode onto `KvCacheManager` | Paged decode runs through the manager; CUDA-graph replay survives |
+| M7.2 | `Scheduler` + admission, reserving against the same budget `withMemoryLimit` bounds | Continuous batching reproduces #129's numbers |
+| M7.3 | `PrefixCache` — identity includes model, dtype, position offset; refcounting; leased blocks pinned | Prefix-reuse savings reproduced; eviction under a live lease tested |
+| M7.4 | `LLMEngine` (`addRequest`, `step`) + non-blocking submit | Server moves onto the engine API |
+| M7.5 | Serving metrics through the M2 sink: TTFT, queue wait, occupancy, block utilization, preemptions, admitted/rejected | Per-request and aggregate; TTFT records cache warm/cold |
+| M7.6 | Retire `-Dbatch.decode.*` in favour of explicit policy | Same combinations expressible |
+
+**Non-goals.** No second compiler. No new kernels. Promotion, not reimplementation.
+
+**Depends on.** M6; **PR #129 must land first** — the design needs its consumer in tree,
+not in a diff. M7.6 is designed together with M10, since both retire process-global
 switches.
 
-**Affected.** `model/ModelType`, `model/loader/**`, `tornadovm/plan/ForwardPlanFactory`,
-`inference/sampler/Sampler.createSampler`, new `model/provider/`.
+---
 
-**Scope.** `ModelProvider` SPI with `supports(ModelSource)` / `load(...)`, discovered
-via `ServiceLoader`. Per-family providers replacing the `ModelType` dispatch, the
-`detectModelType` string matching, and the family branches in `ForwardPlanFactory`.
+## M8 — Operation vocabulary
 
-**Non-goals.** Not required to delete `ModelType` — it may remain an internal
-identifier. Not required to support non-GGUF sources.
+| Task | Detail | Acceptance |
+| --- | --- | --- |
+| M8.1 | Define RmsNorm, RoPE, MatVec/MatMul, Attention, Softmax, SwiGLU, ResidualAdd, EmbeddingLookup, VocabProjection, **Sample/ArgMax** | Each defined once, family-independent |
+| M8.2 | Parameterize by `DataType` at description and dispatch level | Adding a scheme adds ≤ k dispatch classes **and one kernel set per dtype** |
+| M8.3 | Express the CPU forward passes in terms of operations | Kernel bodies unchanged |
+| M8.4 | Express the task-graph builders in terms of operations | Same task graphs produced |
 
-**Acceptance criteria.**
-- Adding a new architecture touches only new files plus one service-registration entry.
-- Dependency rule 15 passes.
-- All currently supported families load and run identically.
-- A deliberately-unsupported model produces a clear error, not a wrong-family load.
-  (Today's `detectModelType` matches on substrings of `general.name`, so this is a
-  behaviour worth testing explicitly during the migration.)
+**Non-goals, enforced in review.** **No kernel rewrites.** No operator registry, graph
+optimizer or fusion rules. Any change to a kernel body in this milestone is rejected and
+deferred.
 
-**Compatibility risks.** Medium — `ModelType` and `ModelLoader.loadModel` are public.
+**Why "one kernel set per dtype" and not full collapse.** TornadoVM compiles per concrete
+native array type (`FloatArray`, `HalfFloatArray`, `Int8Array`, `FP8Array`) and Java has
+no generics over primitives, so one kernel body cannot serve every scheme. The
+per-(model × dtype × mode × MMA) *class* explosion collapses — 36 classes under
+`tornadovm/layers/type/**` today — the per-dtype *kernel* set does not.
 
-**Performance risks.** Low; load-time only.
+**FP4/MXFP4 is out of scope** and depends on upstream TornadoVM work: no array type, no
+`MMAShape` entry, no PTX codegen.
 
-**Depends on.** Phases 4 and 6.
+**Depends on.** M4.
 
 ---
 
-## Phase 9 — Backend and device SPI
+## M9 — Program and compiled program
 
-**Objective.** Make TornadoVM one backend behind an interface, with explicit device
-selection.
+| Task | Detail | Acceptance |
+| --- | --- | --- |
+| M9.1 | Write ArchUnit Rule 3 **before** the package exists | Fails on an accidental TornadoVM import |
+| M9.2 | `InferenceProgram`, `ProgramComponent`, `ProgramSignature` — ordered, not a graph IR | No TornadoVM types |
+| M9.3 | Tornado `compile(...)` reproducing today's graphs, starting with Llama + FP16 | Same graph count, task names, grid scheduler entries |
+| M9.4 | `Invocation` binds inputs/outputs/state, allocates nothing | Per-token allocation profile unchanged |
+| M9.5 | Migrate remaining families; delete each `*PlanComponents` only once proven | Goldens bit-identical throughout |
 
-**Affected.** New `backend/` SPI; `tornadovm/**` → `backend/tornado/**`;
-`inference/InferenceCore*` → `backend/cpu/**`; `tornadovm/scheduling/**`.
+**Non-goals.** No graph IR, no loop IR, no scheduling moved out of TornadoVM.
 
-**Scope.** `Backend`, `Device`, `DeviceSelector`, `CompileOptions`. TornadoVM backend
-implementing them. The plain-Java CPU path implementing them. **This is the phase that
-performs the `tornadovm` → `backend.tornado` package move**, which is what makes
-dependency rules 1 and 11 enforceable without an allowlist.
+**Compiled-program identity** relies on deterministic generated kernel source, which only
+holds from the Phase 0 floor
+([C3](tornadovm-capabilities.md#c3--generated-kernel-source-was-non-deterministic-before-52)).
 
-**Non-goals.** No new hardware backend. No abstraction over TornadoVM's own PTX /
-OpenCL / SPIR-V backends — those stay device-level concerns of the TornadoVM backend
-([ADR-003](decisions/ADR-003-tornado-backend-boundary.md)).
-
-**Acceptance criteria.**
-- Rules 1 and 11 pass with an empty allowlist.
-- Device selection is explicit and testable; the current failure mode where `--cuda`
-  without `--gpu` silently runs on CPU is impossible to express.
-- Both backends satisfy the same SPI test suite.
-- No throughput change (this is a move, not a rewrite).
-
-**Compatibility risks.** **High** — a large package move affecting imports repository-wide,
-plus the shaded jar, native-image configuration and release automation.
-
-**Performance risks.** Low in principle; verify anyway, because a package move can
-change class-initialization order (see phase 7's note on `guardDeviceSample`).
-
-**Depends on.** Phases 6 and 7.
+**Depends on.** M6, M8.
 
 ---
 
-## Phase 10 — Memory planning, diagnostics and developer experience
+## M10 — Execution policy consolidation
 
-**Objective.** Make the framework usable in production JVM services: predictable
-memory, useful errors, observable behaviour.
+| Task | Detail | Acceptance |
+| --- | --- | --- |
+| M10.1 | One generation loop; prefill/decode/batch become policy | `InferenceEngineWith*` reduced to deprecated delegates |
+| M10.2 | `ExecutionPolicy` value replaces class-init `static final` property reads | `LlamaApp.guardDeviceSample`'s ordering workaround unnecessary |
+| M10.3 | Move `runInteractive` / `runInstructOnce*` out of `Model` | Rule 8a passes; `Model` free of `Options` and console I/O |
+| M10.4 | Keep `llama.*` properties as *inputs* that configure a policy | Launcher and scripts keep working |
+| M10.5 | Rename `InferenceEngine` — the name now belongs to the engine tier | No bare "engine" ambiguity left in code or docs |
 
-**Affected.** `runtime/`, `api/`, `auxiliary/metrics/`, `server/`.
+**Watch.** Today's `static final` flags are constant-folded by the JIT. Resolve policy once
+per session, never per token, and benchmark the decode loop specifically.
 
-**Scope.**
-- Explicit memory planning: report required device memory for a
-  (model, context length, policy, batch size) combination before allocating; fail with
-  a clear message instead of an out-of-memory error deep in the backend.
-- Diagnostics: which backend and device were chosen and why; which execution policy is
-  active; where time goes (load / prefill / decode). Replaces `RunMetrics` static
-  printing with values on `GenerationResult`.
-- Error messages that name the actual problem — the current
-  `UnsupportedOperationException("... not yet supported for MISTRAL + F16")` style in
-  `ForwardPlanFactory` is a good model to generalize.
-- Session pooling / reuse guidance for server use.
-- Javadoc on the public API; the experimental marker from phase 2 is removed here.
-
-**Non-goals.** No profiler. No autotuning. No scheduler of its own.
-
-**Acceptance criteria.**
-- A model that will not fit fails at load with a message stating required vs available
-  memory.
-- Timings are available programmatically, not only printed.
-- The public API is documented and no longer marked experimental.
-
-**Compatibility risks.** Low.
-
-**Performance risks.** Low — diagnostics must be off or cheap on the decode path.
-
-**Depends on.** Phase 9.
+**Depends on.** M6, M9.
 
 ---
 
-## Phase dependency summary
+## M11 — Model provider SPI, part B
+
+Removes the `ForwardPlanFactory` family branches, which need the program layer to have
+something to return. **Exit:** Rule 15 passes.
+
+**Depends on.** M9.
+
+---
+
+## M12 — Backend and device SPI
+
+| Task | Detail | Acceptance |
+| --- | --- | --- |
+| M12.1 | `Backend`, `Device`, `DeviceSelector`, `CompileOptions` | `--cuda` without `--gpu` silently running on CPU becomes inexpressible |
+| M12.2 | Buffer lifetime classes (model / engine / invocation) + capacity query | Engine admission consumes the capacity query |
+| M12.3 | Move `tornadovm/**` → `backend/tornado/**`, `InferenceCore*` → `backend/cpu/**` | Rules 1 and 11 pass with empty allowlists |
+| M12.4 | Shard-plan seam; invocation targets a device set | Design-only, no implementation |
+| M12.5 | Verify shaded jar, native-image config, release automation, class-init order | Build and launcher unchanged |
+
+**Non-goals.** No new hardware backend. No abstraction over TornadoVM's own PTX/OpenCL/
+SPIR-V backends — those stay device-level concerns.
+
+**Compatibility risks.** High — a repository-wide import change.
+
+**Depends on.** M9, M10.
+
+---
+
+## M13 — Memory planning, diagnostics, developer experience
+
+Memory planning that reports required device memory before allocating; error messages
+that name the problem; exporters; session-reuse guidance; Javadoc; experimental marker
+removed.
+
+**Depends on.** M12.
+
+---
+
+## Dependency summary
 
 ```
-  1 ──┬── 2 ── 3 ──┬── 6 ── 7 ── 9 ── 10
-      │            │
-      └── 4 ── 5 ──┘
-               └──── 8 (also needs 6)
+Phase 0 ── M1 ─┬─ M2 ──────────────────── (feeds M7.5)
+               ├─ M3
+               ├─ M4 ─┬─ M5
+               │      └─ M8 ─┐
+               └─ M6 ─┬──────┴─ M9 ─┬─ M10 ── M12 ── M13
+        (needs #138)  │             └─ M11
+                      └─ M7  (needs #129)
 ```
 
-Phases 3 and 4 are the two that unblock everything else, and they are independent of
-each other.
+Critical path: **Phase 0 → M1 → M6 → M9 → M10 → M12 → M13**.
+M2, M3, M4, M5 are cheap and parallel. **M7 is the product win** and depends only on M6.
+
+## PR land order
+
+1. **Phase 0** — the version bump precedes everything, including #120, whose BF16 path
+   needs `BFloat16Array` (5.2.0+).
+2. **#129** — source for M7; must land before the engine tier is built.
+3. **#138** — KV layout before M6 changes KV ownership.
+4. **#120** — before M5, as the live example for the provider SPI.
+5. **#131** — last, additive, default-off, measured as parity.
+
+**Freeze declaration.** Once M6 opens, `inference/state/**`, `tornadovm/plan/**` and
+`tornadovm/layers/type/**` are in refactor; feature work in those trees rebases rather
+than merges.
 
 ## What is deliberately not scheduled
 
-- Repository-wide package rename as an early step (only phase 9, and only for the
-  backend boundary).
-- Multi-module Maven split — see
+- Repository-wide package rename as an early step — only M12, and only for the backend
+  boundary.
+- Multi-module Maven split — after M12, once the package boundaries hold. See
   [`target-architecture.md`](target-architecture.md#likely-maven-module-structure).
-  It should follow phase 9, once the package boundaries hold.
-- Any non-transformer use case implementation. Phases 3, 5 and 6 must leave the door
-  open ([rule 14](dependency-rules.md#rule-14--core-abstractions-do-not-assume-generation)),
+- Non-transformer use cases. M6, M8 and M9 must leave the door open
+  ([Rule 14](dependency-rules.md#rule-14--core-abstractions-do-not-assume-generation)),
   but building embeddings or vision support is separate work.
-- New quantization formats, new kernels, new performance work. Those continue
-  independently on their own branches; this roadmap must not block them.
+- FP4/MXFP4 — blocked on upstream TornadoVM capability, tracked in
+  [`tornadovm-capabilities.md`](tornadovm-capabilities.md#missing--genuine-upstream-proposals).
+- New kernels and performance work on their own branches. This roadmap must not block
+  them; the freeze declaration is the coordination mechanism.
