@@ -1,6 +1,5 @@
 package org.beehive.gpullama3.tensor;
 
-import org.beehive.gpullama3.tensor.standard.FloatTensor;
 import org.beehive.gpullama3.auxiliary.Pair;
 import uk.ac.manchester.tornado.api.types.arrays.TornadoNativeArray;
 
@@ -122,8 +121,12 @@ public final class GGUF {
                 continue;
             }
 
-            int numberOfElements = FloatTensor.numberOfElements(ti.dimensions());
-            int sizeInBytes = Math.toIntExact(ti.ggmlType().byteSizeFor(numberOfElements));
+            // Long arithmetic: some tensors (e.g. Gemma4's per-layer token embedding table) exceed
+            // Integer.MAX_VALUE elements/bytes, which would overflow the int-based
+            // FloatTensor.numberOfElements/GGMLType.byteSizeFor. Such tensors are read directly via
+            // long-offset MemorySegment access rather than wrapped in a FloatTensor, so only the
+            // slice size (which MemorySegment#asSlice accepts as a long) matters here.
+            long sizeInBytes = tensorByteSize(ti);
 
             // per-tensor slice offset; ti.offset() is relative to tensor-data start
             long offset = ti.offset();
@@ -167,8 +170,9 @@ public final class GGUF {
                 continue;
             }
 
-            int numberOfElements = FloatTensor.numberOfElements(ti.dimensions());
-            int sizeInBytes = Math.toIntExact(ti.ggmlType().byteSizeFor(numberOfElements));
+            // see loadTensorsStandard for why this uses long arithmetic instead of
+            // FloatTensor.numberOfElements/GGMLType.byteSizeFor
+            long sizeInBytes = tensorByteSize(ti);
 
             // absolute tensor offset - relative to start of the file
             long mappingOffset = tensorDataOffset + ti.offset();
@@ -191,6 +195,18 @@ public final class GGUF {
             tensorEntries.put(ti.name(), new GGMLTensorEntry(memorySegment, ti.name(), ti.ggmlType(), ti.dimensions(), memorySegment));
         }
         return tensorEntries;
+    }
+
+    /** Computes a tensor's byte size with {@code long} arithmetic, avoiding int-overflow for very large tensors. */
+    private static long tensorByteSize(GGUFTensorInfo ti) {
+        long numberOfElements = 1L;
+        for (int dimension : ti.dimensions()) {
+            numberOfElements *= dimension;
+        }
+        long typeSize = ti.ggmlType().getTypeSize();
+        long blockSize = ti.ggmlType().getBlockSize();
+        assert (numberOfElements * typeSize) % blockSize == 0;
+        return numberOfElements * typeSize / blockSize;
     }
 
     public Map<String, GGUFTensorInfo> getTensorInfos() {

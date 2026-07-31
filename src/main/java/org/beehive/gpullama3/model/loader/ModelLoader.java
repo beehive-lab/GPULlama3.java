@@ -52,6 +52,8 @@ public abstract class ModelLoader {
             String lowerName = name.toLowerCase();
             if (lowerName.contains("granite")) {
                 return ModelType.GRANITE;
+            } else if (lowerName.contains("gemma-4") || lowerName.contains("gemma 4")) {
+                return ModelType.GEMMA_4;
             } else if (lowerName.contains("devstral")) {
                 return ModelType.DEVSTRAL_2;
             } else if (lowerName.contains("mistral")) {
@@ -72,6 +74,9 @@ public abstract class ModelLoader {
         // Alternative: check by metadata keys if name-based detection fails
         if (metadata.containsKey("granite.block_count")) {
             return ModelType.GRANITE;
+        }
+        if ("gemma4".equals(metadata.get("general.architecture")) || metadata.containsKey("gemma4.block_count")) {
+            return ModelType.GEMMA_4;
         }
 
         return ModelType.UNKNOWN;
@@ -127,6 +132,7 @@ public abstract class ModelLoader {
             case Q5_K -> new Q5_KFloatTensor(FloatTensor.numberOfElements(entry.shape()), entry.memorySegment());
             case Q6_K -> new Q6_KFloatTensor(FloatTensor.numberOfElements(entry.shape()), entry.memorySegment());
             case F16 -> new FP16FloatTensor(FloatTensor.numberOfElements(entry.shape()), entry.memorySegment());
+            case BF16 -> new BF16FloatTensor(FloatTensor.numberOfElements(entry.shape()), entry.memorySegment());
             default -> throw new UnsupportedOperationException("Quantization format " + ggmlType);
         };
     }
@@ -153,6 +159,7 @@ public abstract class ModelLoader {
         return switch (ggmlType) {
             case F32 -> FP32TornadoTensor.fromTornadoMemorySegment(entry.memorySegment());
             case F16 -> FP16TornadoTensor.fromTornadoMemorySegment(entry.memorySegment());
+            case BF16 -> convertBF16ToFP16TornadoTensor(entry);
             case Q8_0 -> Q8_0TornadoTensor.fromTornadoMemorySegment(entry.memorySegment());
             case Q4_K, Q5_K, Q6_K -> dequantizeToQ8_0TornadoTensor(entry);
             case Q4_0 -> throw new UnsupportedOperationException("Q4_0 format not supported for TornadoVM yet");
@@ -218,6 +225,31 @@ public abstract class ModelLoader {
     }
 
     /**
+     * Converts a BF16 tensor to an FP16 {@link FP16TornadoTensor} for TornadoVM/GPU execution.
+     * TornadoVM has no native BF16 kernel support, so weights are widened to FP32 (a lossless,
+     * simple bit-shift for BF16) and narrowed to IEEE FP16 at load time -- the same representation
+     * the existing FP16 GPU kernels already expect (see {@link #loadTornadoTensor}).
+     */
+    private static FP16TornadoTensor convertBF16ToFP16TornadoTensor(GGMLTensorEntry entry) {
+        long headerBytes = TornadoNativeArray.ARRAY_HEADER;
+        GGMLTensorEntry dataEntry = new GGMLTensorEntry(
+                entry.mappedFile(), entry.name(), entry.ggmlType(), entry.shape(),
+                entry.memorySegment().asSlice(headerBytes));
+        FloatTensor source = loadTensor(dataEntry);
+        int numElements = source.size();
+
+        MemorySegment nativeSegment = Arena.ofAuto().allocate(headerBytes + (long) numElements * Short.BYTES, 4);
+        for (long i = 0; i < headerBytes; i++) {
+            nativeSegment.set(ValueLayout.JAVA_BYTE, i, (byte) 0);
+        }
+        for (int i = 0; i < numElements; i++) {
+            short f16Bits = Float.floatToFloat16(source.getFloat(i));
+            nativeSegment.set(ValueLayout.JAVA_SHORT_UNALIGNED, headerBytes + (long) i * Short.BYTES, f16Bits);
+        }
+        return FP16TornadoTensor.fromTornadoMemorySegment(nativeSegment);
+    }
+
+    /**
      * Dispatcher method for loading a TornadoVM tensor array based on type.
      * Used in GPU-path.
      */
@@ -227,6 +259,80 @@ public abstract class ModelLoader {
             array[i] = loadTornadoTensor(getTensorEntry.apply(i));
         }
         return array;
+    }
+
+    /**
+     * Copies a single {@code rowSize}-element row (selected by {@code rowIndex}) out of a -- possibly
+     * very large -- embedding-table tensor directly into {@code dest}, converting each element to float
+     * on the fly.
+     *
+     * <p>Some tensors (e.g. Gemma4's {@code per_layer_token_embd}, with ~2.35 billion elements) exceed
+     * {@link Integer#MAX_VALUE} elements/bytes, which would overflow the int-based
+     * {@link FloatTensor#numberOfElements} / {@link GGMLType#byteSizeFor} used to wrap a tensor entry in
+     * a {@link FloatTensor}. Such tensors are kept as raw {@link GGMLTensorEntry}s and addressed here with
+     * {@code long} byte offsets instead -- since only single-row (embedding lookup) access is needed.</p>
+     */
+    public static void copyEmbeddingRow(GGMLTensorEntry entry, long rowIndex, int rowSize, FloatTensor dest, int destOffset) {
+        GGMLType type = entry.ggmlType();
+        if (type.getBlockSize() != 1) {
+            throw new UnsupportedOperationException("copyEmbeddingRow only supports unblocked (per-element) types, got " + type);
+        }
+        MemorySegment segment = entry.memorySegment();
+        long elementBytes = type.getTypeSize();
+        long rowByteOffset = rowIndex * rowSize * elementBytes;
+        for (int i = 0; i < rowSize; i++) {
+            long byteOffset = rowByteOffset + (long) i * elementBytes;
+            float value = switch (type) {
+                case F32 -> segment.get(ValueLayout.JAVA_FLOAT_UNALIGNED, byteOffset);
+                case F16 -> Float.float16ToFloat(segment.get(ValueLayout.JAVA_SHORT_UNALIGNED, byteOffset));
+                case BF16 -> Float.intBitsToFloat(((int) segment.get(ValueLayout.JAVA_SHORT_UNALIGNED, byteOffset)) << 16);
+                default -> throw new UnsupportedOperationException("copyEmbeddingRow: unsupported type " + type);
+            };
+            dest.setFloat(destOffset + i, value);
+        }
+    }
+
+    /**
+     * Like {@link #copyEmbeddingRow(GGMLTensorEntry, long, int, FloatTensor, int)}, but writes into a
+     * TornadoVM {@link FloatArray} (optionally scaling each element) -- used by the GPU path to gather
+     * a per-token embedding row directly into a buffer ready for transfer to the device.
+     */
+    public static void copyEmbeddingRowToFloatArray(GGMLTensorEntry entry, long rowIndex, int rowSize, FloatArray dest, float scale) {
+        GGMLType type = entry.ggmlType();
+        MemorySegment segment = entry.memorySegment();
+
+        // Q8_0 is block-quantized (32 int8 values + one FP16 scale per 34-byte block); dequantize the
+        // requested row element-by-element from its global flat index (the blocks tile the row-major data).
+        if (type == GGMLType.Q8_0) {
+            final int blockSize = GGMLType.Q8_0.getBlockSize(); // 32 elements
+            final int typeSize = GGMLType.Q8_0.getTypeSize();   // 2-byte scale + 32 quants = 34 bytes
+            long rowStartElement = rowIndex * rowSize;
+            for (int i = 0; i < rowSize; i++) {
+                long globalElement = rowStartElement + i;
+                long blockOffset = (globalElement / blockSize) * typeSize;
+                int withinBlock = (int) (globalElement % blockSize);
+                float blockScale = Float.float16ToFloat(segment.get(ValueLayout.JAVA_SHORT_UNALIGNED, blockOffset));
+                byte quant = segment.get(ValueLayout.JAVA_BYTE, blockOffset + Short.BYTES + withinBlock);
+                dest.set(i, quant * blockScale * scale);
+            }
+            return;
+        }
+
+        if (type.getBlockSize() != 1) {
+            throw new UnsupportedOperationException("copyEmbeddingRowToFloatArray only supports unblocked (per-element) types, got " + type);
+        }
+        long elementBytes = type.getTypeSize();
+        long rowByteOffset = rowIndex * rowSize * elementBytes;
+        for (int i = 0; i < rowSize; i++) {
+            long byteOffset = rowByteOffset + (long) i * elementBytes;
+            float value = switch (type) {
+                case F32 -> segment.get(ValueLayout.JAVA_FLOAT_UNALIGNED, byteOffset);
+                case F16 -> Float.float16ToFloat(segment.get(ValueLayout.JAVA_SHORT_UNALIGNED, byteOffset));
+                case BF16 -> Float.intBitsToFloat(((int) segment.get(ValueLayout.JAVA_SHORT_UNALIGNED, byteOffset)) << 16);
+                default -> throw new UnsupportedOperationException("copyEmbeddingRowToFloatArray: unsupported type " + type);
+            };
+            dest.set(i, value * scale);
+        }
     }
 
     // Helper methods
