@@ -388,18 +388,31 @@ relocates the problem.
 **Recommendation:** treat the package boundary as the near-term goal and the module
 split as a later confirmation of it.
 
+## Resolved during the ARCH review
+
+Recorded here so they are not reopened by accident.
+
+| Question | Answer |
+| --- | --- |
+| Ordered components or a general graph? | **Ordered components.** No graph IR — [ADR-002](decisions/ADR-002-program-and-compiled-program.md) |
+| Can several sessions run concurrently on one device? | **Yes, by batching them into one invocation** of one compiled program. Not by one plan per session — device buffers are per task graph, so that duplicates the weights ([ADR-006](decisions/ADR-006-engine-tier.md), [C2](tornadovm-capabilities.md#c2--device-buffers-are-per-task-graph)) |
+| Who owns the KV cache? | **An engine-scoped manager**; sessions hold leases — [ADR-005](decisions/ADR-005-kv-cache-ownership-and-leases.md) |
+| Is sampling allowed in the backend? | **Yes** — it is an operation, not generation policy ([Rule 8b](dependency-rules.md#rule-8b--sampling-is-an-operation-and-may-execute-on-the-device)) |
+
 ## Open questions
 
-1. Are inference programs ordered component sequences or general graphs? (Recommended:
-   ordered first — [ADR-002](decisions/ADR-002-program-and-compiled-program.md).)
-2. How are compiled programs cached and keyed, and who owns their lifetime — the
-   loaded model, the backend, or an explicit cache?
-3. Can multiple sessions run concurrently on one device, or is invocation serialized
-   per compiled program? ([ADR-001](decisions/ADR-001-model-session-separation.md))
-4. Does the CPU path become a real `Backend`, or stay a separate simpler path?
-5. Where does execution policy live — model options, session options, or both?
-6. How much of `State` becomes backend-owned (device buffers) versus
-   runtime-described (layout)?
-7. Do architecture descriptions and model loaders share one SPI or two?
-8. Is a shaped tensor descriptor needed, given that `FloatTensor` is deliberately
-   shapeless today?
+Each is answered by the milestone that reaches it. None blocks starting work.
+
+| # | Question | Decided in |
+| --- | --- | --- |
+| 1 | How are compiled programs cached and keyed, and who owns their lifetime — the loaded model, the backend, or an explicit cache? | M9 |
+| 2 | Does the CPU path become a real `Backend`, or stay a separate simpler path? | M12 |
+| 3 | Where does execution policy live — model options, session options, or both? | M10 |
+| 4 | How much of `State` becomes backend-owned (device buffers) versus runtime-described (layout)? | M6 |
+| 5 | Do architecture descriptions and model loaders share one SPI or two? | M5 / M11 |
+| 6 | Is a shaped tensor descriptor needed, given that `FloatTensor` is deliberately shapeless today? | M4 |
+| 7 | Scheduling policy, preemption and batch sizing | M7 ([ADR-006](decisions/ADR-006-engine-tier.md)) |
+| 8 | Block size, eviction policy, and interaction with `withMemoryLimit` | M7 ([ADR-005](decisions/ADR-005-kv-cache-ownership-and-leases.md)) |
+
+An open question is only a problem if the milestone that hits it starts without an
+answer. Deciding them earlier than that is speculation.
