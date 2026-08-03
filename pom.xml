@@ -44,6 +44,7 @@
                  bytecode buffer in 5.2.x. 5.2.0 is the newest release published to
                  Maven Central for both the -jdk21 and -jdk25 suffixes. -->
             <tornadovm.base.version>5.2.0</tornadovm.base.version>
+            <archunit.version>1.4.2</archunit.version>
             <jdk.version.suffix>-jdk21</jdk.version.suffix>
             <!-- CUDA backend is only available after 5.0.0 TornadoVM version -->
             <tornadovm.version>${tornadovm.base.version}${jdk.version.suffix}</tornadovm.version>
@@ -60,6 +61,14 @@
                 <groupId>junit</groupId>
                 <artifactId>junit</artifactId>
                 <version>4.13.2</version>
+                <scope>test</scope>
+            </dependency>
+            <!-- Architecture rules (M1 guardrails). Test scope only: must never
+                 reach the shaded jar. See docs/architecture/dependency-rules.md -->
+            <dependency>
+                <groupId>com.tngtech.archunit</groupId>
+                <artifactId>archunit-junit4</artifactId>
+                <version>${archunit.version}</version>
                 <scope>test</scope>
             </dependency>
             <dependency>
