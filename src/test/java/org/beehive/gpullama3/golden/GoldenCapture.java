@@ -52,6 +52,21 @@ public final class GoldenCapture {
     }
 
     public static Result capture(Path ggufPath, boolean useGpu) throws Exception {
+        return capture(ggufPath, useGpu, null);
+    }
+
+    /**
+     * @param forcedTokens when non-null, the sampler returns these tokens instead of its own
+     *         argmax ("teacher forcing").
+     *
+     *         <p>This is what makes a cross-path comparison meaningful. Greedy decoding is
+     *         autoregressive, so the first near-tie that tips differently sends the two paths into
+     *         different contexts, and every row after that compares unrelated states. Forcing both
+     *         paths along the same token sequence keeps the context identical at every position, so
+     *         a difference in logits is a difference in arithmetic rather than a difference in
+     *         history.
+     */
+    public static Result capture(Path ggufPath, boolean useGpu, List<Integer> forcedTokens) throws Exception {
         assertHostLogitsAvailable();
 
         Model model = ModelLoader.loadModel(ggufPath, CONTEXT_LENGTH, true, useGpu);
@@ -70,6 +85,10 @@ public final class GoldenCapture {
             result.rows.add(toFloatArray(tensor));
             int token = Sampler.TENSOR_ARGMAX.sampleToken(tensor);
             result.tokenIds.add(token);
+            int step = result.rows.size() - 1;
+            if (forcedTokens != null && step < forcedTokens.size()) {
+                return forcedTokens.get(step);
+            }
             return token;
         };
 

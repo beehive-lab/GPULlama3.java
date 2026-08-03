@@ -81,9 +81,15 @@ public class GoldenLogitsAccelTest {
         // than assumed here. Token ids above are still compared, and NaN/Inf still fails.
         boolean bitExact = Boolean.parseBoolean(expected.metadata.getOrDefault("bit_exact", "true"));
         if (!bitExact) {
-            System.out.println("[WARN] " + expected.metadata.get("quantization")
-                    + " is recorded as NOT bit-reproducible on this tuple — comparing token ids only."
-                    + " See docs/architecture/HANDOFF.md (FP16 logits determinism).");
+            // Provisional envelope gate. Token equality alone is NOT accepted as sufficient:
+            // on this tuple argmax and top-5 survive while top-10 membership already changes,
+            // so greedy decoding hides what top-k/top-p sampling would expose.
+            float[] finalRow = actual.rows.get(actual.rows.size() - 1);
+            Envelope.Report report = Envelope.compare(expected.finalRow, finalRow);
+            System.out.println("[ENVELOPE] " + expected.metadata.get("quantization")
+                    + " recorded bit_exact=false — provisional envelope gate: " + report);
+            assertTrue("envelope exceeded for " + expected.metadata.get("quantization")
+                    + " (see verification-gates.md): " + report, report.withinBounds());
         }
 
         if (pinnedTuple && bitExact) {

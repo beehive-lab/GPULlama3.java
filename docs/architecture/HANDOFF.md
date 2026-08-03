@@ -39,6 +39,27 @@ development laptop — do not gate against it. The local baseline covers 7 of 8 
 across CUDA and OpenCL, F16 and Q8_0, median of 3 cold runs, worst spread 6.24%.
 CUDA leads OpenCL by 6–25% everywhere; Q8_0 leads F16 everywhere.
 
+## Open defect: GPU logits are not reproducible run-to-run (FP16 **and** Q8_0)
+
+**Q8_0 is affected too — corrected 2026-08-03.** An earlier note here claimed Q8_0
+reproduced exactly. That was **under-sampled**: the golden generator compares only two
+captures, and the probe compared only the *final* logits row. Running the committed Q8_0
+golden twice settles it — one run passes, the next fails at row 19; an earlier run failed
+at row 48. The drift is **intermittent and can land on any row**.
+
+Consequences, beyond the FP16 detail below:
+
+- **No configuration is currently demonstrated reproducible on the pinned tuple.** The
+  committed goldens' `bit_exact: true` for Q8_0 is wrong and must not be trusted.
+- **T1.6 cannot lean on Q8_0 for the bit-exact numerical assertion**, which was the plan.
+  Compilation identity is still assertable for every configuration, since it does not
+  depend on the numerics — that separation holds and is worth keeping.
+- The reproducibility measurement must sample far more than twice, and must compare
+  **all** rows, before any `bit_exact: true` is believed.
+
+This is a bigger finding than the FP16-only defect and needs a decision before the golden
+gate means anything.
+
 ## Open defect: FP16 logits are not reproducible run-to-run
 
 Found while generating the T1.4 goldens on the pinned tuple (RTX 5090, CUDA,
