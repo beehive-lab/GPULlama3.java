@@ -167,9 +167,15 @@ public interface ModelProvider {
     boolean supports(ModelSource source);
 
     /** Load configuration, weights, tokenizer and architecture description. */
-    LoadedModel load(ModelSource source, ModelOptions options, Backend backend);
+    LoadedModel load(ModelSource source, ModelOptions options, LoadTarget target);
 }
 ```
+
+`LoadTarget` is a **transitional internal adapter** (ADR-007 D4): the SPI lands in M5,
+seven milestones before the backend SPI exists, so it cannot take `Backend`. The
+adapter wraps what loaders consume today (the use-TornadoVM choice and device
+selection), is never public API, and is replaced by `Backend` in M12.6. This is the end
+state's one deliberate placeholder, and it has a named removal point.
 
 Discovered through `ServiceLoader`. `LlamaModelProvider`, `Qwen3ModelProvider` and so
 on register themselves. `ModelType` remains as an internal detail during migration.
@@ -213,7 +219,9 @@ LocalModels.load(path, options)
 LoadedModel.newSession(sessionOptions)
     → resolve execution policy
     → obtain or reuse CompiledProgram for (architecture, policy, backend, device)
-    → acquire a KV lease from the engine's KvCacheManager
+    → acquire a KV lease from the governing KvCacheManager
+      (engine-scoped when an engine exists; who owns the manager on the
+       engineless simple path is gate D-10 — see ownership-and-lifecycle.md)
     → allocate invocation buffers, sized by context length
     → GenerationSession (single sequence, not thread-safe)
 
@@ -401,18 +409,20 @@ Recorded here so they are not reopened by accident.
 
 ## Open questions
 
-Each is answered by the milestone that reaches it. None blocks starting work.
+Every open question is now a tracked gate in [`decision-gates.md`](decision-gates.md),
+with an owner and the task it must be decided **before** — not merely the milestone
+that reaches it.
 
-| # | Question | Decided in |
-| --- | --- | --- |
-| 1 | How are compiled programs cached and keyed, and who owns their lifetime — the loaded model, the backend, or an explicit cache? | M9 |
-| 2 | Does the CPU path become a real `Backend`, or stay a separate simpler path? | M12 |
-| 3 | Where does execution policy live — model options, session options, or both? | M10 |
-| 4 | How much of `State` becomes backend-owned (device buffers) versus runtime-described (layout)? | M6 |
-| 5 | Do architecture descriptions and model loaders share one SPI or two? | M5 / M11 |
-| 6 | Is a shaped tensor descriptor needed, given that `FloatTensor` is deliberately shapeless today? | M4 |
-| 7 | Scheduling policy, preemption and batch sizing | M7 ([ADR-006](decisions/ADR-006-engine-tier.md)) |
-| 8 | Block size, eviction policy, and interaction with `withMemoryLimit` | M7 ([ADR-005](decisions/ADR-005-kv-cache-ownership-and-leases.md)) |
+| # | Question | Gate | Decide before |
+| --- | --- | --- | --- |
+| 1 | How are compiled programs cached and keyed, and who owns their lifetime? | D-05 | M9.2 (internal in façade v1) |
+| 2 | Does the CPU path become a real `Backend`, or stay a separate simpler path? | decided in M12.1 design review | M12.1 |
+| 3 | Where does execution policy live — model options, session options, or both? | D-02 | M10.2 |
+| 4 | How much of `State` becomes backend-owned versus runtime-described? | resolved task-by-task in M6.4.x, per the [ownership matrix](ownership-and-lifecycle.md) | M6.4.1 |
+| 5 | Do architecture descriptions and model loaders share one SPI or two? | D-21 | M5.1 |
+| 6 | Is a shaped tensor descriptor needed? | D-08 | M4.3 |
+| 7 | Scheduling policy, preemption and batch sizing | D-16 / D-17 / D-18 | M7.2 ([`engine-contract.md`](engine-contract.md)) |
+| 8 | Block size, eviction policy, and interaction with `withMemoryLimit` | D-13 | M7.1 / M7.2 |
 
-An open question is only a problem if the milestone that hits it starts without an
-answer. Deciding them earlier than that is speculation.
+An open question is only a problem if the task that needs it starts without an answer.
+Deciding earlier than the gate is optional; later blocks the task.

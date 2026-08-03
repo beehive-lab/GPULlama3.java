@@ -42,24 +42,29 @@ public final class LocalModels {
 /** Immutable and thread-safe. Owns weights and cached compiled programs. */
 public interface LocalModel extends AutoCloseable {
 
-    ModelInfo info();                  // architecture, name, dtypes, context length
+    ModelInfo info();                  // architecture, name, context length
+                                       // (dtype accessors added in M4.7)
     ModelConfiguration configuration(); // read-only hyperparameters
+
+    @Override void close();            // releases weights and compiled programs
+                                       // (behaviour with live sessions: gate D-11)
+}
+
+/** Text generation is a capability, not a property of every model. */
+public interface TextGenerationModel extends LocalModel {
 
     GenerationSession newSession();
     GenerationSession newSession(SessionOptions options);
-
-    @Override void close();            // releases weights and compiled programs
 }
 ```
 
-Note what is *not* here: no `forward(...)`, no `generateTokens(...)`, no sampler, no
-plan setter. Generation lives on the session; execution lives below the model.
-
-Text generation is a *capability*. A model that only produces embeddings would
-implement `LocalModel` without `newSession()` — the exact mechanism (capability
-interfaces such as `TextGenerationModel extends LocalModel`) is an open question, but
+Note what is *not* on `LocalModel`: no `forward(...)`, no `generateTokens(...)`, no
+sampler, no plan setter — and no `newSession()`. Generation lives on the capability
+interface and the session; execution lives below the model. A model that only produces
+embeddings implements `LocalModel` without the generation capability, which is what
 [dependency rule 14](dependency-rules.md#rule-14--core-abstractions-do-not-assume-generation)
-requires that it be possible.
+requires. The capability split is the working sketch pending gate
+[D-01](decision-gates.md); the name is a placeholder like every other name here.
 
 ### `GenerationSession` — one sequence
 
@@ -119,6 +124,9 @@ sequences into one invocation of one compiled program. See
 
 ### `ModelInfo` — dtypes are public
 
+The two dtype accessors are **added in M4.7**, when the runtime `DataType` exists
+(ADR-007 D3); `ModelInfo` v1 ships without them.
+
 ```java
 public interface ModelInfo {
     String name();
@@ -148,7 +156,7 @@ public final class GenerationRequest {
     public interface Builder {
         Builder prompt(String prompt);
         Builder systemPrompt(String systemPrompt);
-        Builder messages(List<ChatMessage> messages);
+        Builder messages(List<ChatMessage> messages);  // pending gate D-03 — may not ship in v1
         Builder maxNewTokens(int maxNewTokens);
         Builder temperature(float temperature);
         Builder topP(float topP);
@@ -173,15 +181,19 @@ printing.
 
 ### `ModelOptions` / `SessionOptions`
 
+**The options builders are staged (ADR-007 D3).** The façade ships in M3 with the v1
+surface; the marked methods are added by the milestone that designs their types —
+they do not exist before it.
+
 ```java
 public final class ModelOptions {
     public static Builder builder();
 
     public interface Builder {
         Builder contextLength(int contextLength);
-        Builder backend(Backend backend);
-        Builder device(DeviceSelector selector);
-        Builder executionPolicy(ExecutionPolicy policy);
+        Builder backend(Backend backend);                 // added in M12.1
+        Builder device(DeviceSelector selector);          // added in M12.1
+        Builder executionPolicy(ExecutionPolicy policy);  // added in M10.2
         ModelOptions build();
     }
 }
@@ -191,7 +203,7 @@ public final class SessionOptions {
 
     public interface Builder {
         Builder contextLength(int contextLength);     // ≤ model context length
-        Builder executionPolicy(ExecutionPolicy policy);
+        Builder executionPolicy(ExecutionPolicy policy);  // added in M10.2
         SessionOptions build();
     }
 }
@@ -207,8 +219,9 @@ ExecutionPolicy.prefillDecode();
 ExecutionPolicy.prefillDecode(int prefillBatchSize);
 ```
 
-**Open question:** whether execution policy is per-model, per-session, or both. Today
-it is process-global and read at class-initialization time, which is the behaviour this
+**Open — gate [D-02](decision-gates.md):** whether execution policy is per-model,
+per-session, or model defaults with session overrides. Decided before M10.2. Today it
+is process-global and read at class-initialization time, which is the behaviour this
 is meant to replace.
 
 ### `Backend` / `DeviceSelector` — advanced
@@ -313,9 +326,13 @@ try (LocalModel model = LocalModels.loader(modelPath)
 }
 ```
 
-Whether `a` and `b` may run **concurrently** is unresolved — see
-[ADR-001](decisions/ADR-001-model-session-separation.md). The API shape above does not
-prevent concurrency, but the first implementation may serialize invocations.
+The concurrency strategy is **resolved** ([ADR-001](decisions/ADR-001-model-session-separation.md),
+[ADR-006](decisions/ADR-006-engine-tier.md)): sessions are independent objects, and
+device-level concurrency comes from the engine batching many sequences into one
+invocation — not from parallel plans. Outside an engine, sessions sharing a compiled
+program serialize their invocations (gate [D-12](decision-gates.md) records the v1
+recommendation). That is implementation latitude within the decided strategy, not an
+open design question.
 
 ## What must never leak through the public API
 
@@ -368,7 +385,7 @@ which ships with today's 20 offending files as a shrink-only allowlist.
 `ModelLoader.loadModel(Path, int, boolean, boolean)` and
 `Model.runInstructOnceLangChain4J(...)` are documented in the code as integration
 points for LangChain4j and Quarkus. They are existing public surface. The façade in
-[roadmap phase 2](migration-roadmap.md#m3--public-api-façade)
+[roadmap milestone M3](migration-roadmap.md#m3--public-api-façade)
 must be added alongside them, and they should be deprecated with a documented
 replacement before any removal.
 
@@ -378,10 +395,15 @@ replacement before any removal.
 plans (ARCH-07); the session holds a lease rather than owning the cache (ARCH-01);
 `ModelInfo` exposes both dtypes (ARCH-15).
 
-1. Is `ExecutionPolicy` a model-level or session-level choice?
-3. How are chat templates exposed — is `ChatMessage` public API, or is prompt
-   formatting an internal concern driven by model metadata?
-4. Should `GenerationSession` expose a lower-level `forward(token, position)` for
-   advanced users, or only `generate(...)`?
-5. Do compiled programs have a user-visible cache with a user-visible key?
-6. What is the module/artifact name for the Tornado-specific extension API?
+Each remaining question is a tracked gate with a decide-before point in
+[`decision-gates.md`](decision-gates.md):
+
+1. Is `ExecutionPolicy` a model-level or session-level choice? — **D-02**, before M10.2.
+2. How are chat templates exposed — is `ChatMessage` public API, or is prompt
+   formatting an internal concern driven by model metadata? — **D-03**, before M3.1.
+3. Should `GenerationSession` expose a lower-level `forward(token, position)` for
+   advanced users, or only `generate(...)`? — **D-06**, before M3.1.
+4. Do compiled programs have a user-visible cache with a user-visible key? — **D-05**,
+   before M9.2.
+5. What is the module/artifact name for the Tornado-specific extension API? — decided
+   with M12; not signature-defining for the façade.

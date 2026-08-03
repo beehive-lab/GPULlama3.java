@@ -44,9 +44,11 @@ PR #140 in which both maintainers recorded a position on every issue. An ADR mov
 | [ADR-004](ADR-004-tensor-and-format-separation.md) | Tensor and format separation | Accepted 2026-07-30 |
 | [ADR-005](ADR-005-kv-cache-ownership-and-leases.md) | KV cache ownership, block pools and leases | Accepted 2026-07-30 |
 | [ADR-006](ADR-006-engine-tier.md) | The engine tier | Accepted 2026-07-30 |
+| [ADR-007](ADR-007-roadmap-ordering-and-transitional-contracts.md) | Roadmap ordering and transitional contracts | Accepted 2026-08-03 |
 
 ADR-005 refines ADR-001's KV cache placement. ADR-006 adds the tier ADR-001 assumed
-did not exist.
+did not exist. ADR-007 sequences the implementation of 001–006 without changing any of
+their decisions.
 
 ## Adding an ADR
 

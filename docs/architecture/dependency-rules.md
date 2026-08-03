@@ -659,7 +659,7 @@ point the ArchUnit test is added **before** the implementation.
 
 Rules 1, 2, 5, 7, 8a, 11, 13 and 16 can be written against today's code — with
 allowlists — as part of
-[milestone M1](migration-roadmap.md#m1--guardrails-tests-only-no-production-code).
+[milestone M1](migration-roadmap.md#m1--guardrails).
 
 Rule 8b is a non-violation clarification rather than a check: it exists to keep the
 device sampler off Rule 8a's allowlist.

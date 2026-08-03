@@ -19,33 +19,45 @@ These documents exist so that:
 - incremental refactoring work can be checked against a shared target instead of
   re-derived per pull request.
 
-## Documents
+## Documents, by audience
 
-| Document | Content | Normative? |
-| --- | --- | --- |
-| [`vision.md`](vision.md) | Mission, users, use cases, non-goals | Normative for scope |
-| [`current-architecture.md`](current-architecture.md) | The repository as it exists today | Descriptive |
-| [`target-architecture.md`](target-architecture.md) | Layering and dependency direction | **Normative** |
-| [`terminology.md`](terminology.md) | Definitions used by all other documents | **Normative** |
-| [`dependency-rules.md`](dependency-rules.md) | Allowed/forbidden dependency directions | **Normative** |
-| [`tornadovm-capabilities.md`](tornadovm-capabilities.md) | What TornadoVM provides, minimum versions, runtime constraints | **Normative** |
-| [`public-api.md`](public-api.md) | Developer-facing API surface | **Proposal** (names not final) |
-| [`migration-roadmap.md`](migration-roadmap.md) | Milestones from today to target | **Normative** |
-| [`decisions/`](decisions/README.md) | Architecture Decision Records | Accepted — see index |
-| [`review/`](review/) | Review history: the ARCH-01..19 issues and responses | Historical record |
+**Maintainers: read [`START-HERE.md`](START-HERE.md) first — nothing else required.**
+It is the control page: what is decided, what needs you now, what can wait.
 
-Read this way:
+### Maintainer
 
-- **Normative** — treat as rules. Changing them requires an ADR or an explicit update
-  to this baseline, agreed by maintainers.
-- **Descriptive** — a snapshot of the code. If it disagrees with the code, the code
-  wins and the document should be corrected.
-- **Proposal** — a direction, not a commitment. Names, packages and signatures in
-  proposal documents are placeholders until an ADR is accepted and code exists.
+- [`START-HERE.md`](START-HERE.md) — control page (phase map, decisions needed, status)
+- [`decision-gates.md`](decision-gates.md) — open decisions, owners, decide-before points
+- [`decisions/`](decisions/README.md) — ADRs (001–007 Accepted)
 
-`terminology.md` and `dependency-rules.md` are normative today because they constrain
-work that is already happening. `target-architecture.md` and `public-api.md` describe
-the destination and are expected to change as ADRs are accepted.
+### Implementer
+
+- [`execution-backlog.md`](execution-backlog.md) — PR-sized tasks with acceptance criteria
+- [`migration-roadmap.md`](migration-roadmap.md) — milestone objectives and dependencies
+- [`verification-gates.md`](verification-gates.md) — gate classes; golden/parity/benchmark specs
+- [`ownership-and-lifecycle.md`](ownership-and-lifecycle.md) — who owns what, close semantics
+- [`engine-contract.md`](engine-contract.md) — request state machine, scheduling, shutdown
+- [`HANDOFF.md`](HANDOFF.md) — transient session state (git, PR mechanics)
+
+### Architecture reference
+
+- [`vision.md`](vision.md) — mission, users, non-goals (normative for scope)
+- [`target-architecture.md`](target-architecture.md) — layering and dependency direction
+- [`public-api.md`](public-api.md) — API surface proposal (names not final)
+- [`dependency-rules.md`](dependency-rules.md) — allowed/forbidden dependencies
+- [`terminology.md`](terminology.md) — definitions all documents use
+- [`tornadovm-capabilities.md`](tornadovm-capabilities.md) — capability ledger, version floors
+- [`current-architecture.md`](current-architecture.md) — the code as it is (descriptive)
+
+### Historical record
+
+- [`review/`](review/) — ARCH-01..19 issues and responses; 2026-08-03 hardening report
+
+Document status classes (normative / proposed / operational / historical) are listed
+per document in [`START-HERE.md`](START-HERE.md#document-status-at-a-glance). The short
+rules: **normative** documents change only via ADR or agreed baseline update;
+**descriptive** documents lose to the code; **proposal** documents carry placeholder
+names until an ADR accepts them and code exists.
 
 ## Proposing an architectural change
 
