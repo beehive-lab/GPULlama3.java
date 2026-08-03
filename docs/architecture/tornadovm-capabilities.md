@@ -13,11 +13,16 @@ column is the fix: it makes "we can do this" and "we can do this *today*" differ
 
 | | Version |
 | --- | --- |
-| Pinned in `pom.xml` (`tornadovm.base.version`) | **5.0.0** |
+| Pinned in `pom.xml` (`tornadovm.base.version`) | **5.2.0** |
 | Verified local development tree | 5.2.1-jdk21-dev |
 | Required by this architecture | **≥ 5.2.x** — see [migration-roadmap.md § Phase 0](migration-roadmap.md#phase-0--tornadovm-version-floor) |
 
-Adopting ≥ 5.2.x is Phase 0 of the roadmap, ahead of all other work.
+Phase 0 is **done** — the pin was raised 5.0.0 → 5.2.0 on 2026-08-03. 5.2.0 is the newest
+release published to Maven Central (5.2.1 is not published; 5.2.1-jdk21-dev is a local
+development build), and it carries both the `-jdk21` and `-jdk25` variants the two JDK
+profiles need. Every capability below is therefore reachable from the pin; the
+"Used today?" column still records what the code actually *uses*, which Phase 0 did not
+change.
 
 ## Available capabilities
 

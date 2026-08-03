@@ -9,6 +9,10 @@ Read [`README.md`](README.md) first — it indexes the architecture documents.
 
 ## Where things stand
 
+**Phase 0 landed 2026-08-03** — `pom.xml` pins TornadoVM **5.2.0**, and a local
+RTX 5090 performance baseline replaces `docs/perf-history.jsonl` as the refactor
+reference. M1 is the current milestone.
+
 Architecture baseline v1.0, ADR-001..007 `Accepted` (**ADR-007 accepted 2026-08-03**,
 same day the hardening pass produced it). The pass added five companion documents
 ([`decision-gates.md`](decision-gates.md), [`execution-backlog.md`](execution-backlog.md),
@@ -18,15 +22,32 @@ same day the hardening pass produced it). The pass added five companion document
 [hardening report](review/roadmap-hardening-2026-08-03.md) and
 [`START-HERE.md`](START-HERE.md). Roadmap + backlog are now binding. The **gate
 recommendations** (D-01..D-24) remain open — the M3 set is the next maintainer batch.
-Implementation has not started; no production file has been touched.
 
 ## Git state (verified 2026-08-03)
 
-- Branch: **`refactor/framework-abstractions`**, 6 commits ahead of `upstream/main`,
-  **pushed** to `upstream/refactor/framework-abstractions`.
+- Branch: **`refactor/framework-abstractions`**, now 8+ commits ahead of `upstream/main`.
+  The Phase 0 commits are **local only — not pushed**.
 - Owner's decision: **not merging to `main`** for now. Do not merge or push without asking.
 - PR #140 is **closed** on GitHub (previous handoff said open — resolved).
-- `pom.xml` still pins TornadoVM **5.0.0** — Phase 0 has not happened yet.
+- `pom.xml` pins TornadoVM **5.2.0** — Phase 0 done.
+
+## Local performance baseline
+
+`perf-results/baseline-rtx5090-tvm520-20260803/` is the reference for the refactor.
+`docs/perf-history.jsonl` was recorded on CI hardware and is **not** comparable to the
+development laptop — do not gate against it. The local baseline covers 7 of 8 families
+across CUDA and OpenCL, F16 and Q8_0, median of 3 cold runs, worst spread 6.24%.
+CUDA leads OpenCL by 6–25% everywhere; Q8_0 leads F16 everywhere.
+
+## Two blockers for M1.4 golden coverage
+
+1. **`DEEPSEEK_R1_DISTILL_QWEN` is broken** — `Qwen3Tokenizer.encodeChunk` throws
+   `NoSuchElementException` at `vocabulary.getIndex(String.valueOf((char) b)).orElseThrow()`
+   because DeepSeek's byte-level BPE vocabulary has no single-character ASCII entries.
+   Fails on both backends, both quantizations, any prompt, before any GPU work.
+   Pre-existing, unrelated to the version bump. Needs a fix before that family can be
+   baselined or covered by goldens.
+2. **`DEVSTRAL_2` has no local GGUF** — unmeasured and untestable here.
 
 ## Pending PRs (open on GitHub, verified 2026-08-03)
 
@@ -38,16 +59,16 @@ roadmap order carries the rationale and stands — ADR-007 D9.)
 | PR | Note |
 | --- | --- |
 | #129 batched decode | **Still targets `feat/mma_cuda`** (already contained in `main`) — retarget to `main`, no rebase needed. Time-critical: +2694 lines into exactly the files M6/M7 restructure |
-| #138 FP16 KV cache | Only conflict is `pom.xml` (it bumps to 5.1.1, which is a partial Phase 0 and not enough — no `BFloat16Array`). Do Phase 0 to ≥5.2.x separately, then #138 rebases clean |
-| #120 Gemma 4 | Merges clean; needs the bump first (BF16 → `BFloat16Array`, 5.2.0) |
+| #138 FP16 KV cache | Only conflict is `pom.xml` (it bumps to 5.1.1, a partial Phase 0 — no `BFloat16Array`). Phase 0 is now done at 5.2.0, so #138 should **drop its pom change** and rebase clean |
+| #120 Gemma 4 | Merges clean; the bump it needed (BF16 → `BFloat16Array`, 5.2.0) has landed. Note `ModelType` still has no `GEMMA` entry — it arrives with this PR |
 | #131 hybrid libs | 2 conflicts (`llama-tornado`, `LogitsFP16Layer.java`); last, additive, default-off |
 | #142 ci/metal-migration | Not in the roadmap; check interaction with M1.7's CI changes before either lands |
 
 ## Immediate next actions
 
-1. **Phase 0** — owner is doing the TornadoVM bump himself. Sanity check: ~53 → ~103
-   tok/s and start-up ~11.5 s → ~5.2 s; if those don't move, the bump didn't take.
-2. **M1 can start now** (T1.1–T1.3 need nothing; T1.4 goldens wait for the bump).
+1. ~~Phase 0~~ — **done**, pin at 5.2.0.
+2. **M1 is current** — T1.1–T1.3 (ArchUnit) then T1.4–T1.7 (goldens, parity, identity,
+   benchmark gate) on the 5.2.0 floor.
 3. Then #129 (retarget) → #138 → #120 → #131 per the land order.
 4. Before M3 opens: maintainer closes the M3 gate set
    (D-01, D-03, D-04, D-06, D-07, D-11) in [`decision-gates.md`](decision-gates.md).

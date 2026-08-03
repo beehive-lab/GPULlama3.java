@@ -18,8 +18,8 @@ benchmark gate green; nothing is rewritten big-bang.
 ## Phase map
 
     DONE      Architecture baseline v1.0, ARCH-01..19 review, ADR-001..007 accepted,
-              roadmap-hardening pass (docs only — no production code touched)
-    CURRENT   ▶ Phase 0 version bump · M1 guardrails
+              roadmap-hardening pass, Phase 0 TornadoVM 5.2.0 bump
+    CURRENT   ▶ M1 guardrails
     NEXT      M2 metrics seam · M3 façade (needs its decision gates) · M4 dtypes · M5 providers
     LATER     M6 state split · M7 engine · M8 ops · M9 programs · M10 policy ·
               M11 providers B · M12 backend SPI · M13 polish
@@ -49,12 +49,10 @@ Do not resolve these early — deciding before the gate is speculation.
 
 ## Safe to start now (prerequisites satisfied)
 
-- **Phase 0** — TornadoVM bump to ≥ 5.2.x (owner's task). Sanity: ~53→~103 tok/s,
-  start-up ~11.5→~5.2 s.
 - **T1.1–T1.3** — ArchUnit module + rules 1/2/5/7/11/8a/16 with allowlists.
   Tests only; needs nothing.
-- **T1.4–T1.7** — goldens, parity, identity test, benchmark gate. **After** Phase 0
-  (goldens on the old floor are invalid).
+- **T1.4–T1.7** — goldens, parity, identity test, benchmark gate. Unblocked now that
+  Phase 0 has landed; generate goldens on the 5.2.0 floor only.
 - **Retarget PR #129** from `feat/mma_cuda` to `main` (no rebase needed).
 - **Assess PR #142** against M1.7's CI changes before either lands.
 
@@ -74,8 +72,8 @@ Do not resolve these early — deciding before the gate is speculation.
 
 | Phase | Purpose | Prereqs | Status | Exit condition |
 | --- | --- | --- | --- | --- |
-| Phase 0 | TornadoVM ≥ 5.2.x floor | — | **not started** (pom pins 5.0.0) | build+launcher work; fresh perf entry |
-| M1 | Guardrails: ArchUnit, goldens, gates | Phase 0 (for T1.4+) | **ready** (T1.1–T1.3 now) | rules + goldens + bench gate in CI |
+| Phase 0 | TornadoVM ≥ 5.2.x floor | — | **done** (pom pins 5.2.0) | build+launcher work; fresh perf entry |
+| M1 | Guardrails: ArchUnit, goldens, gates | Phase 0 (for T1.4+) | **current** (T1.1–T1.7 unblocked) | rules + goldens + bench gate in CI |
 | M2 | Metrics seam | M1.4 | waiting | counters programmatic; no tok/s cost |
 | M3 | Public API façade v1 | M1 + gates D-01..D-11 | **blocked on gates** | simple example runs CPU+GPU, token-identical |
 | M4 | DataType / GGUF isolation | M1; D-08/D-09 | waiting | Rule 4 allowlist empty |
