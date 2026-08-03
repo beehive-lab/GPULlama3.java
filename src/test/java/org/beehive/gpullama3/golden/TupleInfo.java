@@ -13,7 +13,27 @@ public final class TupleInfo {
     private TupleInfo() {
     }
 
+    /**
+     * The installed SDK's version. {@code Package.getImplementationVersion()} is null when
+     * TornadoVM is loaded from the module path, so the authoritative source is
+     * {@code $TORNADOVM_HOME/etc/tornado.release}, which is what {@code tornado --version} reads.
+     */
     public static String tornadoVmVersion() {
+        String home = System.getenv("TORNADOVM_HOME");
+        if (home != null && !home.isBlank()) {
+            java.nio.file.Path release = java.nio.file.Paths.get(home, "etc", "tornado.release");
+            if (java.nio.file.Files.isRegularFile(release)) {
+                try {
+                    for (String line : java.nio.file.Files.readAllLines(release)) {
+                        if (line.startsWith("version=")) {
+                            return line.substring("version=".length()).trim();
+                        }
+                    }
+                } catch (java.io.IOException ignored) {
+                    // fall through to the package/property fallbacks
+                }
+            }
+        }
         Package p = TornadoDeviceMap.class.getPackage();
         String v = p == null ? null : p.getImplementationVersion();
         if (v != null && !v.isBlank()) {
@@ -34,9 +54,13 @@ public final class TupleInfo {
         }
     }
 
+    /**
+     * The physical GPU name. {@code TornadoDevice.getDeviceName()} returns the Tornado device id
+     * ("cuda-0-0"), which is identical on different hardware and so useless for pinning a tuple.
+     */
     public static String deviceName() {
         TornadoDevice d = defaultDevice();
-        return d == null ? "" : d.getDeviceName();
+        return d == null ? "" : d.getPhysicalDevice().getDeviceName();
     }
 
     public static String backend() {
