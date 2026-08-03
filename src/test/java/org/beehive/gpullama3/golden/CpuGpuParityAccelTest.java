@@ -45,6 +45,21 @@ public class CpuGpuParityAccelTest {
         assertParity(Fixture.LLAMA_3_2_1B_F16);
     }
 
+    /** Gap between the best and second-best logit — how close the decision was. */
+    private static double top1MinusTop2(float[] v) {
+        double best = Double.NEGATIVE_INFINITY;
+        double second = Double.NEGATIVE_INFINITY;
+        for (float f : v) {
+            if (f > best) {
+                second = best;
+                best = f;
+            } else if (f > second) {
+                second = f;
+            }
+        }
+        return best - second;
+    }
+
     private void assertParity(Fixture fixture) throws Exception {
         Path model = GoldenFixture.locate(fixture);
         if (model == null) {
@@ -81,6 +96,26 @@ public class CpuGpuParityAccelTest {
         }
         System.out.printf("[PARITY] %s argmax disagreements under teacher forcing: %d/%d%n",
                 fixture.quantization, argmaxDisagreements, cpu.rows.size());
+
+        // Record the top-1/top-2 margins at each disagreement. A reversal whose margin is far
+        // below the observed drift is a near-tie tipping, which is expected across numerical
+        // paths; a reversal with a wide margin would be a genuine parity defect. Reported, not
+        // asserted -- the disagreements stay unresolved rather than being tolerated away.
+        for (int r = 0; r < cpu.rows.size(); r++) {
+            float[] ref = cpu.rows.get(r);
+            float[] got = gpu.rows.get(r);
+            int aRef = Envelope.argmax(ref);
+            int aGot = Envelope.argmax(got);
+            if (aRef == aGot) {
+                continue;
+            }
+            System.out.printf("  [MARGIN] row %d: cpu picks %d (cpu margin %.6g), gpu picks %d "
+                            + "(gpu margin %.6g); cpu logits[%d]=%.6g logits[%d]=%.6g; "
+                            + "gpu logits[%d]=%.6g logits[%d]=%.6g%n",
+                    r, aRef, top1MinusTop2(ref), aGot, top1MinusTop2(got),
+                    aRef, ref[aRef], aGot, ref[aGot],
+                    aRef, got[aRef], aGot, got[aGot]);
+        }
 
         int worstRow = -1;
         double worstExcess = 0;

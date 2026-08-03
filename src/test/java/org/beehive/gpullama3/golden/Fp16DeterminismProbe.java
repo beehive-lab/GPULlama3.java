@@ -49,6 +49,7 @@ public final class Fp16DeterminismProbe {
         List<float[]> wrapX = new ArrayList<>();
         List<float[]> tempLogits = new ArrayList<>();
         List<float[]> xbFp16 = new ArrayList<>();
+        List<List<float[]>> rowsPerRun = new ArrayList<>();
 
         for (int r = 0; r < runs; r++) {
             State state = m.createNewState();
@@ -61,9 +62,11 @@ public final class Fp16DeterminismProbe {
             prompt.addAll(cf.encodeHeader(new ChatFormat.Message(ChatFormat.Role.ASSISTANT, "")));
 
             List<Integer> got = new ArrayList<>();
+            List<float[]> allRows = new ArrayList<>();
             float[][] lastLogits = new float[1][];
             Sampler capture = t -> {
                 lastLogits[0] = toArray(t);
+                allRows.add(lastLogits[0]);
                 int tok = Sampler.TENSOR_ARGMAX.sampleToken(t);
                 got.add(tok);
                 return tok;
@@ -82,6 +85,7 @@ public final class Fp16DeterminismProbe {
                 keys.add(snapshot(state.wrapKeyCache));
                 values.add(snapshot(state.wrapValueCache));
                 logits.add(lastLogits[0]);
+                rowsPerRun.add(allRows);
                 tokens.add(got);
                 // Walk the tail of the graph: final hidden state -> RMS partial sums ->
                 // normalized FP16 input -> logits. The first of these that differs is the
@@ -128,6 +132,74 @@ public final class Fp16DeterminismProbe {
         reportBuffer("wrapX      (final hidden state, pre-norm)", wrapX);
         reportBuffer("tempLogits (RMS reduction partials)      ", tempLogits);
         reportBuffer("wrapXbFP16 (normalized input to vocab)   ", xbFp16);
+
+        // Compare EVERY captured row, not just the last. Comparing only the final row is what
+        // made an intermittent defect look absent earlier.
+        // Cross-process fingerprint: hash every captured row. Comparing this between separate
+        // JVM invocations separates intra-process non-determinism from inter-process variation.
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            for (float[] row : rowsPerRun.get(0)) {
+                java.nio.ByteBuffer bb = java.nio.ByteBuffer.allocate(row.length * 4)
+                        .order(java.nio.ByteOrder.LITTLE_ENDIAN);
+                for (float v : row) {
+                    bb.putInt(Float.floatToRawIntBits(v));
+                }
+                md.update(bb.array());
+            }
+            System.out.println("PROCESS_FINGERPRINT " + java.util.HexFormat.of().formatHex(md.digest()));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+
+        System.out.println("\n=== all-row reproducibility vs run 0 ===");
+        for (int r = 1; r < rowsPerRun.size(); r++) {
+            int badRows = 0;
+            int firstBad = -1;
+            double worst = 0;
+            for (int row = 0; row < rowsPerRun.get(0).size(); row++) {
+                float[] a = rowsPerRun.get(0).get(row);
+                float[] b = rowsPerRun.get(r).get(row);
+                boolean differs = false;
+                for (int i = 0; i < a.length; i++) {
+                    if (Float.floatToRawIntBits(a[i]) != Float.floatToRawIntBits(b[i])) {
+                        differs = true;
+                        worst = Math.max(worst, Math.abs(a[i] - b[i]));
+                    }
+                }
+                if (differs) {
+                    badRows++;
+                    if (firstBad < 0) {
+                        firstBad = row;
+                    }
+                }
+            }
+            System.out.printf("  run0 vs run%d: divergentRows=%d/%d firstDivergentRow=%d worstAbs=%.6g %s%n",
+                    r, badRows, rowsPerRun.get(0).size(), firstBad, worst,
+                    badRows == 0 ? "REPRODUCIBLE" : "*** NOT REPRODUCIBLE ***");
+        }
+
+        // Cross-contamination check: capture a SECOND model in the same JVM, after the first.
+        // Surefire runs the F16 and Q8_0 golden tests in one JVM, F16 first, so if a preceding
+        // non-deterministic run perturbs a later one this is where it shows.
+        String second = System.getProperty("probe.model2");
+        if (second != null) {
+            GoldenCapture.Result r2 = GoldenCapture.capture(Paths.get(second), true);
+            try {
+                java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+                for (float[] row : r2.rows) {
+                    java.nio.ByteBuffer bb = java.nio.ByteBuffer.allocate(row.length * 4)
+                            .order(java.nio.ByteOrder.LITTLE_ENDIAN);
+                    for (float v : row) {
+                        bb.putInt(Float.floatToRawIntBits(v));
+                    }
+                    md.update(bb.array());
+                }
+                System.out.println("SECOND_MODEL_FINGERPRINT " + java.util.HexFormat.of().formatHex(md.digest()));
+            } catch (java.security.NoSuchAlgorithmException e) {
+                throw new IllegalStateException(e);
+            }
+        }
 
         System.out.println("\n=== logits drift across runs (pairwise vs run 0) ===");
         float[] base = logits.get(0);

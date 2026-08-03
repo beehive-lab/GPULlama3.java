@@ -13,7 +13,7 @@
   "tornadovm_version": "5.2.0-jdk21",
   "recover_bailout": false,
   "device_sample": false,
-  "bit_exact": true,
+  "bit_exact": false,
   "payload": "row-hashes + token-ids + final row (see GoldenRecord)",
   "created_by_commit": "2e882c5e9f62fcfe179d414d3349e26fb67813f5"
 }

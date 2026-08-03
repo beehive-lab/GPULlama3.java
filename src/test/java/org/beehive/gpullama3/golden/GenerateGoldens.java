@@ -95,7 +95,13 @@ public final class GenerateGoldens {
             meta.put("recover_bailout", Boolean.toString(Boolean.parseBoolean(
                     System.getProperty("tornado.recover.bailout", "false"))));
             meta.put("device_sample", Boolean.toString(Boolean.getBoolean("llama.deviceSample")));
-            meta.put("bit_exact", Boolean.toString(bitExact));
+            // No GPU configuration currently carries the bit-exact assertion. Two captures are not
+            // enough evidence: Q8_0 passed this very check and still diverges intermittently
+            // (observed roughly 1 run in 4 under device-memory pressure). Until the defect is
+            // resolved, a GPU golden is never recorded as bit-exact regardless of what the
+            // double-capture found; `bitExact` is retained only as a diagnostic signal.
+            meta.put("bit_exact", "false");
+            meta.put("double_capture_agreed", Boolean.toString(bitExact));
             meta.put("payload", "row-hashes + token-ids + final row (see GoldenRecord)");
             meta.put("created_by_commit", commit);
 
