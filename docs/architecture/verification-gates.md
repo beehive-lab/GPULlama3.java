@@ -38,8 +38,55 @@ a pass, and the milestone checklist requires a real Class B run, not a skipped o
   driver, TornadoVM version, backend, build flags). On any other tuple the golden test
   downgrades to the parity tolerance below and says so in its output.
 - **Comparison:** bit-identical (`Float.floatToRawIntBits` equality) on the pinned
-  tuple. **Any NaN/Inf in produced logits fails immediately**, before comparison —
+  tuple, **for configurations demonstrated reproducible on that tuple** (see below).
+  **Any NaN/Inf in produced logits fails immediately**, before comparison —
   goldens must never contain NaN/Inf, and a NaN-vs-NaN "match" must not pass.
+
+### Reproducibility is demonstrated, not assumed
+
+Bit-exactness was originally written here as a property of the pinned tuple. That is
+**not universally true on real hardware**: on the reference tuple Q8_0 reproduces
+exactly while FP16 does not
+([the FP16 determinism defect](HANDOFF.md#open-defect-fp16-logits-are-not-reproducible-run-to-run)).
+
+Therefore the golden generator **measures** reproducibility — it captures each
+configuration twice and compares — and records the outcome as `bit_exact` in the
+golden's metadata. The gate then applies:
+
+| `bit_exact` | Assertion |
+| --- | --- |
+| `true` | full bit-identical comparison of every compared row, as above |
+| `false` | the **reproducibility-envelope gate** below, which is *provisional* |
+
+A configuration may only carry `bit_exact: false` while a corresponding open defect is
+recorded. This is a **temporary accommodation of a known defect, not a relaxed
+standard**, and it must not be extended to new configurations silently.
+
+### Reproducibility-envelope gate (provisional, FP16 only)
+
+Applies where `bit_exact: false`. It bounds how far a non-reproducible configuration may
+drift and asserts the properties that actually affect output. Over repeated captures on
+the pinned tuple, all of the following must hold:
+
+| Property | Bound |
+| --- | --- |
+| NaN/Inf | none, ever — checked before anything else |
+| Max absolute drift | ≤ `1.0` per element |
+| Max relative drift | ≤ `0.05` on elements with \|reference\| ≥ 1.0 (small logits are dominated by absolute noise) |
+| Changed elements | recorded, not bounded — it is ~100% when this defect fires |
+| **Argmax** | **must be identical** — greedy decoding must not change |
+| **Top-k membership** | recorded for k=5 and k=10; **k=5 must be identical** |
+| Token sequence | must be identical |
+
+**Token equality alone is explicitly not sufficient.** On the reference tuple argmax and
+top-5 survive but **top-10 membership already changes**, so greedy decoding hides a
+defect that top-k/top-p sampling would expose. The envelope exists to make that visible
+rather than to bless it.
+
+**This gate is provisional.** Resolving the FP16 defect — or explicitly accepting the
+behaviour with a recorded rationale — is a **blocker before M6**, which is where session
+and KV-storage restructuring begins and where an unexplained numerical drift would become
+impossible to distinguish from a refactor regression.
 - **Execution flags:** always `-Dtornado.recover.bailout=False`
   ([C4](tornadovm-capabilities.md#c4--interpreter-bytecode-buffer-overflow-was-silent)).
 - **Regeneration:** only via `scripts/regenerate-goldens.sh`, which refuses to run with
@@ -68,6 +115,21 @@ Defines exactly what "identity" observes, in one process:
    (compile-time counters via the profiler result are zero after step 1).
 
 This is the structural half of Rule 13; the benchmark gate is the behavioural half.
+
+**Compilation identity is independent of numerical determinism.** The two must not be
+conflated: a configuration can compile to a byte-identical program and still produce
+drifting logits, which is exactly the FP16 situation. So:
+
+- steps 1–3 above assert **compilation identity** directly — task-graph count, ordered
+  task names, grid-scheduler entries, per-task kernel-source SHA-256, and zero
+  recompilation after warm-up. These are asserted for **every** configuration, FP16
+  included, because they do not depend on the numerics being reproducible.
+- the **bit-exact numerical** half of the identity claim is carried by **Q8_0**, which is
+  demonstrated reproducible on the pinned tuple.
+- FP16 additionally runs the reproducibility-envelope gate.
+
+An FP16 identity failure therefore means the *program* changed, which is a real
+regression, and cannot be dismissed as the known logits drift.
 
 ## Benchmark gate (M1.7)
 

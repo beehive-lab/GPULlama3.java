@@ -61,6 +61,30 @@ Tests only, except T1.8 (declared exception, ADR-007 D2).
 - Acceptance (B): re-run asserts bit-identical on the pinned tuple; NaN/Inf fails;
   absent hardware ⇒ explicit skip, not pass.
 
+**T1.4-FP16 — FP16 logits determinism defect** *(discovered production defect)*
+- Objective: find the earliest divergent operation in the FP16 GPU path and either fix it
+  or record an explicit, reasoned acceptance.
+- Status: **diagnostic done, cause not localized, no fix attempted.** Evidence and the
+  read-only probe (`Fp16DeterminismProbe`) are recorded in
+  [`HANDOFF.md`](HANDOFF.md#open-defect-fp16-logits-are-not-reproducible-run-to-run).
+- Established: reproduces on FP16 GPU under **both** CUDA and OpenCL; **not** on the CPU
+  path; **not** on Q8_0 GPU through the identical harness. Intermittent — some run pairs
+  are bit-identical, others differ on every element — which points at a race or an
+  uninitialized read rather than a stable-but-different reduction order. Argmax and top-5
+  survive; **top-10 membership does not**.
+- Blocked on: only `wrapLogits` reaches the host, so no intermediate tensor can be
+  compared. Localizing needs temporary device-to-host transfers or selective graph
+  execution — **both are production changes and need approval before starting**.
+- Prereq: design/maintainer decision. **Not** startable as tests-only work.
+- Acceptance: earliest divergent kernel identified; then either the fix lands with
+  `bit_exact` flipping to `true` on regeneration, or an ADR records why the behaviour is
+  accepted and what the envelope permits.
+- **Blocker before M6** ([`verification-gates.md`](verification-gates.md#reproducibility-envelope-gate-provisional-fp16-only)):
+  past that point a numerical drift of unknown origin is indistinguishable from a
+  refactor regression.
+- Non-goals: treating token-sequence equality as resolution; widening `bit_exact: false`
+  to further configurations.
+
 **T1.5 — CPU↔GPU parity test**
 - Prereq: land T1.4 (shares fixture plumbing).
 - Acceptance (B): tolerance bound passes on both backends of the pinned tuple.
