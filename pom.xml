@@ -39,7 +39,11 @@
         <properties>
             <!-- CI-friendly version: resolved by flatten-maven-plugin at build time -->
             <revision>0.5.0</revision>
-            <tornadovm.base.version>5.0.0</tornadovm.base.version>
+            <!-- Floor is >= 5.2.x: BFloat16Array lands in 5.2.0, FP8Array in 5.1.0,
+                 deterministic generated kernel source and the graph-sized interpreter
+                 bytecode buffer in 5.2.x. 5.2.0 is the newest release published to
+                 Maven Central for both the -jdk21 and -jdk25 suffixes. -->
+            <tornadovm.base.version>5.2.0</tornadovm.base.version>
             <jdk.version.suffix>-jdk21</jdk.version.suffix>
             <!-- CUDA backend is only available after 5.0.0 TornadoVM version -->
             <tornadovm.version>${tornadovm.base.version}${jdk.version.suffix}</tornadovm.version>
