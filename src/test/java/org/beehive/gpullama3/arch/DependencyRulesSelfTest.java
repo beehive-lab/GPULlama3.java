@@ -62,6 +62,20 @@ public class DependencyRulesSelfTest {
     }
 
     @Test
+    public void rule8a_flagsLowerLayerDependingOnGenerationPolicy() {
+        Set<String> v = ArchRules.rule8aLowerLayersDependOnGenerationPolicy(fixture);
+        assertTrue("Rule 8a did not flag the CLI dependency: " + v,
+                v.contains(FIXTURE + ".ViolatingConsoleAndPolicyUser"));
+    }
+
+    @Test
+    public void rule16_flagsConsoleIoInLibraryCode() {
+        Set<String> v = ArchRules.rule16ConsoleIoOutsideCli(fixture);
+        assertTrue("Rule 16 did not flag the console I/O: " + v,
+                v.contains(FIXTURE + ".ViolatingConsoleAndPolicyUser"));
+    }
+
+    @Test
     public void rulesAreQuietWhenTheFixtureIsTreatedAsTheBackend() {
         // Same classes, but now inside the backend package: Rules 1 and 11 must go silent.
         assertTrue(ArchRules.rule1TornadoVmOutsideBackend(fixture, FIXTURE).isEmpty());

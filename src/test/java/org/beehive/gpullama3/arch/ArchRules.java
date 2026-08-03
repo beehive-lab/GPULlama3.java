@@ -82,6 +82,51 @@ public final class ArchRules {
         });
     }
 
+    /**
+     * Today's stand-in for {@code ..generation..}, {@code ..api..} and {@code ..integration..}:
+     * the CLI entry point, the CLI options record and the HTTP server. There is no
+     * {@code integration.cli} package yet, so the CLI is identified by type rather than package.
+     */
+    public static final Set<String> CLI_TYPES = Set.of(
+            "org.beehive.gpullama3.LlamaApp",
+            "org.beehive.gpullama3.Options");
+
+    public static final String SERVER = "org.beehive.gpullama3.server";
+
+    /**
+     * Rule 8a — generation policy is separate from forward execution. Lower layers must not
+     * reach the CLI, the options record or the server integration. The integrations themselves
+     * are excluded: depending on generation policy is their job.
+     */
+    public static Set<String> rule8aLowerLayersDependOnGenerationPolicy(JavaClasses classes) {
+        return violators(classes, c -> !isIntegration(c)
+                && c.getDirectDependenciesFromSelf().stream().anyMatch(d -> {
+                    String n = d.getTargetClass().getName();
+                    return CLI_TYPES.contains(n) || n.startsWith(SERVER + ".");
+                }));
+    }
+
+    /**
+     * Rule 16 — no console I/O outside the CLI integration. Library code that prints cannot be
+     * silenced or routed by an embedder.
+     */
+    public static Set<String> rule16ConsoleIoOutsideCli(JavaClasses classes) {
+        return violators(classes, c -> !isIntegration(c) && printsToConsole(c));
+    }
+
+    private static boolean isIntegration(JavaClass c) {
+        String outer = c.getName().split("\\$")[0];
+        return CLI_TYPES.contains(outer) || inPackage(c, SERVER);
+    }
+
+    private static boolean printsToConsole(JavaClass c) {
+        return c.getMethodCallsFromSelf().stream().anyMatch(call -> {
+            String m = call.getName();
+            return call.getTargetOwner().getName().equals("java.io.PrintStream")
+                    && (m.equals("println") || m.equals("print") || m.equals("printf"));
+        });
+    }
+
     /** Rule 11 — TaskGraph / ImmutableTaskGraph / TornadoExecutionPlan / GridScheduler stay in the backend. */
     public static Set<String> rule11PlanTypesOutsideBackend(JavaClasses classes, String backendPrefix) {
         return violators(classes, c -> !inPackage(c, backendPrefix)

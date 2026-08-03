@@ -7,6 +7,7 @@ import org.junit.Test;
 import java.util.Set;
 import java.util.TreeSet;
 
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -60,8 +61,37 @@ public class DependencyRulesTest {
     }
 
     @Test
+    public void rule8a_generationPolicyIsSeparateFromForwardExecution() {
+        assertMatchesAllowlist("Rule 8a (lower layers depending on generation policy)",
+                ArchRules.rule8aLowerLayersDependOnGenerationPolicy(classes()),
+                Allowlists.RULE_8A);
+    }
+
+    /**
+     * Rule 8b — sampling is an operation and may execute on the device, so a device sampler is
+     * not an 8a violation and must never be allowlisted as one. No such class exists yet; this
+     * guard exists so that adding one cannot quietly go through the allowlist.
+     */
+    @Test
+    public void rule8b_deviceSamplerIsNeverOnRule8aAllowlist() {
+        for (String entry : Allowlists.RULE_8A) {
+            assertFalse("on-device sampling is an operation (Rule 8b), not generation policy — "
+                            + entry + " must not be allowlisted under Rule 8a",
+                    entry.startsWith(ArchRules.TORNADO_BACKEND + "."));
+        }
+    }
+
+    @Test
+    public void rule16_noConsoleIoOutsideTheCliIntegration() {
+        assertMatchesAllowlist("Rule 16 (console I/O in library code)",
+                ArchRules.rule16ConsoleIoOutsideCli(classes()),
+                Allowlists.RULE_16);
+    }
+
+    @Test
     public void allowlistEntriesAreFullyQualifiedNames() {
-        for (Set<String> list : Set.of(Allowlists.RULE_1, Allowlists.RULE_2, Allowlists.RULE_5)) {
+        for (Set<String> list : Set.of(Allowlists.RULE_1, Allowlists.RULE_2, Allowlists.RULE_5,
+                Allowlists.RULE_8A, Allowlists.RULE_16)) {
             for (String entry : list) {
                 assertTrue("wildcards are banned in allowlists: " + entry,
                         !entry.contains("*") && !entry.contains(".."));

@@ -117,6 +117,66 @@ public final class Allowlists {
             "org.beehive.gpullama3.model.qwen2.Qwen2",
             "org.beehive.gpullama3.model.qwen3.Qwen3");
 
+    /**
+     * Rule 8a — lower layers reaching generation policy (the CLI, the options record, the server).
+     *
+     * <p>Nothing under {@code tornadovm} is listed, and {@link DependencyRulesTest} asserts that
+     * stays true: on-device sampling is an <b>operation</b>, not generation policy (Rule 8b), so a
+     * future device sampler must not be waved through here.
+     */
+    public static final Set<String> RULE_8A = frozen(
+            // M6 — the bench harness drives the generation loop directly
+            "org.beehive.gpullama3.bench.LlamaBench",
+
+            // M8 (Rule 8b) — Sampler.createSampler(Model, Options) depends on the CLI record
+            "org.beehive.gpullama3.inference.sampler.Sampler",
+
+            // M3/M10 — Model.runInteractive/runInstructOnce own the generation loop and take Options
+            "org.beehive.gpullama3.model.Model",
+
+            // M4 — ModelLoader reads CLI options to decide what to load
+            "org.beehive.gpullama3.model.loader.ModelLoader",
+
+            // M10 — reads LlamaApp.USE_VECTOR_API as a config flag; becomes execution policy
+            "org.beehive.gpullama3.tensor.standard.Q4_0FloatTensor");
+
+    /**
+     * Rule 16 — console I/O in library code.
+     *
+     * <p>{@code LlamaApp} and {@code Options} are today's CLI integration and are excluded by the
+     * rule rather than listed here: printing is the CLI's job. The rule document counts 20
+     * printing files; the two CLI types account for the difference.
+     */
+    public static final Set<String> RULE_16 = frozen(
+            // M2 — progress and timing output belongs behind the metrics sink
+            "org.beehive.gpullama3.auxiliary.RunMetrics",
+            "org.beehive.gpullama3.auxiliary.Timer$1",
+
+            // M6 — bench harness prints its own report
+            "org.beehive.gpullama3.bench.LlamaBench",
+
+            // M2/M10 — the generation loop streams tokens straight to stdout
+            "org.beehive.gpullama3.inference.InferenceEngine",
+            "org.beehive.gpullama3.inference.InferenceEngineWithBatchPrefillDecode",
+            "org.beehive.gpullama3.inference.InferenceEngineWithPrefillDecode",
+            "org.beehive.gpullama3.model.Model",
+
+            // M4 — loaders print progress while reading GGUF
+            "org.beehive.gpullama3.model.loader.AbstractModelLoader",
+            "org.beehive.gpullama3.model.loader.ModelLoader",
+            "org.beehive.gpullama3.model.loader.Phi3ModelLoader",
+
+            // M2 — plan setup prints init/JIT timings (the --verbose-init output)
+            "org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanBatchPrefillDecode",
+            "org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanPrefillDecode",
+            "org.beehive.gpullama3.tornadovm.TornadoVMMasterPlanSingleToken",
+
+            // M2 — MMA prefill layers print shape/dispatch diagnostics
+            "org.beehive.gpullama3.tornadovm.layers.type.fp16.prefill.LlamaFP16LayersBatchPrefillMMA",
+            "org.beehive.gpullama3.tornadovm.layers.type.fp16.prefill.Qwen3FP16LayersBatchPrefillMMA",
+            "org.beehive.gpullama3.tornadovm.layers.type.q8_0.prefill.LlamaQ8_0LayersBatchPrefillMMA",
+            "org.beehive.gpullama3.tornadovm.layers.type.q8_0.prefill.Qwen3Q8_0LayersBatchPrefillMMA");
+
     // Rule 7 and Rule 11 have no allowlist: they pass on today's code (policy item 4).
 
     private Allowlists() {
