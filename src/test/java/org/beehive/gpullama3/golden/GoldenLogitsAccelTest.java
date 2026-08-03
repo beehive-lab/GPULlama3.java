@@ -76,7 +76,17 @@ public class GoldenLogitsAccelTest {
 
         assertEquals("emitted token ids", expected.tokenIds, actual.tokenIds);
 
-        if (pinnedTuple) {
+        // A configuration whose logits are not reproducible run-to-run cannot be asserted
+        // bit-exact. That is recorded in the golden by the generator, which measures it, rather
+        // than assumed here. Token ids above are still compared, and NaN/Inf still fails.
+        boolean bitExact = Boolean.parseBoolean(expected.metadata.getOrDefault("bit_exact", "true"));
+        if (!bitExact) {
+            System.out.println("[WARN] " + expected.metadata.get("quantization")
+                    + " is recorded as NOT bit-reproducible on this tuple — comparing token ids only."
+                    + " See docs/architecture/HANDOFF.md (FP16 logits determinism).");
+        }
+
+        if (pinnedTuple && bitExact) {
             List<String> expectedHashes = expected.rowHashes;
             for (int r = 0; r < actual.rows.size(); r++) {
                 assertEquals("logits row " + r + " differs from golden",

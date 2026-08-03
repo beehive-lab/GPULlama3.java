@@ -59,6 +59,26 @@ public final class GenerateGoldens {
             List<String> hashes = new ArrayList<>();
             r.rows.forEach(row -> hashes.add(GoldenRecord.hashRow(row)));
 
+            // Reproducibility is measured, not assumed. Capturing a second time and comparing is
+            // the only way to know whether bit-exactness is actually a property of this tuple for
+            // this configuration — and it makes the golden self-correcting: when a
+            // non-deterministic path is fixed, the next regeneration records bit_exact=true
+            // without anyone editing a flag.
+            GoldenCapture.Result again = GoldenCapture.capture(model, true);
+            boolean bitExact = true;
+            for (int i = 0; i < r.rows.size() && bitExact; i++) {
+                bitExact = hashes.get(i).equals(GoldenRecord.hashRow(again.rows.get(i)));
+            }
+            if (!r.tokenIds.equals(again.tokenIds)) {
+                throw new IllegalStateException("token ids are not reproducible for " + fixture.fileName
+                        + " — the golden would be meaningless");
+            }
+            if (!bitExact) {
+                System.out.println("  WARNING: " + fixture.quantization
+                        + " logits are NOT bit-reproducible run-to-run on this tuple;"
+                        + " recording bit_exact=false (token ids are still compared)");
+            }
+
             Map<String, String> meta = new LinkedHashMap<>();
             meta.put("model_file", fixture.fileName);
             meta.put("model_sha256", actualSha);
@@ -75,6 +95,7 @@ public final class GenerateGoldens {
             meta.put("recover_bailout", Boolean.toString(Boolean.parseBoolean(
                     System.getProperty("tornado.recover.bailout", "false"))));
             meta.put("device_sample", Boolean.toString(Boolean.getBoolean("llama.deviceSample")));
+            meta.put("bit_exact", Boolean.toString(bitExact));
             meta.put("payload", "row-hashes + token-ids + final row (see GoldenRecord)");
             meta.put("created_by_commit", commit);
 
