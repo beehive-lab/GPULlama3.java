@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+#
+# Regenerate the committed golden logits (T1.4).
+#
+# Goldens are NEVER regenerated automatically on failure. Running this is a deliberate act, and
+# the resulting commit must change nothing else and must say why in its message.
+#
+# Requires: TORNADOVM_HOME pointing at the pinned SDK, a working device, and the pinned model
+# fixtures under $GPULLAMA_TEST_MODELS (or ~/.gpullama3/test-models).
+#
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+if [ -z "${TORNADOVM_HOME:-}" ]; then
+  echo "error: TORNADOVM_HOME is not set" >&2
+  exit 1
+fi
+if [ ! -f "$TORNADOVM_HOME/tornado-argfile" ]; then
+  echo "error: no tornado-argfile under $TORNADOVM_HOME" >&2
+  exit 1
+fi
+
+# Refuse to run against a dirty tree: the generating commit is written into the metadata, so it
+# has to actually describe the code that produced the numbers.
+if ! git diff --quiet HEAD -- . ; then
+  echo "error: working tree has uncommitted tracked changes; commit or stash them first" >&2
+  git status --short --untracked-files=no >&2
+  exit 1
+fi
+
+COMMIT=$(git rev-parse HEAD)
+echo "generating goldens at commit $COMMIT"
+
+./mvnw -q -B test-compile
+
+CP_FILE=$(mktemp)
+trap 'rm -f "$CP_FILE"' EXIT
+./mvnw -q -B dependency:build-classpath -Dmdep.outputFile="$CP_FILE" -Dmdep.includeScope=test
+
+CLASSPATH="target/classes:target/test-classes:$(cat "$CP_FILE")"
+
+# recover.bailout=False is mandatory: with the default TRUE a failed kernel silently falls back to
+# sequential Java and would produce a wrong golden instead of an error (capability C4).
+# llama.deviceSample=false keeps the full logits row crossing to the host, which is what is hashed.
+java "@$TORNADOVM_HOME/tornado-argfile" \
+  --add-modules jdk.incubator.vector \
+  -Dtornado.recover.bailout=False \
+  -Dllama.deviceSample=false \
+  -Dgolden.commit="$COMMIT" \
+  -cp "$CLASSPATH" \
+  org.beehive.gpullama3.golden.GenerateGoldens
+
+echo
+echo "Goldens written. Review the diff, then commit them on their own:"
+echo "  git add src/test/resources/goldens && git commit"

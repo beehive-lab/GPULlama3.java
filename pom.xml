@@ -100,6 +100,20 @@
                     </configuration>
                 </plugin>
 
+                <!-- Class A gates only by default: `mvn test` must never need a model file,
+                     a TornadoVM installation or an accelerator. The Class B tests are named
+                     *AccelTest and run under -Paccel-tests. See verification-gates.md -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.2.2</version>
+                    <configuration>
+                        <excludes>
+                            <exclude>**/*AccelTest.java</exclude>
+                        </excludes>
+                    </configuration>
+                </plugin>
+
                 <!-- Flatten: resolves ${revision}${jdk.version.suffix} in the published POM -->
                 <plugin>
                     <groupId>org.codehaus.mojo</groupId>
@@ -147,6 +161,39 @@
 
         <!-- Profiles for optional/conditional builds -->
         <profiles>
+
+            <!-- ─── Class B: accelerator qualification gates ─────────────────────────
+                 Opt-in: `mvn verify -Paccel-tests`. Needs TORNADOVM_HOME, a device, and
+                 the pinned model fixtures (GPULLAMA_TEST_MODELS or ~/.gpullama3/test-models).
+                 On a machine without them the tests skip with an explicit marker — a skip
+                 is recorded, never reported as a pass.
+
+                 recover.bailout=False is mandatory (capability C4): with the default TRUE a
+                 failed kernel silently falls back to sequential Java, which would produce a
+                 wrong golden instead of an error.
+            ─────────────────────────────────────────────────────────────────────── -->
+            <profile>
+                <id>accel-tests</id>
+                <build>
+                    <plugins>
+                        <plugin>
+                            <groupId>org.apache.maven.plugins</groupId>
+                            <artifactId>maven-surefire-plugin</artifactId>
+                            <configuration>
+                                <excludes combine.self="override"/>
+                                <includes>
+                                    <include>**/*AccelTest.java</include>
+                                </includes>
+                                <useModulePath>false</useModulePath>
+                                <argLine>@${env.TORNADOVM_HOME}/tornado-argfile
+                                    --add-modules jdk.incubator.vector
+                                    -Dtornado.recover.bailout=False
+                                    -Dllama.deviceSample=false</argLine>
+                            </configuration>
+                        </plugin>
+                    </plugins>
+                </build>
+            </profile>
 
             <!-- ─── JDK 21 ───────────────────────────────────────────────────────────
                  Auto-activates for JDK 21.x builds.
