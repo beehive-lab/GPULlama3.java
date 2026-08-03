@@ -188,7 +188,8 @@
                                 <argLine>@${env.TORNADOVM_HOME}/tornado-argfile
                                     --add-modules jdk.incubator.vector
                                     -Dtornado.recover.bailout=False
-                                    -Dllama.deviceSample=false</argLine>
+                                    -Dllama.deviceSample=false
+                                    -Dtornado.device.memory=12GB</argLine>
                             </configuration>
                         </plugin>
                     </plugins>

@@ -47,6 +47,7 @@ java "@$TORNADOVM_HOME/tornado-argfile" \
   --add-modules jdk.incubator.vector \
   -Dtornado.recover.bailout=False \
   -Dllama.deviceSample=false \
+  -Dtornado.device.memory=12GB \
   -Dgolden.commit="$COMMIT" \
   -cp "$CLASSPATH" \
   org.beehive.gpullama3.golden.GenerateGoldens
