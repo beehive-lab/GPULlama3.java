@@ -73,7 +73,7 @@ Do not resolve these early — deciding before the gate is speculation.
 | Phase | Purpose | Prereqs | Status | Exit condition |
 | --- | --- | --- | --- | --- |
 | Phase 0 | TornadoVM ≥ 5.2.x floor | — | **done** (pom pins 5.2.0) | build+launcher work; fresh perf entry |
-| M1 | Guardrails: ArchUnit, goldens, gates | Phase 0 (for T1.4+) | **current** (T1.1–T1.7 unblocked) | rules + goldens + bench gate in CI |
+| M1 | Guardrails: ArchUnit, goldens, gates | Phase 0 (for T1.4+) | **current** (T1.1–T1.4 done; T1.5–T1.8 next) | rules + goldens + bench gate in CI |
 | M2 | Metrics seam | M1.4 | waiting | counters programmatic; no tok/s cost |
 | M3 | Public API façade v1 | M1 + gates D-01..D-11 | **blocked on gates** | simple example runs CPU+GPU, token-identical |
 | M4 | DataType / GGUF isolation | M1; D-08/D-09 | waiting | Rule 4 allowlist empty |

@@ -39,6 +39,33 @@ development laptop — do not gate against it. The local baseline covers 7 of 8 
 across CUDA and OpenCL, F16 and Q8_0, median of 3 cold runs, worst spread 6.24%.
 CUDA leads OpenCL by 6–25% everywhere; Q8_0 leads F16 everywhere.
 
+## Open defect: FP16 logits are not reproducible run-to-run
+
+Found while generating the T1.4 goldens on the pinned tuple (RTX 5090, CUDA,
+TornadoVM 5.2.0-jdk21). Two identical back-to-back captures of Llama-3.2-1B **F16**
+differ on **all 64** compared logits rows: max absolute difference **0.168** on logits
+spanning −8.0 to +23.3, with 128255 of 128256 elements differing on the final row.
+That is a non-deterministic reduction, not last-bit rounding. **Q8_0 on the same
+harness reproduces exactly**, so it is the FP16 path, not the capture code.
+
+Token ids are so far unaffected — the argmax margins exceed the drift — but that is
+luck, not a guarantee, and it will not hold for near-ties.
+
+Consequences:
+
+- [`verification-gates.md`](verification-gates.md) assumes bit-exactness is a property
+  of the pinned tuple. That holds for Q8_0 and **not** for F16 here. Goldens therefore
+  **measure** reproducibility at generation time and record `bit_exact` in the
+  metadata, rather than assuming it. The F16 golden asserts token ids and the NaN/Inf
+  check; row hashes are asserted only when `bit_exact` is true.
+- **M1.6 compiled-program identity** and the roadmap's "goldens bit-identical"
+  definition of done cannot mean bit-identical for FP16 until this is fixed.
+- Fixing it is production work (a kernel/reduction change) and outside M1's tests-only
+  scope. It needs a maintainer decision on where it lands.
+
+Once fixed, re-running `scripts/regenerate-goldens.sh` records `bit_exact=true`
+automatically — there is no flag to edit.
+
 ## Two blockers for M1.4 golden coverage
 
 1. **`DEEPSEEK_R1_DISTILL_QWEN` is broken** — `Qwen3Tokenizer.encodeChunk` throws
