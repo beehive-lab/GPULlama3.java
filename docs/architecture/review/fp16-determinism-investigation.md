@@ -83,9 +83,10 @@ racy kernel, are 0/300 after the fix.
 Throughput, Llama-3.2-1B-Instruct-F16, 3 runs each: before 105.5 / 104.6 / 104.5 tok/s, after
 108.7 / 109.7 / 104.5 tok/s. No cost.
 
-`mvn verify -Paccel-tests`: `GoldenLogitsAccelTest` 3/3 pass. `CpuGpuParityAccelTest` fails
-(|cpu-gpu| ≈ 3.5 at row 48 vs tolerance 0.256) **both before and after this change, with identical
-values** — a pre-existing gate failure, tracked separately under T1.5, not a regression here.
+`mvn verify -Paccel-tests`: all gates pass. `CpuGpuParityAccelTest` failed at the time of this fix
+(|cpu-gpu| ≈ 3.5 at row 48) with identical values before and after it, so it was never a regression
+here; that turned out to be a separate defect — the GPU's RoPE base — and is resolved in
+[`cpu-gpu-parity.md`](cpu-gpu-parity.md).
 
 ### Reproducing
 
@@ -134,8 +135,11 @@ cross-run contamination, uninitialized `wrapXFP16`/`wrapXbFP16`, and the host-si
 ahead of every execution left the rate at 11.7%).
 
 A separate, **stable** CPU↔GPU offset of ~0.5–0.7 on large logits exists in both quantizations. It
-is reproducible, so it was never this defect; it is accumulation-order difference, and it is what a
-parity tolerance is meant to absorb.
+is reproducible, so it was never this defect. It was assumed here to be accumulation order; it was
+not. It was the GPU computing RoPE from a hardcoded base of 50000 while the model's `rope_theta` is
+500000 — see [`cpu-gpu-parity.md`](cpu-gpu-parity.md). After that fix the offset is 0.032 worst on
+FP16 and 4e-05 on Q8_0. Worth noting as its own lesson: "this difference is just accumulation
+order" is a hypothesis, not an explanation, until something measures it.
 
 ## The sampling trap — still worth reading
 
