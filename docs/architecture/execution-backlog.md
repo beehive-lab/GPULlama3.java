@@ -81,6 +81,17 @@ Tests only, except T1.8 (declared exception, ADR-007 D2).
 **T1.5 — CPU↔GPU parity test**
 - Prereq: land T1.4 (shares fixture plumbing).
 - Acceptance (B): tolerance bound passes on both backends of the pinned tuple.
+- Status: **passing (2026-08-04).** Full record in
+  [`review/cpu-gpu-parity.md`](review/cpu-gpu-parity.md).
+- Cause of the original failure: the GPU RoPE kernel computed its frequencies from a hardcoded
+  base of 50000 while the model's `rope_theta` is 500000, so every rotation angle differed from
+  the CPU's precomputed `freq_cis` tables. Fixed by switching Llama/Mistral (FP16 and Q8_0) to
+  `ropeRotationWithCacheCopyPrecomputed`.
+- Gate redesigned: elementwise `atol + rtol·|cpu|` with a violation budget, a hard max-error
+  ceiling, whole-vector relative L2 and cosine, and decision-level argmax/top-k with the competing
+  tokens' gap. Thresholds are per quantization and measured with `golden/ParityProfile`.
+- Remaining: the same hardcoded RoPE base exists in the batch-prefill, Phi3 and Qwen3 kernels
+  (latent, since those constants currently match their models); batch prefill is separately broken.
 
 **T1.6 — Compiled-program identity test**
 - Prereq: land T1.4 (fixture) and T0.1 (C3 determinism).
