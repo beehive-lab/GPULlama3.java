@@ -176,7 +176,7 @@
             ─────────────────────────────────────────────────────────────────────── -->
             <profile>
                 <id>jdk25</id>
-                <activation><jdk>[25.0.2,)</jdk></activation>
+                <activation><jdk>[25.0.2,26)</jdk></activation>
                 <properties>
                     <maven.compiler.source>25</maven.compiler.source>
                     <maven.compiler.target>25</maven.compiler.target>
@@ -191,6 +191,42 @@
                             <configuration>
                                 <!-- Appended to enable-preview already in main build -->
                                 <compilerArgs combine.children="append">
+                                    <arg>--add-modules</arg>
+                                    <arg>jdk.incubator.vector</arg>
+                                </compilerArgs>
+                            </configuration>
+                        </plugin>
+                    </plugins>
+                </build>
+            </profile>
+
+            <!-- ─── JDK 27 ───────────────────────────────────────────────────────────
+                 Auto-activates for JDK 27+ builds (JVMCI fully removed upstream,
+                 openjdk/jdk#30834 — see the matching jdk27 profile in TornadoVM's own pom).
+                 Publishes: gpu-llama3:${revision}-jdk27
+                 TornadoVM: pinned to the locally-built 5.2.1-jdk27-dev artifacts (no
+                 5.0.0-jdk27 release exists yet, so this does not follow the base+suffix
+                 composition the other profiles use).
+                 No enable-preview: unlike the jdk21/jdk25 profiles, this project's sources
+                 compile clean at release 27 with only add-modules jdk.incubator.vector,
+                 so the base build's enable-preview arg is dropped via combine.self="override".
+            ─────────────────────────────────────────────────────────────────────── -->
+            <profile>
+                <id>jdk27</id>
+                <activation><jdk>[27,)</jdk></activation>
+                <properties>
+                    <maven.compiler.source>27</maven.compiler.source>
+                    <maven.compiler.target>27</maven.compiler.target>
+                    <jdk.version.suffix>-jdk27</jdk.version.suffix>
+                    <tornadovm.version>5.2.1-jdk27-dev</tornadovm.version>
+                </properties>
+                <build>
+                    <plugins>
+                        <plugin>
+                            <groupId>org.apache.maven.plugins</groupId>
+                            <artifactId>maven-compiler-plugin</artifactId>
+                            <configuration combine.self="override">
+                                <compilerArgs>
                                     <arg>--add-modules</arg>
                                     <arg>jdk.incubator.vector</arg>
                                 </compilerArgs>

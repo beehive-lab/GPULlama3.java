@@ -18,8 +18,13 @@ Build TornadoVM from source. Available backends: `opencl` (default), `ptx`, `spi
 
 ## Prerequisites
 
-- JAVA_HOME is set to jdk 21 or 25
+- JAVA_HOME is set to jdk 21, 25, or 27
 - `nvidia-smi` succeeds (GPUs visible)
+
+Note: JDK 27 removed JVMCI entirely (openjdk/jdk#30834). TornadoVM's `jdk27` pom profile
+vendors a same-named `jdk.internal.vm.ci` application module to compensate — see the
+`jdk27-jvmci-removal` branch. `bin/compile --jdk jdk27` (and `make`) auto-detect this from
+`JAVA_HOME`.
 
 ## Instructions
 

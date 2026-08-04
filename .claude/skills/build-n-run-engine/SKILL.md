@@ -20,7 +20,7 @@ Build GPULlama3.java (this repo) with Maven, skipping tests for speed.
 
 ## Prerequisites
 
-- `JAVA_HOME` set to JDK 21 or 25 (`java -version`)
+- `JAVA_HOME` set to JDK 21, 25, or 27 (`java -version`)
 - `TORNADOVM_HOME` set and `tornado --devices` succeeds — if not, run the `build-tornado` skill first
 - `~/TornadoVM/setvars.sh` sourced in **this** shell (env vars don't persist across shells/tool calls)
 
@@ -51,7 +51,7 @@ git checkout <branch> && git pull
 mvn clean install -DskipTests
 ```
 
-For JDK 25 instead of the default JDK 21, ensure `JAVA_HOME` points at JDK 25 before running `make` — the pom auto-activates the `jdk25` profile from the detected JDK version, there is no separate `BACKEND=`-style flag.
+For JDK 25 or JDK 27 instead of the default JDK 21, ensure `JAVA_HOME` points at that JDK before building — the pom auto-activates the matching `jdk25`/`jdk27` profile from the detected JDK version, there is no separate `BACKEND=`-style flag. The `jdk27` profile pins `tornadovm.version` to the locally-installed `5.2.1-jdk27-dev` artifact (no `5.0.0-jdk27` release exists) and compiles without `--enable-preview` (unnecessary at release 27; only `--add-modules jdk.incubator.vector` is needed).
 
 ### Step 5: Verify
 
