@@ -41,6 +41,11 @@ CUDA leads OpenCL by 6–25% everywhere; Q8_0 leads F16 everywhere.
 
 ## Open defect: GPU logits are not reproducible run-to-run (FP16 **and** Q8_0)
 
+**Resume here:** [`review/fp16-determinism-investigation.md`](review/fp16-determinism-investigation.md)
+— measured baseline (FP16 11.0%, Q8_0 0.0% over 300 identical executions), exact repro
+commands, what is excluded with evidence, the next measurement to run, and the sampling
+mistakes that produced three wrong conclusions.
+
 **Q8_0 is affected too — corrected 2026-08-03.** An earlier note here claimed Q8_0
 reproduced exactly. That was **under-sampled**: the golden generator compares only two
 captures, and the probe compared only the *final* logits row. Running the committed Q8_0
