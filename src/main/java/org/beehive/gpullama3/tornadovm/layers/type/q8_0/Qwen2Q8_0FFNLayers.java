@@ -68,6 +68,8 @@ public class Qwen2Q8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen2
         configHiddenDimRowMajorWorker.setLocalWork(LOCAL_WORK_GROUP_SIZE_ALLOC, 1, 1);
 
         WorkerGrid rmsNormWorker = WorkerGridFactory.createRmsNormWorker(config.dim(), 32);
+        // Race-free single-workgroup reduction on the NVIDIA path; see rmsReduceKernel().
+        WorkerGrid rmsReduceWorker = rmsReduceWorker(rmsNormWorker);
 
         int optimalLocalSize = Math.min(config.headSize(), 64); // Start with 64 threads per head
         if (config.headSize() % optimalLocalSize != 0) {
@@ -90,13 +92,13 @@ public class Qwen2Q8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen2
 
         // Map workers to tasks
         for (int i = 0; i < config.numberOfLayers(); i++) {
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_rms_reduce", rmsNormWorker);
+            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_rms_reduce", rmsReduceWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_rms_qkv_projection", fusedQKVWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".fused_qkv_bias", fusedQKVBiasWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attention", parallelAttentionWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_output_proj", configDimRowMajorGlobalWorker);
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce", rmsNormWorker);
+            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce", rmsReduceWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rms_ffn_gate_up", configHiddenDimRowMajorWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_down_proj", configDimRowMajorGlobalWorker);
         }
@@ -136,7 +138,7 @@ public class Qwen2Q8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen2
 
         // RMS Normalization - compute scale factor
         unifiedLayer.task("attn_rms_reduce",
-                TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                rmsReduceKernel(),
                 context,
                 qwen2State.temp,              // output: scale factor
                 qwen2State.wrapX,             // input: hidden state
@@ -223,7 +225,7 @@ public class Qwen2Q8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen2
 
         // RMS Normalization - compute scale factor
         unifiedLayer.task("ffn_rms_reduce",
-                TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                rmsReduceKernel(),
                 context,
                 qwen2State.tempFFN,           // output: scale factor
                 qwen2State.wrapX,             // input: hidden state

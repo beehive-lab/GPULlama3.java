@@ -3,9 +3,15 @@ package org.beehive.gpullama3.tornadovm.layers;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.Weights;
 import org.beehive.gpullama3.model.Configuration;
+import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
 import org.beehive.gpullama3.tornadovm.scheduling.SchedulerType;
+import org.beehive.gpullama3.tornadovm.scheduling.WorkerGridFactory;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
+import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.TaskGraph;
+import uk.ac.manchester.tornado.api.WorkerGrid;
+import uk.ac.manchester.tornado.api.common.TornadoFunctions;
+import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
 import java.util.List;
 import java.util.stream.IntStream;
@@ -90,5 +96,34 @@ public abstract class AbstractTransformerLayerTaskGraphs<W extends Weights, C ex
      */
     protected boolean shouldUseFinalNormalization() {
         return schedulerType == SchedulerType.NON_NVIDIA;
+    }
+
+    /**
+     * RMS-reduction kernel for the {@code *_rms_reduce} tasks.
+     *
+     * <p>{@code reductionOneBlockWithLayer} splits the sum of squares across workgroups and then has
+     * workgroup 0 combine the partial sums <em>inside the same kernel</em>, with no inter-workgroup
+     * synchronization. That combine is only safe when a separate {@code reductionFinalNormalization}
+     * task recomputes the scale afterwards, which the NON_NVIDIA path does and the NVIDIA path does
+     * not. On the NVIDIA path the race made FP16 decode non-deterministic in ~11% of otherwise
+     * identical executions (Q8_0 won the same race more often, so it looked clean). Reducing in a
+     * single workgroup removes the cross-workgroup dependency entirely.</p>
+     *
+     * <p>See docs/architecture/review/fp16-determinism-investigation.md.</p>
+     */
+    protected TornadoFunctions.Task6<KernelContext, FloatArray, FloatArray, Integer, Float, Integer> rmsReduceKernel() {
+        return shouldUseFinalNormalization()
+                ? TransformerComputeKernelsLayered::reductionOneBlockWithLayer
+                : TransformerComputeKernelsLayered::reductionOneBlockWithLayerSingleGroup;
+    }
+
+    /**
+     * Worker grid matching {@link #rmsReduceKernel()}: the multi-workgroup grid on the NON_NVIDIA
+     * path, one workgroup ({@code global == local == state.localSize}) on the NVIDIA path.
+     */
+    protected WorkerGrid rmsReduceWorker(WorkerGrid multiWorkgroupWorker) {
+        return shouldUseFinalNormalization()
+                ? multiWorkgroupWorker
+                : WorkerGridFactory.createRmsNormWorker(state.localSize, state.localSize);
     }
 }

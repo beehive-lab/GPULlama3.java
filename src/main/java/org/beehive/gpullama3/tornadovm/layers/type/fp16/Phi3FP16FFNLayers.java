@@ -40,6 +40,8 @@ public class Phi3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Phi3To
     public GridScheduler updateGridScheduler(GridScheduler gridScheduler) {
         // RMS norm worker
         WorkerGrid rmsNormWorker = WorkerGridFactory.createRmsNormWorker(config.dim(), state.localSize);
+        // Race-free single-workgroup reduction on the NVIDIA path; see rmsReduceKernel().
+        WorkerGrid rmsReduceWorker = rmsReduceWorker(rmsNormWorker);
 
         // Fused RMS + QKV matmul worker
         int fusedQkvGlobal = opSize * LOCAL_WORK_GROUP_SIZE_ALLOC;
@@ -66,13 +68,13 @@ public class Phi3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Phi3To
 
         for (int i = 0; i < config.numberOfLayers(); i++) {
             // === Attention Block ===
-            gridScheduler.addWorkerGrid("layer_" + i + ".attn_rms_reduce", rmsNormWorker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".attn_rms_reduce", rmsReduceWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".attn_rms_qkv_projection", fusedQkvWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".attention", parallelAttentionWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".attn_output_proj", matmul1Worker);
             // === FFN Block ===
-            gridScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce", rmsNormWorker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce", rmsReduceWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".rms_ffn_silu", fusedFFNWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".ffn_down_proj", ffnDownWorker);
         }
@@ -187,7 +189,7 @@ public class Phi3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Phi3To
         // ═══════════════════════════════════════════════════════════════════════
 
         // RMS Normalization - compute scale factor
-        unifiedLayer.task("attn_rms_reduce", TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+        unifiedLayer.task("attn_rms_reduce", rmsReduceKernel(),
                 context, phi3State.temp,               // output: scale factor
                 phi3State.wrapX,              // input: hidden state
                 config.dim(),             // dimension
@@ -252,7 +254,7 @@ public class Phi3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Phi3To
         // ═══════════════════════════════════════════════════════════════════════
 
         // RMS Normalization - compute scale factor
-        unifiedLayer.task("ffn_rms_reduce", TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+        unifiedLayer.task("ffn_rms_reduce", rmsReduceKernel(),
                 context, phi3State.tempFFN,            // output: scale factor
                 phi3State.wrapX,              // input: hidden state
                 config.dim(),             // dimension

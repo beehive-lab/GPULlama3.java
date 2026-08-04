@@ -62,6 +62,8 @@ public class Qwen3Q8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
     @Override
     public GridScheduler updateGridScheduler(GridScheduler gridScheduler) {
         WorkerGrid rmsNormWorker = WorkerGridFactory.createRmsNormWorker(config.dim(), state.localSize);
+        // Race-free single-workgroup reduction on the NVIDIA path; see rmsReduceKernel().
+        WorkerGrid rmsReduceWorker = rmsReduceWorker(rmsNormWorker);
 
         int qkRmsNormGroups = config.numberOfHeads() + config.numberOfKeyValueHeads();
         WorkerGrid qkRmsNormWorker = WorkerGridFactory.genericWorker(qkRmsNormGroups * nEmbdHead, nEmbdHead);
@@ -87,14 +89,14 @@ public class Qwen3Q8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
         WorkerGrid fusedQKVWorker = WorkerGridFactory.genericWorker(fusedQKVGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC);
 
         for (int i = 0; i < config.numberOfLayers(); i++) {
-            gridScheduler.addWorkerGrid("layer_" + i + ".attn_rms_reduce", rmsNormWorker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".attn_rms_reduce", rmsReduceWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".attn_rms_qkv_projection", fusedQKVWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".qk_rmsnorm", qkRmsNormWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".attention", parallelAttentionWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".attention_combine", attentionCombineWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".attn_output_proj", matmul1Worker);
-            gridScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce", rmsNormWorker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce", rmsReduceWorker);
             if (shouldUseFinalNormalization()) {
                 gridScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_finalize", rmsNormWorker);
             }
@@ -149,7 +151,7 @@ public class Qwen3Q8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
 
         // RMS Normalization - compute scale factor
         unifiedLayer.task("attn_rms_reduce",
-                TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                rmsReduceKernel(),
                 context,
                 qwen3State.temp,              // output: scale factor
                 qwen3State.wrapX,             // input: hidden state
@@ -288,7 +290,7 @@ public class Qwen3Q8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
 
         // RMS Normalization - compute scale factor
         unifiedLayer.task("ffn_rms_reduce",
-                TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                rmsReduceKernel(),
                 context,
                 qwen3State.tempFFN,           // output: scale factor
                 qwen3State.wrapX,             // input: hidden state

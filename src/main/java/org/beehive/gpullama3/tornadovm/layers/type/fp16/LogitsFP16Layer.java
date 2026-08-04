@@ -67,7 +67,7 @@ public class LogitsFP16Layer extends AbstractLogitsTaskGraph {
 
         // === Final RMS Normalization ===
         logits.task("rms_reduce",
-                TransformerComputeKernels::reductionOneBlockWithLayer,
+                rmsReduceKernel(),
                 context,
                 state.tempLogits,        // output: partial sums + final scale factor
                 state.wrapX,             // input: hidden state
@@ -130,7 +130,7 @@ public class LogitsFP16Layer extends AbstractLogitsTaskGraph {
         var vocabSizeRowMajor = config.vocabularySize() * LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS;
         var vocabWorker = new WorkerGrid1D(vocabSizeRowMajor);
         vocabWorker.setLocalWork(LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS, 1, 1);
-        tornadoForwardScheduler.addWorkerGrid("logits.rms_reduce", logitsRMS);
+        tornadoForwardScheduler.addWorkerGrid("logits.rms_reduce", rmsReduceWorker(logitsRMS));
         tornadoForwardScheduler.addWorkerGrid("logits.rms_apply_fp16", logitsRMS);
         tornadoForwardScheduler.addWorkerGrid("logits.vocab_proj", vocabWorker);
         if (DEVICE_SAMPLE) {

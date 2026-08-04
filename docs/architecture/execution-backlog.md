@@ -64,26 +64,19 @@ Tests only, except T1.8 (declared exception, ADR-007 D2).
 **T1.4-FP16 — FP16 logits determinism defect** *(discovered production defect)*
 - Objective: find the earliest divergent operation in the FP16 GPU path and either fix it
   or record an explicit, reasoned acceptance.
-- Status: **diagnostic done, cause not localized, no fix attempted.** Evidence and the
-  read-only probe (`Fp16DeterminismProbe`) are recorded in
-  [`HANDOFF.md`](HANDOFF.md#open-defect-fp16-logits-are-not-reproducible-run-to-run).
-- Established: reproduces on FP16 GPU under **both** CUDA and OpenCL; **not** on the CPU
-  path; **not** on Q8_0 GPU through the identical harness. Intermittent — some run pairs
-  are bit-identical, others differ on every element — which points at a race or an
-  uninitialized read rather than a stable-but-different reduction order. Argmax and top-5
-  survive; **top-10 membership does not**.
-- Blocked on: only `wrapLogits` reaches the host, so no intermediate tensor can be
-  compared. Localizing needs temporary device-to-host transfers or selective graph
-  execution — **both are production changes and need approval before starting**.
-- Prereq: design/maintainer decision. **Not** startable as tests-only work.
-- Acceptance: earliest divergent kernel identified; then either the fix lands with
-  `bit_exact` flipping to `true` on regeneration, or an ADR records why the behaviour is
-  accepted and what the envelope permits.
-- **Blocker before M6** ([`verification-gates.md`](verification-gates.md#reproducibility-envelope-gate-provisional-fp16-only)):
-  past that point a numerical drift of unknown origin is indistinguishable from a
-  refactor regression.
-- Non-goals: treating token-sequence equality as resolution; widening `bit_exact: false`
-  to further configurations.
+- Status: **root cause found and fixed (2026-08-04).** Full record in
+  [`review/fp16-determinism-investigation.md`](review/fp16-determinism-investigation.md).
+- Cause: `reductionOneBlockWithLayer` combines the per-workgroup RMS partial sums inside the
+  kernel with no inter-workgroup synchronization. That combine is only safe when the separate
+  `reductionFinalNormalization` task follows it, which the NVIDIA path skipped — so the racy
+  value was the final scale. Quantization-independent: FP16 lost the race ~11% of the time,
+  Q8_0 rarely at 20GB and ~1-in-4 at 12GB.
+- Fix: NVIDIA path now uses `reductionOneBlockWithLayerSingleGroup` (one workgroup) via
+  `rmsReduceKernel()`/`rmsReduceWorker()`, across every FFN and logits layer class.
+- Verified: 0/300 identical executions diverge for FP16 and Q8_0 at both 20GB and 12GB
+  (was 33/300 for FP16); layer-0 stage buffers 0/300 (was 31/300); no throughput cost.
+- Remaining: regenerate goldens so `bit_exact` can flip to `true`; `CpuGpuParityAccelTest`
+  still fails on the pinned tuple with identical values before and after this fix (T1.5).
 
 **T1.5 — CPU↔GPU parity test**
 - Prereq: land T1.4 (shares fixture plumbing).

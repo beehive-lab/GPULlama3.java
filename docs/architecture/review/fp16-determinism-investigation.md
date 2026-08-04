@@ -1,25 +1,81 @@
-# FP16 GPU determinism defect — investigation handoff
+# FP16 GPU determinism defect — root cause and fix
 
-**Status: open, root cause not identified.** Last worked 2026-08-04.
+**Status: root cause found and fixed.** Closed 2026-08-04.
 Task ID **T1.4-FP16** in [`../execution-backlog.md`](../execution-backlog.md).
-Blocker before M6.
 
-This file exists so the investigation can resume without re-deriving anything. It is a
-working record, not architecture.
+## Root cause
 
-## The defect in one line
+`reductionOneBlockWithLayer` (duplicated in `TransformerComputeKernelsLayered` and
+`TransformerComputeKernels`) splits the RMS sum of squares across workgroups, each writing its
+partial sum to `output[groupId + 1]`, and then has **the single thread `gid == 0` read all the
+other workgroups' partials back and compute the final scale — inside the same kernel, with no
+inter-workgroup synchronization.**
 
-Repeated **identical** GPU execution of one fixed plan produces different logits for FP16
-about 11% of the time; Q8_0 and the CPU path are reproducible.
+```java
+if (lid == 0) {
+    output.set(groupId + 1, localX[0]);   // every workgroup writes its partial
+}
+if (gid == 0) {
+    for (int i = 1; i <= (size / localMemSize); i++) {
+        ss += output.get(i);              // ...and workgroup 0 reads them, unsynchronized
+    }
+    output.set(0, 1.0f / sqrt(ss / size + ermsNorm));
+}
+```
 
-## Measured baseline (reproduce before trusting any fix)
+Whether workgroup 0 sees a fresh or a stale partial depends on how the workgroups happen to be
+scheduled, so the RMS scale — and everything downstream of it — differs between otherwise
+identical executions.
 
-Same plan, same token, same position, nothing advanced between iterations:
+The combine is only safe when the separate `reductionFinalNormalization` task runs afterwards and
+recomputes `output[0]` from the partials. That task was gated on `schedulerType == NON_NVIDIA`, so
+**the NVIDIA path ran the racy combine as the final word.** The kernel javadoc for
+`reductionOneBlockWithLayerSingleGroup` already described this race for Qwen3; what was missed is
+that every other model family was still on the racy path.
 
-| Config | Diverged | Rate | worstAbs |
-| --- | --- | --- | --- |
-| FP16 | 33/300 | **11.0%** | 0.137 |
-| Q8_0 | 0/300 | **0.0%** | — |
+This is quantization-independent. FP16 lost the race ~11% of the time and Q8_0 almost never at
+20GB device memory, which is why Q8_0 looked reproducible; at 12GB Q8_0 had already been seen
+diverging ~1-in-4.
+
+## The fix
+
+`AbstractTransformerLayerTaskGraphs.rmsReduceKernel()` / `AbstractLogitsTaskGraph.rmsReduceKernel()`
+now select the kernel, with `rmsReduceWorker()` selecting the matching grid:
+
+- NON_NVIDIA — `reductionOneBlockWithLayer` + `reductionFinalNormalization` (unchanged)
+- NVIDIA — `reductionOneBlockWithLayerSingleGroup`, one workgroup, `global == local ==
+  state.localSize`, no cross-workgroup dependency at all
+
+Applied to every FFN layer class (Llama, Mistral, Devstral, Granite, Phi3, Qwen2, Qwen3 — FP16 and
+Q8_0) and to the logits layers. Qwen3, which had the fix inline, now uses the shared helper.
+
+Also fixed independently: `TransformerComputeKernels.convertFP16toFP32` had no bounds guard, unlike
+its Q8_0 counterpart. Harmless for dims that are a multiple of the local size, out-of-bounds for
+any that are not.
+
+## Verification
+
+Same plan, same token, same position, nothing advanced between iterations, 300 identical
+executions:
+
+| Config | Before | After |
+| --- | --- | --- |
+| FP16 @20GB | 33/300 (11.0%), worstAbs 0.137 | **0/300** |
+| Q8_0 @20GB | 0/300 | **0/300** |
+| FP16 @12GB | — | **0/300** |
+| Q8_0 @12GB | ~1-in-4 (earlier observation) | **0/300** |
+
+Layer-0 stage buffers (`temp`, `wrapXbFP16`, `wrapQ`, `wrapX`), which diverged 31/300 with the
+racy kernel, are 0/300 after the fix.
+
+Throughput, Llama-3.2-1B-Instruct-F16, 3 runs each: before 105.5 / 104.6 / 104.5 tok/s, after
+108.7 / 109.7 / 104.5 tok/s. No cost.
+
+`mvn verify -Paccel-tests`: `GoldenLogitsAccelTest` 3/3 pass. `CpuGpuParityAccelTest` fails
+(|cpu-gpu| ≈ 3.5 at row 48 vs tolerance 0.256) **both before and after this change, with identical
+values** — a pre-existing gate failure, tracked separately under T1.5, not a regression here.
+
+### Reproducing
 
 ```bash
 export TORNADOVM_HOME=$HOME/TornadoVM/dist/tornadovm-5.2.1-jdk21-dev-opencl-linux-amd64/tornadovm-5.2.1-jdk21-dev-opencl
@@ -35,56 +91,55 @@ java "@$TORNADOVM_HOME/tornado-argfile" --add-modules jdk.incubator.vector \
   -cp "$CP" org.beehive.gpullama3.golden.DivergenceRate
 ```
 
-**A fix must be judged against the 11% rate over ≥300 iterations, never against a handful
-of clean runs.** See "the sampling trap" below.
+Mandatory flags: `-Dtornado.recover.bailout=False` (else a failed kernel silently falls back to
+sequential Java), `-Dllama.deviceSample=false` (else argmax runs on device and no logits reach the
+host), `-Dtornado.device.memory=20GB` (12GB can OOM when plans are rebuilt in a loop).
 
-## Established, with evidence
+To re-create the defect, make `shouldUseFinalNormalization()` irrelevant by pointing
+`rmsReduceKernel()` at `reductionOneBlockWithLayer` unconditionally.
 
-| Claim | Evidence |
+## How it was localized
+
+The decisive step was perturbing the graph and measuring the *rate*, not the outcome. In the
+activation graph, and again at the head of the `layer_0` graph:
+
+| perturbation | rate |
 | --- | --- |
-| FP16 GPU is intermittently non-deterministic | 33/300 identical executions |
-| Q8_0 GPU is not (or far rarer) | 0/300 here; but 1-in-4 seen at **12GB** device memory |
-| CPU is fully reproducible, both quantizations | all 64 rows identical, 3/3 |
-| Not code generation | kernel source across two plans is **byte-identical**, SHA-256 `52be5cb5…`, 0 diff lines over 33970 lines / 148 kernels |
-| Not upstream-fixed | reproduces on TornadoVM `develop` `e22835059` at the same magnitude |
-| Not backend-specific | reproduces on CUDA **and** OpenCL |
-| Not cross-run contamination | Q8_0 after a bad FP16 run in the same JVM gives the known-good fingerprint 3/3 |
-| Not `wrapXFP16`/`wrapXbFP16` being uninitialized | zeroing both at allocation changed nothing; reverted |
-| Divergence present from **layer 0** | at layer 0, `state.temp`, the FP16 normalized activation and the QKV output all diverge at the same rate as the final logits |
+| extra kernel that **reads** `wrapX` | 0/300 |
+| copy-out of `wrapX` itself | 0/300 |
+| copy-out of an unrelated, untouched buffer (same blocking D2H) | 11.7% |
+| extra kernel writing an unrelated buffer (same launch, same D2H) | 8.3% |
 
-A separate, **stable** CPU↔GPU offset of ~0.5–0.7 on large logits exists in *both*
-quantizations. It is reproducible, so it is not this defect — it is accumulation-order
-difference, and it is what a parity tolerance is meant to absorb.
+Only touching the buffer changed anything, and the TornadoVM bytecode streams of diverged and clean
+iterations were **byte-identical** (same buffers, same events, same order) — so it was not buffer
+binding, not launch count, and not a host-side sync. Forcing the finalize task on NVIDIA
+(`shouldUseFinalNormalization()` → true) took FP16 from 11.7% to 0/300, which named the kernel.
 
-## The next measurement (this is where to start)
+Ruled out along the way: code generation (kernel source byte-identical across plans), an upstream
+TornadoVM fix (reproduces on `develop` `e22835059`), backend specificity (CUDA and OpenCL both),
+cross-run contamination, uninitialized `wrapXFP16`/`wrapXbFP16`, and the host-side
+`temp`/`tempFFN`/`positionHolder` mutations interleaved between graph executions (hoisting them
+ahead of every execution left the rate at 11.7%).
 
-`state.temp` at layer 0 is produced by `reductionOneBlockWithLayer`, which **Q8_0 also
-uses at 0%**. So either its input `wrapX` is already wrong on entry to layer 0, or that
-shared kernel misbehaves only on FP16-shaped input.
+A separate, **stable** CPU↔GPU offset of ~0.5–0.7 on large logits exists in both quantizations. It
+is reproducible, so it was never this defect; it is accumulation-order difference, and it is what a
+parity tolerance is meant to absorb.
 
-**Snapshot `wrapX` straight out of the `activationUpdate` graph, before layer 0.**
+## The sampling trap — still worth reading
 
-- diverges there ⇒ cause is `convertFP16toFP32`, or the `embeddingX` host-write /
-  device-read ordering. `embeddingX` is written host-side by `MemorySegment.copy` in
-  `InferenceCore.forwardTornadoVM` (~`:785`) and transferred `EVERY_EXECUTION`; an
-  ordering gap there would produce exactly this intermittency.
-- clean there ⇒ the shared reduction is fine on Q8_0 input but not FP16; look at the
-  `HalfFloat` accumulation paths.
+Four wrong conclusions in this investigation came from declaring reproducibility off a small clean
+sample:
 
-## Latent bug found (real, but NOT this defect)
+1. Golden generator compared **two** captures → recorded Q8_0 `bit_exact: true`. Wrong.
+2. Probe compared only the **final** row → Q8_0 looked clean. Wrong; drift is sparse in rows.
+3. Five clean repeats → "execution is deterministic, no race". Wrong; the rate was ~11%.
+4. Q8_0 at 0/300 → "FP16-specific". Wrong; same racy kernel, Q8_0 just usually wins.
 
-`TransformerComputeKernels.convertFP16toFP32` has **no bounds guard**:
+Judge any change here against ≥300 iterations. Also: a buffer comparison is meaningless unless the
+buffer is actually read back — an early localization compared host copies of `wrapKeyCache` that
+were never transferred (all zeros on both sides) and reported "identical".
 
-```java
-int i = context.globalIdx;
-wrapX.set(i, x.get(i).getFloat32());          // unguarded
-```
-
-Its Q8_0 counterpart returns early when `globalId >= wrapX.getSize()`. Not triggered for
-Llama-3.2-1B (dim 2048 is an exact multiple of local size 128), but it writes out of
-bounds for any model whose dimension is not. Worth fixing independently.
-
-## Tools (all test-scope, diagnostic only)
+## Tools
 
 | Class | Purpose |
 | --- | --- |
@@ -93,34 +148,24 @@ bounds for any model whose dimension is not. Worth fixing independently.
 | `golden/LogitDump` | raw logits, teacher-forced; `-Ddump.forced`, `-Ddump.positions`, `-Ddump.cols` |
 | `golden/Fp16DeterminismProbe` | all-row comparison, process fingerprint, cross-config |
 
-Production hooks, **default off**, shipped graph unchanged unless set:
+Production hook, default off: `-Dgpullama3.diag.transfers=true` pulls layer intermediates back to
+the host, `-Dgpullama3.diag.layer=N` selects the layer (default 0). Note that `DivergenceRate`'s
+per-stage counters are meaningless without it — the host copies are otherwise never refreshed.
 
-- `-Dgpullama3.diag.transfers=true` — pull layer intermediates back to host
-- `-Dgpullama3.diag.layer=N` — which layer (default 0)
+## Follow-ups
 
-Mandatory flags for any run: `-Dtornado.recover.bailout=False` (else a failed kernel
-silently falls back to sequential Java), `-Dllama.deviceSample=false` (else argmax runs
-on device and no logits reach the host), and `-Dtornado.device.memory=20GB` (12GB raises
-the Q8_0 divergence rate and can OOM when plans are rebuilt in a loop).
-
-## The sampling trap — read this before concluding anything
-
-Three separate wrong conclusions in this investigation came from the same mistake:
-declaring reproducibility from a small clean sample.
-
-1. Golden generator compares **two** captures → recorded Q8_0 `bit_exact: true`. Wrong.
-2. Probe compared only the **final** row → Q8_0 looked clean. Wrong; drift is sparse in rows.
-3. Five clean repeats → "execution is deterministic, no race". Wrong; the rate is ~11%.
-
-Also: a buffer comparison is meaningless unless the buffer is actually read back. An early
-layer-level localization compared host copies of `wrapKeyCache` that were never transferred
-— all zeros on both sides, reported "identical". Always check the non-zero fill first.
+- `wrapKeyCache` reads back as differing on **every** iteration under `-Dgpullama3.diag.transfers`,
+  including runs whose logits are bit-identical. Almost certainly a partial-buffer readback
+  artifact, but it is unexplained and worth a look.
+- The `reductionOneBlockWithLayer` / `reductionFinalNormalization` pair is duplicated across
+  `TransformerComputeKernels` and `TransformerComputeKernelsLayered`; the racy in-kernel combine
+  should probably be deleted outright rather than left reachable on the NON_NVIDIA path.
+- `CpuGpuParityAccelTest` (T1.5) fails on the pinned tuple, unrelated to this defect.
 
 ## Environment notes
 
 - `~/TornadoVM` is on **`develop`** (`e22835059`). The owner's branch
   `fix/opencl-packed-half2-fp16` is intact at `611843029`; 9 stashes untouched.
-- The CUDA dist was replaced by an OpenCL dist (`make` wipes the other backend).
-  Rebuilding CUDA from develop currently **fails**: `cudnn.h: No such file or directory`
-  — develop's CUDA backend needs cuDNN headers, which are not installed.
+- The CUDA dist was replaced by an OpenCL dist (`make` wipes the other backend). Rebuilding CUDA
+  from develop currently **fails**: `cudnn.h: No such file or directory`.
 - Model fixtures are symlinked into `~/.gpullama3/test-models/`.

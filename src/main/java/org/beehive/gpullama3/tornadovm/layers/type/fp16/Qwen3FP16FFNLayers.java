@@ -59,8 +59,8 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
     @Override
     public GridScheduler updateGridScheduler(GridScheduler gridScheduler) {
         WorkerGrid rmsNormWorker = WorkerGridFactory.createRmsNormWorker(config.dim(), state.localSize);
-        // Single-workgroup grid for the race-free NVIDIA-path RMS reduction (global == local).
-        WorkerGrid rmsSingleGroupWorker = WorkerGridFactory.createRmsNormWorker(state.localSize, state.localSize);
+        // Race-free single-workgroup reduction on the NVIDIA path; see rmsReduceKernel().
+        WorkerGrid rmsReduceWorker = rmsReduceWorker(rmsNormWorker);
         WorkerGrid ropeWorker = WorkerGridFactory.createRoPEWorker(config.numberOfHeads(), nEmbdHead);
         // Split-KV attention launches nHeads*nSplits workgroups (one per head-split) followed by a combine
         // pass over nHeads workgroups.
@@ -88,7 +88,7 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
         for (int i = 0; i < config.numberOfLayers(); i++) {
             // === Attention Block ===
             gridScheduler.addWorkerGrid("layer_" + i + ".attn_rms_reduce",
-                    shouldUseFinalNormalization() ? rmsNormWorker : rmsSingleGroupWorker);
+                    rmsReduceWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".attn_rms_qkv_projection", fusedQKVWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".qk_rmsnorm", qkRmsNormWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWorker);
@@ -97,7 +97,7 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
             gridScheduler.addWorkerGrid("layer_" + i + ".attn_output_proj", matmul1Worker);
             // === FFN Block ===
             gridScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce",
-                    shouldUseFinalNormalization() ? rmsNormWorker : rmsSingleGroupWorker);
+                    rmsReduceWorker);
             if (shouldUseFinalNormalization()) {
                 gridScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_finalize", rmsNormWorker);
             }
@@ -234,26 +234,14 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
         // ═══════════════════════════════════════════════════════════════════════
 
         // RMS Normalization - compute scale factor
-        if (!shouldUseFinalNormalization()) {
-            // NVIDIA path: single-workgroup reduction. The multi-workgroup kernel relies on a
-            // racy cross-workgroup combine (no finalize task on this path) — see kernel javadoc.
-            unifiedLayer.task("attn_rms_reduce",
-                    TransformerComputeKernelsLayered::reductionOneBlockWithLayerSingleGroup,
-                    context,
-                    qwen3State.temp,
-                    qwen3State.wrapX,
-                    config.dim(),
-                    config.rmsNormEps(),
-                    qwen3State.localSize);
-        } else
         unifiedLayer.task("attn_rms_reduce",
-                TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                rmsReduceKernel(),
                 context,
-                qwen3State.temp,              // output: scale factor
-                qwen3State.wrapX,             // input: hidden state
+                qwen3State.temp,           // output: scale factor
+                qwen3State.wrapX,        // input: hidden state
                 config.dim(),            // dimension
                 config.rmsNormEps(),     // epsilon
-                qwen3State.localSize);        // local memory size
+                qwen3State.localSize);   // local memory size
 
         if (shouldUseFinalNormalization()) {
             unifiedLayer.task("attn_rms_finalize",
@@ -377,25 +365,14 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
         // ═══════════════════════════════════════════════════════════════════════
 
         // RMS Normalization - compute scale factor
-        if (!shouldUseFinalNormalization()) {
-            // NVIDIA path: single-workgroup reduction (race-free) — see attn_rms_reduce.
-            unifiedLayer.task("ffn_rms_reduce",
-                    TransformerComputeKernelsLayered::reductionOneBlockWithLayerSingleGroup,
-                    context,
-                    qwen3State.tempFFN,
-                    qwen3State.wrapX,
-                    config.dim(),
-                    config.rmsNormEps(),
-                    qwen3State.localSize);
-        } else
         unifiedLayer.task("ffn_rms_reduce",
-                TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                rmsReduceKernel(),
                 context,
                 qwen3State.tempFFN,           // output: scale factor
-                qwen3State.wrapX,             // input: hidden state
+                qwen3State.wrapX,        // input: hidden state
                 config.dim(),            // dimension
                 config.rmsNormEps(),     // epsilon
-                qwen3State.localSize);        // local memory size
+                qwen3State.localSize);   // local memory size
 
         // Final normalization (non-NVIDIA only)
         if (shouldUseFinalNormalization()) {

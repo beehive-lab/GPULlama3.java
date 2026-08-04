@@ -89,6 +89,11 @@ public class TransformerComputeKernels {
 
     public static void convertFP16toFP32(KernelContext context, HalfFloatArray x, FloatArray wrapX) {
         int i = context.globalIdx;
+        // Guard as convertQ8_0toFP32 does: the grid is rounded up to the local size, so a model
+        // whose dim is not a multiple of it would otherwise write past the end of wrapX.
+        if (i >= wrapX.getSize()) {
+            return;
+        }
         wrapX.set(i, x.get(i).getFloat32());
     }
 

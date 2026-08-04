@@ -44,7 +44,7 @@ public class GraniteQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Gra
         // === Attention Block ===
         // RMS Normalization
         unifiedLayer.task("attn_rms_reduce",
-                TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                rmsReduceKernel(),
                 context, state.temp, state.wrapX,
                 config.dim(), config.rmsNormEps(), state.localSize);
 
@@ -103,7 +103,7 @@ public class GraniteQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Gra
         // === FFN Block ===
         // RMS Normalization
         unifiedLayer.task("ffn_rms_reduce",
-                TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                rmsReduceKernel(),
                 context, state.tempFFN, state.wrapX,
                 config.dim(), config.rmsNormEps(), state.localSize);
 
@@ -180,6 +180,8 @@ public class GraniteQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Gra
     public GridScheduler updateGridScheduler(GridScheduler tornadoForwardScheduler) {
         // === Worker Grid Definitions ===
         WorkerGrid rmsNormWorker = WorkerGridFactory.createRmsNormWorker(config.dim(), 256);
+        // Race-free single-workgroup reduction on the NVIDIA path; see rmsReduceKernel().
+        WorkerGrid rmsReduceWorker = rmsReduceWorker(rmsNormWorker);
 
         int configDimRowMajorGlobal = config.dim() * LOCAL_WORK_GROUP_SIZE_ALLOC;
         WorkerGrid configDimRowMajorGlobalWorker = WorkerGridFactory.genericWorker(configDimRowMajorGlobal, LOCAL_WORK_GROUP_SIZE_ALLOC);
@@ -199,7 +201,7 @@ public class GraniteQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Gra
         for (int i = 0; i < config.numberOfLayers(); i++) {
             // --- Attention Block ---
             // RMS Normalization
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_rms_reduce", rmsNormWorker);
+            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_rms_reduce", rmsReduceWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_rms_apply", rmsNormWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".qkv_projection", fusedQkvWorker);
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWithCacheWorker);
@@ -207,7 +209,7 @@ public class GraniteQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Gra
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".attn_output_proj", configDimRowMajorGlobalWorker);
             // --- FFN Block ---
             // RMS Normalization
-            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce", rmsNormWorker);
+            tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce", rmsReduceWorker);
             // Fused RMS + Gate/Up Projections
             tornadoForwardScheduler.addWorkerGrid("layer_" + i + ".rms_ffn_gate_up", configHiddenDimRowMajorWorker);
             // Down Projection

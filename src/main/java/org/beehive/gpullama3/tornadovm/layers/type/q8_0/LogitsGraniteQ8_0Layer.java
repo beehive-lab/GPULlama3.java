@@ -38,7 +38,7 @@ public class LogitsGraniteQ8_0Layer extends LogitsQ8_0Layer {
                                                                   weights.rms_final_weight_as_floatArray);
         // === Final RMS Normalization ===
         logits.task("rms_reduce",
-                TransformerComputeKernels::reductionOneBlockWithLayer,
+                rmsReduceKernel(),
                 context,
                 state.tempLogits,
                 state.wrapX,

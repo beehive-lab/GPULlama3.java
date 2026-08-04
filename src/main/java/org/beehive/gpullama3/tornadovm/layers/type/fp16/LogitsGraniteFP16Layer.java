@@ -41,7 +41,7 @@ public class LogitsGraniteFP16Layer extends LogitsFP16Layer {
 
         // === Final RMS Normalization ===
         logits.task("rms_reduce",
-                TransformerComputeKernels::reductionOneBlockWithLayer,
+                rmsReduceKernel(),
                 context,
                 state.tempLogits,
                 state.wrapX,

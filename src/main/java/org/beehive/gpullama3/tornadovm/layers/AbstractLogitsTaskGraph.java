@@ -4,9 +4,16 @@ import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.Weights;
 import org.beehive.gpullama3.inference.weights.tornado.TornadoWeights;
 import org.beehive.gpullama3.model.Configuration;
+import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernels;
+import org.beehive.gpullama3.tornadovm.kernels.TransformerComputeKernelsLayered;
 import org.beehive.gpullama3.tornadovm.scheduling.SchedulerType;
+import org.beehive.gpullama3.tornadovm.scheduling.WorkerGridFactory;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
+import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.TaskGraph;
+import uk.ac.manchester.tornado.api.WorkerGrid;
+import uk.ac.manchester.tornado.api.common.TornadoFunctions;
+import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
 /**
  * Abstract base for all logits task graphs (final vocabulary projection step).
@@ -33,6 +40,26 @@ public abstract class AbstractLogitsTaskGraph extends AbstractLayer {
     }
 
     protected abstract TaskGraph setupLogitsTaskGraph(TornadoWeights weights, Configuration config);
+
+    /**
+     * RMS-reduction kernel for the final {@code rms_reduce} task, chosen the same way as in
+     * {@link AbstractTransformerLayerTaskGraphs#rmsReduceKernel()}: the multi-workgroup kernel is
+     * only safe when a {@code reductionFinalNormalization} task follows it (NON_NVIDIA path),
+     * because it otherwise combines the per-workgroup partial sums with no inter-workgroup
+     * synchronization. See docs/architecture/review/fp16-determinism-investigation.md.
+     */
+    protected TornadoFunctions.Task6<KernelContext, FloatArray, FloatArray, Integer, Float, Integer> rmsReduceKernel() {
+        return schedulerType == SchedulerType.NON_NVIDIA
+                ? TransformerComputeKernels::reductionOneBlockWithLayer
+                : TransformerComputeKernelsLayered::reductionOneBlockWithLayerSingleGroup;
+    }
+
+    /** Worker grid matching {@link #rmsReduceKernel()} (one workgroup on the NVIDIA path). */
+    protected WorkerGrid rmsReduceWorker(WorkerGrid multiWorkgroupWorker) {
+        return schedulerType == SchedulerType.NON_NVIDIA
+                ? multiWorkgroupWorker
+                : WorkerGridFactory.createRmsNormWorker(state.localSize, state.localSize);
+    }
 
     public final TaskGraph getTaskGraph() {
         return logitsTaskGraph;
