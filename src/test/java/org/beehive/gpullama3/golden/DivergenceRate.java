@@ -54,6 +54,13 @@ public final class DivergenceRate {
             int pos = prompt.size();
             int tok = sink.get(0);
 
+            // Warm-up forward, discarded. Under -Dgpullama3.diag.transfers the host copies are
+            // taken at the end of layer N's graph, so the parts of wrapKeyCache belonging to layers
+            // beyond N are one forward behind. Capturing the reference straight after the first
+            // forward would freeze that lag into the reference and report every later iteration as
+            // differing (this is the "kvCache=300/300" that looked like a defect and is not one).
+            InferenceCore.forwardTornadoVM(model, state, tok, pos, plan);
+
             float[] ref = snap(InferenceCore.forwardTornadoVM(model, state, tok, pos, plan));
             float[] refKv = snap(state.wrapKeyCache);
             float[] refX = snap(state.wrapX);

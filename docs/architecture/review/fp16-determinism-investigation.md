@@ -147,16 +147,36 @@ were never transferred (all zeros on both sides) and reported "identical".
 | `golden/OnePlanTest` | separates execution from compilation (one plan vs rebuilt plan) |
 | `golden/LogitDump` | raw logits, teacher-forced; `-Ddump.forced`, `-Ddump.positions`, `-Ddump.cols` |
 | `golden/Fp16DeterminismProbe` | all-row comparison, process fingerprint, cross-config |
+| `golden/KvReadback` | characterises the `wrapKeyCache` diagnostic readback (see below) |
 
 Production hook, default off: `-Dgpullama3.diag.transfers=true` pulls layer intermediates back to
 the host, `-Dgpullama3.diag.layer=N` selects the layer (default 0). Note that `DivergenceRate`'s
 per-stage counters are meaningless without it — the host copies are otherwise never refreshed.
 
+## The `wrapKeyCache` readback — explained, not a defect
+
+`DivergenceRate` used to report `kvCache=300/300` under `-Dgpullama3.diag.transfers`, i.e. the KV
+cache host copy differing on every iteration, including iterations whose logits were bit-identical.
+
+It is a snapshot-lag artifact, measured with `golden/KvReadback`:
+
+- The diagnostic `transferToHost` sits at the end of **layer N**'s graph (`-Dgpullama3.diag.layer`,
+  default 0). It copies the whole buffer, but the layers after N have not run yet in this forward,
+  so their region still holds the **previous** forward's values.
+- With `diag.layer=0`, exactly 7680 elements differ once and then never again — 15 layers × 512
+  (`kvDim`) at the current position, i.e. layers 1–15.
+- With `diag.layer=8` it is 3584 elements starting at layer 9 (7 layers × 512). With
+  `diag.layer=15` nothing differs at all.
+
+So consecutive iterations always agreed; only the *reference* snapshot was off, because it was
+captured right after the first forward while the lagging region still held prompt-ingestion values.
+`DivergenceRate` now discards one warm-up forward before capturing the reference, and reports
+`kvCache=0/300`. No partial copy, no race, no production impact — but it did fake a defect for a
+while, which is the same trap as the rest of this file: a comparison is only as good as its
+reference.
+
 ## Follow-ups
 
-- `wrapKeyCache` reads back as differing on **every** iteration under `-Dgpullama3.diag.transfers`,
-  including runs whose logits are bit-identical. Almost certainly a partial-buffer readback
-  artifact, but it is unexplained and worth a look.
 - The `reductionOneBlockWithLayer` / `reductionFinalNormalization` pair is duplicated across
   `TransformerComputeKernels` and `TransformerComputeKernelsLayered`; the racy in-kernel combine
   should probably be deleted outright rather than left reachable on the NON_NVIDIA path.
