@@ -166,8 +166,10 @@ public class LlamaQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Llama
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
 
         // RoPE + KV Cache
+        // Precomputed RoPE tables: the frequencies come from the model's own rope_theta (and
+        // any Llama 3.1 frequency scaling) instead of a constant baked into the kernel.
         unifiedLayer.task("rope_and_kv_cache",
-                TransformerComputeKernelsLayered::ropeRotationWithCacheCopy,
+                TransformerComputeKernelsLayered::ropeRotationWithCacheCopyPrecomputed,
                 context,
                 state.positionHolder,
                 state.wrapQ,                 // Q (in/out)
@@ -175,10 +177,9 @@ public class LlamaQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Llama
                 state.wrapV,                 // V (in only)
                 state.wrapKeyCache,          // Key cache (out)
                 state.wrapValueCache,        // Value cache (out)
-                config.kvDim(),
-                config.headSize(),
-                layerIndex,
-                config.contextLength());
+                weights.freq_cis_realFlat.asFloatArray(),
+                weights.freq_cis_imagFlat.asFloatArray(),
+                config.kvDim(), config.headSize(), layerIndex, config.contextLength());
 
         // Attention
         configureAttention(unifiedLayer, layerIndex);
@@ -245,7 +246,9 @@ public class LlamaQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Llama
                     state.wrapXb, state.wrapXb2, //
                     state.wrapQ, state.wrapK, state.wrapV, //
                     state.wrapKeyCache, state.wrapValueCache, //
-                    state.wrapAtt, state.wrapHb); //
+                    state.wrapAtt, state.wrapHb,
+                    weights.freq_cis_realFlat.asFloatArray(),
+                    weights.freq_cis_imagFlat.asFloatArray()); //
         } else {
             // Subsequent layers: Consume data already on device from previous layer
             unifiedLayer.consumeFromDevice(
@@ -255,7 +258,9 @@ public class LlamaQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Llama
                     state.wrapKeyCache, state.wrapValueCache, //
                     state.wrapAtt, state.wrapHb, //
                     state.positionHolder //
-            );
+            ,
+                    weights.freq_cis_realFlat.asFloatArray(),
+                    weights.freq_cis_imagFlat.asFloatArray());
         }
         return unifiedLayer;
     }

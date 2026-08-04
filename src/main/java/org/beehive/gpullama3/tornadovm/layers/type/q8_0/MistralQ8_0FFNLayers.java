@@ -69,12 +69,16 @@ public class MistralQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Lla
                 weights.wvLayered[layerIndex].asByteArray(),
                 config.dim(), config.kvDim(), LOCAL_WORK_GROUP_SIZE_ALLOC);
 
+        // Precomputed RoPE tables: the frequencies come from the model's own rope_theta (and
+        // any Llama 3.1 frequency scaling) instead of a constant baked into the kernel.
         unifiedLayer.task("rope_and_kv_cache",
-                TransformerComputeKernelsLayered::ropeRotationWithCacheCopy,
+                TransformerComputeKernelsLayered::ropeRotationWithCacheCopyPrecomputed,
                 context,
                 state.positionHolder,
                 state.wrapQ, state.wrapK, state.wrapV,
                 state.wrapKeyCache, state.wrapValueCache,
+                weights.freq_cis_realFlat.asFloatArray(),
+                weights.freq_cis_imagFlat.asFloatArray(),
                 config.kvDim(), config.headSize(), layerIndex, config.contextLength());
 
         configureAttention(unifiedLayer, layerIndex);
@@ -133,7 +137,9 @@ public class MistralQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Lla
                                                                             state.wrapKeyCache,
                                                                             state.wrapValueCache,
                                                                             state.wrapAtt,
-                                                                            state.wrapHb);
+                                                                            state.wrapHb,
+                    weights.freq_cis_realFlat.asFloatArray(),
+                    weights.freq_cis_imagFlat.asFloatArray());
         } else {
             unifiedLayer.consumeFromDevice(context,
                                            state.wrapXb,
@@ -145,7 +151,9 @@ public class MistralQ8_0FFNLayers extends AbstractTransformerLayerTaskGraphs<Lla
                                            state.wrapValueCache,
                                            state.wrapAtt,
                                            state.wrapHb,
-                                           state.positionHolder);
+                                           state.positionHolder,
+                    weights.freq_cis_realFlat.asFloatArray(),
+                    weights.freq_cis_imagFlat.asFloatArray());
         }
         return unifiedLayer;
     }

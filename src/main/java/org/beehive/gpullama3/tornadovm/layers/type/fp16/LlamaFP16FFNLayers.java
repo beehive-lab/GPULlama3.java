@@ -205,8 +205,10 @@ public class LlamaFP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Llama
                 LOCAL_WORK_GROUP_SIZE_ALLOC);
 
         // RoPE + KV Cache
+        // Precomputed RoPE tables: the frequencies come from the model's own rope_theta (and
+        // any Llama 3.1 frequency scaling) instead of a constant baked into the kernel.
         unifiedLayer.task("rope_and_kv_cache",
-                TransformerComputeKernelsLayered::ropeRotationWithCacheCopy,
+                TransformerComputeKernelsLayered::ropeRotationWithCacheCopyPrecomputed,
                 context,
                 state.positionHolder,
                 state.wrapQ,                 // Q (in/out)
@@ -214,10 +216,9 @@ public class LlamaFP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Llama
                 state.wrapV,                 // V (in only)
                 state.wrapKeyCache,          // Key cache (out)
                 state.wrapValueCache,        // Value cache (out)
-                config.kvDim(),
-                config.headSize(),
-                layerIndex,
-                config.contextLength());
+                weights.freq_cis_realFlat.asFloatArray(),
+                weights.freq_cis_imagFlat.asFloatArray(),
+                config.kvDim(), config.headSize(), layerIndex, config.contextLength());
         // Attention
         configureAttention(unifiedLayer, layerIndex);
         // Output Projection (Wo) with residual
@@ -311,7 +312,9 @@ public class LlamaFP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Llama
                     // KV cache
                     state.wrapKeyCache, state.wrapValueCache,
                     // Attention & FFN buffers
-                    state.wrapAtt, state.wrapHb, state.wrapXbFP16);
+                    state.wrapAtt, state.wrapHb, state.wrapXbFP16,
+                    weights.freq_cis_realFlat.asFloatArray(),
+                    weights.freq_cis_imagFlat.asFloatArray());
         } else {
             // Subsequent layers: consume from the previous layer graph by name.
             // The no-arg consumeFromDevice form uses the current graph's own name as source key,
@@ -329,7 +332,9 @@ public class LlamaFP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Llama
                     // Attention & FFN buffers
                     state.wrapAtt, state.wrapHb,
                     // Position & misc
-                    state.positionHolder, state.wrapXbFP16);
+                    state.positionHolder, state.wrapXbFP16,
+                    weights.freq_cis_realFlat.asFloatArray(),
+                    weights.freq_cis_imagFlat.asFloatArray());
         }
         return unifiedLayer;
     }
