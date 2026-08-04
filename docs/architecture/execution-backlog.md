@@ -91,8 +91,12 @@ Tests only, except T1.8 (declared exception, ADR-007 D2).
 - Gate redesigned: elementwise `atol + rtol·|cpu|` with a violation budget, a hard max-error
   ceiling, whole-vector relative L2 and cosine, and decision-level argmax/top-k with the competing
   tokens' gap. Thresholds are per quantization and measured with `golden/ParityProfile`.
-- Remaining: the same hardcoded RoPE base exists in the batch-prefill, Phi3 and Qwen3 kernels
-  (latent, since those constants currently match their models); batch prefill is separately broken.
+- Swept across model families 2026-08-04, see [`review/model-family-sweep.md`](review/model-family-sweep.md):
+  determinism holds everywhere (0/200 on Llama, Mistral, Qwen2.5, Qwen3, Phi-3, Granite, DeepSeek).
+  Two further defects of the same shape were found and fixed — the Qwen2/Qwen3 kernels hardcoded
+  rope_theta=1000000 (wrong for DeepSeek-R1-Distill-Qwen, which uses 10000), and Phi3's loader left
+  modelContextLength at 0 so the CPU path crashed on its empty RoPE tables. Batch prefill is fixed
+  too (hardcoded base + padding rows writing KV past their layer's slice).
 - Gate now runs on the pinned tuple: the accel-tests profile pins the CUDA backend, without which
   a multi-backend SDK defaults to OpenCL and the golden test degrades itself to token ids only.
 
