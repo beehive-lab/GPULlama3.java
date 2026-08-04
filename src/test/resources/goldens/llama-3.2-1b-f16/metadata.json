@@ -10,10 +10,11 @@
   "backend": "CUDA",
   "device_name": "NVIDIA GeForce RTX 5090 Laptop GPU",
   "driver": "NVIDIA CUDA / CUDA C 1.0",
-  "tornadovm_version": "5.2.0-jdk21",
+  "tornadovm_version": "5.2.1-jdk21-dev",
   "recover_bailout": false,
   "device_sample": false,
-  "bit_exact": false,
+  "bit_exact": true,
+  "captures_compared": 3,
   "payload": "row-hashes + token-ids + final row (see GoldenRecord)",
-  "created_by_commit": "2e882c5e9f62fcfe179d414d3349e26fb67813f5"
+  "created_by_commit": "b70fa1901578858e8a1cde1e04c32bba7a37397c"
 }
