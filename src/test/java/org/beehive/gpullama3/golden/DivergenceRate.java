@@ -1,0 +1,140 @@
+package org.beehive.gpullama3.golden;
+
+import org.beehive.gpullama3.inference.InferenceCore;
+import org.beehive.gpullama3.inference.sampler.Sampler;
+import org.beehive.gpullama3.inference.state.State;
+import org.beehive.gpullama3.model.Model;
+import org.beehive.gpullama3.model.format.ChatFormat;
+import org.beehive.gpullama3.model.loader.ModelLoader;
+import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlan;
+import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+
+/**
+ * Measures the divergence <b>rate</b> of repeated identical execution on one fixed plan.
+ *
+ * <p>Yes/no sampling has repeatedly misled this investigation: five clean repeats were read as
+ * "deterministic" three separate times and were wrong each time. This reports a rate over a stated
+ * sample size so that a candidate fix can be compared against a baseline instead of against
+ * "it looked fine".
+ */
+public final class DivergenceRate {
+
+    public static void main(String[] args) throws Exception {
+        Path modelPath = Paths.get(System.getProperty("rate.model"));
+        int iterations = Integer.getInteger("rate.iterations", 200);
+
+        Model model = ModelLoader.loadModel(modelPath, 512, true, true);
+        State state = model.createNewState();
+
+        ChatFormat cf = model.chatFormat();
+        List<Integer> prompt = new ArrayList<>();
+        if (model.shouldAddBeginOfText()) {
+            prompt.add(cf.getBeginOfText());
+        }
+        prompt.addAll(cf.encodeMessage(new ChatFormat.Message(ChatFormat.Role.USER, GoldenCapture.PROMPT)));
+        prompt.addAll(cf.encodeHeader(new ChatFormat.Message(ChatFormat.Role.ASSISTANT, "")));
+
+        TornadoVMMasterPlan plan = TornadoVMMasterPlan.initializeTornadoVMPlan(state, model);
+        try {
+            // Ingest the prompt once so the KV cache is populated and positions are realistic.
+            List<Integer> sink = new ArrayList<>();
+            Sampler greedy = t -> {
+                int tok = Sampler.TENSOR_ARGMAX.sampleToken(t);
+                sink.add(tok);
+                return tok;
+            };
+            model.generateTokensGPU(state, 0, prompt, Set.of(), prompt.size() + 1, greedy, false, null, plan);
+
+            int pos = prompt.size();
+            int tok = sink.get(0);
+
+            float[] ref = snap(InferenceCore.forwardTornadoVM(model, state, tok, pos, plan));
+            float[] refKv = snap(state.wrapKeyCache);
+            float[] refX = snap(state.wrapX);
+            float[] refQ = snap(state.wrapQ);
+            int kvDiv = 0;
+            int xDiv = 0;
+            int qDiv = 0;
+            float[] refXb = snapHalf(state.wrapXbFP16);
+            float[] refTemp = snap(state.temp);
+            int xbDiv = 0;
+            int tempDiv = 0;
+            int diverged = 0;
+            double worst = 0;
+            int firstAt = -1;
+            for (int i = 1; i <= iterations; i++) {
+                float[] got = snap(InferenceCore.forwardTornadoVM(model, state, tok, pos, plan));
+                boolean differs = false;
+                for (int j = 0; j < ref.length; j++) {
+                    if (Float.floatToRawIntBits(ref[j]) != Float.floatToRawIntBits(got[j])) {
+                        differs = true;
+                        worst = Math.max(worst, Math.abs(ref[j] - got[j]));
+                    }
+                }
+                if (differs) {
+                    diverged++;
+                    if (firstAt < 0) {
+                        firstAt = i;
+                    }
+                }
+                if (!same(refKv, snap(state.wrapKeyCache))) {
+                    kvDiv++;
+                }
+                if (!same(refX, snap(state.wrapX))) {
+                    xDiv++;
+                }
+                if (!same(refQ, snap(state.wrapQ))) {
+                    qDiv++;
+                }
+                if (!same(refXb, snapHalf(state.wrapXbFP16))) {
+                    xbDiv++;
+                }
+                if (!same(refTemp, snap(state.temp))) {
+                    tempDiv++;
+                }
+            }
+            System.out.printf("  STAGE temp(rms)=%d/%d  wrapXbFP16(rms out)=%d/%d  wrapQ(qkv out)=%d/%d  kvCache=%d/%d  wrapX=%d/%d%n",
+                    tempDiv, iterations, xbDiv, iterations, qDiv, iterations,
+                    kvDiv, iterations, xDiv, iterations);
+            System.out.printf("RATE model=%s iterations=%d diverged=%d (%.1f%%) firstAt=%d worstAbs=%.7f%n",
+                    modelPath.getFileName(), iterations, diverged,
+                    100.0 * diverged / iterations, firstAt, worst);
+        } finally {
+            plan.freeTornadoExecutionPlan();
+        }
+    }
+
+    private static float[] snapHalf(uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray a) {
+        float[] out = new float[a.getSize()];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = a.get(i).getFloat32();
+        }
+        return out;
+    }
+
+    private static boolean same(float[] a, float[] b) {
+        for (int i = 0; i < a.length; i++) {
+            if (Float.floatToRawIntBits(a[i]) != Float.floatToRawIntBits(b[i])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static float[] snap(FloatArray fa) {
+        float[] out = new float[fa.getSize()];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = fa.get(i);
+        }
+        return out;
+    }
+
+    private DivergenceRate() {
+    }
+}

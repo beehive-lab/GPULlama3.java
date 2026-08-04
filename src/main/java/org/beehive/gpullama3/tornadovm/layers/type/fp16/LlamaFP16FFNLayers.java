@@ -261,6 +261,15 @@ public class LlamaFP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Llama
         unifiedLayer.persistOnDevice(state.wrapX, state.wrapKeyCache,
                 state.wrapValueCache);
 
+        // DIAGNOSTIC (T1.4-FP16), default off: pull the per-layer intermediates back so the
+        // FP16 divergence can be localized. Off by default, so the shipped task graph is
+        // unchanged. See docs/architecture/HANDOFF.md.
+        if (Boolean.getBoolean("gpullama3.diag.transfers")
+                && layerIndex == Integer.getInteger("gpullama3.diag.layer", 0)) {
+            unifiedLayer.transferToHost(uk.ac.manchester.tornado.api.enums.DataTransferMode.EVERY_EXECUTION,
+                    state.wrapKeyCache, state.wrapX, state.wrapQ, state.wrapXbFP16, state.temp);
+        }
+
         return unifiedLayer;
     }
 
