@@ -15,6 +15,9 @@ import java.util.Map;
  */
 public final class GenerateGoldens {
 
+    /** Extra captures compared against the first one before recording {@code bit_exact}. */
+    private static final int REPEAT_CAPTURES = 2;
+
     public static void main(String[] args) throws Exception {
         String commit = System.getProperty("golden.commit", "unknown");
         Path outRoot = Paths.get(System.getProperty("golden.out", "src/test/resources/goldens"));
@@ -64,14 +67,16 @@ public final class GenerateGoldens {
             // this configuration — and it makes the golden self-correcting: when a
             // non-deterministic path is fixed, the next regeneration records bit_exact=true
             // without anyone editing a flag.
-            GoldenCapture.Result again = GoldenCapture.capture(model, true);
             boolean bitExact = true;
-            for (int i = 0; i < r.rows.size() && bitExact; i++) {
-                bitExact = hashes.get(i).equals(GoldenRecord.hashRow(again.rows.get(i)));
-            }
-            if (!r.tokenIds.equals(again.tokenIds)) {
-                throw new IllegalStateException("token ids are not reproducible for " + fixture.fileName
-                        + " — the golden would be meaningless");
+            for (int repeat = 1; repeat <= REPEAT_CAPTURES; repeat++) {
+                GoldenCapture.Result again = GoldenCapture.capture(model, true);
+                if (!r.tokenIds.equals(again.tokenIds)) {
+                    throw new IllegalStateException("token ids are not reproducible for " + fixture.fileName
+                            + " — the golden would be meaningless");
+                }
+                for (int i = 0; i < r.rows.size() && bitExact; i++) {
+                    bitExact = hashes.get(i).equals(GoldenRecord.hashRow(again.rows.get(i)));
+                }
             }
             if (!bitExact) {
                 System.out.println("  WARNING: " + fixture.quantization
@@ -95,13 +100,18 @@ public final class GenerateGoldens {
             meta.put("recover_bailout", Boolean.toString(Boolean.parseBoolean(
                     System.getProperty("tornado.recover.bailout", "false"))));
             meta.put("device_sample", Boolean.toString(Boolean.getBoolean("llama.deviceSample")));
-            // No GPU configuration currently carries the bit-exact assertion. Two captures are not
-            // enough evidence: Q8_0 passed this very check and still diverges intermittently
-            // (observed roughly 1 run in 4 under device-memory pressure). Until the defect is
-            // resolved, a GPU golden is never recorded as bit-exact regardless of what the
-            // double-capture found; `bitExact` is retained only as a diagnostic signal.
-            meta.put("bit_exact", "false");
-            meta.put("double_capture_agreed", Boolean.toString(bitExact));
+            // Recorded as measured. This was hardcoded to false while GPU execution was
+            // non-deterministic — a few repeats could not distinguish "reproducible" from "won the
+            // race this time" (Q8_0 passed the repeat check and still diverged about 1 run in 4
+            // under device-memory pressure). That defect is fixed: the RMS reduction no longer
+            // combines per-workgroup partial sums without synchronization, see
+            // docs/architecture/review/fp16-determinism-investigation.md.
+            //
+            // The repeats below are a cheap guard, not the determinism gate. The gate is
+            // golden/DivergenceRate over >= 300 identical executions; run it before trusting a
+            // bit_exact=true recorded here.
+            meta.put("bit_exact", Boolean.toString(bitExact));
+            meta.put("captures_compared", Integer.toString(REPEAT_CAPTURES + 1));
             meta.put("payload", "row-hashes + token-ids + final row (see GoldenRecord)");
             meta.put("created_by_commit", commit);
 

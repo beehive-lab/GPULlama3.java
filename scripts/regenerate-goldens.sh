@@ -43,11 +43,15 @@ CLASSPATH="target/classes:target/test-classes:$(cat "$CP_FILE")"
 # recover.bailout=False is mandatory: with the default TRUE a failed kernel silently falls back to
 # sequential Java and would produce a wrong golden instead of an error (capability C4).
 # llama.deviceSample=false keeps the full logits row crossing to the host, which is what is hashed.
+# The backend priorities pin CUDA: a multi-backend SDK defaults to OpenCL, and a golden recorded on
+# one backend is not the tuple the other one runs. They are no-ops on an OpenCL-only SDK.
 java "@$TORNADOVM_HOME/tornado-argfile" \
   --add-modules jdk.incubator.vector \
   -Dtornado.recover.bailout=False \
   -Dllama.deviceSample=false \
   -Dtornado.device.memory=12GB \
+  -Dtornado.cuda.priority=100 \
+  -Dtornado.opencl.priority=0 \
   -Dgolden.commit="$COMMIT" \
   -cp "$CLASSPATH" \
   org.beehive.gpullama3.golden.GenerateGoldens

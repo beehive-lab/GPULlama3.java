@@ -171,6 +171,12 @@
                  recover.bailout=False is mandatory (capability C4): with the default TRUE a
                  failed kernel silently falls back to sequential Java, which would produce a
                  wrong golden instead of an error.
+
+                 The backend is pinned to CUDA because the goldens are recorded on it. An SDK
+                 built with several backends otherwise defaults to OpenCL, which is a different
+                 tuple, and the golden test then degrades itself to comparing token ids only —
+                 passing while asserting almost nothing. The priorities are harmless on an
+                 OpenCL-only SDK, where the CUDA backend simply is not present.
             ─────────────────────────────────────────────────────────────────────── -->
             <profile>
                 <id>accel-tests</id>
@@ -189,7 +195,9 @@
                                     --add-modules jdk.incubator.vector
                                     -Dtornado.recover.bailout=False
                                     -Dllama.deviceSample=false
-                                    -Dtornado.device.memory=12GB</argLine>
+                                    -Dtornado.device.memory=12GB
+                                    -Dtornado.cuda.priority=100
+                                    -Dtornado.opencl.priority=0</argLine>
                             </configuration>
                         </plugin>
                     </plugins>
