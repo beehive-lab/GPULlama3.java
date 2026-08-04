@@ -176,6 +176,7 @@ public class Qwen3Q8_0LayersBatchPrefillMMA implements BatchPrefillTransformerLa
                 context, state.batchStartPosHolder,
                 state.qkvResultBatch,
                 state.wrapKeyCache, state.wrapValueCache,
+                config.ropeTheta(),
                 kvDim, nEmbdHead, layerIndex, config.contextLength(), qDim);
 
         // Register-partitioned flash attention over the packed buffer.

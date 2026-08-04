@@ -307,6 +307,7 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
                 qwen3State.wrapV,             // V vectors (in only)
                 qwen3State.wrapKeyCache,      // key cache (out)
                 qwen3State.wrapValueCache,    // value cache (out)
+                config.ropeTheta(),
                 config.numberOfKeyValueHeads(),   // nHeadKv
                 nEmbdHead,                    // head dimension
                 nEmbdGqa,                     // kvDim

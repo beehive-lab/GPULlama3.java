@@ -12,6 +12,7 @@ import java.util.List;
 public final class TokenCount {
     public static void main(String[] args) throws Exception {
         Model model = ModelLoader.loadModel(Path.of(System.getProperty("tc.model")), 512, true, false);
+        System.out.println("config: " + model.configuration());
         ChatFormat cf = model.chatFormat();
         for (String p : System.getProperty("tc.prompts").split("\\|\\|")) {
             List<Integer> t = new ArrayList<>();

@@ -147,6 +147,7 @@ public class Qwen3FP16LayersBatchPrefill implements BatchPrefillTransformerLayer
                 context, state.batchStartPosHolder,
                 state.wrapQBatch, state.wrapKBatch, state.wrapVBatch,
                 state.wrapKeyCache, state.wrapValueCache,
+                config.ropeTheta(),
                 kvDim, nEmbdHead, layerIndex, config.contextLength(), qDim);
 
         // Reuses batchedFlashAttention: passes qDim as the 'dim' stride parameter.

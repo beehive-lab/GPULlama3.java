@@ -285,6 +285,7 @@ public class Qwen2FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen2
                 qwen2State.wrapV,             // V (copied to cache)
                 qwen2State.wrapKeyCache,      // key cache (write)
                 qwen2State.wrapValueCache,    // value cache (write)
+                config.ropeTheta(),
                 config.numberOfKeyValueHeads(), // nHeadKv
                 config.headSize(),            // per-head dimension
                 config.kvDim(),               // kvDim

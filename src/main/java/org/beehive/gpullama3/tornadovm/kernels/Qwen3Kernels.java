@@ -307,6 +307,7 @@ public class Qwen3Kernels {
             FloatArray v,              // V vector (in only)
             FloatArray keyCache,       // Key cache (out)
             FloatArray valueCache,     // Value cache (out)
+            float ropeTheta,           // from the model metadata, NOT a constant
             int numberOfKeyValueHeads,
             int nEmbdHead,
             int nEmbdGqa,
@@ -321,8 +322,10 @@ public class Qwen3Kernels {
         int poffset = h * nEmbdHead;
         int nComplEmbdHead = nEmbdHead / 2;
 
-        // Compute RoPE frequencies for Qwen3 (theta = 1000000.0f)
-        float theta = 1000000.0f;
+        // The base belongs to the model: Qwen2/Qwen3 checkpoints usually use 1000000, but a
+        // Qwen2-architecture distill such as DeepSeek-R1-Distill-Qwen uses 10000, and a constant
+        // here silently rotated it wrong.
+        float theta = ropeTheta;
         int i = ic * 2;
         float freq = 1.0f / TornadoMath.pow(theta, (float) i / (float) nEmbdHead);
 
@@ -1333,6 +1336,7 @@ public class Qwen3Kernels {
             FloatArray wrapVBatch,
             FloatArray wrapKeyCache,
             FloatArray wrapValueCache,
+            float ropeTheta,
             int kvDim,
             int nEmbdHead,
             int layerIndex,
@@ -1351,7 +1355,8 @@ public class Qwen3Kernels {
         int ic      = pairIdx % halfEmbdHead;
         int headIdx = pairIdx / halfEmbdHead;
 
-        float freq = 1.0f / TornadoMath.pow(1000000.0f, 2.0f * ic / (float) nEmbdHead);
+        // Base from model metadata, not a constant — see ropeRotationWithCacheCopy.
+        float freq = 1.0f / TornadoMath.pow(ropeTheta, 2.0f * ic / (float) nEmbdHead);
         float val  = pos * freq;
         float fcr  = TornadoMath.cos(val);
         float fci  = TornadoMath.sin(val);
@@ -1464,6 +1469,7 @@ public class Qwen3Kernels {
             FloatArray qkvBatch,
             FloatArray wrapKeyCache,
             FloatArray wrapValueCache,
+            float ropeTheta,
             int kvDim,
             int nEmbdHead,
             int layerIndex,
@@ -1483,7 +1489,8 @@ public class Qwen3Kernels {
         int ic      = pairIdx % halfEmbdHead;
         int headIdx = pairIdx / halfEmbdHead;
 
-        float freq = 1.0f / TornadoMath.pow(1000000.0f, 2.0f * ic / (float) nEmbdHead);
+        // Base from model metadata, not a constant — see ropeRotationWithCacheCopy.
+        float freq = 1.0f / TornadoMath.pow(ropeTheta, 2.0f * ic / (float) nEmbdHead);
         float val  = pos * freq;
         float fcr  = TornadoMath.cos(val);
         float fci  = TornadoMath.sin(val);
