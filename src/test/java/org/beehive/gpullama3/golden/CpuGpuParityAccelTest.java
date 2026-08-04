@@ -41,10 +41,14 @@ import static org.junit.Assume.assumeTrue;
  * stores its normalized activations as FP16 while the CPU path keeps FP32, so its floor is set by
  * that format, whereas the Q8_0 path keeps FP32 activations and tracks the CPU far more closely.
  * The values below come from {@code golden/ParityProfile} on the pinned tuple and sit roughly 2×
- * above the observed worst case: FP16 max abs error 0.032, relL2 4.5e-3, min cosine 0.9999917;
- * Q8_0 max abs error 4.3e-5, relL2 6.4e-6, cosine 1.0 to eight decimals. Re-derive them with that
+ * above the observed worst case: FP16 max abs error 7.1e-3, relL2 6.3e-4, min cosine 0.9999998;
+ * Q8_0 max abs error 4.4e-5, relL2 5.8e-6, cosine 1.0 to eight decimals. Re-derive them with that
  * tool if the tuple, the prompt or the compared-token count changes; do not widen them to make a
  * failing run pass.
+ *
+ * <p>The FP16 bounds were 5-20x looser until the CPU reference stopped flushing denormal FP16
+ * weights to zero (see docs/architecture/review/fp16-cpu-reference.md). Most of what this gate used
+ * to tolerate was error on the reference side, not the GPU's.
  *
  * <p><b>Teacher forcing</b> is what makes the comparison meaningful: greedy decoding is
  * autoregressive, so the first near-tie that tips differently sends the two paths into different
@@ -61,7 +65,7 @@ public class CpuGpuParityAccelTest {
                           double minCosine, double violationFraction, double decisionGap) {
     }
 
-    private static final Bounds FP16 = new Bounds(6e-2, 1e-2, 1e-1, 1e-2, 0.9999, 1e-4, 0.5);
+    private static final Bounds FP16 = new Bounds(1.5e-2, 1e-2, 2e-2, 2e-3, 0.99999, 1e-4, 0.5);
     private static final Bounds Q8_0 = new Bounds(5e-4, 1e-2, 1e-3, 1e-4, 0.999999, 1e-4, 0.5);
 
     @Test

@@ -25,7 +25,7 @@ Two measurements per model:
 | Qwen2.5-0.5B | Qwen2 | Q8_0 | 0/200 | 8.1e-06 | yes |
 | Phi-3-mini-4k | Phi3 | F16 | 0/200 | 7.7e-04 | yes |
 | Phi-3-mini-4k | Phi3 | Q8_0 | 0/200 | 4.1e-06 | yes |
-| granite-4.0-1b | Granite | F16 | 0/200 | 1.4e-02 | yes |
+| granite-4.0-1b | Granite | F16 | 0/200 | 5.2e-04 (was 1.4e-02) | yes |
 | granite-4.0-1b | Granite | Q8_0 | 0/200 | 6.7e-06 | yes |
 | granite-3.2-2b | Granite | Q8_0 | 0/200 | 4.6e-06 | yes |
 | DeepSeek-R1-Distill-Qwen-1.5B | Qwen2 | Q8_0 | 0/200 | 7.3e-06 (was 0.80) | yes (was no) |
@@ -53,13 +53,12 @@ decode kernel and both Qwen3 batch-prefill kernels now take `ropeTheta` from the
 RoPE kernel computes its frequencies inline. Phi-3 had presumably never been run on CPU since that
 loader was written.
 
-### Granite F16 — flagged, not diagnosed
+### Granite F16 — diagnosed: the CPU reference, not the GPU
 
-granite-4.0-1b F16 has relative L2 1.4e-02, about 3× the other FP16 models, with absolute errors up
-to 21.9 (its logits are large, so the *relative* picture is less alarming than the absolute one).
-Tokens match the CPU and the Q8_0 variant is at 6.7e-06, so this is FP16-path-specific. Granite has
-extra scaling factors (embedding, residual, attention, logit) that the FP16 path may be applying at
-lower precision. Not investigated.
+granite-4.0-1b F16 sat at relative L2 1.4e-02, ~3× the other FP16 models. It turned out not to be a
+Granite or GPU defect at all: the **CPU** FP16 dot product flushed denormal weights to zero, and
+Granite has the most denormal weights of the models measured. With that fixed it is 5.2e-04 —
+better than Llama. Full record in [`fp16-cpu-reference.md`](fp16-cpu-reference.md).
 
 ## Batch prefill
 
@@ -99,7 +98,6 @@ what turned a padding-row bug into layer-to-layer corruption.
 
 ## Follow-ups
 
-- **Granite F16** relative L2 3× the other FP16 models (above).
 - `Qwen2 + Q8_0` with `--with-prefill-decode` throws `UnsupportedOperationException` by design
   (`ForwardPlanFactory:174`) — worth stating in user-facing docs, since the flag combination looks
   supported from the CLI.
