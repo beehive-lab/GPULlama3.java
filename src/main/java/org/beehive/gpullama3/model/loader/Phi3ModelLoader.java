@@ -51,6 +51,12 @@ public class Phi3ModelLoader extends AbstractModelLoader<Phi3, Phi3Configuration
     protected Phi3Configuration createConfiguration(Map<String, Object> metadata) {
         final String modelPrefix = "phi3.";
 
+        // Needed by precomputeRopeFrequencies(). Left unassigned it stayed 0, so the CPU path's
+        // freq_cis tables were empty arrays and the first token threw
+        // ArrayIndexOutOfBoundsException. The GPU path did not notice: its Phi3 RoPE kernel
+        // computes the frequencies inline instead of reading these tables.
+        this.modelContextLength = (int) metadata.get(modelPrefix + "context_length");
+
         var config = new Phi3Configuration(
                 getModelQuantization(metadata),
                 (int) metadata.get(modelPrefix + "embedding_length"),           // dim
