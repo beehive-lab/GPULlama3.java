@@ -65,6 +65,18 @@ executions:
 | FP16 @12GB | — | **0/300** |
 | Q8_0 @12GB | ~1-in-4 (earlier observation) | **0/300** |
 
+Re-measured on both backends of a rebuilt `opencl,cuda` dist (see "Environment notes"), FP16 @20GB:
+
+| Backend | Before | After |
+| --- | --- | --- |
+| CUDA | 24/300 (8.0%), worstAbs 0.142 | **0/300** |
+| OpenCL | 15/300 (5.0%), worstAbs 0.137 | **0/300** |
+
+Q8_0 is 0/300 after the fix on both backends. The "before" figures come from checking out the
+pre-fix layer sources (`git checkout 7aa8e03 -- src/.../tornadovm/layers/`); note that stashing
+does not work for this once the fix is committed — a `git stash push -- src` with nothing to save
+silently produces a post-fix "baseline".
+
 Layer-0 stage buffers (`temp`, `wrapXbFP16`, `wrapQ`, `wrapX`), which diverged 31/300 with the
 racy kernel, are 0/300 after the fix.
 
@@ -186,6 +198,20 @@ reference.
 
 - `~/TornadoVM` is on **`develop`** (`e22835059`). The owner's branch
   `fix/opencl-packed-half2-fp16` is intact at `611843029`; 9 stashes untouched.
-- The CUDA dist was replaced by an OpenCL dist (`make` wipes the other backend). Rebuilding CUDA
-  from develop currently **fails**: `cudnn.h: No such file or directory`.
+- **Both backends are installed again** as one dist:
+  `~/TornadoVM/dist/tornadovm-5.2.1-jdk21-dev-full-linux-amd64/tornadovm-5.2.1-jdk21-dev-full`
+  (`etc/tornado.backend` = `opencl-backend,cuda-backend`). Build both at once with
+  `make BACKEND=opencl,cuda` — a single-backend build wipes the other one's dist. The previous
+  OpenCL-only dist is backed up at `~/TornadoVM/dist-backup-opencl`.
+- Building the CUDA backend on develop needs **cuDNN** (develop added `tornado-cudnn` and
+  `tornado-cutlass` modules). No cuDNN package exists in the configured CUDA repo, and installing
+  system-wide needs root, so the redistributable was unpacked into
+  `~/cudnn/cudnn-linux-x86_64-9.25.0.15_cuda13-archive`. `cudnn-jni` looks for `cudnn.h` and
+  `libcudnn` under `$CUDA_PATH`, and `cutlass-jni` links against `$CUDA_PATH/targets/x86_64-linux/lib`,
+  so the build needs a merged toolkit tree — `~/cuda-cudnn`, whose `include/`, `lib64/`, `bin` and
+  `targets` symlink CUDA 13.1 plus the cuDNN files. Build with `CUDA_PATH=$HOME/cuda-cudnn`,
+  that tree's `bin` on `PATH` and its `lib64` on `LD_LIBRARY_PATH`.
+- Select the backend at runtime with `-Dtornado.cuda.priority` / `-Dtornado.opencl.priority` (higher
+  wins), or `llama-tornado --gpu --cuda|--opencl`. On this box CUDA decodes ~135 tok/s vs ~100 tok/s
+  on OpenCL for Llama-3.2-1B-F16.
 - Model fixtures are symlinked into `~/.gpullama3/test-models/`.
