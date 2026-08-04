@@ -187,6 +187,14 @@ captured right after the first forward while the lagging region still held promp
 while, which is the same trap as the rest of this file: a comparison is only as good as its
 reference.
 
+## Aftermath
+
+Goldens were regenerated on 2026-08-04 and record `bit_exact: true` for both fixtures — the first
+time any GPU golden has carried the bit-exact assertion. Note what that flag was hiding: while it
+was `false`, `GoldenLogitsAccelTest` compared token ids and a loose envelope only, so it passed
+throughout the period when the GPU was both non-deterministic *and* computing RoPE with the wrong
+base (see [`cpu-gpu-parity.md`](cpu-gpu-parity.md)).
+
 ## Follow-ups
 
 - The `reductionOneBlockWithLayer` / `reductionFinalNormalization` pair is duplicated across

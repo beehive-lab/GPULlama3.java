@@ -75,8 +75,9 @@ Tests only, except T1.8 (declared exception, ADR-007 D2).
   `rmsReduceKernel()`/`rmsReduceWorker()`, across every FFN and logits layer class.
 - Verified: 0/300 identical executions diverge for FP16 and Q8_0 at both 20GB and 12GB
   (was 33/300 for FP16); layer-0 stage buffers 0/300 (was 31/300); no throughput cost.
-- Remaining: regenerate goldens so `bit_exact` can flip to `true`; `CpuGpuParityAccelTest`
-  still fails on the pinned tuple with identical values before and after this fix (T1.5).
+- Goldens regenerated 2026-08-04: both fixtures now record `bit_exact: true`, so
+  `GoldenLogitsAccelTest` asserts per-row hashes and the final row bitwise — an assertion that
+  had never run before. T1.5 passes as well, see [`review/cpu-gpu-parity.md`](review/cpu-gpu-parity.md).
 
 **T1.5 — CPU↔GPU parity test**
 - Prereq: land T1.4 (shares fixture plumbing).
@@ -92,6 +93,8 @@ Tests only, except T1.8 (declared exception, ADR-007 D2).
   tokens' gap. Thresholds are per quantization and measured with `golden/ParityProfile`.
 - Remaining: the same hardcoded RoPE base exists in the batch-prefill, Phi3 and Qwen3 kernels
   (latent, since those constants currently match their models); batch prefill is separately broken.
+- Gate now runs on the pinned tuple: the accel-tests profile pins the CUDA backend, without which
+  a multi-backend SDK defaults to OpenCL and the golden test degrades itself to token ids only.
 
 **T1.6 — Compiled-program identity test**
 - Prereq: land T1.4 (fixture) and T0.1 (C3 determinism).
