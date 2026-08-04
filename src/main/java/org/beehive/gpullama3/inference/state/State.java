@@ -165,7 +165,8 @@ public abstract class State {
             this.wrapHbBatch = new FloatArray(gpuBatchSize * config.hiddenDim());
             this.attnScaleBatch = new FloatArray(gpuBatchSize);
             this.ffnScaleBatch = new FloatArray(gpuBatchSize);
-            this.batchStartPosHolder = new IntArray(1);
+            // [0] = position of row 0 in the sequence, [1] = number of real tokens in this chunk
+            this.batchStartPosHolder = new IntArray(2);
             this.normedXFFNFP16 = new HalfFloatArray(paddedGpuBatch * config.dim());
             this.ffnGateResult  = new FloatArray(gpuBatchSize * config.hiddenDim());
             this.ffnUpResult    = new FloatArray(gpuBatchSize * config.hiddenDim());

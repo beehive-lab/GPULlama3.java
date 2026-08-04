@@ -95,7 +95,9 @@ public class LlamaQ8_0LayersBatchPrefill implements BatchPrefillTransformerLayer
                 weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),
                 weights.w1Layered[layerIndex].asByteArray(),
                 weights.w2Layered[layerIndex].asByteArray(),
-                weights.w3Layered[layerIndex].asByteArray());
+                weights.w3Layered[layerIndex].asByteArray(),
+                weights.freq_cis_realFlat.asFloatArray(),
+                weights.freq_cis_imagFlat.asFloatArray());
 
         int dim    = config.dim();
         int kvDim  = config.kvDim();
@@ -129,6 +131,8 @@ public class LlamaQ8_0LayersBatchPrefill implements BatchPrefillTransformerLayer
                 context, state.batchStartPosHolder,
                 state.wrapQBatch, state.wrapKBatch, state.wrapVBatch,
                 state.wrapKeyCache, state.wrapValueCache,
+                weights.freq_cis_realFlat.asFloatArray(),
+                weights.freq_cis_imagFlat.asFloatArray(),
                 kvDim, config.headSize(), layerIndex, config.contextLength(), dim);
 
         // Overwrites wrapXbBatch with attention output

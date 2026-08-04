@@ -100,7 +100,9 @@ public class LlamaFP16LayersBatchPrefill implements BatchPrefillTransformerLayer
                 weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),
                 weights.w1Layered[layerIndex].asHalfFloatArray(),
                 weights.w2Layered[layerIndex].asHalfFloatArray(),
-                weights.w3Layered[layerIndex].asHalfFloatArray());
+                weights.w3Layered[layerIndex].asHalfFloatArray(),
+                weights.freq_cis_realFlat.asFloatArray(),
+                weights.freq_cis_imagFlat.asFloatArray());
 
         int dim      = config.dim();
         int kvDim    = config.kvDim();
@@ -133,6 +135,8 @@ public class LlamaFP16LayersBatchPrefill implements BatchPrefillTransformerLayer
                 context, state.batchStartPosHolder,
                 state.wrapQBatch, state.wrapKBatch, state.wrapVBatch,
                 state.wrapKeyCache, state.wrapValueCache,
+                weights.freq_cis_realFlat.asFloatArray(),
+                weights.freq_cis_imagFlat.asFloatArray(),
                 kvDim, config.headSize(), layerIndex, config.contextLength(), dim);
 
         batchPrefillLayer.task("batch_attention",

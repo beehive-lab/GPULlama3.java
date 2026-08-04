@@ -17,7 +17,7 @@ public final class ParityProfile {
     private static final double ATOL = 1e-3;
 
     public static void main(String[] args) throws Exception {
-        for (String key : new String[] { "parity.f16", "parity.q8" }) {
+        for (String key : new String[] { "parity.model", "parity.f16", "parity.q8" }) {
             String path = System.getProperty(key);
             if (path != null) {
                 profile(key, Path.of(path));
@@ -28,6 +28,9 @@ public final class ParityProfile {
     private static void profile(String label, Path model) throws Exception {
         GoldenCapture.Result cpu = GoldenCapture.capture(model, false);
         GoldenCapture.Result gpu = GoldenCapture.capture(model, true, cpu.tokenIds);
+        GoldenCapture.Result gpuFree = GoldenCapture.capture(model, true);
+        System.out.printf("%s (%s) free-running token ids match CPU: %s%n",
+                label, model.getFileName(), cpu.tokenIds.equals(gpuFree.tokenIds));
 
         int rows = cpu.rows.size();
         int vocab = cpu.rows.get(0).length;
@@ -59,6 +62,9 @@ public final class ParityProfile {
                 dot += (double) ref[i] * got[i];
             }
             double relL2 = Math.sqrt(sqDiff / sqRef);
+            if (Boolean.getBoolean("parity.perRow")) {
+                System.out.printf("    row %2d relL2=%.5g%n", r, relL2);
+            }
             if (relL2 > worstRelL2) {
                 worstRelL2 = relL2;
                 worstRelL2Row = r;

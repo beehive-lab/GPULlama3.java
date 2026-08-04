@@ -176,6 +176,8 @@ public final class TransformerBatchPrefillKernels {
                                                FloatArray wrapVBatch,
                                                FloatArray wrapKeyCache,
                                                FloatArray wrapValueCache,
+                                               FloatArray freqCisReal,
+                                               FloatArray freqCisImag,
                                                int kvDim, int headSize,
                                                int layerIndex, int contextLength, int dim) {
         int globalIdx = context.globalIdx;
@@ -184,16 +186,19 @@ public final class TransformerBatchPrefillKernels {
         int pairIdx = globalIdx % halfDim;
         int i = pairIdx * 2;
 
+        if (batchIdx >= batchStartPosHolder.get(1)) {
+            return;   // padding row: see batchedRopeWithKVCachePacked
+        }
         int pos = batchStartPosHolder.get(0) + batchIdx;
         int qOffset = batchIdx * dim;
         int kOffset = batchIdx * kvDim;
 
         if (i + 1 < dim) {
             int head_dim = i % headSize;
-            float freq = 1.0f / TornadoMath.pow(50000.0f, head_dim / (float) headSize);
-            float val = pos * freq;
-            float fcr = TornadoMath.cos(val);
-            float fci = TornadoMath.sin(val);
+            // See batchedRopeWithKVCachePacked: frequencies belong to the model, not the kernel.
+            int freqIdx = pos * (headSize / 2) + (head_dim / 2);
+            float fcr = freqCisReal.get(freqIdx);
+            float fci = freqCisImag.get(freqIdx);
 
             // Rotate Q
             float v0q = wrapQBatch.get(qOffset + i);
@@ -245,6 +250,9 @@ public final class TransformerBatchPrefillKernels {
 
         int batchIdx = groupId / nHeads;
         int h = groupId % nHeads;
+        if (batchIdx >= batchStartPosHolder.get(1)) {
+            return;   // padding row: no real query, and its KV range is not valid
+        }
         int pos = batchStartPosHolder.get(0) + batchIdx;
         int loff = layerIndex * contextLength * kvDim;
         int kvHeadIdx = h / kvMul;
@@ -1357,6 +1365,8 @@ public final class TransformerBatchPrefillKernels {
                                                     FloatArray qkvBatch,
                                                     FloatArray wrapKeyCache,
                                                     FloatArray wrapValueCache,
+                                                    FloatArray freqCisReal,
+                                                    FloatArray freqCisImag,
                                                     int kvDim, int headSize,
                                                     int layerIndex, int contextLength, int dim) {
         int globalIdx = context.globalIdx;
@@ -1366,17 +1376,27 @@ public final class TransformerBatchPrefillKernels {
         int i = pairIdx * 2;
         int qkvStride = dim + 2 * kvDim;
 
+        // Rows past the chunk's real token count are padding: their contents are stale and their
+        // positions can run past this layer's KV-cache slice (contextLength is the CLI's
+        // --max-tokens), which would corrupt the next layer's keys and values.
+        if (batchIdx >= batchStartPosHolder.get(1)) {
+            return;
+        }
+
         int pos = batchStartPosHolder.get(0) + batchIdx;
         int qOffset = batchIdx * qkvStride;
         int kOffset = batchIdx * qkvStride + dim;
         int vOffset = batchIdx * qkvStride + dim + kvDim;
 
         if (i + 1 < dim) {
+            // Frequencies come from the model's precomputed freq_cis tables (its own rope_theta,
+            // plus any Llama 3.1 scaling). A base compiled into the kernel was wrong for
+            // Llama-3.2 (50000 vs 500000) and, once the decode path was corrected, also left
+            // prefill and decode rotating differently.
             int head_dim = i % headSize;
-            float freq = 1.0f / TornadoMath.pow(50000.0f, head_dim / (float) headSize);
-            float val = pos * freq;
-            float fcr = TornadoMath.cos(val);
-            float fci = TornadoMath.sin(val);
+            int freqIdx = pos * (headSize / 2) + (head_dim / 2);
+            float fcr = freqCisReal.get(freqIdx);
+            float fci = freqCisImag.get(freqIdx);
 
             // Rotate Q in place
             float v0q = qkvBatch.get(qOffset + i);
@@ -1431,6 +1451,9 @@ public final class TransformerBatchPrefillKernels {
 
         int batchIdx = groupId / nHeads;
         int h = groupId % nHeads;
+        if (batchIdx >= batchStartPosHolder.get(1)) {
+            return;   // padding row: no real query, and its KV range is not valid
+        }
         int pos = batchStartPosHolder.get(0) + batchIdx;
         int loff = layerIndex * contextLength * kvDim;
         int kvHeadIdx = h / kvMul;

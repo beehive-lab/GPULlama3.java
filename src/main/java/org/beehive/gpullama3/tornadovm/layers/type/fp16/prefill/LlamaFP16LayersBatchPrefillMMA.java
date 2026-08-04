@@ -128,7 +128,9 @@ public class LlamaFP16LayersBatchPrefillMMA implements BatchPrefillTransformerLa
                 weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),
                 weights.w1Layered[layerIndex].asHalfFloatArray(),
                 weights.w2Layered[layerIndex].asHalfFloatArray(),
-                weights.w3Layered[layerIndex].asHalfFloatArray());
+                weights.w3Layered[layerIndex].asHalfFloatArray(),
+                weights.freq_cis_realFlat.asFloatArray(),
+                weights.freq_cis_imagFlat.asFloatArray());
 
         int dim      = config.dim();
         int kvDim    = config.kvDim();
@@ -162,6 +164,8 @@ public class LlamaFP16LayersBatchPrefillMMA implements BatchPrefillTransformerLa
                 context, state.batchStartPosHolder,
                 state.qkvResultBatch,
                 state.wrapKeyCache, state.wrapValueCache,
+                weights.freq_cis_realFlat.asFloatArray(),
+                weights.freq_cis_imagFlat.asFloatArray(),
                 kvDim, config.headSize(), layerIndex, config.contextLength(), dim);
 
         // Register-partitioned P·V accumulation + direct FP16 emission

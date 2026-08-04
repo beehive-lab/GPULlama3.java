@@ -194,6 +194,9 @@ public final class InferenceCoreBatchPrefillDecode {
         final TornadoWeights weights = (TornadoWeights) model.weights();
 
         state.batchStartPosHolder.set(0, startPos);
+        // The kernels launch a fixed batchSize rows; this tells them how many are real, so the
+        // padding rows do not rotate, do not write KV, and cannot run past this layer's KV slice.
+        state.batchStartPosHolder.set(1, chunkSize);
 
         switch (weights.getWeightType()) {
             case F16 -> {
