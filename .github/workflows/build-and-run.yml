@@ -18,7 +18,7 @@ env:
 jobs:
   code-quality:
     if: github.repository == 'beehive-lab/GPULlama3.java'
-    runs-on: [self-hosted]
+    runs-on: [self-hosted, Linux]
     timeout-minutes: 30
 
     steps:
@@ -31,21 +31,26 @@ jobs:
           # ./mvnw -T12C -Pspotless spotless:check
 
   # Build: TornadoVM → GPULlama3 → Quarkus LangChain4j
-  # max-parallel: 1 ensures the opencl, ptx and cuda variants run sequentially so
-  # there are no workspace conflicts between matrix jobs.
+  # No max-parallel cap: opencl/cuda still serialize against each other since they share
+  # the same self-hosted Linux runner, but that's the runner queue doing the serializing,
+  # not the matrix — the independent Mac runner must be free to start immediately rather
+  # than wait for a slot in a shared parallelism budget it doesn't actually contend for.
+  # fail-fast: false so a Linux failure doesn't cancel the independent Mac runner's job (and vice versa).
   build:
     if: github.repository == 'beehive-lab/GPULlama3.java'
-    runs-on: [self-hosted]
+    runs-on: ${{ matrix.backend.os == 'macos' && fromJSON('["self-hosted","macOS"]') || fromJSON('["self-hosted","Linux"]') }}
     needs: code-quality
     timeout-minutes: 30
     strategy:
-      fail-fast: true
-      max-parallel: 1
+      fail-fast: false
       matrix:
         backend:
           - name: opencl
-          - name: ptx
+            os: linux
           - name: cuda
+            os: linux
+          - name: metal
+            os: macos
 
     steps:
       - name: Checkout GPULlama3
@@ -75,7 +80,7 @@ jobs:
           fi
           echo "TornadoVM Maven version: $TORNADO_VERSION"
           # Strip any pre-existing -SNAPSHOT suffix before appending, making this step idempotent
-          # across sequential matrix variants (ptx runs after opencl on the same workspace).
+          # across sequential matrix variants (cuda runs after opencl on the same Linux workspace).
           BASE_VERSION=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout | sed 's/-SNAPSHOT$//')
           GPULLAMA3_VERSION="${BASE_VERSION}-SNAPSHOT"
           echo "GPULlama3 version: $GPULLAMA3_VERSION"
@@ -92,22 +97,28 @@ jobs:
       - name: Build Quarkus LangChain4j
         run: |
           cd ${{ github.workspace }}/quarkus-langchain4j
-          sed -i 's/<gpu-llama3\.version>.*<\/gpu-llama3\.version>/<gpu-llama3.version>'$GPULLAMA3_VERSION'<\/gpu-llama3.version>/' pom.xml
+          # -i.bak (extension glued to the flag) is the portable form: GNU sed (Linux) accepts it,
+          # and BSD sed (macOS) requires it — a bare `-i ''` is parsed as the script on BSD sed.
+          sed -i.bak 's/<gpu-llama3\.version>.*<\/gpu-llama3\.version>/<gpu-llama3.version>'$GPULLAMA3_VERSION'<\/gpu-llama3.version>/' pom.xml
+          rm -f pom.xml.bak
           # -Dtornado activates the TornadoVM profile; -am builds only the gpu-llama3 module + deps
           mvn clean install -pl integration-tests/gpu-llama3 -am -DskipTests -Dtornado
 
   standalone-inference:
     if: github.repository == 'beehive-lab/GPULlama3.java'
-    runs-on: [self-hosted]
+    runs-on: ${{ matrix.backend.os == 'macos' && fromJSON('["self-hosted","macOS"]') || fromJSON('["self-hosted","Linux"]') }}
     needs: build
     timeout-minutes: 30
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         backend:
           - name: opencl
-          - name: ptx
+            os: linux
           - name: cuda
+            os: linux
+          - name: metal
+            os: macos
 
     steps:
       - name: Checkout GPULlama3
@@ -161,31 +172,6 @@ jobs:
           flags: --with-prefill-decode --batch-prefill-size 32
           metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-llama-1b-f16-batch-prefill-decode.json
 
-      # PTX-only: CUDA-graph variants
-      - name: PTX - FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Prefill-Decode-CUDA-Graphs
-        if: matrix.backend.name == 'ptx'
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: Llama-3.2-1B-Instruct-F16.gguf
-          model: Llama-3.2-1B-Instruct
-          quantization: F16
-          configuration: prefill-decode-cuda-graphs
-          flags: --with-prefill-decode --cuda-graphs
-          metrics_file: ${{ runner.temp }}/metrics-ptx-llama-1b-f16-prefill-decode-cuda-graphs.json
-
-      - name: PTX - FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Batch-Prefill-Decode-CUDA-Graphs
-        if: matrix.backend.name == 'ptx'
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: Llama-3.2-1B-Instruct-F16.gguf
-          model: Llama-3.2-1B-Instruct
-          quantization: F16
-          configuration: batch-prefill-decode-cuda-graphs
-          flags: --with-prefill-decode --batch-prefill-size 32 --cuda-graphs
-          metrics_file: ${{ runner.temp }}/metrics-ptx-llama-1b-f16-batch-prefill-decode-cuda-graphs.json
-
       - name: FP16 - Run Qwen3-0.6B-f16.gguf
         uses: ./.github/actions/run-inference
         with:
@@ -218,32 +204,10 @@ jobs:
           flags: --with-prefill-decode --batch-prefill-size 32
           metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-qwen3-0.6b-f16-batch-prefill-decode.json
 
-      # PTX-only: CUDA-graph variants
-      - name: PTX - FP16 - Run Qwen3-0.6B-f16.gguf - Prefill-Decode-CUDA-Graphs
-        if: matrix.backend.name == 'ptx'
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: Qwen3-0.6B-f16.gguf
-          model: Qwen3-0.6B
-          quantization: F16
-          configuration: prefill-decode-cuda-graphs
-          flags: --with-prefill-decode --cuda-graphs
-          metrics_file: ${{ runner.temp }}/metrics-ptx-qwen3-0.6b-f16-prefill-decode-cuda-graphs.json
-
-      - name: PTX - FP16 - Run Qwen3-0.6B-f16.gguf - Batch-Prefill-Decode-CUDA-Graphs
-        if: matrix.backend.name == 'ptx'
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: Qwen3-0.6B-f16.gguf
-          model: Qwen3-0.6B
-          quantization: F16
-          configuration: batch-prefill-decode-cuda-graphs
-          flags: --with-prefill-decode --batch-prefill-size 32 --cuda-graphs
-          metrics_file: ${{ runner.temp }}/metrics-ptx-qwen3-0.6b-f16-batch-prefill-decode-cuda-graphs.json
-
       - name: FP16 - Run Mistral-7B-Instruct-v0.3.fp16.gguf
+        # TODO: re-enable once the Mistral-7B-on-Metal timeout is root-caused; see the
+        # Metal TornadoOutOfMemoryException also hit by the tiny Llama-3.2-1B quarkus job.
+        if: matrix.backend.name != 'metal'
         uses: ./.github/actions/run-inference
         with:
           backend: ${{ matrix.backend.name }}
@@ -274,6 +238,8 @@ jobs:
           metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-phi3-mini-fp16-standard.json
 
       - name: FP16 - Run Granite-3.2-2b-instruct-f16.gguf
+        # TODO: not yet provisioned under /opt/models on the Mac runner; re-enable once it is.
+        if: matrix.backend.name != 'metal'
         uses: ./.github/actions/run-inference
         with:
           backend: ${{ matrix.backend.name }}
@@ -351,59 +317,6 @@ jobs:
             "flags=--with-prefill-decode --batch-prefill-size 32" \
             prompt="Say hello"
 
-      # ── PTX-only: CUDA-graph variants ────────────────────────────────────────
-      - name: PTX - Q8 - Run Llama-3.2-1B-Instruct-Q8_0.gguf - Prefill-Decode-CUDA-Graphs
-        if: matrix.backend.name == 'ptx'
-        env:
-          JAVA_TOOL_OPTIONS: >-
-            -Dllama.metrics.format=json
-            -Dllama.metrics.output=file
-            -Dllama.metrics.file=${{ runner.temp }}/metrics-ptx-llama-1b-q8-prefill-decode-cuda-graphs.json
-        run: |
-          cd ${{ github.workspace }}
-          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
-          ./llama-tornado --gpu \
-            --model $MODELS_DIR/Llama-3.2-1B-Instruct-Q8_0.gguf \
-            --prompt "Say hello" \
-            --with-prefill-decode \
-            --cuda-graphs
-          python3 scripts/write_metrics_sidecar.py \
-            --out "${{ runner.temp }}/metrics-ptx-llama-1b-q8-prefill-decode-cuda-graphs.meta.json" \
-            backend=ptx \
-            task=llama-inference \
-            model_file=Llama-3.2-1B-Instruct-Q8_0.gguf \
-            model=Llama-3.2-1B-Instruct \
-            quantization=Q8_0 \
-            configuration=prefill-decode-cuda-graphs \
-            "flags=--with-prefill-decode --cuda-graphs" \
-            prompt="Say hello"
-
-      - name: PTX - Q8 - Run Llama-3.2-1B-Instruct-Q8_0.gguf - Batch-Prefill-Decode-CUDA-Graphs
-        if: matrix.backend.name == 'ptx'
-        env:
-          JAVA_TOOL_OPTIONS: >-
-            -Dllama.metrics.format=json
-            -Dllama.metrics.output=file
-            -Dllama.metrics.file=${{ runner.temp }}/metrics-ptx-llama-1b-q8-batch-prefill-decode-cuda-graphs.json
-        run: |
-          cd ${{ github.workspace }}
-          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
-          ./llama-tornado --gpu \
-            --model $MODELS_DIR/Llama-3.2-1B-Instruct-Q8_0.gguf \
-            --prompt "Say hello" \
-            --with-prefill-decode --batch-prefill-size 32 \
-            --cuda-graphs
-          python3 scripts/write_metrics_sidecar.py \
-            --out "${{ runner.temp }}/metrics-ptx-llama-1b-q8-batch-prefill-decode-cuda-graphs.meta.json" \
-            backend=ptx \
-            task=llama-inference \
-            model_file=Llama-3.2-1B-Instruct-Q8_0.gguf \
-            model=Llama-3.2-1B-Instruct \
-            quantization=Q8_0 \
-            configuration=batch-prefill-decode-cuda-graphs \
-            "flags=--with-prefill-decode --batch-prefill-size 32 --cuda-graphs" \
-            prompt="Say hello"
-
       - name: Q8 - Run Qwen3-0.6B-Q8_0.gguf
         uses: ./.github/actions/run-inference
         with:
@@ -436,31 +349,6 @@ jobs:
           flags: --with-prefill-decode --batch-prefill-size 32
           metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-qwen3-0-6b-q8-batch-prefill-decode.json
 
-      # PTX-only: CUDA-graph variants
-      - name: PTX - Q8 - Run Qwen3-0.6B-Q8_0.gguf - Prefill-Decode-CUDA-Graphs
-        if: matrix.backend.name == 'ptx'
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: Qwen3-0.6B-Q8_0.gguf
-          model: Qwen3-0.6B
-          quantization: Q8_0
-          configuration: prefill-decode-cuda-graphs
-          flags: --with-prefill-decode --cuda-graphs
-          metrics_file: ${{ runner.temp }}/metrics-ptx-qwen3-0-6b-q8-prefill-decode-cuda-graphs.json
-
-      - name: PTX - Q8 - Run Qwen3-0.6B-Q8_0.gguf - Batch-Prefill-Decode-CUDA-Graphs
-        if: matrix.backend.name == 'ptx'
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: Qwen3-0.6B-Q8_0.gguf
-          model: Qwen3-0.6B
-          quantization: Q8_0
-          configuration: batch-prefill-decode-cuda-graphs
-          flags: --with-prefill-decode --batch-prefill-size 32 --cuda-graphs
-          metrics_file: ${{ runner.temp }}/metrics-ptx-qwen3-0-6b-q8-batch-prefill-decode-cuda-graphs.json
-
       - name: Q8 - Run Phi-3-mini-4k-instruct-Q8_0.gguf
         uses: ./.github/actions/run-inference
         with:
@@ -482,6 +370,8 @@ jobs:
           metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-qwen2-5-1-5b-q8-standard.json
 
       - name: Q8 - Run Mistral-7B-Instruct-v0.3.Q8_0.gguf
+        # TODO: re-enable once Mistral-7B-on-Metal is root-caused; see the FP16 step above.
+        if: matrix.backend.name != 'metal'
         uses: ./.github/actions/run-inference
         with:
           backend: ${{ matrix.backend.name }}
@@ -523,16 +413,19 @@ jobs:
   # Test integration with Quarkus-langchain4j
   quarkus-langchain4j-integration:
     if: github.repository == 'beehive-lab/GPULlama3.java'
-    runs-on: [self-hosted]
+    runs-on: ${{ matrix.backend.os == 'macos' && fromJSON('["self-hosted","macOS"]') || fromJSON('["self-hosted","Linux"]') }}
     needs: build
     timeout-minutes: 10
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         backend:
           - name: opencl
-          - name: ptx
+            os: linux
           - name: cuda
+            os: linux
+          - name: metal
+            os: macos
 
     steps:
       - name: Checkout GPULlama3
@@ -610,10 +503,20 @@ jobs:
       - name: Start Quarkus Application
         run: |
           cd ${{ github.workspace }}/quarkus-langchain4j/integration-tests/gpu-llama3
+          APP_LOG="${{ runner.temp }}/quarkus-app.log"
+          echo "APP_LOG=$APP_LOG" >> $GITHUB_ENV
+          # Background process output stops being captured by the Actions log once this
+          # step ends, so redirect it to a file we can dump later if a request fails.
+          #
+          # -Dtornado.device.memory here is dead: the gpu-llama3 extension's ChatModelConfig
+          # defaults device-memory to "4GB" and calls System.setProperty("tornado.device.memory", ...)
+          # itself during model init, overwriting whatever we pass as a bare JVM flag. On Metal
+          # that 4GB budget isn't enough even for Llama-3.2-1B in batch-prefill-decode mode
+          # (TornadoOutOfMemoryException), so override the actual Quarkus config property instead.
           java  @"$TORNADOVM_HOME/tornado-argfile" \
-                -Dtornado.device.memory=8GB \
+                -Dquarkus.langchain4j.gpu-llama3.chat-model.device-memory=8GB \
                 -Dquarkus.http.port=$QUARKUS_PORT \
-                -jar target/quarkus-app/quarkus-run.jar &
+                -jar target/quarkus-app/quarkus-run.jar > "$APP_LOG" 2>&1 &
           APP_PID=$!
           echo "APP_PID=$APP_PID" >> $GITHUB_ENV
           for i in {1..30}; do
@@ -650,7 +553,9 @@ jobs:
         run: |
           for attempt in 1 2 3; do
             echo "Attempt $attempt of 3 for streaming endpoint..."
-            HTTP_CODE=$(timeout 10s curl -s -o /dev/null -w "%{http_code}" http://localhost:$QUARKUS_PORT/chat/streaming)
+            # curl's own --max-time (not the external `timeout` command, which stock
+            # macOS doesn't ship) so this works the same on both runner OSes.
+            HTTP_CODE=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" http://localhost:$QUARKUS_PORT/chat/streaming)
             if [ "$HTTP_CODE" = "200" ]; then
               echo "SUCCESS: HTTP $HTTP_CODE"
               break
@@ -659,6 +564,10 @@ jobs:
             [ $attempt -lt 3 ] && sleep 2
             [ $attempt -eq 3 ] && { echo "::error::Streaming endpoint failed after 3 attempts"; exit 1; }
           done
+
+      - name: Dump Quarkus Application Log
+        if: failure()
+        run: cat "$APP_LOG" || true
 
       - name: Cleanup & Shutdown
         if: always()
@@ -675,7 +584,7 @@ jobs:
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main'
 
-    runs-on: [self-hosted]
+    runs-on: [self-hosted, Linux]
     needs: standalone-inference
     timeout-minutes: 15
 

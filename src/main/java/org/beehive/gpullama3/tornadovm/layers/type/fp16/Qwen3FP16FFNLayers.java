@@ -34,9 +34,11 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
     private final int nEmbdHead;
     private final int nEmbdGqa;
     private final int gqa;
-    // Decode attention is always split-KV (flash-decoding): it beats the previous optv2/online kernels
-    // unconditionally and is correct on every backend. Splits per head: see Qwen3State.SPLIT_KV.
-    private final int attentionSplits = Qwen3State.SPLIT_KV;
+    // Decode attention is split-KV (flash-decoding) on every backend except Metal, where TornadoVM
+    // fails to JIT the multi-workgroup split-KV kernel; Metal falls back to the single-workgroup-per-head
+    // online-softmax kernel instead (see SchedulerDetectionService.isMetalBackend). Splits per head: see Qwen3State.SPLIT_KV.
+    private final boolean isMetalBackend = SchedulerDetectionService.isMetalBackend();
+    private final int attentionSplits = isMetalBackend ? 1 : Qwen3State.SPLIT_KV;
     // GEMV reduction strategy: 32-lane warp-shuffle on PTX/CUDA, shared-memory trees elsewhere. Warp is
     // faster but the OpenCL backend miscompiles simdShuffleDown, so it is auto-selected by backend.
     private final boolean useWarpMatmul = SchedulerDetectionService.isWarpShuffleSupported();
@@ -92,8 +94,10 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
             gridScheduler.addWorkerGrid("layer_" + i + ".attn_rms_qkv_projection", fusedQKVWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".qk_rmsnorm", qkRmsNormWorker);
             gridScheduler.addWorkerGrid("layer_" + i + ".rope_and_kv_cache", ropeWorker);
-            gridScheduler.addWorkerGrid("layer_" + i + ".attention", parallelAttentionWorker);
-            gridScheduler.addWorkerGrid("layer_" + i + ".attention_combine", attentionCombineWorker);
+            gridScheduler.addWorkerGrid("layer_" + i + ".attention", isMetalBackend ? attentionCombineWorker : parallelAttentionWorker);
+            if (!isMetalBackend) {
+                gridScheduler.addWorkerGrid("layer_" + i + ".attention_combine", attentionCombineWorker);
+            }
             gridScheduler.addWorkerGrid("layer_" + i + ".attn_output_proj", matmul1Worker);
             // === FFN Block ===
             gridScheduler.addWorkerGrid("layer_" + i + ".ffn_rms_reduce",
@@ -325,32 +329,51 @@ public class Qwen3FP16FFNLayers extends AbstractTransformerLayerTaskGraphs<Qwen3
                 layerIndex,                   // layer index for cache offset
                 config.contextLength()); // max sequence length
 
-        // Split-KV (flash-decoding) attention.
-        // Phase 1: split each head's KV range across attentionSplits workgroups; partials -> wrapAttSplit.
-        unifiedLayer.task("attention",
-                TransformerComputeKernelsLayered::processHeadsFlashAttentionSplitKV,
-                context,
-                qwen3State.wrapQ,             // query vectors
-                qwen3State.wrapKeyCache,      // key cache
-                qwen3State.wrapValueCache,    // value cache
-                qwen3State.wrapAttSplit,      // scratch: per-head split partials (compact layout)
-                config.numberOfHeads(),  // nHeads
-                nEmbdHead,                    // headSize
-                nEmbdGqa,                     // kvDim
-                gqa,                          // kvMul (nHeads / nHeadKv)
-                qwen3State.positionHolder,    // position
-                layerIndex,                   // layer index
-                config.contextLength(),  // context length
-                attentionSplits);             // number of KV splits per head
-        // Phase 2: combine the per-head split partials into the final attention output -> wrapXb.
-        unifiedLayer.task("attention_combine",
-                TransformerComputeKernelsLayered::combineSplitKVAttention,
-                context,
-                qwen3State.wrapAttSplit,      // scratch: per-head split partials (compact layout)
-                qwen3State.wrapXb,            // output: attention result
-                config.numberOfHeads(),  // nHeads
-                nEmbdHead,                    // headSize
-                attentionSplits);             // number of KV splits per head
+        if (isMetalBackend) {
+            // Metal: single-workgroup-per-head online-softmax attention, writing directly to wrapXb.
+            // No combine phase needed (TornadoVM fails to JIT the multi-workgroup split-KV kernel here).
+            unifiedLayer.task("attention",
+                    TransformerComputeKernelsLayered::processHeadsFlashAttention,
+                    context,
+                    qwen3State.wrapQ,             // query vectors
+                    qwen3State.wrapKeyCache,      // key cache
+                    qwen3State.wrapValueCache,    // value cache
+                    qwen3State.wrapXb,            // output: attention result
+                    config.numberOfHeads(),  // nHeads
+                    nEmbdHead,                    // headSize
+                    nEmbdGqa,                     // kvDim
+                    gqa,                          // kvMul (nHeads / nHeadKv)
+                    qwen3State.positionHolder,    // position
+                    layerIndex,                   // layer index
+                    config.contextLength());  // context length
+        } else {
+            // Split-KV (flash-decoding) attention.
+            // Phase 1: split each head's KV range across attentionSplits workgroups; partials -> wrapAttSplit.
+            unifiedLayer.task("attention",
+                    TransformerComputeKernelsLayered::processHeadsFlashAttentionSplitKV,
+                    context,
+                    qwen3State.wrapQ,             // query vectors
+                    qwen3State.wrapKeyCache,      // key cache
+                    qwen3State.wrapValueCache,    // value cache
+                    qwen3State.wrapAttSplit,      // scratch: per-head split partials (compact layout)
+                    config.numberOfHeads(),  // nHeads
+                    nEmbdHead,                    // headSize
+                    nEmbdGqa,                     // kvDim
+                    gqa,                          // kvMul (nHeads / nHeadKv)
+                    qwen3State.positionHolder,    // position
+                    layerIndex,                   // layer index
+                    config.contextLength(),  // context length
+                    attentionSplits);             // number of KV splits per head
+            // Phase 2: combine the per-head split partials into the final attention output -> wrapXb.
+            unifiedLayer.task("attention_combine",
+                    TransformerComputeKernelsLayered::combineSplitKVAttention,
+                    context,
+                    qwen3State.wrapAttSplit,      // scratch: per-head split partials (compact layout)
+                    qwen3State.wrapXb,            // output: attention result
+                    config.numberOfHeads(),  // nHeads
+                    nEmbdHead,                    // headSize
+                    attentionSplits);             // number of KV splits per head
+        }
 
         // Output Projection with Residual
         if (useWarpMatmul) {

@@ -3,22 +3,27 @@ description: Build TornadoVM develop once per backend and reuse across runs via 
 
 inputs:
   backend:
-    description: 'TornadoVM backend to build (opencl, ptx, or cuda)'
+    description: 'TornadoVM backend to build (opencl, cuda, or metal)'
     required: true
 
+# macOS ships bash 3.2 (Apple keeps it frozen for GPLv3 reasons); SDKMAN's own scripts use
+# bash 4+ syntax (${var^^}) and crash under it, so every step below uses Homebrew's bash on
+# macOS runners instead (requires `brew install bash` on the runner) and plain "bash" on Linux.
+# GitHub's action-manifest parser doesn't support YAML anchors, so the expression is repeated
+# per step rather than shared via &shell/*shell.
 runs:
   using: composite
   steps:
     - name: Get TornadoVM develop SHA
       id: tornado_sha
-      shell: bash
+      shell: ${{ runner.os == 'macOS' && '/opt/homebrew/bin/bash --noprofile --norc -eo pipefail {0}' || 'bash' }}
       run: |
         SHA=$(git ls-remote https://github.com/beehive-lab/TornadoVM refs/heads/develop | cut -f1)
         echo "sha=$SHA" >> $GITHUB_OUTPUT
 
     - name: Check local build sentinel
       id: sentinel
-      shell: bash
+      shell: ${{ runner.os == 'macOS' && '/opt/homebrew/bin/bash --noprofile --norc -eo pipefail {0}' || 'bash' }}
       run: |
         SENTINEL="$TORNADO_ROOT/.built-sha"
         if [ -f "$SENTINEL" ] && [ "$(cat $SENTINEL)" = "${{ steps.tornado_sha.outputs.sha }}" ]; then
@@ -29,7 +34,7 @@ runs:
 
     - name: Clone TornadoVM develop
       if: steps.sentinel.outputs.up-to-date != 'true'
-      shell: bash
+      shell: ${{ runner.os == 'macOS' && '/opt/homebrew/bin/bash --noprofile --norc -eo pipefail {0}' || 'bash' }}
       run: |
         rm -rf $TORNADO_ROOT
         git clone --depth 1 --branch develop \
@@ -38,7 +43,7 @@ runs:
 
     - name: Set up Python venv for TornadoVM
       if: steps.sentinel.outputs.up-to-date != 'true'
-      shell: bash
+      shell: ${{ runner.os == 'macOS' && '/opt/homebrew/bin/bash --noprofile --norc -eo pipefail {0}' || 'bash' }}
       run: |
         python3 -m venv $TORNADO_ROOT/venv
         source $TORNADO_ROOT/venv/bin/activate
@@ -46,7 +51,7 @@ runs:
 
     - name: Build TornadoVM
       if: steps.sentinel.outputs.up-to-date != 'true'
-      shell: bash
+      shell: ${{ runner.os == 'macOS' && '/opt/homebrew/bin/bash --noprofile --norc -eo pipefail {0}' || 'bash' }}
       run: |
         cd $TORNADO_ROOT
         mkdir -p graalJars && cp $GRAAL_JARS/* graalJars/
@@ -57,7 +62,7 @@ runs:
 
     - name: Find TornadoVM SDK directory
       id: find_sdk
-      shell: bash
+      shell: ${{ runner.os == 'macOS' && '/opt/homebrew/bin/bash --noprofile --norc -eo pipefail {0}' || 'bash' }}
       run: |
         SDK_DIR=$(find $TORNADO_ROOT/dist -type d -maxdepth 3 -path "*/tornadovm-*-${{ inputs.backend }}" | head -n 1)
         if [ -z "$SDK_DIR" ]; then
@@ -70,7 +75,7 @@ runs:
     # Runs on both fresh build and sentinel hit — sets TORNADOVM_HOME and PATH
     # for all subsequent steps in the calling workflow.
     - name: Configure TornadoVM environment
-      shell: bash
+      shell: ${{ runner.os == 'macOS' && '/opt/homebrew/bin/bash --noprofile --norc -eo pipefail {0}' || 'bash' }}
       run: |
         FULL_SDK="${{ steps.find_sdk.outputs.sdk_dir }}"
         echo "Detected TornadoVM SDK: $FULL_SDK"

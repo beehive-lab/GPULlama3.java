@@ -26,6 +26,18 @@ public class SchedulerDetectionService {
         // return backendType == TornadoVMBackendType.PTX || backendType == TornadoVMBackendType.CUDA;
     }
 
+    /**
+     * Whether the active TornadoVM backend is Metal. The Metal backend fails to JIT the
+     * multi-workgroup split-KV flash-decoding attention kernel ({@code processHeadsFlashAttentionSplitKV}),
+     * so Qwen3 layers must fall back to the single-workgroup-per-head online-softmax kernel there.
+     */
+    public static boolean isMetalBackend() {
+        TornadoVMBackendType backendType = TornadoRuntimeProvider.getTornadoRuntime()
+                .getBackend(0)
+                .getBackendType();
+        return backendType == TornadoVMBackendType.METAL;
+    }
+
     // @formatter:off
     public static SchedulerType determineSchedulerType(Model model) {
         TornadoRuntime tornadoRuntime = TornadoRuntimeProvider.getTornadoRuntime();

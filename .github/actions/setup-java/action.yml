@@ -10,7 +10,10 @@ runs:
   using: composite
   steps:
     - name: Set up Java with SDKMAN
-      shell: bash
+      # macOS ships bash 3.2 (Apple keeps it frozen for GPLv3 reasons); SDKMAN's own
+      # scripts use bash 4+ syntax (${var^^}) and crash under it, so use Homebrew's
+      # bash on macOS runners instead. Requires `brew install bash` on the runner.
+      shell: ${{ runner.os == 'macOS' && '/opt/homebrew/bin/bash --noprofile --norc -eo pipefail {0}' || 'bash' }}
       run: |
         source "$HOME/.sdkman/bin/sdkman-init.sh"
         if ! sdk list java | grep -q "${{ inputs.java_version }}"; then
