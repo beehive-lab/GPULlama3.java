@@ -200,6 +200,41 @@
                 </build>
             </profile>
 
+            <!-- ─── JDK 26 ───────────────────────────────────────────────────────────
+                 Auto-activates for JDK 26.x builds.
+                 Publishes: gpu-llama3:${revision}-jdk26
+                 TornadoVM: pinned to the locally-built 5.2.1-jdk26-dev artifacts (no
+                 5.0.0-jdk26 release exists yet, so this does not follow the base+suffix
+                 composition the jdk21/jdk25 profiles use).
+                 Vector API is still incubating in JDK 26; add-modules jdk.incubator.vector
+                 is required for compilation.
+            ─────────────────────────────────────────────────────────────────────── -->
+            <profile>
+                <id>jdk26</id>
+                <activation><jdk>[26,27)</jdk></activation>
+                <properties>
+                    <maven.compiler.source>26</maven.compiler.source>
+                    <maven.compiler.target>26</maven.compiler.target>
+                    <jdk.version.suffix>-jdk26</jdk.version.suffix>
+                    <tornadovm.version>5.2.1-jdk26-dev</tornadovm.version>
+                </properties>
+                <build>
+                    <plugins>
+                        <plugin>
+                            <groupId>org.apache.maven.plugins</groupId>
+                            <artifactId>maven-compiler-plugin</artifactId>
+                            <configuration>
+                                <!-- Appended to enable-preview already in main build -->
+                                <compilerArgs combine.children="append">
+                                    <arg>--add-modules</arg>
+                                    <arg>jdk.incubator.vector</arg>
+                                </compilerArgs>
+                            </configuration>
+                        </plugin>
+                    </plugins>
+                </build>
+            </profile>
+
             <!-- ─── JDK 27 ───────────────────────────────────────────────────────────
                  Auto-activates for JDK 27+ builds (JVMCI fully removed upstream,
                  openjdk/jdk#30834 — see the matching jdk27 profile in TornadoVM's own pom).
