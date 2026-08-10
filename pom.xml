@@ -43,6 +43,7 @@
             <jdk.version.suffix>-jdk21</jdk.version.suffix>
             <!-- CUDA backend is only available after 5.0.0 TornadoVM version -->
             <tornadovm.version>${tornadovm.base.version}${jdk.version.suffix}</tornadovm.version>
+            <tornadovm.dev.suffix>-dev</tornadovm.dev.suffix>
             <!-- Compiler defaults (overridden by JDK profiles below) -->
             <maven.compiler.source>25</maven.compiler.source>
             <maven.compiler.target>25</maven.compiler.target>
@@ -204,8 +205,8 @@
                  Auto-activates for JDK 26.x builds.
                  Publishes: gpu-llama3:${revision}-jdk26
                  TornadoVM: pinned to the locally-built 5.2.1-jdk26-dev artifacts (no
-                 5.0.0-jdk26 release exists yet, so this does not follow the base+suffix
-                 composition the jdk21/jdk25 profiles use).
+                 5.0.0-jdk26 release exists yet, so tornadovm.base.version is overridden
+                 to 5.2.1 here and composed with tornadovm.dev.suffix below).
                  Vector API is still incubating in JDK 26; add-modules jdk.incubator.vector
                  is required for compilation.
             ─────────────────────────────────────────────────────────────────────── -->
@@ -216,7 +217,8 @@
                     <maven.compiler.source>26</maven.compiler.source>
                     <maven.compiler.target>26</maven.compiler.target>
                     <jdk.version.suffix>-jdk26</jdk.version.suffix>
-                    <tornadovm.version>5.2.1-jdk26-dev</tornadovm.version>
+                    <tornadovm.base.version>5.2.1</tornadovm.base.version>
+                    <tornadovm.version>${tornadovm.base.version}${jdk.version.suffix}${tornadovm.dev.suffix}</tornadovm.version>
                 </properties>
                 <build>
                     <plugins>
@@ -240,8 +242,8 @@
                  openjdk/jdk#30834 — see the matching jdk27 profile in TornadoVM's own pom).
                  Publishes: gpu-llama3:${revision}-jdk27
                  TornadoVM: pinned to the locally-built 5.2.1-jdk27-dev artifacts (no
-                 5.0.0-jdk27 release exists yet, so this does not follow the base+suffix
-                 composition the other profiles use).
+                 5.0.0-jdk27 release exists yet, so tornadovm.base.version is overridden
+                 to 5.2.1 here and composed with tornadovm.dev.suffix below).
                  No enable-preview: unlike the jdk21/jdk25 profiles, this project's sources
                  compile clean at release 27 with only add-modules jdk.incubator.vector,
                  so the base build's enable-preview arg is dropped via combine.self="override".
@@ -253,7 +255,8 @@
                     <maven.compiler.source>27</maven.compiler.source>
                     <maven.compiler.target>27</maven.compiler.target>
                     <jdk.version.suffix>-jdk27</jdk.version.suffix>
-                    <tornadovm.version>5.2.1-jdk27-dev</tornadovm.version>
+                    <tornadovm.base.version>5.2.1</tornadovm.base.version>
+                    <tornadovm.version>${tornadovm.base.version}${jdk.version.suffix}${tornadovm.dev.suffix}</tornadovm.version>
                 </properties>
                 <build>
                     <plugins>
