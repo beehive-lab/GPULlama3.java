@@ -43,6 +43,10 @@
             <jdk.version.suffix>-jdk21</jdk.version.suffix>
             <!-- CUDA backend is only available after 5.0.0 TornadoVM version -->
             <tornadovm.version>${tornadovm.base.version}${jdk.version.suffix}</tornadovm.version>
+            <!-- Composed into jdk26/jdk27's tornadovm.version below, since no GA TornadoVM
+                 release exists yet for those JDKs, only locally-built "-dev" artifacts.
+                 Cleared to empty in the release profile so published (Maven Central) POMs
+                 never depend on an unresolvable "-dev" coordinate; see that profile. -->
             <tornadovm.dev.suffix>-dev</tornadovm.dev.suffix>
             <!-- Compiler defaults (overridden by JDK profiles below) -->
             <maven.compiler.source>25</maven.compiler.source>
@@ -279,6 +283,12 @@
                 <properties>
                     <maven.javadoc.skip>false</maven.javadoc.skip>
                     <gpg.skip>false</gpg.skip>
+                    <!-- Overrides the "-dev" default (see top-level properties) so a real
+                         release never publishes a POM depending on an unpublished
+                         tornado-api/tornado-runtime:*-dev coordinate. Only takes effect once
+                         jdk26/jdk27 are added to deploy-maven-central.yml's matrix, and only
+                         once a GA TornadoVM release exists for those JDKs to point at instead. -->
+                    <tornadovm.dev.suffix></tornadovm.dev.suffix>
                 </properties>
                 <build>
                     <plugins>
