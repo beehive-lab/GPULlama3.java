@@ -33,6 +33,14 @@ jobs:
             java_version: 21.0.2-open
           - name: jdk25
             java_version: 25.0.2-open
+          # jdk26/jdk27 intentionally held back: TornadoVM has not yet published GA
+          # 5.2.1-jdk26/-jdk27 to Maven Central (only the "-dev" line exists today), so
+          # a deploy attempt would just fail on dependency resolution. Add matrix entries
+          #   - name: jdk26
+          #     java_version: 26.0.2-open
+          #   - name: jdk27
+          #     java_version: 27.ea.31-open   # no GA JDK 27 build exists yet either
+          # back once TornadoVM's 5.2.1 GA release is confirmed published.
 
     steps:
       - name: Checkout code
