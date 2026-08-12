@@ -92,7 +92,7 @@ jobs:
 
           SNIPPET_FILE="${{ runner.temp }}/dependency_snippet.md"
           cat > "$SNIPPET_FILE" <<EOF
-          **JDK 21** (\`jdk21\` profile, auto-activates for JDK \`[21,25)\`):
+          **JDK 21** (\`jdk21\` profile, auto-activates for JDK \`[21,22)\`):
           \`\`\`xml
           <dependency>
               <groupId>io.github.beehive-lab</groupId>
@@ -101,12 +101,12 @@ jobs:
           </dependency>
           \`\`\`
 
-          **JDK 25** (\`jdk25\` profile, auto-activates for JDK \`[25.0.2,)\`):
+          **JDK 22+** (\`jdk22plus\` profile, auto-activates for JDK \`[22,)\` — covers 22, 23, 24, 25, 26, 27 and later):
           \`\`\`xml
           <dependency>
               <groupId>io.github.beehive-lab</groupId>
               <artifactId>gpu-llama3</artifactId>
-              <version>${VERSION}-jdk25</version>
+              <version>${VERSION}-jdk22plus</version>
           </dependency>
           \`\`\`
 
@@ -117,9 +117,9 @@ jobs:
           implementation 'io.github.beehive-lab:gpu-llama3:${VERSION}-jdk21'
           \`\`\`
 
-          **JDK 25**:
+          **JDK 22+**:
           \`\`\`groovy
-          implementation 'io.github.beehive-lab:gpu-llama3:${VERSION}-jdk25'
+          implementation 'io.github.beehive-lab:gpu-llama3:${VERSION}-jdk22plus'
           \`\`\`
           EOF
 
