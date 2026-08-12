@@ -154,7 +154,7 @@
             ─────────────────────────────────────────────────────────────────────── -->
             <profile>
                 <id>jdk21</id>
-                <activation><jdk>[21,25)</jdk></activation>
+                <activation><jdk>[21,22)</jdk></activation>
                 <properties>
                     <maven.compiler.source>21</maven.compiler.source>
                     <maven.compiler.target>21</maven.compiler.target>
@@ -178,93 +178,29 @@
                 </build>
             </profile>
 
-            <!-- ─── JDK 25 ───────────────────────────────────────────────────────────
-                 Auto-activates for JDK 25.0.2+ builds (minimum required version).
-                 Publishes: gpu-llama3:${revision}-jdk25
-                 TornadoVM: ${tornadovm.base.version}-jdk25${tornadovm.dev.suffix} - see the
-                 jdk21 profile above for why the dev suffix is composed in here too.
-                 Vector API is still incubating in JDK 25 (JEP 508 — 10th Incubator);
-                 add-modules jdk.incubator.vector is required for compilation.
+            <!-- ─── JDK 22+ ──────────────────────────────────────────────────────────
+                 Auto-activates for JDK 22 and newer. TornadoVM consolidated its old
+                 per-version jdk25/jdk26/jdk27 dev profiles into one "jdk22plus" SDK
+                 build that runs unchanged on 22, 23, ..., 27 and later, so one
+                 profile here (replacing the former jdk25/jdk26/jdk27 profiles) covers
+                 the whole open-ended range too.
+                 Publishes: gpu-llama3:${revision}-jdk22plus
+                 TornadoVM: ${tornadovm.base.version}-jdk22plus${tornadovm.dev.suffix}
+                 No enable-preview: FFM (the only preview API this project's JDK21 build
+                 needs it for) is final since JDK 22, and the former jdk27 profile already
+                 proved sources compile clean at release 27 with just add-modules
+                 jdk.incubator.vector - so the base build's enable-preview arg is dropped
+                 via combine.self="override", same as that profile did.
+                 Vector API remains incubating through at least JDK 27 (JEP 508); add-
+                 modules jdk.incubator.vector is required for compilation across the range.
             ─────────────────────────────────────────────────────────────────────── -->
             <profile>
-                <id>jdk25</id>
-                <activation><jdk>[25.0.2,26)</jdk></activation>
+                <id>jdk22plus</id>
+                <activation><jdk>[22,)</jdk></activation>
                 <properties>
-                    <maven.compiler.source>25</maven.compiler.source>
-                    <maven.compiler.target>25</maven.compiler.target>
-                    <jdk.version.suffix>-jdk25</jdk.version.suffix>
-                    <tornadovm.version>${tornadovm.base.version}${jdk.version.suffix}${tornadovm.dev.suffix}</tornadovm.version>
-                </properties>
-                <build>
-                    <plugins>
-                        <plugin>
-                            <groupId>org.apache.maven.plugins</groupId>
-                            <artifactId>maven-compiler-plugin</artifactId>
-                            <configuration>
-                                <!-- Appended to enable-preview already in main build -->
-                                <compilerArgs combine.children="append">
-                                    <arg>--add-modules</arg>
-                                    <arg>jdk.incubator.vector</arg>
-                                </compilerArgs>
-                            </configuration>
-                        </plugin>
-                    </plugins>
-                </build>
-            </profile>
-
-            <!-- ─── JDK 26 ───────────────────────────────────────────────────────────
-                 Auto-activates for JDK 26.x builds.
-                 Publishes: gpu-llama3:${revision}-jdk26
-                 TornadoVM: ${tornadovm.base.version}-jdk26${tornadovm.dev.suffix} - inherits
-                 tornadovm.base.version from the top-level properties (no override needed here;
-                 no GA TornadoVM release for jdk26 exists below that version yet, only the
-                 locally-built "-dev" artifacts tornadovm.dev.suffix composes in by default).
-                 Vector API is still incubating in JDK 26; add-modules jdk.incubator.vector
-                 is required for compilation.
-            ─────────────────────────────────────────────────────────────────────── -->
-            <profile>
-                <id>jdk26</id>
-                <activation><jdk>[26,27)</jdk></activation>
-                <properties>
-                    <maven.compiler.source>26</maven.compiler.source>
-                    <maven.compiler.target>26</maven.compiler.target>
-                    <jdk.version.suffix>-jdk26</jdk.version.suffix>
-                    <tornadovm.version>${tornadovm.base.version}${jdk.version.suffix}${tornadovm.dev.suffix}</tornadovm.version>
-                </properties>
-                <build>
-                    <plugins>
-                        <plugin>
-                            <groupId>org.apache.maven.plugins</groupId>
-                            <artifactId>maven-compiler-plugin</artifactId>
-                            <configuration>
-                                <!-- Appended to enable-preview already in main build -->
-                                <compilerArgs combine.children="append">
-                                    <arg>--add-modules</arg>
-                                    <arg>jdk.incubator.vector</arg>
-                                </compilerArgs>
-                            </configuration>
-                        </plugin>
-                    </plugins>
-                </build>
-            </profile>
-
-            <!-- ─── JDK 27 ───────────────────────────────────────────────────────────
-                 Auto-activates for JDK 27+ builds (JVMCI fully removed upstream,
-                 openjdk/jdk#30834 — see the matching jdk27 profile in TornadoVM's own pom).
-                 Publishes: gpu-llama3:${revision}-jdk27
-                 TornadoVM: ${tornadovm.base.version}-jdk27${tornadovm.dev.suffix} - inherits
-                 tornadovm.base.version from the top-level properties, same as jdk26 above.
-                 No enable-preview: unlike the jdk21/jdk25 profiles, this project's sources
-                 compile clean at release 27 with only add-modules jdk.incubator.vector,
-                 so the base build's enable-preview arg is dropped via combine.self="override".
-            ─────────────────────────────────────────────────────────────────────── -->
-            <profile>
-                <id>jdk27</id>
-                <activation><jdk>[27,)</jdk></activation>
-                <properties>
-                    <maven.compiler.source>27</maven.compiler.source>
-                    <maven.compiler.target>27</maven.compiler.target>
-                    <jdk.version.suffix>-jdk27</jdk.version.suffix>
+                    <maven.compiler.source>22</maven.compiler.source>
+                    <maven.compiler.target>22</maven.compiler.target>
+                    <jdk.version.suffix>-jdk22plus</jdk.version.suffix>
                     <tornadovm.version>${tornadovm.base.version}${jdk.version.suffix}${tornadovm.dev.suffix}</tornadovm.version>
                 </properties>
                 <build>
