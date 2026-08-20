@@ -3,7 +3,7 @@
 [![build JDK21](https://github.com/beehive-lab/GPULlama3.java/actions/workflows/build-and-run.yml/badge.svg)](https://github.com/beehive-lab/GPULlama3.java/actions/workflows/build-and-run.yml)
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.beehive-lab/gpu-llama3?&logo=apache-maven&color=blue)](https://central.sonatype.com/artifact/io.github.beehive-lab/gpu-llama3)
 ![Java 21](https://img.shields.io/badge/java-21-blue?logo=openjdk)
-![Java 25](https://img.shields.io/badge/java-25-yellow?logo=openjdk)
+![Java 22+](https://img.shields.io/badge/java-22%2B-yellow?logo=openjdk)
 [![LangChain4j](https://img.shields.io/badge/LangChain4j-1.7.1+-purple?&logo=link&logoColor=white)](https://docs.langchain4j.dev/)
 ![NVIDIA](https://img.shields.io/badge/CUDA%20%7C%20PTX-supported-76B900?logo=nvidia)
 ![OpenCL](https://img.shields.io/badge/OpenCL-supported-blue?logo=khronos)
@@ -94,7 +94,7 @@ GPULlama3ChatModel model = GPULlama3ChatModel.builder()
 ### 📦 Maven
 
 <!-- DEPENDENCY-SNIPPETS:START -->
-**JDK 21** (`jdk21` profile, auto-activates for JDK `[21,25)`):
+**JDK 21** (`jdk21` profile, auto-activates for JDK `[21,22)`):
 ```xml
 <dependency>
     <groupId>io.github.beehive-lab</groupId>
@@ -103,12 +103,12 @@ GPULlama3ChatModel model = GPULlama3ChatModel.builder()
 </dependency>
 ```
 
-**JDK 25** (`jdk25` profile, auto-activates for JDK `[25.0.2,)`):
+**JDK 22+** (`jdk22plus` profile, auto-activates for JDK `[22,)` — covers 22, 23, 24, 25, 26, 27 and later):
 ```xml
 <dependency>
     <groupId>io.github.beehive-lab</groupId>
     <artifactId>gpu-llama3</artifactId>
-    <version>1.0.0-jdk25</version>
+    <version>1.0.0-jdk22plus</version>
 </dependency>
 ```
 
@@ -119,9 +119,9 @@ GPULlama3ChatModel model = GPULlama3ChatModel.builder()
 implementation 'io.github.beehive-lab:gpu-llama3:1.0.0-jdk21'
 ```
 
-**JDK 25**:
+**JDK 22+**:
 ```groovy
-implementation 'io.github.beehive-lab:gpu-llama3:1.0.0-jdk25'
+implementation 'io.github.beehive-lab:gpu-llama3:1.0.0-jdk22plus'
 ```
 <!-- DEPENDENCY-SNIPPETS:END -->
 
@@ -137,7 +137,7 @@ implementation 'io.github.beehive-lab:gpu-llama3:1.0.0-jdk25'
 
 ### Prerequisites
 
-- **Java 21** — required for the Vector API & TornadoVM (Java 25 supported via the `-jdk25` artifact / `llamaTornado` script).
+- **Java 21+** — required for the Vector API & TornadoVM. JDK 21 uses the `-jdk21` artifact; JDK 22 and newer (22, 23, 24, 25, 26, 27, ...) uses the `-jdk22plus` artifact / `llamaTornado` script.
 - **[TornadoVM](https://github.com/beehive-lab/TornadoVM)** with an OpenCL, PTX, CUDA, or Metal backend. `llama-tornado`/`llamaTornado` auto-detect whichever backend your installed SDK was built with.
 - **GCC/G++ 13+** — to build TornadoVM's native components.
 

@@ -10,6 +10,7 @@ The backend is auto-detected from the installed TornadoVM SDK
 import argparse
 import glob
 import os
+import re
 import subprocess
 import sys
 import time
@@ -80,6 +81,21 @@ class LlamaRunner:
             print("Note: check set_path in root dir -> source set_path")
             sys.exit(1)
 
+        self.java_version = self._detect_java_version()
+
+    def _detect_java_version(self) -> Optional[int]:
+        """Parse the JDK feature/major version out of `$JAVA_HOME/bin/java -version`,
+        e.g. 'openjdk version "21.0.2" ...' -> 21, 'openjdk version "27-ea" ...' -> 27."""
+        try:
+            output = subprocess.run(
+                [f"{self.java_home}/bin/java", "-version"],
+                capture_output=True, text=True, check=True,
+            ).stderr
+        except (OSError, subprocess.CalledProcessError):
+            return None
+        match = re.search(r'version "(\d+)', output)
+        return int(match.group(1)) if match else None
+
     def _validate_paths(self):
         """Validate that required paths exist."""
         paths_to_check = {
@@ -134,19 +150,49 @@ class LlamaRunner:
 
     def _build_base_command(self, args: argparse.Namespace) -> List[str]:
         """Build the base Java command with JVM options."""
+        # JDK 27+ removed the platform jdk.internal.vm.ci module entirely; TornadoVM ships a
+        # vendored same-named module for that case, which must go on the module-path (mirrors
+        # tornado.py's self.jvmci_absent). On JDK <=26 the platform module is still present and
+        # a same-named module on the module-path would cause a "two versions of module" error,
+        # so it's deliberately left off here -- see the --patch-module handling below instead.
+        jvmci_absent = self.java_version is not None and self.java_version >= 27
+        module_path_entries = [".", f"{self.tornado_sdk}/share/java/tornado"]
+        if jvmci_absent:
+            module_path_entries.append(f"{self.tornado_sdk}/share/java/jvmci")
+
         cmd = [
             f"{self.java_home}/bin/java",
             "-server",
             "-XX:+UnlockExperimentalVMOptions",
-            "-XX:+EnableJVMCI",
-            f"-Xms{args.heap_min}",
-            f"-Xmx{args.heap_max}",
-            "--enable-preview",
-            f"-Djava.library.path={self.tornado_sdk}/lib",
-            "-Djdk.module.showModuleResolution=false",
-            "--module-path",
-            self.module_path_colon_sep([".", f"{self.tornado_sdk}/share/java/tornado"]),
         ]
+        if jvmci_absent:
+            # JDK 27+ removed JVMCI entirely (openjdk/jdk#30834): -XX:+EnableJVMCI is now an
+            # unrecognized (fatal) VM option, and Panama/FFM is final so --enable-preview is
+            # unnecessary. Mirrors tornado.py's __JAVA_BASE_OPTIONS_NO_JVMCI__: set the saved
+            # property the vendored jdk.vm.ci.services.Services.checkJVMCIEnabled() reads
+            # (HotSpot's own +EnableJVMCI bookkeeping no longer exists to set it), and export the
+            # java.base internals the vendored jdk.internal.vm.ci module needs.
+            cmd.extend(
+                [
+                    "-Djdk.internal.vm.ci.enabled=true",
+                    "--add-exports", "java.base/jdk.internal.misc=jdk.internal.vm.ci",
+                    "--add-exports", "java.base/jdk.internal.vm=jdk.internal.vm.ci",
+                    "--add-exports", "java.base/jdk.internal.vm.annotation=jdk.internal.vm.ci",
+                    "--add-exports", "java.base/jdk.internal.reflect=jdk.internal.vm.ci",
+                ]
+            )
+        else:
+            cmd.extend(["-XX:+EnableJVMCI", "--enable-preview"])
+        cmd.extend(
+            [
+                f"-Xms{args.heap_min}",
+                f"-Xmx{args.heap_max}",
+                f"-Djava.library.path={self.tornado_sdk}/lib",
+                "-Djdk.module.showModuleResolution=false",
+                "--module-path",
+                self.module_path_colon_sep(module_path_entries),
+            ]
+        )
 
         # TornadoVM configuration
         tornado_config = [
@@ -265,6 +311,21 @@ class LlamaRunner:
             module_config.append(f"@{self.tornado_sdk}/etc/exportLists/{BACKEND_EXPORTS_FILE[backend]}")
             add_modules.append(BACKEND_MODULE_NAME[backend])
         module_config.extend(["--add-modules", ",".join(add_modules)])
+
+        # JDK 22-26 still ship jdk.internal.vm.ci, but its jdk.vm.ci.* interfaces have drifted
+        # from the JDK-21 shape the reflection providers were compiled against (e.g.
+        # jdk.vm.ci.code.Architecture's constructor). Overlay the frozen JDK-21 classes so the
+        # loaded jdk.vm.ci.* matches what was compiled -- mirrors tornado.py's jvmci_patched
+        # branch, which `tornado --printJavaFlags` applies but this script builds its command
+        # independently of, so it has to be replicated here too.
+        if self.java_version is not None and 22 <= self.java_version <= 26:
+            module_config.extend(
+                [
+                    "-Djdk.internal.vm.ci.enabled=true",
+                    "--patch-module",
+                    f"jdk.internal.vm.ci={self.tornado_sdk}/share/java/jvmci/jvmci-21.0.2.jar",
+                ]
+            )
 
         if getattr(args, "server", False):
             main_class = "org.beehive.gpullama3.server.OpenAIServer"

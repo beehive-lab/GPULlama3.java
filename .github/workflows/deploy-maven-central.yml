@@ -31,8 +31,17 @@ jobs:
         jdk:
           - name: jdk21
             java_version: 21.0.2-open
-          - name: jdk25
+          - name: jdk22plus
             java_version: 25.0.2-open
+          # A single jdk22plus matrix entry now covers JDK 22 through 27+: the pom's
+          # jdk22plus profile (which replaced the former separate jdk25/jdk26/jdk27
+          # profiles) publishes one gpu-llama3:*-jdk22plus artifact that every JDK in
+          # that range resolves, mirroring TornadoVM's own consolidated jdk22plus SDK.
+          # Building it on 25.0.2-open is just this job's pick of JDK within the range,
+          # not a jdk25-specific artifact - no separate jdk26/jdk27 entries are needed.
+          # TornadoVM has not yet published GA 5.2.1-jdk22plus to Maven Central (only
+          # the "-dev" line exists today), so this entry will fail dependency resolution
+          # until that GA release lands - same caveat the old jdk26/jdk27 note carried.
 
     steps:
       - name: Checkout code

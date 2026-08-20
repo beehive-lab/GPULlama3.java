@@ -39,10 +39,17 @@
         <properties>
             <!-- CI-friendly version: resolved by flatten-maven-plugin at build time -->
             <revision>1.0.0</revision>
-            <tornadovm.base.version>5.0.0</tornadovm.base.version>
+            <tornadovm.base.version>5.2.1</tornadovm.base.version>
             <jdk.version.suffix>-jdk21</jdk.version.suffix>
             <!-- CUDA backend is only available after 5.0.0 TornadoVM version -->
             <tornadovm.version>${tornadovm.base.version}${jdk.version.suffix}</tornadovm.version>
+            <!-- Composed into every jdk21/25/26/27 profile's tornadovm.version below. Defaults
+                 to "-dev" so day-to-day builds track a locally-built TornadoVM checkout at
+                 whatever tag tornadovm.base.version currently points at (bump that property
+                 alone to move to a newer TornadoVM tag). Cleared to empty in the release
+                 profile so published (Maven Central) POMs always depend on the plain GA
+                 coordinate instead of an unresolvable "-dev" one; see that profile. -->
+            <tornadovm.dev.suffix>-dev</tornadovm.dev.suffix>
             <!-- Compiler defaults (overridden by JDK profiles below) -->
             <maven.compiler.source>25</maven.compiler.source>
             <maven.compiler.target>25</maven.compiler.target>
@@ -138,17 +145,21 @@
             <!-- ─── JDK 21 ───────────────────────────────────────────────────────────
                  Auto-activates for JDK 21.x builds.
                  Publishes: gpu-llama3:${revision}  (no suffix)
-                 TornadoVM: ${tornadovm.base.version}
+                 TornadoVM: ${tornadovm.base.version}${jdk.version.suffix}${tornadovm.dev.suffix} -
+                 tracks whatever TornadoVM tag tornadovm.base.version is currently pointed at
+                 (top-level properties): "-dev" for day-to-day testing against a locally-built
+                 TornadoVM checkout, stripped automatically in the release profile so a real
+                 release always resolves the plain GA coordinate instead.
                  Adds add-modules jdk.incubator.vector (still incubating in JDK21)
             ─────────────────────────────────────────────────────────────────────── -->
             <profile>
                 <id>jdk21</id>
-                <activation><jdk>[21,25)</jdk></activation>
+                <activation><jdk>[21,22)</jdk></activation>
                 <properties>
                     <maven.compiler.source>21</maven.compiler.source>
                     <maven.compiler.target>21</maven.compiler.target>
                     <jdk.version.suffix>-jdk21</jdk.version.suffix>
-                    <tornadovm.version>${tornadovm.base.version}${jdk.version.suffix}</tornadovm.version>
+                    <tornadovm.version>${tornadovm.base.version}${jdk.version.suffix}${tornadovm.dev.suffix}</tornadovm.version>
                 </properties>
                 <build>
                     <plugins>
@@ -167,30 +178,38 @@
                 </build>
             </profile>
 
-            <!-- ─── JDK 25 ───────────────────────────────────────────────────────────
-                 Auto-activates for JDK 25.0.2+ builds (minimum required version).
-                 Publishes: gpu-llama3:${revision}-jdk25
-                 TornadoVM: ${tornadovm.base.version}-jdk25
-                 Vector API is still incubating in JDK 25 (JEP 508 — 10th Incubator);
-                 add-modules jdk.incubator.vector is required for compilation.
+            <!-- ─── JDK 22+ ──────────────────────────────────────────────────────────
+                 Auto-activates for JDK 22 and newer. TornadoVM consolidated its old
+                 per-version jdk25/jdk26/jdk27 dev profiles into one "jdk22plus" SDK
+                 build that runs unchanged on 22, 23, ..., 27 and later, so one
+                 profile here (replacing the former jdk25/jdk26/jdk27 profiles) covers
+                 the whole open-ended range too.
+                 Publishes: gpu-llama3:${revision}-jdk22plus
+                 TornadoVM: ${tornadovm.base.version}-jdk22plus${tornadovm.dev.suffix}
+                 No enable-preview: FFM (the only preview API this project's JDK21 build
+                 needs it for) is final since JDK 22, and the former jdk27 profile already
+                 proved sources compile clean at release 27 with just add-modules
+                 jdk.incubator.vector - so the base build's enable-preview arg is dropped
+                 via combine.self="override", same as that profile did.
+                 Vector API remains incubating through at least JDK 27 (JEP 508); add-
+                 modules jdk.incubator.vector is required for compilation across the range.
             ─────────────────────────────────────────────────────────────────────── -->
             <profile>
-                <id>jdk25</id>
-                <activation><jdk>[25.0.2,)</jdk></activation>
+                <id>jdk22plus</id>
+                <activation><jdk>[22,)</jdk></activation>
                 <properties>
-                    <maven.compiler.source>25</maven.compiler.source>
-                    <maven.compiler.target>25</maven.compiler.target>
-                    <jdk.version.suffix>-jdk25</jdk.version.suffix>
-                    <tornadovm.version>${tornadovm.base.version}${jdk.version.suffix}</tornadovm.version>
+                    <maven.compiler.source>22</maven.compiler.source>
+                    <maven.compiler.target>22</maven.compiler.target>
+                    <jdk.version.suffix>-jdk22plus</jdk.version.suffix>
+                    <tornadovm.version>${tornadovm.base.version}${jdk.version.suffix}${tornadovm.dev.suffix}</tornadovm.version>
                 </properties>
                 <build>
                     <plugins>
                         <plugin>
                             <groupId>org.apache.maven.plugins</groupId>
                             <artifactId>maven-compiler-plugin</artifactId>
-                            <configuration>
-                                <!-- Appended to enable-preview already in main build -->
-                                <compilerArgs combine.children="append">
+                            <configuration combine.self="override">
+                                <compilerArgs>
                                     <arg>--add-modules</arg>
                                     <arg>jdk.incubator.vector</arg>
                                 </compilerArgs>
@@ -205,6 +224,15 @@
                 <properties>
                     <maven.javadoc.skip>false</maven.javadoc.skip>
                     <gpg.skip>false</gpg.skip>
+                    <!-- Overrides the "-dev" default (see top-level properties) for all four
+                         JDK profiles, so a real release never publishes a POM depending on an
+                         unpublished tornado-api/tornado-runtime:*-dev coordinate - it always
+                         resolves plain ${tornadovm.base.version}${jdk.version.suffix} instead,
+                         i.e. whatever GA TornadoVM tag tornadovm.base.version currently names.
+                         Deploying jdk26/jdk27 additionally requires adding matrix entries to
+                         deploy-maven-central.yml, and a GA TornadoVM release actually published
+                         for those JDKs - see that workflow. -->
+                    <tornadovm.dev.suffix></tornadovm.dev.suffix>
                 </properties>
                 <build>
                     <plugins>
