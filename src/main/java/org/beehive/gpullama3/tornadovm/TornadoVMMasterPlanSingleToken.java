@@ -95,9 +95,18 @@ public class TornadoVMMasterPlanSingleToken implements TornadoVMMasterPlan {
     }
     // @formatter:on
 
+    /**
+     * Puts the read-only weights on the device. With CUDA graphs enabled the pass is also the
+     * capture, so it still runs every graph; otherwise it is a plain copy-in and no kernel runs.
+     */
     // @formatter:off
     @Override
     public void forceCopyInReadOnlyData() {
+        if (!CUDA_GRAPHS) {
+            executionPlan.transferToDevice();
+            return;
+        }
+
         state.wrapX.clear();
         state.positionHolder.init(0);
 
