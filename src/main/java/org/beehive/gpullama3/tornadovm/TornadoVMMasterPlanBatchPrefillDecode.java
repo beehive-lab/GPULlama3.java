@@ -78,21 +78,28 @@ public class TornadoVMMasterPlanBatchPrefillDecode implements TornadoVMMasterPla
 
     // ── Initialisation ────────────────────────────────────────────────────────
 
+    /**
+     * Puts the read-only weights on the device. With CUDA graphs enabled the pass is also the
+     * capture, so it still runs every graph; otherwise it is a plain copy-in and no kernel runs.
+     */
     // @formatter:off
     @Override
     public void forceCopyInReadOnlyData() {
+        if (!CUDA_GRAPHS) {
+            executionPlan.transferToDevice();
+            return;
+        }
+
         state.wrapX.clear();
         state.positionHolder.init(0);
         state.wrapXBatch.clear();
         state.batchStartPosHolder.init(0);
 
         for (int i = 0; i <= taskGraphLayout.logitsIdx(); i++) {
-            var g = executionPlan.withGraph(i)
-                                 .withGridScheduler(batchPrefillDecodeForwardPlan.getGridScheduler());
-            if (CUDA_GRAPHS) {
-                g.withCUDAGraph();
-            }
-            g.execute();
+            executionPlan.withGraph(i)
+                         .withGridScheduler(batchPrefillDecodeForwardPlan.getGridScheduler())
+                         .withCUDAGraph()
+                         .execute();
         }
     }
     // @formatter:on
