@@ -1,7 +1,10 @@
 package org.beehive.gpullama3.model.granite;
 
-import org.beehive.gpullama3.inference.InferenceCore;
-import org.beehive.gpullama3.inference.InferenceEngine;
+import java.util.List;
+import java.util.Set;
+import java.util.function.IntConsumer;
+import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
+import org.beehive.gpullama3.inference.TokenGenerationLoop;
 import org.beehive.gpullama3.inference.sampler.Sampler;
 import org.beehive.gpullama3.inference.state.GraniteState;
 import org.beehive.gpullama3.inference.state.State;
@@ -11,18 +14,17 @@ import org.beehive.gpullama3.model.ModelType;
 import org.beehive.gpullama3.model.format.ChatFormat;
 import org.beehive.gpullama3.tokenizer.GraniteTokenizer;
 import org.beehive.gpullama3.tokenizer.Tokenizer;
-import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlan;
-
-import java.util.List;
-import java.util.Set;
-import java.util.function.IntConsumer;
 
 public class Granite extends AbstractModel {
 
     private final GraniteConfiguration configuration;
 
-    public Granite(GraniteConfiguration configuration, Tokenizer tokenizer, Weights weights, ChatFormat chatFormat) {
-        super(tokenizer, weights, chatFormat, null);
+    public Granite(
+            GraniteConfiguration configuration,
+            Tokenizer tokenizer,
+            Weights weights,
+            ChatFormat chatFormat) {
+        super(tokenizer, weights, chatFormat);
         this.configuration = configuration;
     }
 
@@ -59,25 +61,49 @@ public class Granite extends AbstractModel {
     }
 
     @Override
-    public void forward(State state, int token, int position) {
-        // Uses Granite-specific forward with scaling factors
-        InferenceCore.forwardGranite(this, state, token, position);
-    }
-
-    @Override
-    public List<Integer> generateTokens(State state, int startPosition, List<Integer> promptTokens,
-            Set<Integer> stopTokens, int maxTokens, Sampler sampler, boolean echo,
+    public List<Integer> generateTokens(
+            State state,
+            int startPosition,
+            List<Integer> promptTokens,
+            Set<Integer> stopTokens,
+            int maxTokens,
+            Sampler sampler,
+            boolean echo,
             IntConsumer onTokenGenerated) {
-        return InferenceEngine.generateTokensGranite(this, state, startPosition, promptTokens,
-                stopTokens, maxTokens, sampler, echo, onTokenGenerated);
+        return TokenGenerationLoop.generateTokensGranite(
+                this,
+                state,
+                startPosition,
+                promptTokens,
+                stopTokens,
+                maxTokens,
+                sampler,
+                echo,
+                onTokenGenerated);
     }
 
     @Override
-    public List<Integer> generateTokensGPU(State state, int startPosition, List<Integer> promptTokens,
-            Set<Integer> stopTokens, int maxTokens, Sampler sampler, boolean echo,
-            IntConsumer onTokenGenerated, TornadoVMMasterPlan tornadoVMPlan) {
-        return InferenceEngine.generateTokensGPUGranite(this, state, startPosition, promptTokens,
-                stopTokens, maxTokens, sampler, echo, onTokenGenerated, tornadoVMPlan);
+    public List<Integer> generateTokensGPU(
+            State state,
+            int startPosition,
+            List<Integer> promptTokens,
+            Set<Integer> stopTokens,
+            int maxTokens,
+            Sampler sampler,
+            boolean echo,
+            IntConsumer onTokenGenerated,
+            TornadoVMMasterPlan tornadoVMPlan) {
+        return TokenGenerationLoop.generateTokensGPUGranite(
+                this,
+                state,
+                startPosition,
+                promptTokens,
+                stopTokens,
+                maxTokens,
+                sampler,
+                echo,
+                onTokenGenerated,
+                tornadoVMPlan);
     }
 
     // Convenience accessors for scaling factors (used in forward pass)
@@ -95,5 +121,21 @@ public class Granite extends AbstractModel {
 
     public float logitScale() {
         return configuration.logitScale();
+    }
+
+    @Override
+    public State createNewState(org.beehive.gpullama3.runtime.kv.KvLease lease) {
+        if (lease == null || lease.storage() == null) {
+            return createNewState();
+        }
+        State state = new GraniteState(configuration(), -1, lease);
+        state.latestToken = 0;
+        return state;
+    }
+
+    /** Its own identity, stated rather than derived. */
+    @Override
+    public org.beehive.gpullama3.runtime.model.ArchitectureId architectureId() {
+        return org.beehive.gpullama3.runtime.model.ArchitectureId.of("granite");
     }
 }

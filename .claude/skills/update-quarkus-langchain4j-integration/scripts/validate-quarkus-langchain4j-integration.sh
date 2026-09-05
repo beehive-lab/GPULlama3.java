@@ -42,14 +42,18 @@ if ((maven_status != 0)); then
     exit "$maven_status"
 fi
 
-summary_line=$(grep -E '^Tests run: [0-9]+, Failures: [0-9]+, Errors: [0-9]+, Skipped: [0-9]+$' "$log_file" | tail -1 || true)
+# Surefire prints its per-module summary through Maven's logger, so the line carries an
+# "[INFO] " prefix. Anchoring on a bare "Tests run:" found nothing and reported a passing
+# run as unvalidated.
+summary_pattern='^(\[INFO\] )?Tests run: [0-9]+, Failures: [0-9]+, Errors: [0-9]+, Skipped: [0-9]+$'
+summary_line=$(grep -E "$summary_pattern" "$log_file" | tail -1 || true)
 
 if [[ -z $summary_line ]]; then
     echo "Surefire summary was not found; refusing to treat the run as successful" >&2
     exit 1
 fi
 
-run=$(sed -n 's/^Tests run: \([0-9]*\).*/\1/p' <<<"$summary_line")
+run=$(sed -n 's/.*Tests run: \([0-9]*\).*/\1/p' <<<"$summary_line")
 failures=$(sed -n 's/.*Failures: \([0-9]*\).*/\1/p' <<<"$summary_line")
 errors=$(sed -n 's/.*Errors: \([0-9]*\).*/\1/p' <<<"$summary_line")
 

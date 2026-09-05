@@ -1,35 +1,39 @@
 package org.beehive.gpullama3.inference.state;
 
-import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
-import org.beehive.gpullama3.tensor.standard.FloatTensor;
+import java.util.stream.Stream;
+import org.beehive.gpullama3.backend.tornado.workspace.TornadoWorkspaces;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.phi3.Phi3Configuration;
-import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
-import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
-import uk.ac.manchester.tornado.api.types.arrays.IntArray;
-
-import java.util.stream.Stream;
+import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
+import org.beehive.gpullama3.tensor.standard.FloatTensor;
 
 public class Phi3State extends State {
     // Phi3-specific fields for QKV processing
-    public FloatTensor qkv; // Combined QKV buffer: op_size = dim + 2 * (n_kv_heads * head_dim)
+    public final FloatTensor
+            qkv; // Combined QKV buffer: op_size = dim + 2 * (n_kv_heads * head_dim)
 
     // Phi3-specific fields for FFN gate/up processing
-    public FloatTensor hbG; // Gate states buffer
-    public FloatTensor hbU; // Up states buffer
-
-    public FloatArray wrapQkv; // TornadoVM wrapper for QKV buffer
-    public FloatArray wrapHbG; // TornadoVM wrapper for gate states
-    public FloatArray wrapHbU; // TornadoVM wrapper for up states
+    public final FloatTensor hbG; // Gate states buffer
+    public final FloatTensor hbU; // Up states buffer
 
     public Phi3State(Configuration config, int batchsize) {
-        super(config, batchsize);
+        this(config, batchsize, null);
+    }
+
+    /**
+     * @param lease the KV lease whose shared storage this state addresses, or {@code null} to
+     *     allocate its own arrays
+     */
+    public Phi3State(
+            Configuration config, int batchsize, org.beehive.gpullama3.runtime.kv.KvLease lease) {
+        super(config, batchsize, lease);
 
         // Initialize Phi3-specific fields
         Phi3Configuration phi3Config = (Phi3Configuration) config;
 
         // QKV buffer size: op_size = num_heads * head_dim + 2 * (num_key_value_heads * head_dim)
-        int opSize = phi3Config.dim() + 2 * (phi3Config.numberOfKeyValueHeads() * phi3Config.headSize());
+        int opSize =
+                phi3Config.dim() + 2 * (phi3Config.numberOfKeyValueHeads() * phi3Config.headSize());
         this.qkv = ArrayFloatTensor.allocate(opSize);
 
         // FFN gate and up state buffers
@@ -37,9 +41,9 @@ public class Phi3State extends State {
         this.hbU = ArrayFloatTensor.allocate(phi3Config.hiddenDim());
 
         // TornadoVM wrappers for GPU acceleration
-        this.wrapQkv = new FloatArray(opSize);
-        this.wrapHbG = new FloatArray(phi3Config.hiddenDim());
-        this.wrapHbU = new FloatArray(phi3Config.hiddenDim());
+        this.workspace.wrapQkv = TornadoWorkspaces.floats(opSize);
+        this.workspace.wrapHbG = TornadoWorkspaces.floats(phi3Config.hiddenDim());
+        this.workspace.wrapHbU = TornadoWorkspaces.floats(phi3Config.hiddenDim());
     }
 
     @Override
@@ -76,43 +80,52 @@ public class Phi3State extends State {
         fields.logits = ArrayFloatTensor.allocate(vocabSize);
 
         // Key-value cache with Phi3 dimensions
-        fields.keyCache = Stream.generate(() -> ArrayFloatTensor.allocate(contextLength, kvDim)).limit(nLayers).toArray(FloatTensor[]::new);
-        fields.valueCache = Stream.generate(() -> ArrayFloatTensor.allocate(contextLength, kvDim)).limit(nLayers).toArray(FloatTensor[]::new);
+        fields.keyCache =
+                Stream.generate(() -> ArrayFloatTensor.allocate(contextLength, kvDim))
+                        .limit(nLayers)
+                        .toArray(FloatTensor[]::new);
+        fields.valueCache =
+                Stream.generate(() -> ArrayFloatTensor.allocate(contextLength, kvDim))
+                        .limit(nLayers)
+                        .toArray(FloatTensor[]::new);
 
         // TornadoVM wrapper arrays for GPU acceleration
         switch (config.quantization()) {
-            case "FP16" -> fields.createActivationFP16(config.dim());
-            case "Q8_0" -> fields.createActivationQ8_0(config.dim());
-            default -> throw new UnsupportedOperationException("Unsupported quantization format: " + config.quantization());
+            case "FP16" -> TornadoWorkspaces.activationFP16(workspace, config.dim());
+            case "Q8_0" -> TornadoWorkspaces.activationQ8_0(workspace, config.dim());
+            default ->
+                    throw new UnsupportedOperationException(
+                            "Unsupported quantization format: " + config.quantization());
         }
-        fields.wrapX = new FloatArray(dim);
-        fields.wrapXb = new FloatArray(dim);
-        fields.wrapXFP16 = new HalfFloatArray(dim);
-        fields.wrapXbFP16 = new HalfFloatArray(dim);
-        fields.wrapXb2 = new FloatArray(dim);
-        fields.wrapHb = new FloatArray(2 * hiddenDim);
-        fields.wrapHb2 = new FloatArray(hiddenDim);
-        fields.wrapLogits = new FloatArray(vocabSize);
-        fields.wrapQ = new FloatArray(dim);
-        fields.wrapK = new FloatArray(kvDim);
-        fields.wrapV = new FloatArray(kvDim);
+        workspace.wrapX = TornadoWorkspaces.floats(dim);
+        workspace.wrapXb = TornadoWorkspaces.floats(dim);
+        workspace.wrapXFP16 = TornadoWorkspaces.halfFloats(dim);
+        workspace.wrapXbFP16 = TornadoWorkspaces.halfFloats(dim);
+        workspace.wrapXb2 = TornadoWorkspaces.floats(dim);
+        workspace.wrapHb = TornadoWorkspaces.floats(2 * hiddenDim);
+        workspace.wrapHb2 = TornadoWorkspaces.floats(hiddenDim);
+        workspace.wrapLogits = TornadoWorkspaces.floats(vocabSize);
+        workspace.wrapQ = TornadoWorkspaces.floats(dim);
+        workspace.wrapK = TornadoWorkspaces.floats(kvDim);
+        workspace.wrapV = TornadoWorkspaces.floats(kvDim);
 
         // KV cache wrappers
-        fields.wrapKeyCache = new FloatArray(contextLength * kvDim * nLayers);
-        fields.wrapValueCache = new FloatArray(contextLength * kvDim * nLayers);
-        fields.wrapKeyCache.init(0.f);
-        fields.wrapValueCache.init(0.f);
+        // KV cache: leased from the manager's pool when this state holds a lease, otherwise
+        // allocated here, block-major when paged and contiguous when not.
+        fillKvFields(fields, config, kvDim, false);
 
         // Attention wrapper
-        fields.wrapAtt = new FloatArray(nHeads * contextLength);
+        workspace.wrapAtt = TornadoWorkspaces.floats(nHeads * contextLength);
 
         // Position holder for GPU operations
-        fields.positionHolder = new IntArray(1);
+        // [0] = position, [1] = table-local KV slot.
+        workspace.positionHolder = TornadoWorkspaces.ints(2);
 
         // Temporary arrays for reductions and operations
-        fields.temp = new FloatArray(1 + ((dim + localSize - 1) / localSize));
-        fields.tempFFN = new FloatArray(1 + ((hiddenDim + localSize - 1) / localSize));
-        fields.tempLogits = new FloatArray(1 + ((vocabSize + localSize - 1) / localSize));
+        workspace.temp = TornadoWorkspaces.floats(1 + ((dim + localSize - 1) / localSize));
+        workspace.tempFFN = TornadoWorkspaces.floats(1 + ((hiddenDim + localSize - 1) / localSize));
+        workspace.tempLogits =
+                TornadoWorkspaces.floats(1 + ((vocabSize + localSize - 1) / localSize));
 
         return fields;
     }

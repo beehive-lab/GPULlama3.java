@@ -1,20 +1,18 @@
 package org.beehive.gpullama3.model.format;
 
-import org.beehive.gpullama3.tokenizer.GraniteTokenizer;
-import org.beehive.gpullama3.tokenizer.Tokenizer;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.beehive.gpullama3.tokenizer.GraniteTokenizer;
+import org.beehive.gpullama3.tokenizer.Tokenizer;
 
 /**
  * Chat format for Granite models.
  *
- * Granite uses a different chat template than Llama:
- * <|start_of_role|>system<|end_of_role|>...<|end_of_text|>
- * <|start_of_role|>user<|end_of_role|>...<|end_of_text|>
- * <|start_of_role|>assistant<|end_of_role|>...
+ * <p>Granite uses a different chat template than Llama:
+ * <|start_of_role|>system<|end_of_role|>.<|end_of_text|>
+ * <|start_of_role|>user<|end_of_role|>.<|end_of_text|> <|start_of_role|>assistant<|end_of_role|>.
  */
 public class GraniteChatFormat implements ChatFormat {
 
@@ -43,7 +41,7 @@ public class GraniteChatFormat implements ChatFormat {
 
     @Override
     public int getBeginOfText() {
-        return endOfText;  // For Granite, token 0 is both BOS and EOS
+        return endOfText; // For Granite, token 0 is both BOS and EOS
     }
 
     @Override

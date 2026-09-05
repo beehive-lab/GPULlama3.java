@@ -1,61 +1,63 @@
 package org.beehive.gpullama3.inference.state;
 
-import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
-import org.beehive.gpullama3.tensor.standard.FloatTensor;
+import org.beehive.gpullama3.backend.tornado.workspace.TornadoWorkspaces;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.gemma4.Gemma4Configuration;
-import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
-import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
-import uk.ac.manchester.tornado.api.types.arrays.IntArray;
+import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
+import org.beehive.gpullama3.tensor.standard.FloatTensor;
 
 /**
  * Inference state for Gemma 4 models.
  *
- * <p>In addition to the common buffers, Gemma 4 needs scratch space for its per-layer
- * embedding (PLE) mechanism. Buffers that vary in size across layers (Q/K/V, attention
- * output, FFN hidden state) are sized to the maximum across all layers. The KV cache is
- * allocated per "physical" layer: layers that reuse an earlier layer's KV cache (Gemma4's
- * "shared KV layers" feature) simply alias that layer's cache arrays.</p>
+ * <p>In addition to the common buffers, Gemma 4 needs scratch space for its per-layer embedding
+ * (PLE) mechanism. Buffers that vary in size across layers (Q/K/V, attention output, FFN hidden
+ * state) are sized to the maximum across all layers. The KV cache is allocated per "physical"
+ * layer: layers that reuse an earlier layer's KV cache (Gemma4's "shared KV layers" feature) simply
+ * alias that layer's cache arrays.
  *
- * <p>The TornadoVM (GPU) wrapper buffers mirror the same scheme: {@link #wrapKeyCache}/
- * {@link #wrapValueCache} are laid out back-to-back only for layers that own a KV cache
- * (see {@link #cacheLayerBaseOffset}), and the per-layer-embedding scratch buffers are
- * exposed as flat {@link FloatArray}s for transfer to the GPU.</p>
+ * <p>The TornadoVM (GPU) wrapper buffers mirror the same scheme: {@link #wrapKeyCache}/ {@link
+ * #wrapValueCache} are laid out back-to-back only for layers that own a KV cache (see {@link
+ * #cacheLayerBaseOffset}), and the per-layer-embedding scratch buffers are exposed as flat {@code
+ * FloatArray}s for transfer to the GPU.
  */
 public final class Gemma4State extends State {
 
     /** Per-layer projected input embeddings (PLE), laid out as [layer][embeddingLengthPerLayer]. */
     public final FloatTensor perLayerInputs;
-    /** Scratch buffer for the per-layer model projection output, same layout as {@link #perLayerInputs}. */
+
+    /**
+     * Scratch buffer for the per-layer model projection output, same layout as {@link
+     * #perLayerInputs}.
+     */
     public final FloatTensor perLayerProjScratch;
+
     /** Scratch buffer for a single layer's gated per-layer-embedding contribution. */
     public final FloatTensor perLayerGate;
+
     /** Scratch buffer for a single layer's projected per-layer-embedding output (dim-sized). */
     public final FloatTensor perLayerOut;
 
     /**
-     * For each layer {@code l}, the base element offset of its KV-cache slot inside
-     * {@link #wrapKeyCache}/{@link #wrapValueCache} (GPU path) and {@link #keyCache}/{@link #valueCache}
-     * (CPU path, where it doubles as the "physical" layer index used for cache aliasing). Layers that
-     * reuse an earlier layer's cache share that layer's offset, so attention kernels can address the
-     * (possibly shared) cache uniformly via {@code cacheLayerBaseOffset[l]} without branching on reuse.
+     * For each layer {@code l}, the base element offset of its KV-cache slot inside {@link
+     * #wrapKeyCache}/{@link #wrapValueCache} (GPU path) and {@link #keyCache}/{@link #valueCache}
+     * (CPU path, where it doubles as the "physical" layer index used for cache aliasing). Layers
+     * that reuse an earlier layer's cache share that layer's offset, so attention kernels can
+     * address the (possibly shared) cache uniformly via {@code cacheLayerBaseOffset[l]} without
+     * branching on reuse.
      */
     public final int[] cacheLayerBaseOffset;
 
-    // GPU (TornadoVM) per-layer-embedding scratch buffers; mirror perLayerInputs/perLayerProjScratch/perLayerGate/perLayerOut.
-    public final FloatArray wrapPerLayerInputs;
-    public final FloatArray wrapPerLayerProjScratch;
-    public final FloatArray wrapPerLayerGate;
-    public final FloatArray wrapPerLayerOut;
-    /** Holds the current token's per-layer-token-embedding row (gathered on the host each step, then transferred to the GPU). */
-    public final FloatArray wrapPerLayerTokenEmbedRow;
+    // GPU (TornadoVM) per-layer-embedding scratch buffers; mirror
+    // perLayerInputs/perLayerProjScratch/perLayerGate/perLayerOut.
+    /**
+     * Holds the current token's per-layer-token-embedding row (gathered on the host each step, then
+     * transferred to the GPU).
+     */
 
-    // Extra RMSNorm reduction scratch buffers (GPU path): Gemma4's "sandwich norm" pattern needs five
-    // independent reductions per layer (attn-norm uses the inherited `temp`, FFN-norm `tempFFN`); each
-    // of the others gets its own buffer so consecutive reduce/apply pairs never alias.
-    public final FloatArray tempPostAttn;
-    public final FloatArray tempPostFfn;
-    public final FloatArray tempPostPle;
+    // Extra RMSNorm reduction scratch buffers (GPU path): Gemma4's "sandwich norm" pattern needs
+    // five independent reductions per layer (attn-norm uses the inherited `temp`, FFN-norm
+    // `tempFFN`); each of the others gets its own buffer so consecutive reduce/apply pairs never
+    // alias.
 
     public Gemma4State(Configuration config, int batchsize) {
         super(config, batchsize);
@@ -69,23 +71,25 @@ public final class Gemma4State extends State {
 
         this.cacheLayerBaseOffset = computeCacheLayerBaseOffsets(gemma4config);
 
-        this.wrapPerLayerInputs = new FloatArray(perLayerTotal);
-        this.wrapPerLayerProjScratch = new FloatArray(perLayerTotal);
-        this.wrapPerLayerGate = new FloatArray(gemma4config.embeddingLengthPerLayer());
-        this.wrapPerLayerOut = new FloatArray(gemma4config.dim());
-        this.wrapPerLayerTokenEmbedRow = new FloatArray(perLayerTotal);
+        this.workspace.wrapPerLayerInputs = TornadoWorkspaces.floats(perLayerTotal);
+        this.workspace.wrapPerLayerProjScratch = TornadoWorkspaces.floats(perLayerTotal);
+        this.workspace.wrapPerLayerGate =
+                TornadoWorkspaces.floats(gemma4config.embeddingLengthPerLayer());
+        this.workspace.wrapPerLayerOut = TornadoWorkspaces.floats(gemma4config.dim());
+        this.workspace.wrapPerLayerTokenEmbedRow = TornadoWorkspaces.floats(perLayerTotal);
 
         int tempSize = 1 + ((gemma4config.dim() + localSize - 1) / localSize);
-        this.tempPostAttn = new FloatArray(tempSize);
-        this.tempPostFfn = new FloatArray(tempSize);
-        this.tempPostPle = new FloatArray(tempSize);
+        this.workspace.tempPostAttn = TornadoWorkspaces.floats(tempSize);
+        this.workspace.tempPostFfn = TornadoWorkspaces.floats(tempSize);
+        this.workspace.tempPostPle = TornadoWorkspaces.floats(tempSize);
     }
 
     /**
      * Computes, for each layer, the base element offset of its KV-cache slot in a flat buffer that
-     * back-to-back concatenates only the caches of layers that own one ({@link Gemma4Configuration#hasOwnKv}).
-     * Reusing layers inherit their source layer's offset (and -- by construction -- its head dimension,
-     * since {@link Gemma4Configuration#kvReuseLayer} only ever points to a layer with the same {@code isSwa}-ness).
+     * back-to-back concatenates only the caches of layers that own one ({@link
+     * Gemma4Configuration#hasOwnKv}). Reusing layers inherit their source layer's offset (and -- by
+     * construction -- its head dimension, since {@link Gemma4Configuration#kvReuseLayer} only ever
+     * points to a layer with the same {@code isSwa}-ness).
      */
     private static int[] computeCacheLayerBaseOffsets(Gemma4Configuration config) {
         int nHeadKv = config.numberOfKeyValueHeads();
@@ -109,7 +113,11 @@ public final class Gemma4State extends State {
         int total = 0;
         for (int l = 0; l < config.numberOfLayers(); l++) {
             if (config.hasOwnKv(l)) {
-                total = Math.max(total, cacheLayerBaseOffset[l] + config.contextLength() * (nHeadKv * config.headDim(l)));
+                total =
+                        Math.max(
+                                total,
+                                cacheLayerBaseOffset[l]
+                                        + config.contextLength() * (nHeadKv * config.headDim(l)));
             }
         }
         return total;
@@ -160,35 +168,37 @@ public final class Gemma4State extends State {
         fields.valueCache = valueCache;
 
         switch (config.quantization()) {
-            case "FP16" -> fields.createActivationFP16(dim);
-            case "Q8_0" -> fields.createActivationQ8_0(dim);
-            default -> throw new UnsupportedOperationException("Unsupported quantization format: " + config.quantization());
+            case "FP16" -> TornadoWorkspaces.activationFP16(workspace, dim);
+            case "Q8_0" -> TornadoWorkspaces.activationQ8_0(workspace, dim);
+            default ->
+                    throw new UnsupportedOperationException(
+                            "Unsupported quantization format: " + config.quantization());
         }
 
-        fields.wrapX = new FloatArray(dim);
-        fields.wrapXb = new FloatArray(Math.max(dim, qSize));
-        fields.wrapXbFP16 = new HalfFloatArray(Math.max(dim, qSize));
-        fields.wrapXb2 = new FloatArray(dim);
-        fields.wrapHb = new FloatArray(maxFFN);
-        fields.wrapHb2 = new FloatArray(maxFFN);
-        fields.wrapLogits = new FloatArray(config.vocabularySize());
-        fields.wrapQ = new FloatArray(qSize);
-        fields.wrapK = new FloatArray(kvSize);
-        fields.wrapV = new FloatArray(kvSize);
+        workspace.wrapX = TornadoWorkspaces.floats(dim);
+        workspace.wrapXb = TornadoWorkspaces.floats(Math.max(dim, qSize));
+        workspace.wrapXbFP16 = TornadoWorkspaces.halfFloats(Math.max(dim, qSize));
+        workspace.wrapXb2 = TornadoWorkspaces.floats(dim);
+        workspace.wrapHb = TornadoWorkspaces.floats(maxFFN);
+        workspace.wrapHb2 = TornadoWorkspaces.floats(maxFFN);
+        workspace.wrapLogits = TornadoWorkspaces.floats(config.vocabularySize());
+        workspace.wrapQ = TornadoWorkspaces.floats(qSize);
+        workspace.wrapK = TornadoWorkspaces.floats(kvSize);
+        workspace.wrapV = TornadoWorkspaces.floats(kvSize);
 
-        // Flat GPU KV cache: back-to-back slots only for layers that own a cache (see cacheLayerBaseOffset).
+        // Flat GPU KV cache: back-to-back slots only for layers that own a cache (see
+        // cacheLayerBaseOffset).
         int[] gpuCacheLayerBaseOffset = computeCacheLayerBaseOffsets(config);
         int totalCacheElements = Math.max(1, totalCacheElements(config, gpuCacheLayerBaseOffset));
-        fields.wrapKeyCache = new FloatArray(totalCacheElements);
-        fields.wrapValueCache = new FloatArray(totalCacheElements);
-        fields.wrapValueCache.init(0.f);
-        fields.wrapKeyCache.init(0.f);
-        fields.wrapAtt = new FloatArray(nHead * config.contextLength());
-        fields.positionHolder = new IntArray(1);
+        workspace.wrapKeyCache = TornadoWorkspaces.floats(totalCacheElements);
+        workspace.wrapValueCache = TornadoWorkspaces.floats(totalCacheElements);
+        TornadoWorkspaces.zeroKeyValue(workspace);
+        workspace.wrapAtt = TornadoWorkspaces.floats(nHead * config.contextLength());
+        workspace.positionHolder = TornadoWorkspaces.ints(1);
 
-        fields.temp = new FloatArray(1 + ((dim + localSize - 1) / localSize));
-        fields.tempFFN = new FloatArray(1 + ((dim + localSize - 1) / localSize));
-        fields.tempLogits = new FloatArray(1 + ((dim + localSize - 1) / localSize));
+        workspace.temp = TornadoWorkspaces.floats(1 + ((dim + localSize - 1) / localSize));
+        workspace.tempFFN = TornadoWorkspaces.floats(1 + ((dim + localSize - 1) / localSize));
+        workspace.tempLogits = TornadoWorkspaces.floats(1 + ((dim + localSize - 1) / localSize));
 
         return fields;
     }

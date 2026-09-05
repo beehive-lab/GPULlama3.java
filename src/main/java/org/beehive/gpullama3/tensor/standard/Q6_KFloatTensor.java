@@ -1,20 +1,20 @@
 package org.beehive.gpullama3.tensor.standard;
 
-import org.beehive.gpullama3.tensor.GGMLType;
+import java.lang.foreign.MemorySegment;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorSpecies;
-
-import java.lang.foreign.MemorySegment;
+import org.beehive.gpullama3.format.GGMLType;
 
 /**
  * {@link FloatTensor} quantized in the {@link GGMLType#Q6_K} format.
  *
  * <p>Q6_K uses super-blocks of 256 elements, each containing:
+ *
  * <ul>
- *   <li>128 bytes: ql (lower 4 bits of 6-bit quants)</li>
- *   <li>64 bytes: qh (upper 2 bits of 6-bit quants)</li>
- *   <li>16 bytes: scales (signed 8-bit per 16-element sub-block)</li>
- *   <li>2 bytes: d (super-block scale, fp16)</li>
+ *   <li>128 bytes: ql (lower 4 bits of 6-bit quants)
+ *   <li>64 bytes: qh (upper 2 bits of 6-bit quants)
+ *   <li>16 bytes: scales (signed 8-bit per 16-element sub-block)
+ *   <li>2 bytes: d (super-block scale, fp16)
  * </ul>
  */
 public final class Q6_KFloatTensor extends FloatTensor {
@@ -23,10 +23,10 @@ public final class Q6_KFloatTensor extends FloatTensor {
     private static final int BLOCK_SIZE = GGMLType.Q6_K.getTypeSize(); // 210
 
     // Offsets within a block
-    private static final int QL_OFFSET = 0;        // 128 bytes
-    private static final int QH_OFFSET = 128;      // 64 bytes
-    private static final int SCALES_OFFSET = 192;   // 16 bytes
-    private static final int D_OFFSET = 208;        // 2 bytes
+    private static final int QL_OFFSET = 0; // 128 bytes
+    private static final int QH_OFFSET = 128; // 64 bytes
+    private static final int SCALES_OFFSET = 192; // 16 bytes
+    private static final int D_OFFSET = 208; // 2 bytes
 
     final int size;
     final MemorySegment memorySegment;
@@ -71,12 +71,12 @@ public final class Q6_KFloatTensor extends FloatTensor {
         float d = Float.float16ToFloat(readShort(memorySegment, blockOffset + D_OFFSET));
 
         // The block is split into two halves of 128 elements each
-        int halfIndex = withinBlock / 128;   // 0 or 1
-        int posInHalf = withinBlock % 128;   // 0..127
+        int halfIndex = withinBlock / 128; // 0 or 1
+        int posInHalf = withinBlock % 128; // 0..127
 
         // Within each half, there are 4 groups of 32 elements
-        int groupInHalf = posInHalf / 32;    // 0..3
-        int posInGroup = posInHalf % 32;     // 0..31
+        int groupInHalf = posInHalf / 32; // 0..3
+        int posInGroup = posInHalf % 32; // 0..31
 
         // ql/qh pointers advance by 64/32 per half
         long qlBase = blockOffset + QL_OFFSET + halfIndex * 64;

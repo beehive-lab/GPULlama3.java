@@ -1,129 +1,145 @@
 ---
 name: build-n-run-engine
-description: Build GPULlama3.java from source with Maven and run. Use when the compiled jar/classes are missing or stale, or after pulling new changes.
+description: Build GPULlama3.java with Maven and run it on an accelerator. Use when target/ is missing or stale, after pulling changes, or when switching JDK line or backend.
 license: Apache-2.0
 metadata:
   author: TornadoVM Team
 ---
 
-# Build GPULlama3.java
+# Build and run GPULlama3.java
 
-Build GPULlama3.java (this repo) with Maven, skipping tests for speed.
+## When to use
 
-## When to Use
+| Situation | Use this skill? |
+| --- | --- |
+| `target/` is missing, or older than the sources | yes |
+| You just switched JDK line or TornadoVM SDK | yes — always `clean` |
+| You only need to run an already-built jar | no |
+| `TORNADOVM_HOME` is unset or wrong | no — run `build-tornado` first |
 
-| Scenario                                                          | Use This Skill? |
-|--------------------------------------------------------------------|-----------------|
-| `target/classes` missing or older than latest source/pom changes  | Yes |
-| Just pulled/checked out new code and need it compiled              | Yes |
-| Only running an already-built jar, no source changes               | No |
+## Environment
 
-## Prerequisites
+Two JDK lines are supported and they are not interchangeable. The build refuses anything
+else at `validate`, naming both.
 
-- `JAVA_HOME` set to JDK 21 or 25 (`java -version`)
-- `TORNADOVM_HOME` set and `tornado --devices` succeeds — if not, run the `build-tornado` skill first
-- `~/TornadoVM/setvars.sh` sourced in **this** shell (env vars don't persist across shells/tool calls)
+| Build JDK | Artifact | TornadoVM SDK it must run against |
+| --- | --- | --- |
+| 21 | `gpu-llama3:<version>-jdk21` | a TornadoVM SDK built with `make BACKEND=...` (the jdk21 target) |
+| 25 | `gpu-llama3:<version>-jdk25` | a TornadoVM SDK built with `make jdk22plus BACKEND=...` |
 
-## Instructions
+There is no flag: the JDK on `JAVA_HOME` selects the profile.
 
-### Step 1: Verify Environment
+Each Bash tool call is a fresh shell, so export the environment in the **same** command as
+the build or run:
 
 ```bash
-echo $JAVA_HOME && echo $TORNADOVM_HOME && tornado --devices
+export JAVA_HOME="$HOME/.sdkman/candidates/java/21.0.2-open"
+export TORNADOVM_HOME=/path/to/tornadovm-<version>-<backend>
+export PATH="$JAVA_HOME/bin:$TORNADOVM_HOME/bin:$PATH"
+java -version && tornado --devices
 ```
 
-If `TORNADOVM_HOME` is unset or `tornado --devices` fails, stop and run the `build-tornado` skill first — do not proceed with a missing TornadoVM SDK.
+Quote every path: some contain spaces.
 
-### Step 2: Locate the Codebase
+## Build
 
-`cd` to the GPULlama3.java repository. If the path is not provided by the user, ask for it. If the path doesn't exist, stop and ask — don't clone or guess.
-
-### Step 3: (Optional) Checkout Branch
-
-A single word/arg to this skill is most likely the intent for **which JDK/backend to build with**, not a branch. Only checkout when a branch is explicitly named:
 ```bash
-git checkout <branch> && git pull
+./mvnw clean install                 # includes the Class A gates
+./mvnw clean install -DskipTests     # artifact only
+make lint                            # Spotless check
+make format                          # Spotless apply
 ```
 
-### Step 4: Build
+Always `clean` when the JDK line changes. A `target/` left by the other line fails partway
+through with `UnsupportedClassVersionError`, and the message names a test class rather than
+the cause.
+
+Accelerator gates are opt-in and need a device, an SDK and the pinned fixtures under
+`$GPULLAMA_TEST_MODELS` or `~/.gpullama3/test-models/`:
 
 ```bash
-mvn clean install -DskipTests
+./mvnw clean verify -Paccel-tests
 ```
 
-For JDK 25 instead of the default JDK 21, ensure `JAVA_HOME` points at JDK 25 before running `make` — the pom auto-activates the `jdk25` profile from the detected JDK version, there is no separate `BACKEND=`-style flag.
-
-### Step 5: Verify
+## Verify the build
 
 ```bash
+./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout   # must end -jdk21 or -jdk25
 ./llama-tornado --help
 ```
 
-If this prints usage instead of erroring, the build succeeded and the launcher is executable.
-
-### Step 6: (Optional) Smoke-test a run
-
-Only if a GGUF model path is available. The backend (OpenCL/PTX/CUDA/Metal) is
-auto-detected from `$TORNADOVM_HOME/etc/tornado.backend` — no backend flag needed:
-```bash
-./llama-tornado --gpu --verbose-init --model <path-to-model.gguf> --prompt "write a matmul in Java" --max-tokens 2048
-```
-
-## MANDATORY: Use --help When Uncertain About Flags
-
-Before using any `llama-tornado` flag you are not 100% certain about, run `--help` first. Do not guess flag names.
-
-## Running GPULlama3.java
-
-`./llama-tornado --model <path> [options]`. The TornadoVM backend is auto-detected from the
-installed SDK (`$TORNADOVM_HOME/etc/tornado.backend`); to run on a different backend, point
-`TORNADOVM_HOME` at an SDK built for it. If the current SDK was built with more than one backend
-(e.g. a `cuda-opencl` build), pass `--opencl`/`--ptx`/`--cuda`/`--metal` to force one of the
-installed ones instead — these error out if the requested backend isn't part of the SDK, and
-are a no-op (redundant but harmless) on a single-backend SDK.
-
-### Core options
-
-| Flag | When to use |
-|------|-------------|
-| `--model <path>` | required, GGUF path |
-| `--prompt "..."` | single-shot generation |
-| `-i` / `--interactive` | chat loop instead of one-shot |
-| `--gpu` | required for GPU acceleration; omit to run CPU-only |
-| `--opencl`/`--ptx`/`--cuda`/`--metal` | rarely needed — only to force a backend when the SDK has more than one installed |
-| `--gpu-memory 15GB`/`20GB` | bump from default 14GB for 3B/8B models — avoids OOM |
-| `--temperature`, `--top-p`, `--seed`, `-n` | standard sampling knobs |
-| `-sp/--system-prompt` | instruct-mode framing |
-
-### Debug/inspect (only when diagnosing a specific issue, not normal runs)
-
-| Flag | When to use                                                                                |
-|------|--------------------------------------------------------------------------------------------|
-| `--verbose-init` | to inspect gguf load, copy-in, jit time                                                    |
-| `--print-bytecodes` / `--print-threads` / `--print-kernel` / `--full-dump` | debugging a specific kernel/codegen problem — pair with `tornado-backend-specialist` agent |
-| `--profiler` + `--profiler-dump-dir <dir>` | collect perf metrics JSON — feeds the `gpullama-benchmarking` skill                        |
-| `--show-command --execute-after-show` | verify the exact java invocation before it runs                                            |
-
-### This branch's feature: prefill/decode split (fp16-kvcache work)
-
-| Flag | When to use |
-|------|-------------|
-| `--with-prefill-decode` | enable batched-prefill / single-token-decode split path |
-| `--batch-prefill-size N` | only meaningful with `--with-prefill-decode`; N>1 batches prefill |
-| `--cuda-graphs` | **PTX-only**; captures/replays CUDA graph to cut launch overhead — use when benchmarking decode-heavy latency on NVIDIA |
-
-### Typical invocations
+## Run
 
 ```bash
-# quick single-shot GPU test (backend auto-detected from TORNADOVM_HOME)
-./llama-tornado --gpu --model model.gguf --prompt "..."
-
-# interactive chat
-./llama-tornado --gpu -i --model model.gguf
-
-# bigger model, needs more GPU mem
-./llama-tornado --gpu --model llama-3.2-8b-instruct-fp16.gguf --gpu-memory 20GB --prompt "..."
-
-# benchmarking prefill/decode split with CUDA graphs (needs a PTX-backend TORNADOVM_HOME)
-./llama-tornado --gpu --model model.gguf --with-prefill-decode --cuda-graphs --profiler --profiler-dump-dir ./perf-results --prompt "..."
+./llama-tornado --gpu --model <model.gguf> --prompt "..." -n 128 --seed 42
 ```
+
+The backend comes from `$TORNADOVM_HOME/etc/tornado.backend`. `--opencl`, `--ptx`,
+`--cuda` and `--metal` force one when the SDK has several; they error out if the SDK does
+not contain the requested backend, and are redundant on a single-backend SDK.
+
+Both launchers take their JVM flags from `$TORNADOVM_HOME/tornado-argfile`. If it is
+missing, run `tornado --devices` once to regenerate it from the template. Never add JVMCI,
+module-path or preview flags by hand — they differ by TornadoVM version, JDK and backend,
+and the SDK is what knows them. `llamaTornado`, the single-file Java launcher, needs JDK 25
+to run itself.
+
+### Prove what actually ran
+
+A process that exits 0 at a plausible throughput has proved nothing. Before reporting a
+result, establish all three:
+
+```bash
+# The launcher parses its own flags, so engine properties go through JAVA_TOOL_OPTIONS,
+# which is what CI does too.
+JAVA_TOOL_OPTIONS="-Dllama.metrics.format=json -Dllama.metrics.output=file -Dllama.metrics.file=$PWD/run.json" \
+  ./llama-tornado --gpu --model <model.gguf> \
+    --prompt "What is the capital of France?" -n 64 --seed 42
+```
+
+1. **The backend resolved** — the launcher prints `Detected TornadoVM backend: <name>`.
+2. **A plan was built** — `execution_path` in the metrics JSON is `LOWERED` or `LEGACY`. If
+   it is absent, no accelerator plan was built and a CPU fallback looks identical to
+   success.
+3. **The output is right** — the generated text contains what the prompt implies. An
+   accelerator computing wrong numbers exits 0 and reports normal throughput.
+
+Add `-Dtornado.recover.bailout=False` whenever correctness matters: with the default, a
+failed kernel silently falls back to sequential Java and produces a wrong answer instead of
+an error.
+
+## Flags worth knowing
+
+| Flag | Use |
+| --- | --- |
+| `--model <path>` | required |
+| `--prompt "..."` / `-i` | one-shot, or a chat loop |
+| `--gpu` | required for acceleration; without it the run is CPU-only |
+| `-n`, `--temperature`, `--top-p`, `--seed` | sampling |
+| `--gpu-memory 20GB` | raise from the 14GB default for 3B/8B models |
+| `--heap-max`, `--heap-min` | JVM heap, default 20g |
+| `--server --port N` | the OpenAI-compatible server |
+| `--bench --bench-args "..."` | the llama-bench-style harness |
+
+Execution modes (batched prefill is default-off, deliberately):
+
+| Flag | Meaning |
+| --- | --- |
+| `--with-prefill-decode` | sequential prefill, then single-token decode |
+| `--batch-prefill-size N` | with the above, batch N prompt tokens per invocation |
+| `--cuda-graphs` | PTX/CUDA only: capture and replay to cut launch overhead |
+
+Diagnostics — for a specific investigation, not for normal runs:
+
+| Flag | Use |
+| --- | --- |
+| `--verbose-init` | GGUF load, copy-in and JIT timings |
+| `--show-command --execute-after-show` | print the exact JVM command first |
+| `--print-kernel`, `--print-bytecodes`, `--print-threads`, `--full-dump` | codegen and scheduling detail |
+| `--profiler --profiler-dump-dir <FILE>` | TornadoVM profiler output |
+
+`--profiler-dump-dir` takes a **file**, not a directory. Given a directory the run bails
+out to sequential Java and looks like a hang.
+
+Run `--help` before using a flag you are not certain about. Keep profiler output, traces
+and metrics files outside the repository.

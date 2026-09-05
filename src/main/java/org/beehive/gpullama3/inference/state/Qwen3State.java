@@ -1,51 +1,42 @@
 package org.beehive.gpullama3.inference.state;
 
-import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
-import org.beehive.gpullama3.tensor.standard.FloatTensor;
+import java.util.stream.Stream;
+import org.beehive.gpullama3.backend.tornado.workspace.TornadoWorkspaces;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.qwen3.Qwen3Configuration;
-import uk.ac.manchester.tornado.api.types.HalfFloat;
-import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
-import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
-import uk.ac.manchester.tornado.api.types.arrays.IntArray;
-
-import java.util.stream.Stream;
+import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
+import org.beehive.gpullama3.tensor.standard.FloatTensor;
 
 /**
- * Represents the state of the Qwen3 model during inference.
- * This class extends {@link State} to include model-specific functionalities
- * and configurations tailored for the Qwen3 model.
+ * Represents the state of the Qwen3 model during inference. This class extends {@link State} to
+ * include model-specific functionalities and configurations tailored for the Qwen3 model.
  *
- * <p><b>Note 1:</b> Qwen3State contains additional fields for TornadoVM wrappers
- * to enable GPU-accelerated processing of the model.</p>
- *
+ * <p><b>Note 1:</b> Qwen3State contains additional fields for TornadoVM wrappers to enable
+ * GPU-accelerated processing of the model.
  */
 public final class Qwen3State extends State {
 
     // Qwen3 specific fields
     // Temporary buffers for intermediate calculations.
-    public FloatArray tempQcur;
-    public FloatArray tempKcur;
-
-    // Split-KV (flash-decoding) attention scratch: per (head, split) partial numerator [headSize] plus
-    // block max and block sum. Sized exactly to the configured split count so the split-KV kernel writes
-    // every element each layer (a partially-written large buffer is not reliably synced between the
-    // split and combine tasks by TornadoVM). See processHeadsFlashAttentionSplitKV / combineSplitKVAttention.
-    public FloatArray wrapAttSplit;
-
-    /** Number of KV splits per head for split-KV (flash-decoding) decode attention. */
-    public static final int SPLIT_KV = Integer.getInteger("llama.attention.splitKv.count", 8);
-
+    /**
+     * Q/K RMS-norm scratch, per head. Qwen3 normalises Q and K before RoPE; no other family does.
+     */
     public Qwen3State(Configuration config, int batchsize) {
-        super(config, batchsize);
+        this(config, batchsize, null);
+    }
+
+    /**
+     * @param lease the KV lease whose shared storage this state addresses, or {@code null} to
+     *     allocate its own arrays
+     */
+    public Qwen3State(
+            Configuration config, int batchsize, org.beehive.gpullama3.runtime.kv.KvLease lease) {
+        super(config, batchsize, lease);
         // Initialize Qwen3-specific fields
         Qwen3Configuration qwen3config = (Qwen3Configuration) config;
         int nEmbdHead = qwen3config.numberOfHeads();
-        this.tempQcur = new FloatArray(nEmbdHead);
-        this.tempKcur = new FloatArray(nEmbdHead);
-
-        int headSizeV = qwen3config.numberOfHeadsValue();
-        this.wrapAttSplit = new FloatArray(qwen3config.numberOfHeads() * SPLIT_KV * (headSizeV + 2));
+        this.workspace.tempQcur = TornadoWorkspaces.floats(nEmbdHead);
+        this.workspace.tempKcur = TornadoWorkspaces.floats(nEmbdHead);
     }
 
     @Override
@@ -87,45 +78,54 @@ public final class Qwen3State extends State {
         fields.logits = ArrayFloatTensor.allocate(config.vocabularySize());
 
         // Key-value cache with Qwen3 dimensions
-        fields.keyCache = Stream.generate(() -> ArrayFloatTensor.allocate(config.contextLength(), nEmbdGqa)).limit(config.numberOfLayers()).toArray(FloatTensor[]::new);
-        fields.valueCache = Stream.generate(() -> ArrayFloatTensor.allocate(config.contextLength(), nEmbdGqa)).limit(config.numberOfLayers()).toArray(FloatTensor[]::new);
+        fields.keyCache =
+                Stream.generate(() -> ArrayFloatTensor.allocate(config.contextLength(), nEmbdGqa))
+                        .limit(config.numberOfLayers())
+                        .toArray(FloatTensor[]::new);
+        fields.valueCache =
+                Stream.generate(() -> ArrayFloatTensor.allocate(config.contextLength(), nEmbdGqa))
+                        .limit(config.numberOfLayers())
+                        .toArray(FloatTensor[]::new);
 
         // TornadoVM wrappers with Qwen3-specific sizes
 
         switch (config.quantization()) {
-            case "FP16" -> fields.createActivationFP16(config.dim());
-            case "Q8_0" -> fields.createActivationQ8_0(config.dim());
-            default -> throw new UnsupportedOperationException("Unsupported quantization format: " + config.quantization());
+            case "FP16" -> TornadoWorkspaces.activationFP16(workspace, config.dim());
+            case "Q8_0" -> TornadoWorkspaces.activationQ8_0(workspace, config.dim());
+            default ->
+                    throw new UnsupportedOperationException(
+                            "Unsupported quantization format: " + config.quantization());
         }
 
-        fields.wrapX = new FloatArray(config.dim());
-        fields.wrapXb = new FloatArray(nEmbdHeadK * config.numberOfHeads());
-        fields.wrapXbFP16 = new HalfFloatArray(nEmbdHeadK * config.numberOfHeads());
+        workspace.wrapX = TornadoWorkspaces.floats(config.dim());
+        workspace.wrapXb = TornadoWorkspaces.floats(nEmbdHeadK * config.numberOfHeads());
+        workspace.wrapXbFP16 = TornadoWorkspaces.halfFloats(nEmbdHeadK * config.numberOfHeads());
 
-        fields.wrapXb2 = new FloatArray(config.dim());
-        fields.wrapHb = new FloatArray(config.hiddenDim());
-        fields.wrapHb2 = new FloatArray(config.hiddenDim());
-        fields.wrapLogits = new FloatArray(config.vocabularySize());
-        fields.wrapQ = new FloatArray(nEmbdHeadK * config.numberOfHeads());
-        fields.wrapK = new FloatArray(nEmbdKGqa);
-        fields.wrapV = new FloatArray(nEmbdKGqa);
-        fields.wrapKeyCache = new FloatArray(config.contextLength() * nEmbdGqa * config.numberOfLayers());
-        fields.wrapValueCache = new FloatArray(config.contextLength() * nEmbdGqa * config.numberOfLayers());
-        fields.wrapValueCache.init(0.f);
-        fields.wrapKeyCache.init(0.f);
-        if (USE_FP16_KV) {
-            fields.wrapKeyCacheFP16 = new HalfFloatArray(config.contextLength() * nEmbdGqa * config.numberOfLayers());
-            fields.wrapValueCacheFP16 = new HalfFloatArray(config.contextLength() * nEmbdGqa * config.numberOfLayers());
-            fields.wrapKeyCacheFP16.init(new HalfFloat(0.f));
-            fields.wrapValueCacheFP16.init(new HalfFloat(0.f));
-        }
-        fields.wrapAtt = new FloatArray(config.numberOfHeads() * config.contextLength());
-        fields.positionHolder = new IntArray(1);
+        workspace.wrapXb2 = TornadoWorkspaces.floats(config.dim());
+        workspace.wrapHb = TornadoWorkspaces.floats(config.hiddenDim());
+        workspace.wrapHb2 = TornadoWorkspaces.floats(config.hiddenDim());
+        workspace.wrapLogits = TornadoWorkspaces.floats(config.vocabularySize());
+        workspace.wrapQ = TornadoWorkspaces.floats(nEmbdHeadK * config.numberOfHeads());
+        workspace.wrapK = TornadoWorkspaces.floats(nEmbdKGqa);
+        workspace.wrapV = TornadoWorkspaces.floats(nEmbdKGqa);
+        // KV cache: leased from the manager's pool when this state holds a lease, otherwise
+        // allocated here, block-major when paged and contiguous when not.
+        fillKvFields(fields, config, nEmbdGqa, true);
+        workspace.wrapAtt =
+                TornadoWorkspaces.floats(config.numberOfHeads() * config.contextLength());
+        // Qwen3 sizes the split-KV scratch by its value-head dimension, not by headSize.
+        workspace.wrapAttSplit =
+                TornadoWorkspaces.floats(
+                        config.numberOfHeads() * SPLIT_KV * (config.numberOfHeadsValue() + 2));
+        // [0] = position, [1] = table-local KV slot.
+        workspace.positionHolder = TornadoWorkspaces.ints(2);
 
         // Temporary arrays
-        fields.temp = new FloatArray(1 + ((config.dim() + localSize - 1) / localSize));
-        fields.tempFFN = new FloatArray(1 + ((config.dim() + localSize - 1) / localSize));
-        fields.tempLogits = new FloatArray(1 + ((config.dim() + localSize - 1) / localSize));
+        workspace.temp = TornadoWorkspaces.floats(1 + ((config.dim() + localSize - 1) / localSize));
+        workspace.tempFFN =
+                TornadoWorkspaces.floats(1 + ((config.dim() + localSize - 1) / localSize));
+        workspace.tempLogits =
+                TornadoWorkspaces.floats(1 + ((config.dim() + localSize - 1) / localSize));
 
         return fields;
     }

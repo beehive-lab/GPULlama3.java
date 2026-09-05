@@ -1,45 +1,45 @@
 package org.beehive.gpullama3.model.loader;
 
-import org.beehive.gpullama3.tensor.GGMLType;
-import org.beehive.gpullama3.tensor.GGUF;
-import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
-import org.beehive.gpullama3.tensor.tornado.FP32TornadoTensor;
-import org.beehive.gpullama3.tensor.GGMLTensorEntry;
-import org.beehive.gpullama3.auxiliary.Pair;
-import org.beehive.gpullama3.inference.operation.RoPE;
-import org.beehive.gpullama3.inference.weights.Weights;
-import org.beehive.gpullama3.inference.weights.standard.Qwen2StandardWeights;
-import org.beehive.gpullama3.inference.weights.tornado.Qwen2TornadoWeights;
-import org.beehive.gpullama3.model.format.ChatFormat;
-import org.beehive.gpullama3.model.format.ChatFormat.ChatTokens;
-import org.beehive.gpullama3.model.qwen2.DeepSeekR1Qwen;
-import org.beehive.gpullama3.model.qwen2.Qwen2;
-import org.beehive.gpullama3.model.qwen2.Qwen2Configuration;
-import org.beehive.gpullama3.tokenizer.Qwen3Tokenizer;
-import org.beehive.gpullama3.tokenizer.Tokenizer;
-import org.beehive.gpullama3.tokenizer.Vocabulary;
-import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlan;
-import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import static org.beehive.gpullama3.model.loader.ModelLoader.*;
 
 import java.nio.channels.FileChannel;
 import java.util.Map;
-
-import static org.beehive.gpullama3.model.loader.ModelLoader.*;
+import org.beehive.gpullama3.auxiliary.Pair;
+import org.beehive.gpullama3.backend.tornado.tensor.TornadoTensorLoader;
+import org.beehive.gpullama3.format.DataTypeMapping;
+import org.beehive.gpullama3.format.GGMLTensorEntry;
+import org.beehive.gpullama3.format.GGUF;
+import org.beehive.gpullama3.inference.weights.Weights;
+import org.beehive.gpullama3.inference.weights.standard.Qwen2StandardWeights;
+import org.beehive.gpullama3.inference.weights.tornado.Qwen2TornadoWeights;
+import org.beehive.gpullama3.model.format.ChatFormat.ChatTokens;
+import org.beehive.gpullama3.model.format.Qwen3ChatFormat;
+import org.beehive.gpullama3.model.qwen2.DeepSeekR1Qwen;
+import org.beehive.gpullama3.model.qwen2.Qwen2;
+import org.beehive.gpullama3.model.qwen2.Qwen2Configuration;
+import org.beehive.gpullama3.runtime.tensor.DataType;
+import org.beehive.gpullama3.runtime.tensor.ExecutionTarget;
+import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
+import org.beehive.gpullama3.tokenizer.Qwen3Tokenizer;
+import org.beehive.gpullama3.tokenizer.Tokenizer;
+import org.beehive.gpullama3.tokenizer.Vocabulary;
 
 public class Qwen2ModelLoader extends AbstractModelLoader<Qwen2, Qwen2Configuration> {
 
-    public Qwen2ModelLoader(FileChannel fileChannel, GGUF gguf, int contextLength, boolean useTornadovm) {
+    public Qwen2ModelLoader(
+            FileChannel fileChannel, GGUF gguf, int contextLength, boolean useTornadovm) {
         super(fileChannel, gguf, contextLength, useTornadovm);
     }
 
     @Override
     protected Vocabulary loadVocabulary(Map<String, Object> metadata) {
-        return Vocabulary.loadQwen3Vocabulary(metadata);
+        return Vocabulary.fromTokensAndScores(metadata);
     }
 
     @Override
     protected Tokenizer createTokenizer(Map<String, Object> metadata, Vocabulary vocabulary) {
-        boolean isDeepSeekR1DistillQwen = "DeepSeek-R1-Distill-Qwen".equals(metadata.get("general.basename"));
+        boolean isDeepSeekR1DistillQwen =
+                "DeepSeek-R1-Distill-Qwen".equals(metadata.get("general.basename"));
         return new Qwen3Tokenizer(metadata, vocabulary, isDeepSeekR1DistillQwen);
     }
 
@@ -47,55 +47,88 @@ public class Qwen2ModelLoader extends AbstractModelLoader<Qwen2, Qwen2Configurat
     @Override
     protected Qwen2Configuration createConfiguration(Map<String, Object> metadata) {
         int modelContextLength = (int) metadata.get("qwen2.context_length");
-        int finalContextLength = (contextLength < 0 || modelContextLength < contextLength) ? modelContextLength : contextLength;
+        int finalContextLength =
+                (contextLength < 0 || modelContextLength < contextLength)
+                        ? modelContextLength
+                        : contextLength;
 
-        int numberOfKeyValueHeads = metadata.containsKey("qwen2.attention.head_count_kv") ? (int) metadata.get("qwen2.attention.head_count_kv") : (int) metadata.get("qwen2.attention.head_count");
+        int numberOfKeyValueHeads =
+                metadata.containsKey("qwen2.attention.head_count_kv")
+                        ? (int) metadata.get("qwen2.attention.head_count_kv")
+                        : (int) metadata.get("qwen2.attention.head_count");
         int vocabSize = vocabulary.size();
 
         return new Qwen2Configuration(
                 getModelQuantization(metadata),
-                (int) metadata.get("qwen2.embedding_length"),       // dim
-                (int) metadata.get("qwen2.feed_forward_length"),    // hiddendim
-                (int) metadata.get("qwen2.block_count"),            // numberOfLayers
-                (int) metadata.get("qwen2.attention.head_count"),   // numberOfHeads
-
+                (int) metadata.get("qwen2.embedding_length"), // dim
+                (int) metadata.get("qwen2.feed_forward_length"), // hiddendim
+                (int) metadata.get("qwen2.block_count"), // numberOfLayers
+                (int) metadata.get("qwen2.attention.head_count"), // numberOfHeads
                 numberOfKeyValueHeads, // numberOfKeyValueHeads
                 numberOfKeyValueHeads, // numberOfHeadsKey
                 numberOfKeyValueHeads, // numberOfHeadsValue
-
                 vocabSize,
                 modelContextLength,
                 finalContextLength,
                 false,
                 (float) metadata.get("qwen2.attention.layer_norm_rms_epsilon"),
-                (float) metadata.get("qwen2.rope.freq_base")
-        );
+                (float) metadata.get("qwen2.rope.freq_base"));
     }
+
     // @formatter:on
 
     @Override
     protected Pair<float[], float[]> precomputeRopeFrequencies(Qwen2Configuration config) {
-        return RoPE.precomputeFreqsCis(config.contextLengthModel(), config.headSize(), config.ropeTheta(), false, 8, 1, 3, 8192);
+        return RopeFrequencies.precomputeFreqsCis(
+                config.contextLengthModel(),
+                config.headSize(),
+                config.ropeTheta(),
+                false,
+                8,
+                1,
+                3,
+                8192);
     }
 
     // @formatter:off
     @Override
     protected Qwen2 createModel(Qwen2Configuration config, Tokenizer tokenizer, Weights weights) {
         Map<String, Object> metadata = gguf.getMetadata();
-        boolean isDeepSeekR1DistillQwen = "DeepSeek-R1-Distill-Qwen".equals(metadata.get("general.basename"));
+        boolean isDeepSeekR1DistillQwen =
+                "DeepSeek-R1-Distill-Qwen".equals(metadata.get("general.basename"));
         // Qwen2.5-Coder uses <|endoftext|> as stop-token.
-        ChatTokens chatTokens = isDeepSeekR1DistillQwen ? new ChatTokens("<｜begin▁of▁sentence｜>", "", "", "<｜end▁of▁sentence｜>", "")
-                : new ChatTokens("<|im_start|>", "<|im_end|>", "", "<|end_of_text|>", "<|endoftext|>");
+        ChatTokens chatTokens =
+                isDeepSeekR1DistillQwen
+                        ? new ChatTokens("<｜begin▁of▁sentence｜>", "", "", "<｜end▁of▁sentence｜>", "")
+                        : new ChatTokens(
+                                "<|im_start|>",
+                                "<|im_end|>",
+                                "",
+                                "<|end_of_text|>",
+                                "<|endoftext|>");
         return isDeepSeekR1DistillQwen
-                ? new DeepSeekR1Qwen(config, tokenizer, weights, ChatFormat.create(tokenizer, chatTokens))
-                : new Qwen2(config, tokenizer, weights, ChatFormat.create(tokenizer, chatTokens));
+                ? new DeepSeekR1Qwen(
+                        config,
+                        tokenizer,
+                        weights,
+                        new Qwen3ChatFormat((Qwen3Tokenizer) tokenizer, chatTokens))
+                : new Qwen2(
+                        config,
+                        tokenizer,
+                        weights,
+                        new Qwen3ChatFormat((Qwen3Tokenizer) tokenizer, chatTokens));
     }
+
     // @formatter:on
 
     // @formatter:off
     @Override
-    protected Weights createStandardWeights(Map<String, GGMLTensorEntry> tensorEntries, Qwen2Configuration config, Pair<float[], float[]> ropeFreqs, GGMLTensorEntry tokenEmbeddings,
-                                            GGMLTensorEntry outputWeight) {
+    protected Weights createStandardWeights(
+            Map<String, GGMLTensorEntry> tensorEntries,
+            Qwen2Configuration config,
+            Pair<float[], float[]> ropeFreqs,
+            GGMLTensorEntry tokenEmbeddings,
+            GGMLTensorEntry outputWeight) {
 
         final int nl = config.numberOfLayers();
 
@@ -117,20 +150,26 @@ public class Qwen2ModelLoader extends AbstractModelLoader<Qwen2, Qwen2Configurat
                 new ArrayFloatTensor(ropeFreqs.first()),
                 new ArrayFloatTensor(ropeFreqs.second()),
                 loadTensor(outputWeight),
-                outputWeight.ggmlType()
-        );
+                DataTypeMapping.sourceType(outputWeight.ggmlType()));
     }
+
     // @formatter:on
 
     // @formatter:off
     @Override
-    protected Weights createTornadoVMWeights(Map<String, GGMLTensorEntry> tensorEntries, Qwen2Configuration config, Pair<float[], float[]> ropeFreqs, GGMLTensorEntry tokenEmbeddings,
-                                             GGMLTensorEntry outputWeight) {
-        GGMLType ggmlType = effectiveGpuWeightType(outputWeight.ggmlType());
+    protected Weights createTornadoVMWeights(
+            Map<String, GGMLTensorEntry> tensorEntries,
+            Qwen2Configuration config,
+            Pair<float[], float[]> ropeFreqs,
+            GGMLTensorEntry tokenEmbeddings,
+            GGMLTensorEntry outputWeight) {
+        DataType weightType =
+                DataTypeMapping.materializedType(outputWeight.ggmlType(), ExecutionTarget.GPU);
 
         // Validate supported types
-        if (ggmlType != GGMLType.F16 && ggmlType != GGMLType.Q8_0) {
-            throw new UnsupportedOperationException("Type: " + ggmlType + " currently not supported for TornadoVM weights.");
+        if (weightType != DataType.F16 && weightType != DataType.Q8_0) {
+            throw new UnsupportedOperationException(
+                    "Type: " + weightType + " currently not supported for TornadoVM weights.");
         }
 
         final int nl = config.numberOfLayers();
@@ -138,26 +177,36 @@ public class Qwen2ModelLoader extends AbstractModelLoader<Qwen2, Qwen2Configurat
         // Load all tensors uniformly as TornadoTensor hierarchy
         return new Qwen2TornadoWeights(
                 loadTornadoTensor(tokenEmbeddings),
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_norm.weight")),    // fp32
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_q.weight")),
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_k.weight")),
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_v.weight")),
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".attn_norm.weight")), // fp32
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".attn_q.weight")),
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".attn_k.weight")),
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".attn_v.weight")),
                 // Qwen2-specific: qkv bias (always F32)
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_q.bias")),         // fp32
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_k.bias")),         // fp32
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_v.bias")),         // fp32
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_output.weight")),
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".ffn_norm.weight")),     // fp32
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".ffn_gate.weight")),
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".ffn_down.weight")),
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".ffn_up.weight")),
-                loadTornadoTensor(tensorEntries.get("output_norm.weight")),                                     // fp32
-                new FP32TornadoTensor(FloatArray.fromArray(ropeFreqs.first())),
-                new FP32TornadoTensor(FloatArray.fromArray(ropeFreqs.second())),
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".attn_q.bias")), // fp32
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".attn_k.bias")), // fp32
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".attn_v.bias")), // fp32
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".attn_output.weight")),
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".ffn_norm.weight")), // fp32
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".ffn_gate.weight")),
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".ffn_down.weight")),
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".ffn_up.weight")),
+                loadTornadoTensor(tensorEntries.get("output_norm.weight")), // fp32
+                TornadoTensorLoader.fromFloats(ropeFreqs.first()),
+                TornadoTensorLoader.fromFloats(ropeFreqs.second()),
                 loadTornadoTensor(outputWeight),
-                ggmlType
-        );
-
+                weightType);
     }
     // @formatter:off
 }

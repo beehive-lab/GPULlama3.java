@@ -37,22 +37,34 @@ Otherwise build and inspect both JARs locally. Among others check model loading/
 
 ## 2. Inspect and update LangChain4j
 
-Locate the integration rather than assuming its current layout:
+The integration lives in `langchain4j-gpu-llama3`, and the branch this project validates
+against is `gpu-llama3/facade-1.0.0` on the maintainer's fork. Re-read the layout rather than
+assuming it:
 
 ```bash
 rg -n "gpu-llama3|langchain4j-gpu-llama3|jdk21|jdk25" pom.xml langchain4j-gpu-llama3
 ```
 
-Read the module POM, adapter classes, inherited IT subclasses, module README, root JDK profiles,
-and BOM entry.
+Read the module POM (its `jdk21`/`jdk25` profiles select the artifact), the adapter classes,
+the inherited IT subclasses, `src/test/resources/tornado-jvm.args`, the module README and the
+BOM entry.
 
 Keep changes minimal and backend agnostic:
 
 - use `TORNADOVM_HOME`; leave backend configuration to the selected SDK
-- select matching `-jdk21`/`-jdk25` dependencies from JDK-specific profiles
+- the JDK profiles select `-jdk21`/`-jdk25`; never hardcode either
 - use `MODEL` for tests; never hardcode a GGUF path
 - preserve inherited ITs and enable only implemented capabilities
 - keep unsupported feature combinations disabled with accurate reasons
+
+Two adapter rules this integration has already had to learn:
+
+- **A `ChatModel` is stateless.** The caller owns the conversation and sends all of it on
+  every request, while an engine session retains its own history. Reset the session per
+  request, or each one appends the whole conversation to the previous and the context grows
+  without bound.
+- **Import only `api/**`.** `BackendId` and `ExecutionPolicy` are reachable and marked
+  experimental; anything else from the engine is an internal type and a rule violation.
 
 For a new capability, implement both request and response mappings, including conversation
 history, metadata, finish reasons, and streaming callbacks. Add deterministic unit tests where

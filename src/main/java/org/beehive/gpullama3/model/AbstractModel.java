@@ -3,27 +3,17 @@ package org.beehive.gpullama3.model;
 import org.beehive.gpullama3.inference.weights.Weights;
 import org.beehive.gpullama3.model.format.ChatFormat;
 import org.beehive.gpullama3.tokenizer.Tokenizer;
-import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlan;
 
 public abstract class AbstractModel implements Model {
 
-    protected Tokenizer tokenizer;
-    protected Weights weights;
-    protected ChatFormat chatFormat;
-    /**
-     * Represents the master plan for the TornadoVM execution in the context of the model.
-     * This variable is used to manage the execution flow or strategy within the TornadoVM environment.
-     * <p>
-     * Initialized *only* when Tornado is used, via {@link TornadoVMMasterPlan#initializeTornadoVMPlan}.
-     * </p>
-     */
-    protected TornadoVMMasterPlan plan;
+    protected final Tokenizer tokenizer;
+    protected final Weights weights;
+    protected final ChatFormat chatFormat;
 
-    protected AbstractModel(Tokenizer tokenizer, Weights weights, ChatFormat chatFormat, TornadoVMMasterPlan plan) {
+    protected AbstractModel(Tokenizer tokenizer, Weights weights, ChatFormat chatFormat) {
         this.tokenizer = tokenizer;
         this.weights = weights;
         this.chatFormat = chatFormat;
-        this.plan = plan;
     }
 
     // Common methods across models
@@ -35,13 +25,4 @@ public abstract class AbstractModel implements Model {
     public ChatFormat chatFormat() {
         return chatFormat;
     }
-
-    public TornadoVMMasterPlan tornadoVMPlan() {
-        return plan;
-    }
-
-    public void setTornadoVMPlan(TornadoVMMasterPlan plan) {
-        this.plan = plan;
-    }
-
 }

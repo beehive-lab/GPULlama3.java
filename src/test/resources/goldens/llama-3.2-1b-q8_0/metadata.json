@@ -1,0 +1,20 @@
+{
+  "model_file": "Llama-3.2-1B-Instruct-Q8_0.gguf",
+  "model_sha256": "3f87a880027e7b9ea8e0da9e4009584336f352af444a0e6e5c20721ac4c7ffd1",
+  "quantization": "Q8_0",
+  "prompt": "Explain what a matrix multiplication is in one paragraph.",
+  "context_length": 512,
+  "tokens_compared": 64,
+  "sampling": "greedy-argmax",
+  "vocab_size": 128256,
+  "backend": "CUDA",
+  "device_name": "NVIDIA GeForce RTX 5090 Laptop GPU",
+  "driver": "NVIDIA CUDA / CUDA C 1.0",
+  "tornadovm_version": "5.2.1-jdk21-dev",
+  "recover_bailout": false,
+  "device_sample": false,
+  "bit_exact": true,
+  "captures_compared": 3,
+  "payload": "row-hashes + token-ids + final row (see GoldenRecord)",
+  "created_by_commit": "39c1d18dfa42e3fe64f42da4ae001ca5dbf1ade2"
+}

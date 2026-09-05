@@ -1,7 +1,5 @@
 package org.beehive.gpullama3.tokenizer;
 
-import org.beehive.gpullama3.auxiliary.Pair;
-
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -14,23 +12,31 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import org.beehive.gpullama3.auxiliary.Pair;
 
 /**
  * GPT-2-style BPE tokenizer (even though it's called "llama") with an explicit merges list.
- * <p>
- * BPE (Byte Pair Encoding): A sub-word tokenization algorithm that iteratively merges the most frequent pairs of symbols in a corpus to build a vocabulary of common character sequences.
- * <p>
- * GPT-2-style tokenization: Applies BPE at the byte level, ensuring all UTF-8 inputs are representable and using tokens that preserve leading spaces (e.g., 'Ġthe').
- * <p>
- * Explicit merges list: A fixed sequence of learned merge rules that deterministically reconstructs the tokenizer’s vocabulary during inference without retraining.
- * <p>
- * Based on <a href="https://github.com/karpathy/minbpe">minbpe</a>, algorithmically follows along the
- * <a href="https://github.com/openai/gpt-2/blob/master/src/encoder.py">GPT 2 tokenizer</a>
+ *
+ * <p>BPE (Byte Pair Encoding): A sub-word tokenization algorithm that iteratively merges the most
+ * frequent pairs of symbols in a corpus to build a vocabulary of common character sequences.
+ *
+ * <p>GPT-2-style tokenization: Applies BPE at the byte level, ensuring all UTF-8 inputs are
+ * representable and using tokens that preserve leading spaces (e.g., 'Ġthe').
+ *
+ * <p>Explicit merges list: A fixed sequence of learned merge rules that deterministically
+ * reconstructs the tokenizer’s vocabulary during inference without retraining.
+ *
+ * <p>Based on <a href="https://github.com/karpathy/minbpe">minbpe</a>, algorithmically follows
+ * along the <a href="https://github.com/openai/gpt-2/blob/master/src/encoder.py">GPT 2
+ * tokenizer</a>
  */
 public class LlamaTokenizer implements Tokenizer {
     static final Map<Integer, Integer> BYTE_ENCODER = bytesToUnicode();
-    static final Map<Integer, Integer> BYTE_DECODER = BYTE_ENCODER.entrySet().stream().collect(Collectors.toMap(Map.Entry::getValue, Map.Entry::getKey));
-    private static final String LLAMA_3_PATTERN = "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
+    static final Map<Integer, Integer> BYTE_DECODER =
+            BYTE_ENCODER.entrySet().stream()
+                    .collect(Collectors.toMap(Map.Entry::getValue, Map.Entry::getKey));
+    private static final String LLAMA_3_PATTERN =
+            "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
     // general fields
     private final Pattern compiledPattern;
     private final Vocabulary vocabulary;
@@ -41,16 +47,29 @@ public class LlamaTokenizer implements Tokenizer {
     public LlamaTokenizer(Map<String, Object> metadata, Vocabulary vocabulary) {
         // load from metadata
         String[] mergeLines = (String[]) metadata.get("tokenizer.ggml.merges");
-        List<Pair<Integer, Integer>> merges = Arrays.stream(mergeLines).map(line -> line.split(" "))
-                .map(parts -> new Pair<>(vocabulary.getIndex(parts[0]).orElseThrow(), vocabulary.getIndex(parts[1]).orElseThrow())).toList();
+        List<Pair<Integer, Integer>> merges =
+                Arrays.stream(mergeLines)
+                        .map(line -> line.split(" "))
+                        .map(
+                                parts ->
+                                        new Pair<>(
+                                                vocabulary.getIndex(parts[0]).orElseThrow(),
+                                                vocabulary.getIndex(parts[1]).orElseThrow()))
+                        .toList();
         int allTokens = vocabulary.size();
         int baseTokens = 128000; // assume all tokens after the base ones are special.
         int reservedSpecialTokens = allTokens - baseTokens;
-        List<String> specialTokensList = Arrays.stream(vocabulary.tokens(), baseTokens, allTokens).toList();
+        List<String> specialTokensList =
+                Arrays.stream(vocabulary.tokens(), baseTokens, allTokens).toList();
 
         assert specialTokensList.stream().allMatch(token -> vocabulary.getIndex(token).isPresent());
 
-        Map<String, Integer> specialTokens = IntStream.range(0, specialTokensList.size()).boxed().collect(Collectors.toMap(i -> specialTokensList.get(i), i -> baseTokens + i));
+        Map<String, Integer> specialTokens =
+                IntStream.range(0, specialTokensList.size())
+                        .boxed()
+                        .collect(
+                                Collectors.toMap(
+                                        i -> specialTokensList.get(i), i -> baseTokens + i));
 
         // init tokenizer object fields
         this.vocabulary = vocabulary;
@@ -60,7 +79,10 @@ public class LlamaTokenizer implements Tokenizer {
         for (Pair<Integer, Integer> pair : merges) {
             int firstIndex = pair.first();
             int secondIndex = pair.second();
-            int mergeIndex = vocabulary.getIndex(vocabulary.get(firstIndex) + vocabulary.get(secondIndex)).orElseThrow();
+            int mergeIndex =
+                    vocabulary
+                            .getIndex(vocabulary.get(firstIndex) + vocabulary.get(secondIndex))
+                            .orElseThrow();
             this.merges.put(pair, mergeIndex);
         }
     }
@@ -79,7 +101,9 @@ public class LlamaTokenizer implements Tokenizer {
         int i = 0;
         while (i < ids.size()) {
             // if not at the very last position AND the pair matches, replace it
-            if (ids.get(i).equals(pair.first()) && i < ids.size() - 1 && ids.get(i + 1).equals(pair.second())) {
+            if (ids.get(i).equals(pair.first())
+                    && i < ids.size() - 1
+                    && ids.get(i + 1).equals(pair.second())) {
                 newids.add(idx);
                 i += 2;
             } else {
@@ -91,9 +115,12 @@ public class LlamaTokenizer implements Tokenizer {
     }
 
     /**
-     * Returns list of utf-8 byte and a corresponding list of unicode strings. The reversible bpe codes work on unicode strings. This means you need a large # of unicode characters in your vocab if
-     * you want to avoid UNKs. When you're at something like a 10B token dataset you end up needing around 5K for decent coverage. This is a significant percentage of your normal, say, 32K bpe vocab.
-     * To avoid that, we want lookup tables between utf-8 bytes and unicode strings. And avoids mapping to whitespace/control characters the bpe code barfs on.
+     * Returns list of utf-8 byte and a corresponding list of unicode strings. The reversible bpe
+     * codes work on unicode strings. This means you need a large # of unicode characters in your
+     * vocab if you want to avoid UNKs. When you're at something like a 10B token dataset you end up
+     * needing around 5K for decent coverage. This is a significant percentage of your normal, say,
+     * 32K bpe vocab. To avoid that, we want lookup tables between utf-8 bytes and unicode strings.
+     * And avoids mapping to whitespace/control characters the bpe code barfs on.
      */
     private static Map<Integer, Integer> bytesToUnicode() {
         List<Integer> bs = new ArrayList<>();
@@ -142,8 +169,11 @@ public class LlamaTokenizer implements Tokenizer {
     }
 
     /**
-     * Unlike {@link #encodeOrdinary(String)}, this function handles special tokens. allowed_special: can be "all"|"none"|"none_raise" or a custom set of special tokens if none_raise, then an error is
-     * raised if any special token is encountered in text this is the default tiktoken behavior right now as well any other behavior is either annoying, or a major footgun.
+     * Unlike {@link #encodeOrdinary(String)}, this function handles special tokens.
+     * allowed_special: can be "all"|"none"|"none_raise" or a custom set of special tokens if
+     * none_raise, then an error is raised if any special token is encountered in text this is the
+     * default tiktoken behavior right now as well any other behavior is either annoying, or a major
+     * footgun.
      */
     public List<Integer> encode(String text, Set<String> allowedSpecial) {
         // decode the user desire w.r.t. handling of special tokens
@@ -159,7 +189,8 @@ public class LlamaTokenizer implements Tokenizer {
         // based on the occurrence of any exact match with any of the special tokens
         // we can use re.split for this. note that surrounding the pattern with ()
         // makes it into a capturing group, so the special tokens will be included
-        String specialPattern = special.stream().map(Pattern::quote).collect(Collectors.joining("|", "(", ")"));
+        String specialPattern =
+                special.stream().map(Pattern::quote).collect(Collectors.joining("|", "(", ")"));
 
         String[] specialChunks = text.split(specialPattern);
         // now all the special characters are separated from the rest of the text
@@ -177,9 +208,7 @@ public class LlamaTokenizer implements Tokenizer {
         return ids;
     }
 
-    /**
-     * Encoding that ignores any special tokens.
-     */
+    /** Encoding that ignores any special tokens. */
     public List<Integer> encodeOrdinary(String text) {
         // split text into chunks of text by categories defined in regex pattern
         List<String> textChunks = findAll(compiledPattern, text);
@@ -203,7 +232,7 @@ public class LlamaTokenizer implements Tokenizer {
 
     private List<Integer> encodeChunk(String chunk) {
         // return the token ids
-        // let's begin. first, convert all bytes to integers in range 0..255
+        // let's begin. first, convert all bytes to integers in range 0.255
         List<Integer> ids = new ArrayList<>();
         for (int b : chunk.toCharArray()) {
             int tokenIndex = this.vocabulary.getIndex(String.valueOf((char) b)).orElseThrow();
@@ -213,7 +242,14 @@ public class LlamaTokenizer implements Tokenizer {
         while (ids.size() >= 2) {
             // find the pair with the lowest merge index
             Map<Pair<Integer, Integer>, Integer> stats = getStats(ids);
-            Pair<Integer, Integer> pair = stats.keySet().stream().min(Comparator.comparingInt(key -> this.merges.getOrDefault(key, Integer.MAX_VALUE))).orElseThrow();
+            Pair<Integer, Integer> pair =
+                    stats.keySet().stream()
+                            .min(
+                                    Comparator.comparingInt(
+                                            key ->
+                                                    this.merges.getOrDefault(
+                                                            key, Integer.MAX_VALUE)))
+                            .orElseThrow();
             // subtle: if there are no more merges available, the key will
             // result in an inf for every single pair, and the min will be
             // just the first pair in the list, arbitrarily

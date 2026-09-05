@@ -1,0 +1,41 @@
+package org.beehive.gpullama3.backend.tornado.plan;
+
+import java.util.Set;
+import org.beehive.gpullama3.backend.tornado.lowering.TornadoSupportSets;
+import org.beehive.gpullama3.backend.tornado.plan.components.SingleTokenForwardPlanComponents;
+import org.beehive.gpullama3.backend.tornado.plan.components.fp16.Qwen2FP16PlanComponents;
+import org.beehive.gpullama3.backend.tornado.plan.components.q8_0.Qwen2Q8_0PlanComponents;
+import org.beehive.gpullama3.inference.state.Qwen2State;
+import org.beehive.gpullama3.inference.state.State;
+import org.beehive.gpullama3.model.Model;
+import org.beehive.gpullama3.runtime.model.ArchitectureId;
+import org.beehive.gpullama3.runtime.tensor.DataType;
+
+/** DeepSeek-R1-Distill-Qwen's plan components: Qwen2's, under its own identity. */
+public final class DeepSeekR1DistillQwenPlanProvider implements TornadoPlanProvider {
+
+    private static final ArchitectureId ID = ArchitectureId.of("deepseek-r1-distill-qwen");
+
+    @Override
+    public ArchitectureId architecture() {
+        return ID;
+    }
+
+    @Override
+    public Set<DataType> supportedDataTypes() {
+        return TornadoSupportSets.BOTH_REPRESENTATIONS;
+    }
+
+    @Override
+    public Set<ExecutionMode> supportedModes() {
+        return TornadoSupportSets.STANDARD_ONLY;
+    }
+
+    @Override
+    public SingleTokenForwardPlanComponents components(DataType weights, State state, Model model) {
+        Qwen2State typed = PlanStates.expect(Qwen2State.class, state, ID);
+        return weights == DataType.F16
+                ? new Qwen2FP16PlanComponents(typed, model)
+                : new Qwen2Q8_0PlanComponents(typed, model);
+    }
+}

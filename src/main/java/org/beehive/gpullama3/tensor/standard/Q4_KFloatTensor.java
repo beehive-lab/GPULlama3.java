@@ -1,21 +1,20 @@
 package org.beehive.gpullama3.tensor.standard;
 
-import org.beehive.gpullama3.tensor.GGMLType;
-import org.beehive.gpullama3.tensor.Float16;
+import java.lang.foreign.MemorySegment;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorSpecies;
-
-import java.lang.foreign.MemorySegment;
+import org.beehive.gpullama3.format.GGMLType;
 
 /**
  * {@link FloatTensor} quantized in the {@link GGMLType#Q4_K} format.
  *
  * <p>Q4_K uses super-blocks of 256 elements, each containing:
+ *
  * <ul>
- *   <li>2 bytes: d (super-block scale, fp16)</li>
- *   <li>2 bytes: dmin (super-block min, fp16)</li>
- *   <li>12 bytes: scales/mins for 8 sub-blocks (packed 6-bit values)</li>
- *   <li>128 bytes: 4-bit quantized values</li>
+ *   <li>2 bytes: d (super-block scale, fp16)
+ *   <li>2 bytes: dmin (super-block min, fp16)
+ *   <li>12 bytes: scales/mins for 8 sub-blocks (packed 6-bit values)
+ *   <li>128 bytes: 4-bit quantized values
  * </ul>
  */
 public final class Q4_KFloatTensor extends FloatTensor {
@@ -63,8 +62,8 @@ public final class Q4_KFloatTensor extends FloatTensor {
     }
 
     /**
-     * Unpacks the 6-bit scale value for a given sub-block index.
-     * The 12 scale bytes encode 8 scale/min pairs in a packed format.
+     * Unpacks the 6-bit scale value for a given sub-block index. The 12 scale bytes encode 8
+     * scale/min pairs in a packed format.
      */
     private static int getScaleK4(int j, MemorySegment ms, long scalesOffset) {
         if (j < 4) {
@@ -75,9 +74,7 @@ public final class Q4_KFloatTensor extends FloatTensor {
         }
     }
 
-    /**
-     * Unpacks the 6-bit min value for a given sub-block index.
-     */
+    /** Unpacks the 6-bit min value for a given sub-block index. */
     private static int getMinK4(int j, MemorySegment ms, long scalesOffset) {
         if (j < 4) {
             return Byte.toUnsignedInt(readByte(ms, scalesOffset + j + 4)) & 63;
@@ -99,18 +96,22 @@ public final class Q4_KFloatTensor extends FloatTensor {
         long scalesOff = blockOffset + SCALES_OFFSET;
 
         // Each group of 64 elements uses 2 sub-blocks (low nibble / high nibble)
-        int pairIndex = withinBlock / 64;   // 0..3
-        int posInPair = withinBlock % 64;   // 0..63
+        int pairIndex = withinBlock / 64; // 0..3
+        int posInPair = withinBlock % 64; // 0..63
 
         int subBlock;
         int q;
         if (posInPair < 32) {
             subBlock = pairIndex * 2;
-            byte qByte = readByte(memorySegment, blockOffset + QS_OFFSET + pairIndex * 32 + posInPair);
+            byte qByte =
+                    readByte(memorySegment, blockOffset + QS_OFFSET + pairIndex * 32 + posInPair);
             q = Byte.toUnsignedInt(qByte) & 0xF;
         } else {
             subBlock = pairIndex * 2 + 1;
-            byte qByte = readByte(memorySegment, blockOffset + QS_OFFSET + pairIndex * 32 + (posInPair - 32));
+            byte qByte =
+                    readByte(
+                            memorySegment,
+                            blockOffset + QS_OFFSET + pairIndex * 32 + (posInPair - 32));
             q = (Byte.toUnsignedInt(qByte) >> 4) & 0xF;
         }
 

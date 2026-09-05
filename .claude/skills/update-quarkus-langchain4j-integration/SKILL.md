@@ -43,9 +43,10 @@ Locate the integration rather than assuming its current layout:
 rg -n "gpu-llama3" pom.xml model-providers/gpu-llama3
 ```
 
-As of this writing the module lives at `model-providers/gpu-llama3/{runtime,deployment}`, and the
-version is set via the `gpu-llama3.version` property in the root `pom.xml`: the default value picks
-`-jdk21`, overridden to `-jdk25` inside the `jdk25` profile (activated automatically on JDK 25+).
+The module lives at `model-providers/gpu-llama3/{runtime,deployment}`, and the version comes from
+the `gpu-llama3.version` property in the root `pom.xml`: the default picks `-jdk21`, and the
+`jdk25` profile overrides it to `-jdk25`. The branch this project validates against is
+`gpu-llama3/facade-1.0.0` on the maintainer's fork, which is what GPULlama3's own CI clones.
 Re-read the current root `pom.xml` before editing it — do not assume this layout is unchanged.
 
 Read the module POMs, `GPULlama3BaseModel`/`GPULlama3ChatModel`/`GPULlama3StreamingChatModel`,
@@ -59,6 +60,17 @@ Keep changes minimal and backend agnostic:
 - never hardcode a GGUF path in tests; use an environment variable
 - preserve existing unit tests and add new ones for changed capabilities
 - keep unsupported feature combinations disabled with accurate reasons
+
+Three rules this extension has already had to learn:
+
+- **Name no backend.** The engine rejects an explicit `BackendId` that disagrees with the
+  device it resolves, rather than silently running on another one, so naming CUDA stops the
+  extension starting on an OpenCL or Metal SDK. Set `use.tornadovm` and let the SDK decide.
+- **Batched prefill is default-off.** It is default-off in the engine on every backend, and
+  a default that turns it on makes every deployment opt in without asking. `prefill-decode`
+  defaults to `false` and `prefill-batch-size` to `1`.
+- **Import only `api/**`.** `BackendId` and `ExecutionPolicy` are reachable and marked
+  experimental; anything else from the engine is an internal type and a rule violation.
 
 For a new capability, implement both request and response mappings, including conversation
 history, metadata, finish reasons, and streaming callbacks. Add deterministic unit tests where
@@ -108,10 +120,17 @@ git status --short docs/modules/ROOT/pages/includes/
 git diff docs/modules/ROOT/pages/includes/
 ```
 
-Review the diff: it should only reflect the config change just made. Any unrelated hunk (e.g. a
-stale default/Javadoc left over from an earlier commit) means the docs were already out of sync
-before this change — regenerate anyway and call it out in the report rather than hand-editing the
-generated file.
+Review the diff: it should only reflect the config change just made.
+
+`quarkus-all-config.adoc` aggregates every module, so a `-pl ... -am` build regenerates it
+from the subset that was built and deletes the sections for everything else. That is a
+partial-build artifact, not drift. Take the module-specific `quarkus-langchain4j-gpu-llama3*.adoc`
+files from the regeneration, revert `quarkus-all-config.adoc`, and apply the same edits to its
+gpu-llama3 rows by hand — or run a full `mvn clean install`, which is what CI does. Do not commit
+the deletions.
+
+Any genuinely unrelated hunk in the module files means the docs were already out of sync before
+this change: regenerate anyway and call it out in the report rather than hand-editing them.
 
 Finish with:
 

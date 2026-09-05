@@ -1,0 +1,7 @@
+org.beehive.gpullama3.model.architecture.LlamaArchitecture
+org.beehive.gpullama3.model.architecture.MistralArchitecture
+org.beehive.gpullama3.model.architecture.Qwen2Architecture
+org.beehive.gpullama3.model.architecture.DeepSeekR1DistillQwenArchitecture
+org.beehive.gpullama3.model.architecture.Qwen3Architecture
+org.beehive.gpullama3.model.architecture.GraniteArchitecture
+org.beehive.gpullama3.model.architecture.Phi3Architecture

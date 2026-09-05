@@ -67,9 +67,9 @@ Grab a ready-to-run model from the [Hugging Face collections](#-model-collection
 
 GPULlama3.java is growing into a **serving engine** — the vLLM-style path for the JVM:
 
-- 🌐 **OpenAI-compatible server** — `llama-tornado --server` exposes `/v1/chat/completions` and `/v1/completions` with streaming and zero external dependencies. Point any OpenAI client at `localhost`. See [OpenAI-compatible server](#-openai-compatible-server---server) below.
+- 🌐 **OpenAI-compatible server** — `llama-tornado --server` exposes `/v1/chat/completions` and `/v1/completions` with streaming and zero external dependencies. Point any OpenAI client at `localhost`. See [Serving](#-serving-openai-compatible-preview) below.
 - 🎯 **Tensor-core (MMA) batch prefill** on the CUDA backend, FP16 & Q8_0 — `--with-prefill-decode --batch-prefill-size N`.
-- 📈 **llama-bench-style benchmarking** — `llama-tornado --bench` reports a pp/tg matrix with avg±stddev in md/csv/json/jsonl/sql. See [Benchmarking](#-benchmarking---bench-llama-bench-style) below.
+- 📈 **llama-bench-style benchmarking** — `llama-tornado --bench` reports a pp/tg matrix with avg±stddev in md/csv/json/jsonl/sql. See [Running the CLI](#-running-the-cli) for the flag.
 - 🧮 **On-device greedy sampling** *(landing next)* — argmax on the GPU keeps logits device-side, cutting device→host traffic by ~500× per token. ([PR #134](https://github.com/beehive-lab/GPULlama3.java/pull/134))
 - 📚 **Static batched decode** *(landing next)* — B independent sequences per step for up to **41× aggregate throughput** (Llama & Qwen3). ([PR #129](https://github.com/beehive-lab/GPULlama3.java/pull/129))
 
@@ -199,9 +199,6 @@ curl -Ls https://sh.jbang.dev | bash -s - app setup
 # From the catalog
 jbang gpullama3@beehive-lab -m model.gguf -p "Tell me a joke"
 jbang app install gpullama3@beehive-lab && gpullama3 -m model.gguf -p "Hello!"
-
-# Or the local script, interactive
-jbang LlamaTornadoCli.java -m beehive-llama-3.2-1b-instruct-fp16.gguf --interactive
 ```
 
 ### 🐳 Docker

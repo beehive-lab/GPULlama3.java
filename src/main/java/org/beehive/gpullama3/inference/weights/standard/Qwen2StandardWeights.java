@@ -1,6 +1,6 @@
 package org.beehive.gpullama3.inference.weights.standard;
 
-import org.beehive.gpullama3.tensor.GGMLType;
+import org.beehive.gpullama3.runtime.tensor.DataType;
 import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
 import org.beehive.gpullama3.tensor.standard.FloatTensor;
 
@@ -26,9 +26,10 @@ public class Qwen2StandardWeights extends StandardWeights {
             ArrayFloatTensor freq_cis_real,
             ArrayFloatTensor freq_cis_imag,
             FloatTensor wcls,
-            GGMLType weightType) {
+            DataType weightType) {
         // call to StandardWeights constructor
-        super(token_embedding_table,
+        super(
+                token_embedding_table,
                 rms_att_weight,
                 wq,
                 wk,
@@ -50,7 +51,7 @@ public class Qwen2StandardWeights extends StandardWeights {
     }
 
     @Override
-    public GGMLType getWeightType() {
+    public DataType dataType() {
         return weightType;
     }
 }

@@ -1,23 +1,29 @@
 package org.beehive.gpullama3.inference.state;
 
-import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
-import org.beehive.gpullama3.tensor.standard.FloatTensor;
+import java.util.stream.Stream;
+import org.beehive.gpullama3.backend.tornado.workspace.TornadoWorkspaces;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.devstral.DevstralConfiguration;
-import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
-import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
-import uk.ac.manchester.tornado.api.types.arrays.IntArray;
-
-import java.util.stream.Stream;
+import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
+import org.beehive.gpullama3.tensor.standard.FloatTensor;
 
 /**
- * State for Devstral 2 models where head_dim != dim/num_heads.
- * Allocates Q with qDim (num_heads * head_dim) and K/V with kvDim (num_kv_heads * head_dim).
+ * State for Devstral 2 models where head_dim != dim/num_heads. Allocates Q with qDim (num_heads *
+ * head_dim) and K/V with kvDim (num_kv_heads * head_dim).
  */
 public final class DevstralState extends State {
 
     public DevstralState(Configuration config, int batchsize) {
-        super(config, batchsize);
+        this(config, batchsize, null);
+    }
+
+    /**
+     * @param lease the KV lease whose shared storage this state addresses, or {@code null} to
+     *     allocate its own arrays
+     */
+    public DevstralState(
+            Configuration config, int batchsize, org.beehive.gpullama3.runtime.kv.KvLease lease) {
+        super(config, batchsize, lease);
     }
 
     @Override
@@ -39,38 +45,47 @@ public final class DevstralState extends State {
         fields.att = ArrayFloatTensor.allocate(dc.numberOfHeads(), dc.contextLength());
         fields.logits = ArrayFloatTensor.allocate(dc.vocabularySize());
 
-        fields.keyCache = Stream.generate(() -> ArrayFloatTensor.allocate(dc.contextLength(), kvDim)).limit(dc.numberOfLayers()).toArray(FloatTensor[]::new);
-        fields.valueCache = Stream.generate(() -> ArrayFloatTensor.allocate(dc.contextLength(), kvDim)).limit(dc.numberOfLayers()).toArray(FloatTensor[]::new);
+        fields.keyCache =
+                Stream.generate(() -> ArrayFloatTensor.allocate(dc.contextLength(), kvDim))
+                        .limit(dc.numberOfLayers())
+                        .toArray(FloatTensor[]::new);
+        fields.valueCache =
+                Stream.generate(() -> ArrayFloatTensor.allocate(dc.contextLength(), kvDim))
+                        .limit(dc.numberOfLayers())
+                        .toArray(FloatTensor[]::new);
 
         // TornadoVM wrappers
-        fields.wrapX = new FloatArray(dc.dim());
-        fields.wrapXb = new FloatArray(dc.dim());
-        fields.wrapXb2 = new FloatArray(dc.dim());
-        fields.wrapHb = new FloatArray(dc.hiddenDim());
-        fields.wrapHb2 = new FloatArray(dc.hiddenDim());
+        workspace.wrapX = TornadoWorkspaces.floats(dc.dim());
+        workspace.wrapXb = TornadoWorkspaces.floats(dc.dim());
+        workspace.wrapXb2 = TornadoWorkspaces.floats(dc.dim());
+        workspace.wrapHb = TornadoWorkspaces.floats(dc.hiddenDim());
+        workspace.wrapHb2 = TornadoWorkspaces.floats(dc.hiddenDim());
 
         switch (dc.quantization()) {
-            case "FP16" -> fields.createActivationFP16(dc.dim());
-            case "Q8_0" -> fields.createActivationQ8_0(dc.dim());
-            default -> throw new UnsupportedOperationException("Unsupported quantization format: " + dc.quantization());
+            case "FP16" -> TornadoWorkspaces.activationFP16(workspace, dc.dim());
+            case "Q8_0" -> TornadoWorkspaces.activationQ8_0(workspace, dc.dim());
+            default ->
+                    throw new UnsupportedOperationException(
+                            "Unsupported quantization format: " + dc.quantization());
         }
-        fields.wrapLogits = new FloatArray(dc.vocabularySize());
-        fields.wrapQ = new FloatArray(qDim);
-        fields.wrapK = new FloatArray(kvDim);
-        fields.wrapV = new FloatArray(kvDim);
+        workspace.wrapLogits = TornadoWorkspaces.floats(dc.vocabularySize());
+        workspace.wrapQ = TornadoWorkspaces.floats(qDim);
+        workspace.wrapK = TornadoWorkspaces.floats(kvDim);
+        workspace.wrapV = TornadoWorkspaces.floats(kvDim);
 
-        fields.wrapXFP16 = new HalfFloatArray(dc.dim());
-        fields.wrapXbFP16 = new HalfFloatArray(dc.dim());
-        fields.wrapKeyCache = new FloatArray(dc.contextLength() * kvDim * dc.numberOfLayers());
-        fields.wrapValueCache = new FloatArray(dc.contextLength() * kvDim * dc.numberOfLayers());
-        fields.wrapValueCache.init(0.f);
-        fields.wrapKeyCache.init(0.f);
-        fields.wrapAtt = new FloatArray(dc.numberOfHeads() * dc.contextLength());
-        fields.positionHolder = new IntArray(1);
+        workspace.wrapXFP16 = TornadoWorkspaces.halfFloats(dc.dim());
+        workspace.wrapXbFP16 = TornadoWorkspaces.halfFloats(dc.dim());
+        // KV cache: leased from the manager's pool when this state holds a lease, otherwise
+        // allocated here, block-major when paged and contiguous when not.
+        fillKvFields(fields, dc, kvDim, false);
+        workspace.wrapAtt = TornadoWorkspaces.floats(dc.numberOfHeads() * dc.contextLength());
+        // [0] = position, [1] = table-local KV slot.
+        workspace.positionHolder = TornadoWorkspaces.ints(2);
 
-        fields.temp = new FloatArray(1 + ((dc.dim() + localSize - 1) / localSize));
-        fields.tempFFN = new FloatArray(1 + ((dc.dim() + localSize - 1) / localSize));
-        fields.tempLogits = new FloatArray(1 + ((dc.dim() + localSize - 1) / localSize));
+        workspace.temp = TornadoWorkspaces.floats(1 + ((dc.dim() + localSize - 1) / localSize));
+        workspace.tempFFN = TornadoWorkspaces.floats(1 + ((dc.dim() + localSize - 1) / localSize));
+        workspace.tempLogits =
+                TornadoWorkspaces.floats(1 + ((dc.dim() + localSize - 1) / localSize));
 
         return fields;
     }

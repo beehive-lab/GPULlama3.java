@@ -1,7 +1,7 @@
 package org.beehive.gpullama3.inference.weights.tornado;
 
-import org.beehive.gpullama3.tensor.GGMLType;
-import org.beehive.gpullama3.tensor.tornado.TornadoTensor;
+import org.beehive.gpullama3.backend.tornado.tensor.TornadoTensor;
+import org.beehive.gpullama3.runtime.tensor.DataType;
 
 public class Qwen2TornadoWeights extends TornadoWeights {
 
@@ -11,25 +11,27 @@ public class Qwen2TornadoWeights extends TornadoWeights {
     public TornadoTensor[] v_biasLayered;
 
     // @formatter:off
-    public Qwen2TornadoWeights(TornadoTensor tokenEmbeddingTable,
-                               TornadoTensor[] rms_att_weightLayered,
-                               TornadoTensor[] wqLayered,
-                               TornadoTensor[] wkLayered,
-                               TornadoTensor[] wvLayered,
-                               TornadoTensor[] q_biasLayered,
-                               TornadoTensor[] k_biasLayered,
-                               TornadoTensor[] v_biasLayered,
-                               TornadoTensor[] woLayered,
-                               TornadoTensor[] rms_ffn_weightLayered,
-                               TornadoTensor[] w1Layered,
-                               TornadoTensor[] w2Layered,
-                               TornadoTensor[] w3Layered,
-                               TornadoTensor rms_final_weight_as_floatArray,
-                               TornadoTensor freq_cis_realFlat,
-                               TornadoTensor freq_cis_imagFlat,
-                               TornadoTensor wclsByteArray,
-                               GGMLType weightType) {
-        super(tokenEmbeddingTable,
+    public Qwen2TornadoWeights(
+            TornadoTensor tokenEmbeddingTable,
+            TornadoTensor[] rms_att_weightLayered,
+            TornadoTensor[] wqLayered,
+            TornadoTensor[] wkLayered,
+            TornadoTensor[] wvLayered,
+            TornadoTensor[] q_biasLayered,
+            TornadoTensor[] k_biasLayered,
+            TornadoTensor[] v_biasLayered,
+            TornadoTensor[] woLayered,
+            TornadoTensor[] rms_ffn_weightLayered,
+            TornadoTensor[] w1Layered,
+            TornadoTensor[] w2Layered,
+            TornadoTensor[] w3Layered,
+            TornadoTensor rms_final_weight_as_floatArray,
+            TornadoTensor freq_cis_realFlat,
+            TornadoTensor freq_cis_imagFlat,
+            TornadoTensor wclsByteArray,
+            DataType weightType) {
+        super(
+                tokenEmbeddingTable,
                 rms_att_weightLayered,
                 wqLayered,
                 wkLayered,

@@ -1,18 +1,17 @@
 package org.beehive.gpullama3.model.format;
 
-import org.beehive.gpullama3.tokenizer.Gemma4Tokenizer;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.beehive.gpullama3.tokenizer.Gemma4Tokenizer;
 
 /**
  * Chat format for Gemma 4 models.
- * <p>
- * Gemma 4 uses a {@code <|turn>{role}\n ... <turn|>} turn structure (the assistant role is
- * spelled "model" in the template), starts conversations with {@code <bos>}, and stops
- * generation on {@code <turn|>} (the model's configured EOS token).
+ *
+ * <p>Gemma 4 uses a {@code <|turn>{role}\n. <turn|>} turn structure (the assistant role is spelled
+ * "model" in the template), starts conversations with {@code <bos>}, and stops generation on {@code
+ * <turn|>} (the model's configured EOS token).
  */
 public class Gemma4ChatFormat implements ChatFormat {
 

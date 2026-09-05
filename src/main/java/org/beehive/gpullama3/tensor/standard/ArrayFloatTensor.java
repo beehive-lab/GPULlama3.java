@@ -1,11 +1,10 @@
 package org.beehive.gpullama3.tensor.standard;
 
-import org.beehive.gpullama3.tensor.GGMLType;
-import jdk.incubator.vector.FloatVector;
-import jdk.incubator.vector.VectorSpecies;
-
 import java.lang.foreign.MemorySegment;
 import java.util.Arrays;
+import jdk.incubator.vector.FloatVector;
+import jdk.incubator.vector.VectorSpecies;
+import org.beehive.gpullama3.format.GGMLType;
 
 public final class ArrayFloatTensor extends FloatTensor {
 

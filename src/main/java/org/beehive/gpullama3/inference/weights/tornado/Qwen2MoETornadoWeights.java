@@ -1,15 +1,14 @@
 package org.beehive.gpullama3.inference.weights.tornado;
 
-import org.beehive.gpullama3.tensor.GGMLType;
-import org.beehive.gpullama3.tensor.tornado.TornadoTensor;
+import org.beehive.gpullama3.backend.tornado.tensor.TornadoTensor;
+import org.beehive.gpullama3.runtime.tensor.DataType;
 
 /**
  * TornadoVM weight container for Qwen2-MoE / Qwen1.5-MoE models.
  *
- * <p>The inherited fields provide the embedding, attention, RMSNorm and final
- * classifier weights. MoE-specific tensors remain in their GGUF Q8_0 layout;
- * GPU kernels will access their {@code ByteArray} representation through
- * {@link TornadoTensor#asByteArray()}.</p>
+ * <p>The inherited fields provide the embedding, attention, RMSNorm and final classifier weights.
+ * MoE-specific tensors remain in their GGUF Q8_0 layout; GPU kernels will access their {@code
+ * ByteArray} representation through {@link TornadoTensor#asByteArray()}.
  */
 public final class Qwen2MoETornadoWeights extends Qwen2TornadoWeights {
 
@@ -46,8 +45,9 @@ public final class Qwen2MoETornadoWeights extends Qwen2TornadoWeights {
             TornadoTensor freqCisReal,
             TornadoTensor freqCisImag,
             TornadoTensor wCls,
-            GGMLType weightType) {
-        super(tokenEmbeddingTable,
+            DataType weightType) {
+        super(
+                tokenEmbeddingTable,
                 rmsAttWeightLayered,
                 wqLayered,
                 wkLayered,

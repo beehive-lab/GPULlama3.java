@@ -1,0 +1,10 @@
+org.beehive.gpullama3.model.provider.FamilyProviders$GraniteProvider
+org.beehive.gpullama3.model.provider.FamilyProviders$DevstralProvider
+org.beehive.gpullama3.model.provider.FamilyProviders$MistralProvider
+org.beehive.gpullama3.model.provider.FamilyProviders$LlamaProvider
+org.beehive.gpullama3.model.provider.Gemma4Provider
+org.beehive.gpullama3.model.provider.FamilyProviders$Qwen2Provider
+org.beehive.gpullama3.model.provider.FamilyProviders$Qwen2MoEProvider
+org.beehive.gpullama3.model.provider.FamilyProviders$Qwen3Provider
+org.beehive.gpullama3.model.provider.FamilyProviders$DeepSeekR1DistillQwenProvider
+org.beehive.gpullama3.model.provider.FamilyProviders$Phi3Provider

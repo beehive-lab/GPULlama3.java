@@ -7,7 +7,11 @@ import org.beehive.gpullama3.tokenizer.Tokenizer;
 
 public class DeepSeekR1Qwen extends Qwen2 {
 
-    public DeepSeekR1Qwen(Qwen2Configuration configuration, Tokenizer tokenizer, Weights weights, ChatFormat chatFormat) {
+    public DeepSeekR1Qwen(
+            Qwen2Configuration configuration,
+            Tokenizer tokenizer,
+            Weights weights,
+            ChatFormat chatFormat) {
         super(configuration, tokenizer, weights, chatFormat);
     }
 
@@ -19,5 +23,11 @@ public class DeepSeekR1Qwen extends Qwen2 {
     @Override
     public boolean shouldAddBeginOfText() {
         return true;
+    }
+
+    /** Its own identity, stated rather than derived. */
+    @Override
+    public org.beehive.gpullama3.runtime.model.ArchitectureId architectureId() {
+        return org.beehive.gpullama3.runtime.model.ArchitectureId.of("deepseek-r1-distill-qwen");
     }
 }

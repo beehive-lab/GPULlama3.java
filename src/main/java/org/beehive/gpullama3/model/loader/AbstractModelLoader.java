@@ -1,27 +1,38 @@
 package org.beehive.gpullama3.model.loader;
 
-import org.beehive.gpullama3.tensor.GGMLType;
-import org.beehive.gpullama3.tensor.GGUF;
-import org.beehive.gpullama3.tensor.GGMLTensorEntry;
-import org.beehive.gpullama3.auxiliary.Pair;
-import org.beehive.gpullama3.inference.weights.Weights;
-import org.beehive.gpullama3.model.Configuration;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.tokenizer.Tokenizer;
-import org.beehive.gpullama3.tokenizer.Vocabulary;
-import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlan;
-
 import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.util.Map;
+import org.beehive.gpullama3.auxiliary.Pair;
+import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
+import org.beehive.gpullama3.format.DataTypeMapping;
+import org.beehive.gpullama3.format.GGMLTensorEntry;
+import org.beehive.gpullama3.format.GGMLType;
+import org.beehive.gpullama3.format.GGUF;
+import org.beehive.gpullama3.inference.weights.Weights;
+import org.beehive.gpullama3.model.Configuration;
+import org.beehive.gpullama3.model.Model;
+import org.beehive.gpullama3.runtime.diagnostics.DiagnosticCode;
+import org.beehive.gpullama3.runtime.tensor.ExecutionTarget;
+import org.beehive.gpullama3.tokenizer.Tokenizer;
+import org.beehive.gpullama3.tokenizer.Vocabulary;
 
 /**
- * Abstract base class for model loaders using Template Method pattern. Provides common loading flow with extension points for model-specific logic.
+ * Abstract base class for model loaders using Template Method pattern. Provides common loading flow
+ * with extension points for model-specific logic.
  *
  * @param <M> The specific Model type to load
  * @param <C> The specific Configuration type for the model
  */
 public abstract class AbstractModelLoader<M extends Model, C extends Configuration> {
+
+    /**
+     * Rule 16: loading is library code, so its progress goes through the platform logger and an
+     * embedder can silence or route it. Reached only under {@code
+     * llama.EnableTimingForTornadoVMInit}.
+     */
+    private static final System.Logger LOGGER =
+            System.getLogger(AbstractModelLoader.class.getName());
 
     protected final FileChannel fileChannel;
     protected final GGUF gguf;
@@ -30,43 +41,68 @@ public abstract class AbstractModelLoader<M extends Model, C extends Configurati
 
     protected Vocabulary vocabulary;
 
-    protected AbstractModelLoader(FileChannel fileChannel, GGUF gguf, int contextLength, boolean useTornadovm) {
+    protected AbstractModelLoader(
+            FileChannel fileChannel, GGUF gguf, int contextLength, boolean useTornadovm) {
         this.fileChannel = fileChannel;
         this.gguf = gguf;
         this.contextLength = contextLength;
         this.useTornadovm = useTornadovm;
     }
 
-    protected String getModelQuantization(Map<String, Object> metadata) {
+    /**
+     * The activation representation this model runs with, from GGUF's {@code general.file_type}.
+     *
+     * <p>Not the same question as the weights' type: every quantization the GPU cannot execute
+     * directly is materialized as Q8_0 (see {@link #effectiveGpuWeightType}), so they all report
+     * Q8_0 activations. Static because it reads only its argument — which also makes it testable
+     * without standing up a loader.
+     */
+    protected static String getModelQuantization(Map<String, Object> metadata) {
         int modelQuantizationAsInt = (int) metadata.get("general.file_type");
         return switch (modelQuantizationAsInt) {
             case 1 -> "FP16";
-            case 32 -> "FP16"; // MOSTLY_BF16 (treated like FP16 for activation buffers)
+            case 2 ->
+                    "Q8_0"; // Q4_0 — decoded directly on the CPU, materialized as Q8_0 for the GPU
+            case 32 -> "FP16"; // MOSTLY_BF16 — BF16 weights use FP16 activation buffers
             case 7 -> "Q8_0";
             case 14, 15 -> "Q8_0"; // Q4_K_S, Q4_K_M (K-quants use Q8_0 activations)
             case 16, 17 -> "Q8_0"; // Q5_K_S, Q5_K_M
-            case 18 -> "Q8_0";     // Q6_K
-            default -> throw new UnsupportedOperationException("Unsupported quantization format: " + modelQuantizationAsInt + " (as int).");
+            case 18 -> "Q8_0"; // Q6_K
+            default ->
+                    throw new UnsupportedOperationException(
+                            "Unsupported quantization format: "
+                                    + modelQuantizationAsInt
+                                    + " (as int).");
         };
     }
 
     /**
-     * Returns the effective GPU weight type for TornadoVM execution.
-     * K-quant types (Q4_K, Q5_K, Q6_K) are dequantized to Q8_0 at load time.
+     * Returns the effective GPU weight type for TornadoVM execution. K-quant types (Q4_K, Q5_K,
+     * Q6_K) are dequantized to Q8_0 at load time.
      */
+    /**
+     * @deprecated Use {@code DataTypeMapping.materializedType(fileType, ExecutionTarget.GPU)}. Kept
+     *     while the diagnostic below still speaks the file's vocabulary; it answers in file types,
+     *     which is what made the collapse invisible in the first place.
+     */
+    @Deprecated
     protected static GGMLType effectiveGpuWeightType(GGMLType ggmlType) {
-        return switch (ggmlType) {
-            case F16, F32, Q8_0 -> ggmlType;
-            case BF16 -> GGMLType.F16; // widened to FP16 at load time; see ModelLoader#loadTornadoTensor
-            case Q4_K, Q5_K, Q6_K -> GGMLType.Q8_0;
-            default -> ggmlType;
-        };
+        // Delegates to the mapping so the collapse is stated once and tested. A type this
+        // engine does not execute at all is left alone here rather than rejected: the callers
+        // already refuse anything that is not F16 or Q8_0, with a message naming the type.
+        // BF16 collapses to F16 for the GPU, which is what #120's explicit switch did here.
+        if (!DataTypeMapping.isSupported(ggmlType, ExecutionTarget.GPU)) {
+            return ggmlType;
+        }
+        return DataTypeMapping.asFileType(
+                DataTypeMapping.materializedType(ggmlType, ExecutionTarget.GPU));
     }
 
     private static String fileTypeName(int fileType) {
         return switch (fileType) {
             case 0 -> "F32";
             case 1 -> "F16";
+            case 2 -> "Q4_0";
             case 32 -> "BF16";
             case 7 -> "Q8_0";
             case 14 -> "Q4_K_S";
@@ -79,7 +115,8 @@ public abstract class AbstractModelLoader<M extends Model, C extends Configurati
     }
 
     /**
-     * Template method that defines the model loading workflow. Subclasses should not override this method.
+     * Template method that defines the model loading workflow. Subclasses should not override this
+     * method.
      *
      * @return The loaded model instance
      */
@@ -99,9 +136,17 @@ public abstract class AbstractModelLoader<M extends Model, C extends Configurati
             // Step 4: Load tensor entries
             Map<String, GGMLTensorEntry> tensorEntries;
             if (useTornadovm) {
-                tensorEntries = GGUF.loadTensorsTornado(fileChannel, gguf.getTensorDataOffset(), gguf.getTensorInfos());
+                tensorEntries =
+                        GGUF.loadTensorsTornado(
+                                fileChannel,
+                                gguf.getTensorDataOffset(),
+                                gguf.getTensorInfos(),
+                                org.beehive.gpullama3.backend.tornado.device.TornadoDevices
+                                        .current());
             } else {
-                tensorEntries = GGUF.loadTensorsStandard(fileChannel, gguf.getTensorDataOffset(), gguf.getTensorInfos());
+                tensorEntries =
+                        GGUF.loadTensorsStandard(
+                                fileChannel, gguf.getTensorDataOffset(), gguf.getTensorInfos());
             }
 
             // Step 4: Load weights
@@ -111,12 +156,14 @@ public abstract class AbstractModelLoader<M extends Model, C extends Configurati
             return createModel(config, tokenizer, weights);
 
         } catch (IOException e) {
-            throw new ModelLoadException("Failed to load model", e);
+            throw new ModelLoadException(
+                    DiagnosticCode.MODEL_MALFORMED.prefix() + "Failed to load model", e);
         }
     }
 
     /**
-     * Load the vocabulary from GGUF metadata. Model-specific implementations should override this method.
+     * Load the vocabulary from GGUF metadata. Model-specific implementations should override this
+     * method.
      *
      * @param metadata The GGUF metadata map
      * @return The loaded Vocabulary
@@ -126,11 +173,12 @@ public abstract class AbstractModelLoader<M extends Model, C extends Configurati
     /**
      * Create a tokenizer instance for this model.
      *
-     * @param metadata   The GGUF metadata map
+     * @param metadata The GGUF metadata map
      * @param vocabulary The loaded vocabulary
      * @return The tokenizer instance
      */
-    protected abstract Tokenizer createTokenizer(Map<String, Object> metadata, Vocabulary vocabulary);
+    protected abstract Tokenizer createTokenizer(
+            Map<String, Object> metadata, Vocabulary vocabulary);
 
     /**
      * Create a configuration instance from GGUF metadata.
@@ -141,10 +189,11 @@ public abstract class AbstractModelLoader<M extends Model, C extends Configurati
     protected abstract C createConfiguration(Map<String, Object> metadata);
 
     /**
-     * Load model weights from tensor entries. Default implementation handles common weight loading logic.
+     * Load model weights from tensor entries. Default implementation handles common weight loading
+     * logic.
      *
      * @param tensorEntries Map of tensor names to tensor entries
-     * @param config        The model configuration
+     * @param config The model configuration
      * @return The loaded weights
      */
     public Weights loadWeights(Map<String, GGMLTensorEntry> tensorEntries, C config) {
@@ -160,50 +209,68 @@ public abstract class AbstractModelLoader<M extends Model, C extends Configurati
             GGMLType gpuType = effectiveGpuWeightType(outputWeight.ggmlType());
             if (TornadoVMMasterPlan.ENABLE_TORNADOVM_INIT_TIME) {
                 int fileType = (int) gguf.getMetadata().get("general.file_type");
-                System.out.println("Loading model weights in TornadoVM format (" + fileTypeName(fileType) + " -> " + gpuType + ")");
+                LOGGER.log(
+                        System.Logger.Level.INFO,
+                        "Loading model weights in TornadoVM format ("
+                                + fileTypeName(fileType)
+                                + " -> "
+                                + gpuType
+                                + ")");
             }
-            return createTornadoVMWeights(tensorEntries, config, ropeFreqs, tokenEmbeddings, outputWeight);
+            return createTornadoVMWeights(
+                    tensorEntries, config, ropeFreqs, tokenEmbeddings, outputWeight);
         } else {
-            return createStandardWeights(tensorEntries, config, ropeFreqs, tokenEmbeddings, outputWeight);
+            return createStandardWeights(
+                    tensorEntries, config, ropeFreqs, tokenEmbeddings, outputWeight);
         }
     }
 
     /**
      * Create the final model instance.
      *
-     * @param config    The model configuration
+     * @param config The model configuration
      * @param tokenizer The tokenizer
-     * @param weights   The loaded weights
+     * @param weights The loaded weights
      * @return The model instance
      */
     protected abstract M createModel(C config, Tokenizer tokenizer, Weights weights);
 
     /**
-     * Precompute RoPE frequencies for this model. Default implementation can be overridden for custom RoPE configurations.
+     * Precompute RoPE frequencies for this model. Default implementation can be overridden for
+     * custom RoPE configurations.
      */
     protected abstract Pair<float[], float[]> precomputeRopeFrequencies(C config);
 
     /**
-     * Get token embeddings tensor entry. Default implementation can be overridden for different tensor naming.
+     * Get token embeddings tensor entry. Default implementation can be overridden for different
+     * tensor naming.
      */
     protected GGMLTensorEntry getTokenEmbeddings(Map<String, GGMLTensorEntry> tensorEntries) {
         return tensorEntries.get("token_embd.weight");
     }
 
     /**
-     * Get output weight tensor entry. Default implementation falls back to token embeddings if output.weight not found.
+     * Get output weight tensor entry. Default implementation falls back to token embeddings if
+     * output.weight not found.
      */
-    protected GGMLTensorEntry getOutputWeight(Map<String, GGMLTensorEntry> tensorEntries, GGMLTensorEntry tokenEmbeddings) {
+    protected GGMLTensorEntry getOutputWeight(
+            Map<String, GGMLTensorEntry> tensorEntries, GGMLTensorEntry tokenEmbeddings) {
         return tensorEntries.getOrDefault("output.weight", tokenEmbeddings);
     }
 
-    /**
-     * Create standard (CPU) weights.
-     */
-    protected abstract Weights createStandardWeights(Map<String, GGMLTensorEntry> tensorEntries, C config, Pair<float[], float[]> ropeFreqs, GGMLTensorEntry tokenEmbeddings, GGMLTensorEntry outputWeight);
+    /** Create standard (CPU) weights. */
+    protected abstract Weights createStandardWeights(
+            Map<String, GGMLTensorEntry> tensorEntries,
+            C config,
+            Pair<float[], float[]> ropeFreqs,
+            GGMLTensorEntry tokenEmbeddings,
+            GGMLTensorEntry outputWeight);
 
-    /**
-     * Create TornadoVM (GPU) weights.
-     */
-    protected abstract Weights createTornadoVMWeights(Map<String, GGMLTensorEntry> tensorEntries, C config, Pair<float[], float[]> ropeFreqs, GGMLTensorEntry tokenEmbeddings, GGMLTensorEntry outputWeight);
+    /** Create TornadoVM (GPU) weights. */
+    protected abstract Weights createTornadoVMWeights(
+            Map<String, GGMLTensorEntry> tensorEntries,
+            C config,
+            Pair<float[], float[]> ropeFreqs,
+            GGMLTensorEntry tokenEmbeddings,
+            GGMLTensorEntry outputWeight);
 }

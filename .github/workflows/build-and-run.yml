@@ -9,9 +9,14 @@ on:
 
 env:
   JAVA_VERSION: 21.0.2-open
-  GRAAL_JARS: /opt/graalJars
+  JAVA_VERSION_25: 25.0.2-open
   MODELS_DIR: /opt/models
   QUARKUS_PORT: 8081
+  # The Quarkus extension that consumes this project. Its GPULlama3 module tracks the public
+  # facade, so it is pinned to the branch matching this repository's surface rather than to
+  # quarkiverse's default branch, which lags it.
+  QUARKUS_LANGCHAIN4J_REPO: https://github.com/orionpapadakis/quarkus-langchain4j.git
+  QUARKUS_LANGCHAIN4J_REF: gpu-llama3/facade-1.0.0
   # History file committed back to the repo on push to main
   PERF_HISTORY_FILE: docs/perf-history.jsonl
 
@@ -25,32 +30,34 @@ jobs:
       - name: Checkout GPULlama3
         uses: actions/checkout@v4
 
-      - name: Check code formatting (Spotless)
-        run: |
-          cd ${{ github.workspace }}
-          # ./mvnw -T12C -Pspotless spotless:check
+      - name: Set up Java
+        uses: ./.github/actions/setup-java
+        with:
+          java_version: ${{ env.JAVA_VERSION }}
 
-  # Build: TornadoVM → GPULlama3 → Quarkus LangChain4j
-  # No max-parallel cap: opencl/cuda still serialize against each other since they share
-  # the same self-hosted Linux runner, but that's the runner queue doing the serializing,
-  # not the matrix — the independent Mac runner must be free to start immediately rather
-  # than wait for a slot in a shared parallelism budget it doesn't actually contend for.
-  # fail-fast: false so a Linux failure doesn't cancel the independent Mac runner's job (and vice versa).
-  build:
+      - name: Check code formatting (Spotless)
+        run: ./mvnw -T12C -Pspotless spotless:check
+
+      - name: Run the Python tooling tests
+        run: make test-scripts
+
+  # Linux build and Class A gates, on both published JDK lines. The artifact coordinates and
+  # the TornadoVM line both follow from the JDK the build runs on (pom.xml's jdk21/jdk25
+  # profiles), so a line that is never compiled here is a line nobody has checked.
+  #
+  # Split from the macOS job rather than expressed as one matrix with an `os` dimension: jobs
+  # depend on jobs, not on matrix cells, so with one `build` job an unavailable Mac runner
+  # leaves every Linux consumer queued behind it.
+  build-linux:
     if: github.repository == 'beehive-lab/GPULlama3.java'
-    runs-on: ${{ matrix.backend.os == 'macos' && fromJSON('["self-hosted","macOS"]') || fromJSON('["self-hosted","Linux"]') }}
+    runs-on: [self-hosted, Linux]
     needs: code-quality
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        backend:
-          - name: opencl
-            os: linux
-          - name: cuda
-            os: linux
-          - name: metal
-            os: macos
+        backend: [opencl, cuda]
+        jdk: ['21', '25']
 
     steps:
       - name: Checkout GPULlama3
@@ -61,64 +68,81 @@ jobs:
       - name: Set up Java
         uses: ./.github/actions/setup-java
         with:
-          java_version: ${{ env.JAVA_VERSION }}
+          java_version: ${{ matrix.jdk == '25' && env.JAVA_VERSION_25 || env.JAVA_VERSION }}
 
       - name: Setup TornadoVM
         uses: ./.github/actions/setup-tornadovm
         env:
-          TORNADO_ROOT: ${{ runner.tool_cache }}/tornadovm/tornadovm-${{ matrix.backend.name }}
+          TORNADO_ROOT: ${{ runner.tool_cache }}/tornadovm/tornadovm-${{ matrix.backend }}-jdk${{ matrix.jdk }}
         with:
-          backend: ${{ matrix.backend.name }}
+          backend: ${{ matrix.backend }}
+          jdk: ${{ matrix.jdk }}
 
-      - name: Build GPULlama3.java
+      - name: Build and unit-test GPULlama3.java
         run: |
-          TORNADO_VERSION=$(tornado --version | tee /tmp/tornado-version.txt | sed -n 's/^version=//p' | head -n 1)
-          if [ -z "$TORNADO_VERSION" ]; then
-            echo "::error::Could not determine TornadoVM version from tornado --version"
-            cat /tmp/tornado-version.txt
+          # No `versions:set` and no `-Dtornadovm.version`: both would overwrite what the JDK
+          # profile resolved, which is the mechanism being tested. The version is read back
+          # afterwards so downstream steps name the artifact the build actually produced.
+          ./mvnw clean install
+          GPULLAMA3_VERSION=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout)
+          echo "GPULlama3 version: $GPULLAMA3_VERSION"
+          echo "GPULLAMA3_VERSION=$GPULLAMA3_VERSION" >> $GITHUB_ENV
+
+      - name: Check the artifact matches the JDK that built it
+        run: |
+          set -euo pipefail
+          EXPECTED_SUFFIX="-jdk${{ matrix.jdk }}"
+          case "$GPULLAMA3_VERSION" in
+            *"$EXPECTED_SUFFIX") ;;
+            *) echo "::error::JDK ${{ matrix.jdk }} produced $GPULLAMA3_VERSION, which does not end in $EXPECTED_SUFFIX"; exit 1 ;;
+          esac
+          # 21 -> class major 65, 25 -> 69.
+          EXPECTED_MAJOR=$(( 44 + ${{ matrix.jdk }} ))
+          JAR="target/gpu-llama3-${GPULLAMA3_VERSION}.jar"
+          MAJOR=$("$JAVA_HOME/bin/javap" -verbose -classpath "$JAR" \
+            org.beehive.gpullama3.model.Model | awk '/major version:/ { print $3; exit }')
+          if [ "$MAJOR" != "$EXPECTED_MAJOR" ]; then
+            echo "::error::$JAR has class major $MAJOR, expected $EXPECTED_MAJOR"; exit 1
+          fi
+          # The seven provider/architecture SPIs. A missing one loses a model family at runtime
+          # and nothing else notices until a load fails.
+          SERVICES=$("$JAVA_HOME/bin/jar" tf "$JAR" | grep -c '^META-INF/services/org\.beehive\.' || true)
+          if [ "$SERVICES" != "7" ]; then
+            echo "::error::$JAR declares $SERVICES project service files, expected 7"
+            "$JAVA_HOME/bin/jar" tf "$JAR" | grep '^META-INF/services/' || true
             exit 1
           fi
-          echo "TornadoVM Maven version: $TORNADO_VERSION"
-          # Strip any pre-existing -SNAPSHOT suffix before appending, making this step idempotent
-          # across sequential matrix variants (cuda runs after opencl on the same Linux workspace).
-          BASE_VERSION=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout | sed 's/-SNAPSHOT$//')
-          GPULLAMA3_VERSION="${BASE_VERSION}-SNAPSHOT"
-          echo "GPULlama3 version: $GPULLAMA3_VERSION"
-          ./mvnw versions:set -DnewVersion="$GPULLAMA3_VERSION" -Dtornadovm.version="$TORNADO_VERSION"
-          ./mvnw clean install -DskipTests -Dtornadovm.version="$TORNADO_VERSION"
-          echo "GPULLAMA3_VERSION=$GPULLAMA3_VERSION" >> $GITHUB_ENV
-          echo "TORNADOVM_MAVEN_VERSION=$TORNADO_VERSION" >> $GITHUB_ENV
+          echo "$JAR: version $GPULLAMA3_VERSION, class major $MAJOR, $SERVICES service files"
 
-      - name: Clone Quarkus LangChain4j
+      - name: Launcher smoke test
         run: |
-          rm -rf quarkus-langchain4j
-          git clone --depth 1 https://github.com/quarkiverse/quarkus-langchain4j.git
+          set -euo pipefail
+          export LLAMA_ROOT="${{ github.workspace }}"
+          ./llama-tornado --help > /dev/null
+          # --show-command without --execute-after-show builds the whole JVM command line,
+          # which is what proves the SDK argfile was found and read.
+          ./llama-tornado --show-command --gpu \
+            --model "$MODELS_DIR/Llama-3.2-1B-Instruct-F16.gguf" --prompt hi \
+            | tee /tmp/llama-command.txt > /dev/null
+          # `if` blocks, not AND/OR lists: under `bash -e` a list whose final status is
+          # non-zero terminates the step, so the negative check below would fail the job
+          # precisely when it passes.
+          if ! grep -q -- "@$TORNADOVM_HOME/tornado-argfile" /tmp/llama-command.txt; then
+            echo "::error::launcher did not use the SDK argfile"
+            cat /tmp/llama-command.txt
+            exit 1
+          fi
+          if grep -q -- "-XX:+EnableJVMCI" /tmp/llama-command.txt; then
+            echo "::error::launcher hardcodes a JVMCI flag again; it must come from the SDK argfile"
+            exit 1
+          fi
+          echo "launcher command built from the SDK argfile"
 
-      - name: Build Quarkus LangChain4j
-        run: |
-          cd ${{ github.workspace }}/quarkus-langchain4j
-          # -i.bak (extension glued to the flag) is the portable form: GNU sed (Linux) accepts it,
-          # and BSD sed (macOS) requires it — a bare `-i ''` is parsed as the script on BSD sed.
-          sed -i.bak 's/<gpu-llama3\.version>.*<\/gpu-llama3\.version>/<gpu-llama3.version>'$GPULLAMA3_VERSION'<\/gpu-llama3.version>/' pom.xml
-          rm -f pom.xml.bak
-          # -Dtornado activates the TornadoVM profile; -am builds only the gpu-llama3 module + deps
-          mvn clean install -pl integration-tests/gpu-llama3 -am -DskipTests -Dtornado
-
-  standalone-inference:
+  build-macos:
     if: github.repository == 'beehive-lab/GPULlama3.java'
-    runs-on: ${{ matrix.backend.os == 'macos' && fromJSON('["self-hosted","macOS"]') || fromJSON('["self-hosted","Linux"]') }}
-    needs: build
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        backend:
-          - name: opencl
-            os: linux
-          - name: cuda
-            os: linux
-          - name: metal
-            os: macos
+    runs-on: [self-hosted, macOS]
+    needs: code-quality
+    timeout-minutes: 45
 
     steps:
       - name: Checkout GPULlama3
@@ -134,315 +158,50 @@ jobs:
       - name: Setup TornadoVM
         uses: ./.github/actions/setup-tornadovm
         env:
-          TORNADO_ROOT: ${{ runner.tool_cache }}/tornadovm/tornadovm-${{ matrix.backend.name }}
+          TORNADO_ROOT: ${{ runner.tool_cache }}/tornadovm/tornadovm-metal-jdk21
         with:
-          backend: ${{ matrix.backend.name }}
+          backend: metal
+          jdk: '21'
 
-      # Test standalone mode per model family and quantization
-      # Note: variants can be represented with matrices
-      - name: FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Standard
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: Llama-3.2-1B-Instruct-F16.gguf
-          model: Llama-3.2-1B-Instruct
-          quantization: F16
-          configuration: standard
-          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-llama-1b-f16-standard.json
+      - name: Build and unit-test GPULlama3.java
+        run: ./mvnw clean install
 
-      - name: FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Prefill-Decode
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: Llama-3.2-1B-Instruct-F16.gguf
-          model: Llama-3.2-1B-Instruct
-          quantization: F16
-          configuration: prefill-decode
-          flags: --with-prefill-decode
-          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-llama-1b-f16-prefill-decode.json
+  standalone-inference-linux:
+    if: github.repository == 'beehive-lab/GPULlama3.java'
+    needs: build-linux
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [opencl, cuda]
+    uses: ./.github/workflows/standalone-inference.yml
+    with:
+      backend: ${{ matrix.backend }}
+      runner_os: Linux
 
-      - name: FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Batch-Prefill-Decode
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: Llama-3.2-1B-Instruct-F16.gguf
-          model: Llama-3.2-1B-Instruct
-          quantization: F16
-          configuration: batch-prefill-decode
-          flags: --with-prefill-decode --batch-prefill-size 32
-          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-llama-1b-f16-batch-prefill-decode.json
-
-      - name: FP16 - Run Qwen3-0.6B-f16.gguf
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: Qwen3-0.6B-f16.gguf
-          model: Qwen3-0.6B
-          quantization: F16
-          configuration: standard
-          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-qwen3-0.6b-f16-standard.json
-
-      - name: FP16 - Run Qwen3-0.6B-f16.gguf - Prefill-Decode
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: Qwen3-0.6B-f16.gguf
-          model: Qwen3-0.6B
-          quantization: F16
-          configuration: prefill-decode
-          flags: --with-prefill-decode
-          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-qwen3-0.6b-f16-prefill-decode.json
-
-      - name: FP16 - Run Qwen3-0.6B-f16.gguf - Batch-Prefill-Decode
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: Qwen3-0.6B-f16.gguf
-          model: Qwen3-0.6B
-          quantization: F16
-          configuration: batch-prefill-decode
-          flags: --with-prefill-decode --batch-prefill-size 32
-          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-qwen3-0.6b-f16-batch-prefill-decode.json
-
-      - name: FP16 - Run Mistral-7B-Instruct-v0.3.fp16.gguf
-        # TODO: re-enable once the Mistral-7B-on-Metal timeout is root-caused; see the
-        # Metal TornadoOutOfMemoryException also hit by the tiny Llama-3.2-1B quarkus job.
-        if: matrix.backend.name != 'metal'
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: Mistral-7B-Instruct-v0.3.fp16.gguf
-          model: Mistral-7B-Instruct-v0.3
-          quantization: F16
-          configuration: standard
-          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-mistral-7b-fp16-standard.json
-
-      - name: FP16 - Run Qwen2.5-1.5b-instruct-fp16.gguf
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: qwen2.5-1.5b-instruct-fp16.gguf
-          model: Qwen2.5-1.5B-Instruct
-          quantization: F16
-          configuration: standard
-          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-qwen2-5-1-5b-fp16-standard.json
-
-      - name: FP16 - Run Phi-3-mini-4k-instruct-fp16.gguf
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: Phi-3-mini-4k-instruct-fp16.gguf
-          model: Phi-3-mini-4k-instruct
-          quantization: F16
-          configuration: standard
-          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-phi3-mini-fp16-standard.json
-
-      - name: FP16 - Run Granite-3.2-2b-instruct-f16.gguf
-        # TODO: not yet provisioned under /opt/models on the Mac runner; re-enable once it is.
-        if: matrix.backend.name != 'metal'
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: granite-3.2-2b-instruct-f16.gguf
-          model: Granite-3.2-2B-Instruct
-          quantization: F16
-          configuration: standard
-          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-granite-3-2-2b-f16-standard.json
-
-      - name: FP16 - Run Granite-4.0-1b-F16.gguf
-        # Not provisioned on the macOS runner; same as the other Granite/Mistral models.
-        if: matrix.backend.name != 'metal'
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: granite-4.0-1b-F16.gguf
-          model: Granite-4.0-1B
-          quantization: F16
-          configuration: standard
-          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-granite-4-0-1b-f16-standard.json
-
-      - name: Q8 - Run Llama-3.2-1B-Instruct-Q8_0.gguf
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: Llama-3.2-1B-Instruct-Q8_0.gguf
-          model: Llama-3.2-1B-Instruct
-          quantization: Q8_0
-          configuration: standard
-          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-llama-1b-q8-standard.json
-
-      - name: Q8 - Run Llama-3.2-1B-Instruct-Q8_0.gguf - Prefill-Decode
-        env:
-          JAVA_TOOL_OPTIONS: >-
-            -Dllama.metrics.format=json
-            -Dllama.metrics.output=file
-            -Dllama.metrics.file=${{ runner.temp }}/metrics-${{ matrix.backend.name }}-llama-1b-q8-prefill-decode.json
-        run: |
-          cd ${{ github.workspace }}
-          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
-          ./llama-tornado --gpu \
-            --model $MODELS_DIR/Llama-3.2-1B-Instruct-Q8_0.gguf \
-            --prompt "Say hello" \
-            --with-prefill-decode
-          python3 scripts/write_metrics_sidecar.py \
-            --out "${{ runner.temp }}/metrics-${{ matrix.backend.name }}-llama-1b-q8-prefill-decode.meta.json" \
-            backend="${{ matrix.backend.name }}" \
-            task=llama-inference \
-            model_file=Llama-3.2-1B-Instruct-Q8_0.gguf \
-            model=Llama-3.2-1B-Instruct \
-            quantization=Q8_0 \
-            configuration=prefill-decode \
-            "flags=--with-prefill-decode" \
-            prompt="Say hello"
-
-      - name: Q8 - Run Llama-3.2-1B-Instruct-Q8_0.gguf - Batch-Prefill-Decode
-        # Fails on the CUDA backend only (OpenCL and Metal both pass this step):
-        #   TornadoInternalError: unimplemented: address origin unimplemented: ...calc.Mul
-        #   at CUDAAddressLowering.lower (tornado.drivers.cuda 5.2.1-jdk21-dev)
-        # A TornadoVM CUDA address-lowering gap on the Q8_0 tensor-core batch-prefill
-        # kernel (gemmMMAQKVQ8), not a change in this repository. Reproduced on develop
-        # 7fcd11b10 and reported as beehive-lab/TornadoVM#1057. Drop the guard once it is fixed.
-        if: matrix.backend.name != 'cuda'
-        env:
-          JAVA_TOOL_OPTIONS: >-
-            -Dllama.metrics.format=json
-            -Dllama.metrics.output=file
-            -Dllama.metrics.file=${{ runner.temp }}/metrics-${{ matrix.backend.name }}-llama-1b-q8-batch-prefill-decode.json
-        run: |
-          cd ${{ github.workspace }}
-          export PATH="$TORNADOVM_HOME/bin:$JAVA_HOME/bin:$PATH"
-          ./llama-tornado --gpu \
-            --model $MODELS_DIR/Llama-3.2-1B-Instruct-Q8_0.gguf \
-            --prompt "Say hello" \
-            --with-prefill-decode --batch-prefill-size 32
-          python3 scripts/write_metrics_sidecar.py \
-            --out "${{ runner.temp }}/metrics-${{ matrix.backend.name }}-llama-1b-q8-batch-prefill-decode.meta.json" \
-            backend="${{ matrix.backend.name }}" \
-            task=llama-inference \
-            model_file=Llama-3.2-1B-Instruct-Q8_0.gguf \
-            model=Llama-3.2-1B-Instruct \
-            quantization=Q8_0 \
-            configuration=batch-prefill-decode \
-            "flags=--with-prefill-decode --batch-prefill-size 32" \
-            prompt="Say hello"
-
-      - name: Q8 - Run Qwen3-0.6B-Q8_0.gguf
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: Qwen3-0.6B-Q8_0.gguf
-          model: Qwen3-0.6B
-          quantization: Q8_0
-          configuration: standard
-          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-qwen3-0-6b-q8-standard.json
-
-      - name: Q8 - Run Qwen3-0.6B-Q8_0.gguf - Prefill-Decode
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: Qwen3-0.6B-Q8_0.gguf
-          model: Qwen3-0.6B
-          quantization: Q8_0
-          configuration: prefill-decode
-          flags: --with-prefill-decode
-          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-qwen3-0-6b-q8-prefill-decode.json
-
-      - name: Q8 - Run Qwen3-0.6B-Q8_0.gguf - Batch-Prefill-Decode
-        # Same CUDA address-lowering gap as the Llama Q8_0 batch-prefill step above
-        # (beehive-lab/TornadoVM#1057).
-        if: matrix.backend.name != 'cuda'
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: Qwen3-0.6B-Q8_0.gguf
-          model: Qwen3-0.6B
-          quantization: Q8_0
-          configuration: batch-prefill-decode
-          flags: --with-prefill-decode --batch-prefill-size 32
-          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-qwen3-0-6b-q8-batch-prefill-decode.json
-
-      - name: Q8 - Run Phi-3-mini-4k-instruct-Q8_0.gguf
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: Phi-3-mini-4k-instruct-Q8_0.gguf
-          model: Phi-3-mini-4k-instruct
-          quantization: Q8_0
-          configuration: standard
-          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-phi3-mini-q8-standard.json
-
-      - name: Q8 - Run Qwen2.5-1.5b-instruct-q8_0.gguf
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: qwen2.5-1.5b-instruct-q8_0.gguf
-          model: Qwen2.5-1.5B-Instruct
-          quantization: Q8_0
-          configuration: standard
-          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-qwen2-5-1-5b-q8-standard.json
-
-      - name: Q8 - Run Mistral-7B-Instruct-v0.3.Q8_0.gguf
-        # TODO: re-enable once Mistral-7B-on-Metal is root-caused; see the FP16 step above.
-        if: matrix.backend.name != 'metal'
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: Mistral-7B-Instruct-v0.3.Q8_0.gguf
-          model: Mistral-7B-Instruct-v0.3
-          quantization: Q8_0
-          configuration: standard
-          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-mistral-7b-q8-standard.json
-
-      - name: Q8 - Run Granite-3.2-2b-instruct-Q8_0.gguf
-        # Not provisioned on the macOS runner; same as the other Granite/Mistral models.
-        if: matrix.backend.name != 'metal'
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: granite-3.2-2b-instruct-Q8_0.gguf
-          model: Granite-3.2-2B-Instruct
-          quantization: Q8_0
-          configuration: standard
-          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-granite-3-2-2b-q8-standard.json
-
-      - name: Q8 - Run Granite-4.0-1b-Q8_0.gguf
-        # Not provisioned on the macOS runner; same as the other Granite/Mistral models.
-        if: matrix.backend.name != 'metal'
-        uses: ./.github/actions/run-inference
-        with:
-          backend: ${{ matrix.backend.name }}
-          model_file: granite-4.0-1b-Q8_0.gguf
-          model: Granite-4.0-1B
-          quantization: Q8_0
-          configuration: standard
-          metrics_file: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-granite-4-0-1b-q8-standard.json
-
-      # Upload metrics for the publish job
-      - name: Upload metrics artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: metrics-${{ matrix.backend.name }}-${{ github.run_id }}
-          path: ${{ runner.temp }}/metrics-${{ matrix.backend.name }}-*.json
-          if-no-files-found: warn
+  standalone-inference-macos:
+    if: github.repository == 'beehive-lab/GPULlama3.java'
+    needs: build-macos
+    uses: ./.github/workflows/standalone-inference.yml
+    with:
+      backend: metal
+      runner_os: macOS
+      # The same 22 rows take far longer on the Mac than on the CUDA/OpenCL machine --
+      # Phi-3-mini in FP16 alone ran past the 40-minute wall there, cancelling the job
+      # after seven rows had verified. The budget is per machine, not per matrix.
+      timeout_minutes: 120
 
   # Test integration with Quarkus-langchain4j
   quarkus-langchain4j-integration:
     if: github.repository == 'beehive-lab/GPULlama3.java'
-    runs-on: ${{ matrix.backend.os == 'macos' && fromJSON('["self-hosted","macOS"]') || fromJSON('["self-hosted","Linux"]') }}
-    needs: build
-    timeout-minutes: 10
+    runs-on: [self-hosted, Linux]
+    needs: build-linux
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        backend:
-          - name: opencl
-            os: linux
-          - name: cuda
-            os: linux
-          # No metal leg: the Metal backend builds, but its generated text is wrong
-          # (prompt "Say hello" returns unrelated tokens), so a streaming-endpoint check
-          # against it cannot mean anything yet. Re-add once Metal produces correct output.
+        # Linux only: the extension is exercised here as a consumer of the public facade,
+        # and the backend it runs on is not what this job is checking.
+        backend: [opencl, cuda]
 
     steps:
       - name: Checkout GPULlama3
@@ -458,14 +217,36 @@ jobs:
       - name: Setup TornadoVM
         uses: ./.github/actions/setup-tornadovm
         env:
-          TORNADO_ROOT: ${{ runner.tool_cache }}/tornadovm/tornadovm-${{ matrix.backend.name }}
+          TORNADO_ROOT: ${{ runner.tool_cache }}/tornadovm/tornadovm-${{ matrix.backend }}-jdk21
         with:
-          backend: ${{ matrix.backend.name }}
+          backend: ${{ matrix.backend }}
+          jdk: '21'
+
+      - name: Build GPULlama3 for this leg
+        run: |
+          ./mvnw -q clean install -DskipTests
+          echo "GPULLAMA3_VERSION=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout)" >> $GITHUB_ENV
+
+      - name: Clone the Quarkus LangChain4j extension
+        run: |
+          rm -rf quarkus-langchain4j
+          git clone --depth 1 --branch "$QUARKUS_LANGCHAIN4J_REF" \
+            "$QUARKUS_LANGCHAIN4J_REPO" quarkus-langchain4j
+
+      - name: Build the Quarkus LangChain4j extension against this build
+        run: |
+          cd ${{ github.workspace }}/quarkus-langchain4j
+          # -i.bak (extension glued to the flag) is the portable form: GNU sed accepts it and
+          # BSD sed requires it — a bare `-i ''` is parsed as the script on BSD sed.
+          sed -i.bak 's/<gpu-llama3\.version>.*<\/gpu-llama3\.version>/<gpu-llama3.version>'$GPULLAMA3_VERSION'<\/gpu-llama3.version>/' pom.xml
+          rm -f pom.xml.bak
+          # -Dtornado activates the TornadoVM profile; -am builds only the gpu-llama3 module + deps
+          mvn -q clean install -pl integration-tests/gpu-llama3 -am -DskipTests -Dtornado
 
       - name: Verify GPULlama3 Dependency
         run: |
           cd ${{ github.workspace }}/quarkus-langchain4j/integration-tests/gpu-llama3
-          mvn dependency:tree | grep "io.github.beehive-lab:gpu-llama3"
+          mvn dependency:tree | grep "io.github.beehive-lab:gpu-llama3:jar:$GPULLAMA3_VERSION"
 
       - name: Seed GPULlama3 model cache (avoid HuggingFace download on cold runners)
         shell: bash
@@ -598,6 +379,85 @@ jobs:
           kill $APP_PID || true
           wait $APP_PID 2>/dev/null || true
 
+  # ── Benchmark gate (M1.7 / T1.7) ────────────────────────────────────────────
+  #
+  # The gate that was written in M1 and never wired up, because it was waiting on
+  # #142 (which landed) and #146. It measures one pinned tuple and compares the median
+  # eval_rate against the most recent gate-passing entry for the same tuple in
+  # docs/perf-history.jsonl, failing on a regression beyond tolerance.
+  #
+  # Deliberately NOT --append: publish-performance-history below is what records runs,
+  # and two writers would race for the same file and double-count the same run.
+  #
+  # Push to main only, for the same reason that job is: a PR from a fork cannot be
+  # trusted with the history, and a gate that runs on unpinned hardware compares against
+  # the wrong baseline. scripts/perf-gate-tolerances.json is where a machine's tolerance
+  # (or record-only status) is declared.
+  performance-gate:
+    if: >-
+      github.repository == 'beehive-lab/GPULlama3.java' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main'
+
+    runs-on: [self-hosted, Linux]
+    needs: standalone-inference-linux
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout GPULlama3
+        uses: actions/checkout@v4
+        with:
+          clean: false
+
+      - name: Set up Java
+        uses: ./.github/actions/setup-java
+        with:
+          java_version: ${{ env.JAVA_VERSION }}
+
+      - name: Setup TornadoVM
+        uses: ./.github/actions/setup-tornadovm
+        env:
+          TORNADO_ROOT: ${{ runner.tool_cache }}/tornadovm/tornadovm-cuda-jdk21
+        with:
+          backend: cuda
+          jdk: '21'
+
+      - name: Build
+        run: ./mvnw -q -B clean package -DskipTests
+
+      - name: Gate Llama-3.2-1B-Instruct-Q8_0 on CUDA
+        run: |
+          # GitHub runs this with `bash -e`, so the gate's own non-zero exit would abort
+          # the step before its status could be read. errexit off for the call, and
+          # PIPESTATUS[0] rather than $? because the output goes through tee.
+          set +e
+          set -o pipefail
+          scripts/perf-gate-run.sh \
+            --model-file Llama-3.2-1B-Instruct-Q8_0.gguf \
+            --model Llama-3.2-1B-Instruct \
+            --quantization Q8_0 \
+            --backend cuda \
+            --machine "${{ runner.name }}" 2>&1 | tee gate-q8.log
+          status=${PIPESTATUS[0]}
+          set -e
+
+          # The gate's exit codes: 0 pass or record-only, 1 regression, 2 unstable, 3 usage.
+          case "$status" in
+            0) echo "benchmark gate passed" ;;
+            2) echo "::warning::benchmark gate could not measure reliably — a machine too"\
+                    " noisy to measure has said nothing about the code; see gate-q8.log" ;;
+            *) echo "::error::benchmark gate failed with status $status; see gate-q8.log"
+               exit "$status" ;;
+          esac
+
+      - name: Upload gate log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-gate-${{ github.run_id }}
+          path: gate-*.log
+          if-no-files-found: warn
+
   # Collect all matrix metrics and update history
   publish-performance-history:
     # Guard: only commit history on real pushes to main, not on PRs or forks.
@@ -608,7 +468,7 @@ jobs:
       github.ref == 'refs/heads/main'
 
     runs-on: [self-hosted, Linux]
-    needs: standalone-inference
+    needs: standalone-inference-linux
     timeout-minutes: 15
 
     steps:
@@ -624,14 +484,22 @@ jobs:
 
       - name: Append to performance history
         run: |
+          # Gate tuple fields (M1.7): a row missing any of these can never serve as a
+          # baseline, so they are derived here rather than left null.
+          GPU_NAME="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"
+          TVM_VERSION="$(sed -n 's:.*<tornadovm.base.version>\(.*\)</tornadovm.base.version>.*:\1:p' pom.xml | head -1)"
           python3 scripts/process_metrics.py \
             --metrics-dir "${{ runner.temp }}/metrics-artifacts" \
+            --gpu "$GPU_NAME" \
+            --tornadovm-version "$TVM_VERSION" \
+            --cache-warm true \
             --commit "${{ github.sha }}" \
             --branch "${{ github.ref_name }}" \
             --run-id "${{ github.run_id }}" \
             --run-number "${{ github.run_number }}" \
             --run-attempt "${{ github.run_attempt }}" \
             --workflow "${{ github.workflow }}" \
+            --machine "${{ runner.name }}" \
             --history "$PERF_HISTORY_FILE"
 
       - name: Commit performance history

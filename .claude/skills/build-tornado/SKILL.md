@@ -1,6 +1,6 @@
 ---
 name: build-tornado
-description: Setup TornadoVM to use with GPULlama3.java. Use this when already on a system with GPUs visible.
+description: Build a TornadoVM SDK for GPULlama3.java. Use when TORNADOVM_HOME is unset, points at the wrong JDK line or backend, or the pinned version has moved.
 license: Apache-2.0
 metadata:
   author: TornadoVM Team
@@ -8,55 +8,99 @@ metadata:
 
 # Build TornadoVM
 
-Build TornadoVM from source. Available backends: `opencl` (default), `ptx`, `spirv`, `cuda`, `metal`. Comma-separated combos allowed (e.g. `ptx,opencl` but not suggested).
+One SDK per (JDK line, backend). GPULlama3.java pins the TornadoVM version in `pom.xml`
+as `tornadovm.base.version`; build that tag, not `develop`.
 
-## When to Use
+## When to use
 
-| Scenario                                                 | Use This Skill? |
-|----------------------------------------------------------|----------------|
-| `echo $TORNADOVM_HOME` does not point to a TornadoVM SDK | Yes |
+| Situation | Use this skill? |
+| --- | --- |
+| `echo $TORNADOVM_HOME` is empty, or `tornado --devices` fails | yes |
+| The SDK's JDK line does not match the JDK you will build GPULlama3 with | yes |
+| You need a different backend than the installed SDK has | yes |
+| The SDK is fine and you only need to rebuild GPULlama3 | no — use `build-n-run-engine` |
 
-## Prerequisites
+## 1. Decide the tuple
 
-- JAVA_HOME is set to jdk 21 or 25
-- `nvidia-smi` succeeds (GPUs visible)
-
-## Instructions
-
-### Step 1: Verify Environment
-
-Run `nvidia-smi` to confirm you are on a system with GPU access.
-
-### Step 2: Locate the Codebase
-
-`cd` to the TornadoVM repository. If the path is not provided by the user, ask for it. If the path doesn't exist, stop and ask — don't clone or guess.
-
-### Step 3: (Optional) Checkout Branch
-
-A single word/arg to this skill is the **backend** unless the user explicitly calls it a branch (e.g. "on the develop branch"). Only checkout when a branch is explicitly named:
-```bash
-git checkout <branch> && git pull
-```
-
-### Step 4: Build
-
-If the backend of choice is not provided by the user, ask for it.
-Run the build command:
+Ask, or read, three things. Do not guess any of them.
 
 ```bash
-make BACKEND=<backend>
+# The pinned version, from the consuming project:
+sed -n 's:.*<tornadovm.base.version>\(.*\)</tornadovm.base.version>.*:\1:p' /path/to/GPULlama3.java/pom.xml
 ```
 
-### Step 5: Install
+- **Backend**: `opencl`, `cuda` or `metal`. Comma-separated combinations are accepted but
+  make the runtime pick between them, so prefer one.
+- **JDK line**: 21 or 25. It must be the same JDK you build and run GPULlama3.java with.
+- **Version**: the pinned tag above.
+
+## 2. Check the environment
 
 ```bash
-source setvars.sh
+java -version                 # must match the JDK line you chose
+nvidia-smi                    # CUDA/OpenCL on NVIDIA
+system_profiler SPDisplaysDataType | head    # macOS/Metal
 ```
 
-Note: this only sets env vars for the current shell. Each new Bash tool call is a fresh shell — re-source `setvars.sh` before any later `tornado`/GPULlama3 command in a new call.
+## 3. Get a clean source tree at the pinned tag
 
-### Step 6: Verify
+Use a directory per tuple, so one build does not overwrite another's `dist/`.
 
 ```bash
-tornado --devices
+TVM_SRC="$HOME/tornadovm-sdks/jdk21-cuda"     # name it after the tuple
+git clone --depth 1 --branch v6.0.0 https://github.com/beehive-lab/TornadoVM.git "$TVM_SRC"
 ```
+
+## 4. Build
+
+```bash
+cd "$TVM_SRC"
+export JAVA_HOME="$HOME/.sdkman/candidates/java/21.0.2-open"   # the chosen line
+export PATH="$JAVA_HOME/bin:$PATH"
+
+python3 -m venv venv && source venv/bin/activate
+python -m pip install --quiet --upgrade pip
+python -m pip install --quiet requests tqdm    # bin/pull_graal_jars.py imports these
+
+rm -rf graalJars && mkdir -p graalJars         # never seed from a shared directory
+
+make BACKEND=cuda            # JDK 21
+# make jdk22plus BACKEND=cuda   # JDK 25 and anything newer
+```
+
+Four things that cost time if you get them wrong:
+
+- **`make BACKEND=...` is the JDK 21 target.** It passes `--jdk jdk21`, and `bin/compile`
+  refuses a `JAVA_HOME` that is not JDK 21 rather than compiling against one JVMCI shape
+  and linking against another. Everything from JDK 22 up is the single `jdk22plus` profile.
+- **`make metal` is not Metal-only** — it expands to `--backend metal,opencl`. Use
+  `make BACKEND=metal`.
+- **Clear `graalJars/` first.** Mixing Graal packagings makes the boot layer refuse to
+  start with `LayerInstantiationException: Package org.graalvm.graphio in both module ...`,
+  which reports module names and no file.
+- **`CUDA_PATH`** must point at a toolkit whose `include/` has `cudnn.h`; otherwise the
+  `cudnn-jni` module fails with `fatal error: cudnn.h: No such file or directory`.
+
+## 5. Point the environment at it
+
+```bash
+export TORNADOVM_HOME="$(find "$TVM_SRC/dist" -maxdepth 3 -type d -name 'tornadovm-*-cuda' | head -1)"
+export PATH="$TORNADOVM_HOME/bin:$PATH"
+```
+
+Each Bash tool call is a fresh shell. Export these in the **same** command as anything
+that uses them, or source a script that does.
+
+## 6. Verify
+
+```bash
+tornado --version
+tornado --devices              # must list the device you intend to use
+cat "$TORNADOVM_HOME/etc/tornado.backend"
+test -f "$TORNADOVM_HOME/tornado-argfile"     # what GPULlama3's launchers read
+```
+
+`tornado --devices` also regenerates `tornado-argfile` from its template, so run it once
+after a fresh build. The argfile is the SDK's own record of how to start it — module path,
+Graal/JVMCI arrangement, per-backend export lists, and the preview flag where the JDK 21
+line needs one. Never hand-write those flags.

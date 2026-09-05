@@ -1,9 +1,9 @@
 ---
 name: gpullama-nsys-analysis
 description: >
-  Nsight Systems workflow for GPULlama3/TornadoVM CUDA runs. Use to capture
-  CUDA timelines, summarize kernel/API/memcpy time, identify hot kernels,
-  launch overhead, syncs, and GPU idle behavior.
+  Nsight Systems workflow for GPULlama3.java on the CUDA backend. Use to capture a
+  timeline and decide where the time goes: generated kernels, launch overhead,
+  synchronization, host-device transfers, or GPU idle.
 tags:
   - gpullama
   - nsys
@@ -11,63 +11,102 @@ tags:
 license: Apache-2.0
 ---
 
-# GPULlama3 Nsight Systems Analysis
+# Nsight Systems on GPULlama3.java
 
-## When To Use
+## When to use
 
-Use `nsys` when you need the system-level picture:
+For the system-level picture: which kernels dominate, whether launch overhead is
+significant, whether copies or synchronization are visible, and whether the GPU is idle
+between kernels. For per-kernel occupancy, stalls and speed-of-light, use
+`gpullama-ncu-analysis` after this identifies the hot kernel.
 
-- which CUDA kernels dominate total time
-- whether launch overhead is significant
-- whether memory copies or synchronization are visible
-- whether GPU is idle between kernels
-- whether native CUDA libraries appear in the timeline
+CUDA only. `nsys` sees nothing useful on the OpenCL or Metal backends.
 
-Do not use `nsys` for detailed per-kernel SOL/occupancy/warp-stall diagnosis. Use `gpullama-ncu-analysis` after identifying a hot kernel.
+## 1. Establish the run before profiling it
 
-## Workflow
+A profile of the wrong path is worse than no profile. Fix the tuple first: model file,
+quantization, execution mode, and JDK/SDK line. Then confirm the run is what you think it
+is, exactly as `build-n-run-engine` describes — resolved backend, an `execution_path` in
+the metrics JSON, and correct generated text.
 
-1. Pick a focused GPULlama3 command and a CUDA backend run.
-2. Use a prompt/flag combination that reaches the phase being studied.
-3. Capture a trace under a timestamped artifact directory.
-4. Run targeted `nsys stats` reports.
-5. Classify the bottleneck before recommending changes.
+Choose flags that reach the phase you are studying:
 
-Useful reports:
+| Studying | Flags |
+| --- | --- |
+| decode | a short prompt and a large `-n` |
+| prefill | a long prompt and a small `-n` |
+| sequential prefill | `--with-prefill-decode` |
+| batched prefill | `--with-prefill-decode --batch-prefill-size N` (default-off otherwise) |
+| launch overhead on CUDA | with and without `--cuda-graphs` |
+
+## 2. Separate warm-up from steady state
+
+The first tokens include GGUF load, host-to-device weight copy and TornadoVM JIT. Left in,
+they dominate the timeline and hide the decode loop.
+
+Two ways, in order of preference:
+
+1. Give the run enough tokens that the steady state dominates, then restrict the reports
+   to that range with `nsys stats --filter-time <start>/<end>`.
+2. Run once with `--verbose-init` first, read the load and JIT timings, and subtract them
+   when reading the totals.
+
+Compilation should happen once. If kernel compilation appears repeatedly in the timeline,
+that is a finding in itself: a compiled program is meant to be built once and invoked many
+times.
+
+## 3. Capture
+
+Write traces to a timestamped directory outside the repository. Profiler output is never
+committed.
 
 ```bash
-nsys stats -r cuda_gpu_kern_sum,cuda_api_sum,cuda_gpu_mem_time_sum <trace.nsys-rep>
-nsys analyze -r all <trace.nsys-rep>
+OUT="$HOME/nsys-runs/$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$OUT"
+
+nsys profile \
+  --trace=cuda,nvtx,osrt \
+  --output "$OUT/decode" \
+  --force-overwrite true \
+  ./llama-tornado --gpu --model "<model.gguf>" \
+    --prompt "<prompt>" -n 256 --seed 42
 ```
 
-When CUDA libraries are involved and traced:
+Quote every path.
+
+## 4. Report
 
 ```bash
-nsys stats -r cublas_api_sum,cudnn_api_sum <trace.nsys-rep>
+nsys stats -r cuda_gpu_kern_sum,cuda_api_sum,cuda_gpu_mem_time_sum "$OUT/decode.nsys-rep"
+nsys analyze "$OUT/decode.nsys-rep"
 ```
 
-## Interpretation
+`nsys stats --help-reports` lists the report names for the installed version; `nsys analyze
+--help` lists its rules. Check them rather than assuming — they change between releases.
 
-Classify:
+## 5. Classify before recommending
 
-- hot generated kernel dominates: use `gpullama-ncu-analysis`
-- many small kernels / high launch API time: launch-overhead-bound
-- high memcpy time: transfer-bound or persistence issue
-- high synchronization API time: sync-bound
-- GPU gaps: host/TornadoVM scheduling or graph/persistence issue
-- cuBLAS/cuDNN dominates: inspect native library call shape and stream behavior
+| Observation | Classification | Next |
+| --- | --- | --- |
+| one generated kernel dominates GPU time | kernel-bound | `gpullama-ncu-analysis` on that kernel |
+| many short kernels, high launch API time | launch-overhead-bound | compare with `--cuda-graphs`; look at graph count and per-layer task count |
+| high `cudaMemcpy` time | transfer-bound | which buffers move per step? A weight or block table copied every execution is a residency question |
+| high synchronization API time | sync-bound | look at the read-back at the invocation boundary |
+| GPU gaps between kernels | host-bound scheduling | TornadoVM interpreter or host-side sampling |
+| compilation appears after warm-up | a caching defect | the compiled program is being rebuilt |
 
-## Report
+Distinguish device-resident data from data that crosses the boundary each step. Weights,
+the KV pool, the block table and the workspace stay on the device for the compiled
+program's life; only values — token, position, block-table slot, sampling parameters —
+should move per invocation. A per-step copy of anything else is the finding.
 
-Include:
+## 6. What to hand back
 
-- exact profile command
-- exact GPULlama3 command
-- trace path
-- top kernels by total GPU time
-- CUDA API summary
-- memory transfer summary
-- bottleneck classification
-- next action
+- the exact `nsys` command and the exact `llama-tornado` command;
+- the trace path (outside the repo);
+- top kernels by total GPU time, the CUDA API summary and the transfer summary;
+- which part of the timeline is warm-up and which is steady state;
+- the classification, and the single next action.
 
-Every numeric claim must cite `nsys stats`, `nsys analyze`, or a parsed trace artifact.
+Every number must come from `nsys stats`, `nsys analyze` or a parsed trace. Do not estimate
+and do not carry a number over from a different tuple.

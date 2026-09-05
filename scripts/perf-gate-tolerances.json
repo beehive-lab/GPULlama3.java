@@ -1,0 +1,37 @@
+{
+  "_comment": [
+    "Per-tuple tolerances for scripts/perf_gate.py. The rules are stated in",
+    "docs/architecture/verification.md (Benchmark gate, M1.7): default 3% on the",
+    "pinned self-hosted runner, record-only on shared CI, because a 3% gate over",
+    "heterogeneous runners is noise.",
+    "Resolution order, most specific first: a matching entry in \"tuples\" (the one",
+    "matching the most keys wins), then \"machines\", then \"default\".",
+    "mode is \"gate\" or \"record-only\"; tolerance is the fraction the median eval_rate",
+    "may fall below the baseline before the gate fails."
+  ],
+  "default": {
+    "tolerance": 0.03,
+    "mode": "gate"
+  },
+  "unstable_spread_limit": 0.10,
+  "machines": {
+    "rtx5090-laptop": {
+      "tolerance": 0.03,
+      "mode": "gate"
+    },
+    "github-hosted": {
+      "mode": "record-only"
+    }
+  },
+  "tuples": [
+    {
+      "_why": "7B F16 runs close to the memory ceiling on the 24GB laptop part; its spread is wider than the small models'.",
+      "match": {
+        "machine": "rtx5090-laptop",
+        "model": "Mistral-7B-Instruct-v0.3",
+        "quantization": "F16"
+      },
+      "tolerance": 0.05
+    }
+  ]
+}

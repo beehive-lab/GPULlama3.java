@@ -1,17 +1,16 @@
 package org.beehive.gpullama3.tensor.standard;
 
-import org.beehive.gpullama3.tensor.GGMLType;
+import java.lang.foreign.MemorySegment;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorSpecies;
-
-import java.lang.foreign.MemorySegment;
+import org.beehive.gpullama3.format.GGMLType;
 
 /**
  * {@link FloatTensor} backed by raw BF16 (bfloat16) data.
  *
  * <p>BF16 stores the upper 16 bits of an IEEE-754 binary32 value (same sign/exponent layout,
  * truncated mantissa), so widening to float32 is a plain left-shift by 16 bits -- no exponent
- * rebiasing is needed, unlike IEEE binary16 (F16).</p>
+ * rebiasing is needed, unlike IEEE binary16 (F16).
  */
 public final class BF16FloatTensor extends FloatTensor {
 

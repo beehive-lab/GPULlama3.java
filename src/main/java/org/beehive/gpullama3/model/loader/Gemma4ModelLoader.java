@@ -1,24 +1,8 @@
 package org.beehive.gpullama3.model.loader;
 
-import org.beehive.gpullama3.auxiliary.Pair;
-import org.beehive.gpullama3.inference.weights.Weights;
-import org.beehive.gpullama3.inference.weights.standard.Gemma4StandardWeights;
-import org.beehive.gpullama3.inference.weights.tornado.Gemma4TornadoWeights;
-import org.beehive.gpullama3.model.format.ChatFormat;
-import org.beehive.gpullama3.model.gemma4.Gemma4;
-import org.beehive.gpullama3.model.gemma4.Gemma4Configuration;
-import org.beehive.gpullama3.tensor.GGMLTensorEntry;
-import org.beehive.gpullama3.tensor.GGMLType;
-import org.beehive.gpullama3.tensor.GGUF;
-import org.beehive.gpullama3.tensor.GGUF.GGUFTensorInfo;
-import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
-import org.beehive.gpullama3.tensor.tornado.FP32TornadoTensor;
-import org.beehive.gpullama3.tensor.tornado.TornadoTensor;
-import org.beehive.gpullama3.tokenizer.Gemma4Tokenizer;
-import org.beehive.gpullama3.tokenizer.Tokenizer;
-import org.beehive.gpullama3.tokenizer.Vocabulary;
-import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
-import uk.ac.manchester.tornado.api.types.arrays.TornadoNativeArray;
+import static org.beehive.gpullama3.model.loader.ModelLoader.*;
+import static org.beehive.gpullama3.model.loader.ModelLoader.loadArrayOfTensors;
+import static org.beehive.gpullama3.model.loader.ModelLoader.loadTensor;
 
 import java.io.EOFException;
 import java.io.IOException;
@@ -27,11 +11,28 @@ import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
 import java.util.Map;
 import java.util.function.IntFunction;
-
-import static org.beehive.gpullama3.model.loader.ModelLoader.loadArrayOfTensors;
-import static org.beehive.gpullama3.model.loader.ModelLoader.loadArrayOfTornadoTensors;
-import static org.beehive.gpullama3.model.loader.ModelLoader.loadTensor;
-import static org.beehive.gpullama3.model.loader.ModelLoader.loadTornadoTensor;
+import org.beehive.gpullama3.auxiliary.Pair;
+import org.beehive.gpullama3.backend.tornado.tensor.TornadoTensor;
+import org.beehive.gpullama3.backend.tornado.tensor.TornadoTensorLoader;
+import org.beehive.gpullama3.format.DataTypeMapping;
+import org.beehive.gpullama3.format.GGMLTensorEntry;
+import org.beehive.gpullama3.format.GGMLType;
+import org.beehive.gpullama3.format.GGUF;
+import org.beehive.gpullama3.format.GGUF.GGUFTensorInfo;
+import org.beehive.gpullama3.inference.weights.Weights;
+import org.beehive.gpullama3.inference.weights.standard.Gemma4StandardWeights;
+import org.beehive.gpullama3.inference.weights.tornado.Gemma4TornadoWeights;
+import org.beehive.gpullama3.model.format.Gemma4ChatFormat;
+import org.beehive.gpullama3.model.gemma4.Gemma4;
+import org.beehive.gpullama3.model.gemma4.Gemma4Configuration;
+import org.beehive.gpullama3.runtime.diagnostics.DiagnosticCode;
+import org.beehive.gpullama3.runtime.tensor.DataType;
+import org.beehive.gpullama3.runtime.tensor.ExecutionTarget;
+import org.beehive.gpullama3.runtime.tensor.LongIndexedTensor;
+import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
+import org.beehive.gpullama3.tokenizer.Gemma4Tokenizer;
+import org.beehive.gpullama3.tokenizer.Tokenizer;
+import org.beehive.gpullama3.tokenizer.Vocabulary;
 
 /**
  * Loader for Gemma 4 models (e.g. Gemma-4-E2B-It).
@@ -40,17 +41,18 @@ import static org.beehive.gpullama3.model.loader.ModelLoader.loadTornadoTensor;
  * layers use different bases and head dimensions, and full-attention layers additionally apply a
  * per-dimension frequency scaling stored in the {@code rope_freqs} tensor), so RoPE frequencies are
  * computed directly here -- where the tensor entries are available -- rather than through the
- * generic {@link #precomputeRopeFrequencies} hook.</p>
+ * generic {@link #precomputeRopeFrequencies} hook.
  */
 public class Gemma4ModelLoader extends AbstractModelLoader<Gemma4, Gemma4Configuration> {
 
-    public Gemma4ModelLoader(FileChannel fileChannel, GGUF gguf, int contextLength, boolean useTornadovm) {
+    public Gemma4ModelLoader(
+            FileChannel fileChannel, GGUF gguf, int contextLength, boolean useTornadovm) {
         super(fileChannel, gguf, contextLength, useTornadovm);
     }
 
     @Override
     protected Vocabulary loadVocabulary(Map<String, Object> metadata) {
-        return Vocabulary.loadGemma4Vocabulary(metadata);
+        return Vocabulary.fromTokensAndScores(metadata);
     }
 
     @Override
@@ -62,7 +64,10 @@ public class Gemma4ModelLoader extends AbstractModelLoader<Gemma4, Gemma4Configu
     @Override
     protected Gemma4Configuration createConfiguration(Map<String, Object> metadata) {
         int modelContextLength = (int) metadata.get("gemma4.context_length");
-        int finalContextLength = (contextLength < 0 || modelContextLength < contextLength) ? modelContextLength : contextLength;
+        int finalContextLength =
+                (contextLength < 0 || modelContextLength < contextLength)
+                        ? modelContextLength
+                        : contextLength;
         int numberOfLayers = (int) metadata.get("gemma4.block_count");
 
         return new Gemma4Configuration(
@@ -84,12 +89,23 @@ public class Gemma4ModelLoader extends AbstractModelLoader<Gemma4, Gemma4Configu
                 (float) metadata.get("gemma4.attention.layer_norm_rms_epsilon"),
                 (float) metadata.get("gemma4.rope.freq_base"),
                 (float) metadata.get("gemma4.rope.freq_base_swa"),
-                (float) metadata.get("gemma4.final_logit_softcapping")
-        );
+                (float) metadata.get("gemma4.final_logit_softcapping"));
     }
+
+    /**
+     * Wraps a tensor too large for int indexing so the weight sets can hold it without holding a
+     * format type. Gemma-4's per-layer token embedding table is the only such tensor today.
+     */
+    private static LongIndexedTensor longIndexed(GGMLTensorEntry entry) {
+        return new LongIndexedTensor(
+                entry.memorySegment(), DataTypeMapping.sourceType(entry.ggmlType()));
+    }
+
     // @formatter:on
 
-    /** Gemma4 needs two RoPE tables computed with tensor data (rope_freqs); see {@link #ropeTables}. */
+    /**
+     * Gemma4 needs two RoPE tables computed with tensor data (rope_freqs); see {@link #ropeTables}.
+     */
     @Override
     protected Pair<float[], float[]> precomputeRopeFrequencies(Gemma4Configuration config) {
         return null;
@@ -97,21 +113,27 @@ public class Gemma4ModelLoader extends AbstractModelLoader<Gemma4, Gemma4Configu
 
     @Override
     protected Gemma4 createModel(Gemma4Configuration config, Tokenizer tokenizer, Weights weights) {
-        return new Gemma4(config, tokenizer, weights, ChatFormat.create(tokenizer, null));
+        return new Gemma4(
+                config, tokenizer, weights, new Gemma4ChatFormat((Gemma4Tokenizer) tokenizer));
     }
 
     // @formatter:off
     @Override
-    protected Weights createStandardWeights(Map<String, GGMLTensorEntry> tensorEntries, Gemma4Configuration config, Pair<float[], float[]> ropeFreqs,
-                                             GGMLTensorEntry tokenEmbeddings, GGMLTensorEntry outputWeight) {
+    protected Weights createStandardWeights(
+            Map<String, GGMLTensorEntry> tensorEntries,
+            Gemma4Configuration config,
+            Pair<float[], float[]> ropeFreqs,
+            GGMLTensorEntry tokenEmbeddings,
+            GGMLTensorEntry outputWeight) {
         final int nl = config.numberOfLayers();
         RopeTables ropeTables = computeRopeTables(tensorEntries, config);
 
         return new Gemma4StandardWeights(
                 loadTensor(tokenEmbeddings),
-                tensorEntries.containsKey("output.weight") ? loadTensor(tensorEntries.get("output.weight")) : loadTensor(tokenEmbeddings),
+                tensorEntries.containsKey("output.weight")
+                        ? loadTensor(tensorEntries.get("output.weight"))
+                        : loadTensor(tokenEmbeddings),
                 loadTensor(tensorEntries.get("output_norm.weight")),
-
                 loadArrayOfTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_norm.weight")),
                 loadArrayOfTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_q.weight")),
                 loadArrayOfTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_k.weight")),
@@ -119,96 +141,122 @@ public class Gemma4ModelLoader extends AbstractModelLoader<Gemma4, Gemma4Configu
                 loadArrayOfTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_output.weight")),
                 loadArrayOfTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_q_norm.weight")),
                 loadArrayOfTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_k_norm.weight")),
-                loadArrayOfTensors(nl, i -> tensorEntries.get("blk." + i + ".post_attention_norm.weight")),
-
+                loadArrayOfTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".post_attention_norm.weight")),
                 loadArrayOfTensors(nl, i -> tensorEntries.get("blk." + i + ".ffn_norm.weight")),
                 loadArrayOfTensors(nl, i -> tensorEntries.get("blk." + i + ".ffn_gate.weight")),
                 loadArrayOfTensors(nl, i -> tensorEntries.get("blk." + i + ".ffn_up.weight")),
                 loadArrayOfTensors(nl, i -> tensorEntries.get("blk." + i + ".ffn_down.weight")),
-                loadArrayOfTensors(nl, i -> tensorEntries.get("blk." + i + ".post_ffw_norm.weight")),
-
+                loadArrayOfTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".post_ffw_norm.weight")),
                 loadArrayOfTensors(nl, i -> tensorEntries.get("blk." + i + ".inp_gate.weight")),
                 loadArrayOfTensors(nl, i -> tensorEntries.get("blk." + i + ".proj.weight")),
                 loadArrayOfTensors(nl, i -> tensorEntries.get("blk." + i + ".post_norm.weight")),
-                loadArrayOfTensors(nl, i -> tensorEntries.get("blk." + i + ".layer_output_scale.weight")),
-
-                tensorEntries.get("per_layer_token_embd.weight"),
+                loadArrayOfTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".layer_output_scale.weight")),
+                longIndexed(tensorEntries.get("per_layer_token_embd.weight")),
                 loadTensor(tensorEntries.get("per_layer_model_proj.weight")),
                 loadTensor(tensorEntries.get("per_layer_proj_norm.weight")),
-
                 new ArrayFloatTensor(ropeTables.realSwa),
                 new ArrayFloatTensor(ropeTables.imagSwa),
                 new ArrayFloatTensor(ropeTables.realFull),
                 new ArrayFloatTensor(ropeTables.imagFull),
-
-                null
-        );
+                DataTypeMapping.sourceType(outputWeight.ggmlType()));
     }
+
     // @formatter:on
 
     // @formatter:off
     @Override
-    protected Weights createTornadoVMWeights(Map<String, GGMLTensorEntry> tensorEntries, Gemma4Configuration config, Pair<float[], float[]> ropeFreqs, GGMLTensorEntry tokenEmbeddings,
+    protected Weights createTornadoVMWeights(
+            Map<String, GGMLTensorEntry> tensorEntries,
+            Gemma4Configuration config,
+            Pair<float[], float[]> ropeFreqs,
+            GGMLTensorEntry tokenEmbeddings,
             GGMLTensorEntry outputWeight) {
         final int nl = config.numberOfLayers();
-        GGMLType ggmlType = effectiveGpuWeightType(outputWeight.ggmlType());
+        DataType weightType =
+                DataTypeMapping.materializedType(outputWeight.ggmlType(), ExecutionTarget.GPU);
         RopeTables ropeTables = computeRopeTables(tensorEntries, config);
 
         return new Gemma4TornadoWeights(
                 loadTornadoTensor(tokenEmbeddings),
-
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_norm.weight")),
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_q.weight")),
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_k.weight")),
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_v.weight")),
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_output.weight")),
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_q_norm.weight")),
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".attn_k_norm.weight")),
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".post_attention_norm.weight")),
-
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".ffn_norm.weight")),
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".ffn_gate.weight")),
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".ffn_up.weight")),
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".ffn_down.weight")),
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".post_ffw_norm.weight")),
-
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".inp_gate.weight")),
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".attn_norm.weight")),
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".attn_q.weight")),
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".attn_k.weight")),
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".attn_v.weight")),
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".attn_output.weight")),
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".attn_q_norm.weight")),
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".attn_k_norm.weight")),
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".post_attention_norm.weight")),
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".ffn_norm.weight")),
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".ffn_gate.weight")),
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".ffn_up.weight")),
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".ffn_down.weight")),
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".post_ffw_norm.weight")),
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".inp_gate.weight")),
                 loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".proj.weight")),
-                loadArrayOfTornadoTensors(nl, i -> tensorEntries.get("blk." + i + ".post_norm.weight")),
-                loadArrayOfTornadoTensorsNullable(nl, i -> tensorEntries.get("blk." + i + ".layer_output_scale.weight")),
-
-                stripTornadoArrayHeader(tensorEntries.get("per_layer_token_embd.weight")),
+                loadArrayOfTornadoTensors(
+                        nl, i -> tensorEntries.get("blk." + i + ".post_norm.weight")),
+                loadArrayOfTornadoTensorsNullable(
+                        nl, i -> tensorEntries.get("blk." + i + ".layer_output_scale.weight")),
+                longIndexed(
+                        stripTornadoArrayHeader(tensorEntries.get("per_layer_token_embd.weight"))),
                 loadTornadoTensor(tensorEntries.get("per_layer_model_proj.weight")),
                 loadTornadoTensor(tensorEntries.get("per_layer_proj_norm.weight")),
                 loadTornadoTensor(tensorEntries.get("output_norm.weight")),
-
-                new FP32TornadoTensor(FloatArray.fromArray(ropeTables.realSwa)),
-                new FP32TornadoTensor(FloatArray.fromArray(ropeTables.imagSwa)),
-                new FP32TornadoTensor(FloatArray.fromArray(ropeTables.realFull)),
-                new FP32TornadoTensor(FloatArray.fromArray(ropeTables.imagFull)),
-
-                tensorEntries.containsKey("output.weight") ? loadTornadoTensor(tensorEntries.get("output.weight")) : loadTornadoTensor(tokenEmbeddings),
-                ggmlType
-        );
+                TornadoTensorLoader.fromFloats(ropeTables.realSwa),
+                TornadoTensorLoader.fromFloats(ropeTables.imagSwa),
+                TornadoTensorLoader.fromFloats(ropeTables.realFull),
+                TornadoTensorLoader.fromFloats(ropeTables.imagFull),
+                tensorEntries.containsKey("output.weight")
+                        ? loadTornadoTensor(tensorEntries.get("output.weight"))
+                        : loadTornadoTensor(tokenEmbeddings),
+                weightType);
     }
+
     // @formatter:on
 
     /**
-     * Tensor entries produced by {@link GGUF#loadTensorsTornado} prefix every {@code memorySegment()} with a
-     * 16-byte {@link TornadoNativeArray#ARRAY_HEADER} (so the data can be wrapped as a TornadoVM native array
-     * without copying) -- but {@code per_layer_token_embd} is kept as a raw entry and addressed with
-     * byte-offset arithmetic that assumes the segment starts at the tensor's actual data (see
-     * {@link ModelLoader#copyEmbeddingRowToFloatArray}, mirroring the CPU path's {@link ModelLoader#copyEmbeddingRow}
-     * over a {@link GGUF#loadTensorsStandard}-produced entry, which has no such header). Slice past the
-     * header here so both code paths see the same layout.
+     * Tensor entries produced by {@link GGUF#loadTensorsTornado} prefix every {@code
+     * memorySegment()} with a 16-byte TornadoVM array header (so the data can be wrapped as a
+     * native array without copying) -- but {@code per_layer_token_embd} is kept as a raw entry and
+     * addressed with byte-offset arithmetic that assumes the segment starts at the tensor's actual
+     * data, mirroring the CPU path's {@link ModelLoader#copyEmbeddingRow} over a {@link
+     * GGUF#loadTensorsStandard}-produced entry, which has no such header. Slice past the header so
+     * both code paths see the same layout.
+     *
+     * <p>How wide that header is is the backend's knowledge, not this loader's.
      */
     private static GGMLTensorEntry stripTornadoArrayHeader(GGMLTensorEntry entry) {
-        long headerBytes = TornadoNativeArray.ARRAY_HEADER;
-        return new GGMLTensorEntry(entry.mappedFile(), entry.name(), entry.ggmlType(), entry.shape(), entry.memorySegment().asSlice(headerBytes));
+        return new GGMLTensorEntry(
+                entry.mappedFile(),
+                entry.name(),
+                entry.ggmlType(),
+                entry.shape(),
+                TornadoTensorLoader.withoutArrayHeader(entry.memorySegment()));
     }
 
-    /** Like {@link ModelLoader#loadArrayOfTornadoTensors}, but tolerates missing entries (Gemma4's optional per-layer output scale). */
-    private static TornadoTensor[] loadArrayOfTornadoTensorsNullable(int size, IntFunction<GGMLTensorEntry> getTensorEntry) {
+    /**
+     * Like {@link ModelLoader#loadArrayOfTornadoTensors}, but tolerates missing entries (Gemma4's
+     * optional per-layer output scale).
+     */
+    private static TornadoTensor[] loadArrayOfTornadoTensorsNullable(
+            int size, IntFunction<GGMLTensorEntry> getTensorEntry) {
         TornadoTensor[] array = new TornadoTensor[size];
         for (int i = 0; i < size; i++) {
             GGMLTensorEntry entry = getTensorEntry.apply(i);
@@ -217,38 +265,54 @@ public class Gemma4ModelLoader extends AbstractModelLoader<Gemma4, Gemma4Configu
         return array;
     }
 
-    private record RopeTables(float[] realSwa, float[] imagSwa, float[] realFull, float[] imagFull) {
-    }
+    private record RopeTables(
+            float[] realSwa, float[] imagSwa, float[] realFull, float[] imagFull) {}
 
     /**
      * Computes the two RoPE frequency tables Gemma4 needs.
-     * <p>
-     * Sliding-window layers use {@code rope_theta_swa} with {@code headDimSwa} and no extra scaling.
-     * Full/global-attention layers use {@code rope_theta} with {@code headDimFull}, additionally
-     * dividing each rotation angle by the corresponding entry of the (single, shared) {@code
-     * rope_freqs} tensor -- this is how the GGUF encodes "partial RoPE" (entries are 1.0 for the
-     * active low-frequency dimensions and effectively infinite for the inactive ones, which zeroes
-     * out their rotation).
+     *
+     * <p>Sliding-window layers use {@code rope_theta_swa} with {@code headDimSwa} and no extra
+     * scaling. Full/global-attention layers use {@code rope_theta} with {@code headDimFull},
+     * additionally dividing each rotation angle by the corresponding entry of the (single, shared)
+     * {@code rope_freqs} tensor -- this is how the GGUF encodes "partial RoPE" (entries are 1.0 for
+     * the active low-frequency dimensions and effectively infinite for the inactive ones, which
+     * zeroes out their rotation).
      */
-    private RopeTables computeRopeTables(Map<String, GGMLTensorEntry> tensorEntries, Gemma4Configuration config) {
-        Pair<float[], float[]> swa = precomputeFreqsCisWithFactors(config.contextLengthModel(), config.headDimSwa(), config.ropeThetaSwa(), null);
+    private RopeTables computeRopeTables(
+            Map<String, GGMLTensorEntry> tensorEntries, Gemma4Configuration config) {
+        Pair<float[], float[]> swa =
+                precomputeFreqsCisWithFactors(
+                        config.contextLengthModel(),
+                        config.headDimSwa(),
+                        config.ropeThetaSwa(),
+                        null);
 
-        // rope_freqs.weight is intentionally excluded from tensorEntries by GGUF.loadTensorsStandard/
+        // rope_freqs.weight is intentionally excluded from tensorEntries by
+        // GGUF.loadTensorsStandard/
         // loadTensorsTornado (it isn't needed by most architectures), so read it directly here.
         float[] freqFactors = readFloat32TensorDirect("rope_freqs.weight");
-        Pair<float[], float[]> full = precomputeFreqsCisWithFactors(config.contextLengthModel(), config.headDimFull(), config.ropeTheta(), freqFactors);
+        Pair<float[], float[]> full =
+                precomputeFreqsCisWithFactors(
+                        config.contextLengthModel(),
+                        config.headDimFull(),
+                        config.ropeTheta(),
+                        freqFactors);
 
         return new RopeTables(swa.first(), swa.second(), full.first(), full.second());
     }
 
-    /** Reads a small F32 tensor's raw data directly from the GGUF file, bypassing the {@code tensorEntries} map. */
+    /**
+     * Reads a small F32 tensor's raw data directly from the GGUF file, bypassing the {@code
+     * tensorEntries} map.
+     */
     private float[] readFloat32TensorDirect(String tensorName) {
         GGUFTensorInfo info = gguf.getTensorInfos().get(tensorName);
         if (info == null) {
             return null;
         }
         if (info.ggmlType() != GGMLType.F32) {
-            throw new UnsupportedOperationException("Expected F32 tensor for " + tensorName + ", got " + info.ggmlType());
+            throw new UnsupportedOperationException(
+                    "Expected F32 tensor for " + tensorName + ", got " + info.ggmlType());
         }
 
         int numberOfElements = 1;
@@ -257,7 +321,8 @@ public class Gemma4ModelLoader extends AbstractModelLoader<Gemma4, Gemma4Configu
         }
 
         long byteOffset = gguf.getTensorDataOffset() + info.offset();
-        ByteBuffer buffer = ByteBuffer.allocate(numberOfElements * Float.BYTES).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer buffer =
+                ByteBuffer.allocate(numberOfElements * Float.BYTES).order(ByteOrder.LITTLE_ENDIAN);
         try {
             while (buffer.hasRemaining()) {
                 if (gguf.getFileChannel().read(buffer, byteOffset + buffer.position()) < 0) {
@@ -265,7 +330,12 @@ public class Gemma4ModelLoader extends AbstractModelLoader<Gemma4, Gemma4Configu
                 }
             }
         } catch (IOException e) {
-            throw new ModelLoadException("Failed to read " + tensorName + " from GGUF file", e);
+            throw new ModelLoadException(
+                    DiagnosticCode.MODEL_MALFORMED.prefix()
+                            + "Failed to read "
+                            + tensorName
+                            + " from GGUF file",
+                    e);
         }
         buffer.flip();
 
@@ -274,8 +344,12 @@ public class Gemma4ModelLoader extends AbstractModelLoader<Gemma4, Gemma4Configu
         return result;
     }
 
-    /** Like {@link org.beehive.gpullama3.inference.operation.RoPE#precomputeFreqsCis}, but allows dividing each pair's frequency by a per-dimension scaling factor (NeoX-style RoPE). */
-    private static Pair<float[], float[]> precomputeFreqsCisWithFactors(int contextLength, int headSize, double theta, float[] freqFactors) {
+    /**
+     * Like {@link RopeFrequencies#precomputeFreqsCis}, but allows dividing each pair's frequency by
+     * a per-dimension scaling factor (NeoX-style RoPE).
+     */
+    private static Pair<float[], float[]> precomputeFreqsCisWithFactors(
+            int contextLength, int headSize, double theta, float[] freqFactors) {
         assert headSize % 2 == 0;
         float[] cr = new float[contextLength * (headSize / 2)];
         float[] ci = new float[contextLength * (headSize / 2)];

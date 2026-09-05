@@ -1,14 +1,14 @@
 package org.beehive.gpullama3.inference.weights.standard;
 
-import org.beehive.gpullama3.tensor.GGMLType;
+import org.beehive.gpullama3.runtime.tensor.DataType;
 import org.beehive.gpullama3.tensor.standard.FloatTensor;
 
 /**
- * A model-specific implementation of {@link StandardWeights} for the Llama model.
- * This class encapsulates the weights required for performing inference
- * using the Llama model in the standard CPU-based format.
+ * A model-specific implementation of {@link StandardWeights} for the Llama model. This class
+ * encapsulates the weights required for performing inference using the Llama model in the standard
+ * CPU-based format.
  *
- * <p><b>Note:</b> This weight format is also used for the Mistral model.</p>
+ * <p><b>Note:</b> This weight format is also used for the Mistral model.
  */
 public class LlamaStandardWeights extends StandardWeights {
 
@@ -16,21 +16,21 @@ public class LlamaStandardWeights extends StandardWeights {
     /**
      * Constructor for LlamaStandardWeights.
      *
-     * @param token_embedding_table  The token embedding table tensor.
-     * @param rms_att_weight         Array of RMS attention weights tensors.
-     * @param wq                     Array of query weight tensors.
-     * @param wk                     Array of key weight tensors.
-     * @param wv                     Array of value weight tensors.
-     * @param wo                     Array of output weight tensors.
-     * @param rms_ffn_weight         Array of RMS feed-forward network weights.
-     * @param w1                     Array of first feed-forward layer weights.
-     * @param w2                     Array of second feed-forward layer weights.
-     * @param w3                     Array of third feed-forward layer weights.
-     * @param rms_final_weight       Final RMS weight tensor.
-     * @param freq_cis_real          Real part of frequency cis tensor.
-     * @param freq_cis_imag          Imaginary part of frequency cis tensor.
-     * @param wcls                   Class token weight tensor.
-     * @param weightType             The GGML weight type.
+     * @param token_embedding_table The token embedding table tensor.
+     * @param rms_att_weight Array of RMS attention weights tensors.
+     * @param wq Array of query weight tensors.
+     * @param wk Array of key weight tensors.
+     * @param wv Array of value weight tensors.
+     * @param wo Array of output weight tensors.
+     * @param rms_ffn_weight Array of RMS feed-forward network weights.
+     * @param w1 Array of first feed-forward layer weights.
+     * @param w2 Array of second feed-forward layer weights.
+     * @param w3 Array of third feed-forward layer weights.
+     * @param rms_final_weight Final RMS weight tensor.
+     * @param freq_cis_real Real part of frequency cis tensor.
+     * @param freq_cis_imag Imaginary part of frequency cis tensor.
+     * @param wcls Class token weight tensor.
+     * @param weightType The GGML weight type.
      */
     public LlamaStandardWeights(
             FloatTensor token_embedding_table,
@@ -47,9 +47,10 @@ public class LlamaStandardWeights extends StandardWeights {
             FloatTensor freq_cis_real,
             FloatTensor freq_cis_imag,
             FloatTensor wcls,
-            GGMLType weightType) {
+            DataType weightType) {
         // call to StandardWeights constructor
-        super(token_embedding_table,
+        super(
+                token_embedding_table,
                 rms_att_weight,
                 wq,
                 wk,
@@ -65,10 +66,11 @@ public class LlamaStandardWeights extends StandardWeights {
                 wcls,
                 weightType);
     }
+
     // @formatter:on
 
     @Override
-    public GGMLType getWeightType() {
+    public DataType dataType() {
         return weightType;
     }
 }

@@ -1,34 +1,41 @@
 package org.beehive.gpullama3.model.loader;
 
-import org.beehive.gpullama3.Options;
-import org.beehive.gpullama3.auxiliary.RunMetrics;
-import org.beehive.gpullama3.tensor.GGMLType;
-import org.beehive.gpullama3.tensor.GGUF;
-import org.beehive.gpullama3.tensor.*;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.ModelType;
-import org.beehive.gpullama3.tensor.standard.*;
-import org.beehive.gpullama3.tensor.tornado.FP16TornadoTensor;
-import org.beehive.gpullama3.tensor.tornado.FP32TornadoTensor;
-import org.beehive.gpullama3.tensor.tornado.Q8_0TornadoTensor;
-import org.beehive.gpullama3.tensor.tornado.TornadoTensor;
-import uk.ac.manchester.tornado.api.types.HalfFloat;
-import uk.ac.manchester.tornado.api.types.arrays.*;
-
 import java.io.IOException;
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.util.Map;
-import java.util.Set;
 import java.util.function.IntFunction;
-import java.util.stream.Collectors;
+import org.beehive.gpullama3.Options;
+import org.beehive.gpullama3.auxiliary.RunMetrics;
+import org.beehive.gpullama3.backend.tornado.tensor.FP16TornadoTensor;
+import org.beehive.gpullama3.backend.tornado.tensor.FP32TornadoTensor;
+import org.beehive.gpullama3.backend.tornado.tensor.Q8_0TornadoTensor;
+import org.beehive.gpullama3.backend.tornado.tensor.TornadoTensor;
+import org.beehive.gpullama3.backend.tornado.tensor.TornadoTensorLoader;
+import org.beehive.gpullama3.format.*;
+import org.beehive.gpullama3.format.GGMLType;
+import org.beehive.gpullama3.format.GGUF;
+import org.beehive.gpullama3.format.TensorDescriptors;
+import org.beehive.gpullama3.model.Model;
+import org.beehive.gpullama3.model.ModelType;
+import org.beehive.gpullama3.model.provider.ModelProvider;
+import org.beehive.gpullama3.model.provider.ModelProviders;
+import org.beehive.gpullama3.runtime.backend.BackendId;
+import org.beehive.gpullama3.runtime.tensor.ExecutionTarget;
+import org.beehive.gpullama3.runtime.tensor.TensorDescriptor;
+import org.beehive.gpullama3.tensor.standard.*;
 
 public abstract class ModelLoader {
+
+    /**
+     * Rule 16: loading is library code. This one is a genuine diagnostic rather than progress — an
+     * F32 tensor reaching the FP16 path is a case this loader does not handle — so it is a warning,
+     * not an info line.
+     */
+    private static final System.Logger LOGGER = System.getLogger(ModelLoader.class.getName());
 
     protected FileChannel fileChannel;
     protected GGUF gguf;
@@ -36,7 +43,12 @@ public abstract class ModelLoader {
     protected boolean loadWeights;
     protected boolean useTornadovm;
 
-    public ModelLoader(FileChannel fileChannel, GGUF gguf, int contextLength, boolean loadWeights, boolean useTornadovm) {
+    public ModelLoader(
+            FileChannel fileChannel,
+            GGUF gguf,
+            int contextLength,
+            boolean loadWeights,
+            boolean useTornadovm) {
         this.fileChannel = fileChannel;
         this.gguf = gguf;
         this.contextLength = contextLength;
@@ -81,7 +93,8 @@ public abstract class ModelLoader {
         if (metadata.containsKey("granite.block_count")) {
             return ModelType.GRANITE;
         }
-        if ("gemma4".equals(metadata.get("general.architecture")) || metadata.containsKey("gemma4.block_count")) {
+        if ("gemma4".equals(metadata.get("general.architecture"))
+                || metadata.containsKey("gemma4.block_count")) {
             return ModelType.GEMMA_4;
         }
 
@@ -96,58 +109,180 @@ public abstract class ModelLoader {
      *
      * @param options the parsed CLI options containing model path and max token limit
      * @return the loaded {@link Model} instance
-     * @throws IOException           if the model fails to load
-     * @throws IllegalStateException if AOT loading is enabled but the preloaded model is unavailable
+     * @throws IOException if the model fails to load
+     * @throws IllegalStateException if AOT loading is enabled but the preloaded model is
+     *     unavailable
      */
     public static Model loadModel(Options options) throws IOException {
-        Path ggufPath = options.modelPath();
-        int contextLength = options.maxTokens();
-        boolean useTornadovm = options.useTornadovm();
+        return loadModel(options.modelPath(), options.maxTokens(), true, options.useTornadovm());
+    }
 
+    /**
+     * Whether discovered providers do the loading. Defaults to true; {@code
+     * -Dllama.providers=false} selects the {@code ModelType} dispatch this replaced.
+     *
+     * <p>The fallback exists for one release, so that a model which loads differently through a
+     * provider has a way to be compared rather than a way to be stuck.
+     */
+    private static boolean providersEnabled() {
+        return !"false".equalsIgnoreCase(System.getProperty("llama.providers", "true"));
+    }
+
+    /** For compatibility with langchain4j and quarkus. */
+    public static Model loadModel(
+            Path ggufPath, int contextLength, boolean loadWeights, boolean useTornadovm)
+            throws IOException {
         long start = System.nanoTime();
-        GGUF gguf = GGUF.loadGGUFMetadata(ggufPath);
-        ModelType modelType = detectModelType(gguf.getMetadata());
-        Model model = modelType.loadModel(gguf.getFileChannel(), gguf, contextLength, useTornadovm);
+        ModelSource source = ModelSource.ofFile(ggufPath);
+        Model model =
+                providersEnabled()
+                        ? loadThroughProvider(source, contextLength, useTornadovm)
+                        : loadThroughModelType(source, contextLength, useTornadovm);
         RunMetrics.setLoadDuration(System.nanoTime() - start);
         return model;
     }
 
     /**
-     * For compatibility with langchain4j and quarkus.
+     * The discovered provider loads it. Recognition happens once, in the provider that claims the
+     * source, and the architecture identity it chooses is the one everything downstream uses.
      */
-    public static Model loadModel(Path ggufPath, int contextLength, boolean loadWeights, boolean useTornadovm) throws IOException {
-        long start = System.nanoTime();
-        GGUF gguf = GGUF.loadGGUFMetadata(ggufPath);
-        ModelType modelType = detectModelType(gguf.getMetadata());
-        Model model = modelType.loadModel(gguf.getFileChannel(), gguf, contextLength, useTornadovm);
-        RunMetrics.setLoadDuration(System.nanoTime() - start);
-        return model;
+    private static Model loadThroughProvider(
+            ModelSource source, int contextLength, boolean useTornadovm) throws IOException {
+        ModelProvider provider = ModelProviders.select(source);
+        return provider.load(source, providerBackend(useTornadovm), contextLength);
     }
 
     /**
-     * Dispatcher method for loading a standard (non-tornado) tensor based on GGML type.
-     * Used in CPU-path.
+     * The identity a provider and its diagnostics see.
+     *
+     * <p>Was a hardcoded {@code BackendId.CUDA} for every non-CPU load — wrong on Metal, PTX and
+     * OpenCL alike, and a defect this method's callers ({@code FamilyProviders} and {@code
+     * Gemma4Provider}, both only ever comparing the value to {@code BackendId.CPU}) could not
+     * observe. When a real accelerator is resolved, this reports it truthfully instead.
+     *
+     * <p><b>The no-accelerator corner case keeps the old placeholder.</b> If {@code
+     * useTornadovm=true} and nothing resolves an accelerator at all — {@code
+     * TornadoDevices.current()} itself falls back to the {@code BackendId.CPU} placeholder —
+     * reporting that placeholder here would flip every provider's {@code
+     * !BackendId.CPU.equals(backend)} check to {@code false} and silently take the CPU path for a
+     * caller that asked for the GPU one: a new silent fallback, introduced by fixing an old
+     * mislabel. Keeping {@code BackendId.CUDA} here in that one case is exactly the pre-existing
+     * behaviour {@code useTornadovm}'s boolean callers already have — unchanged, not newly correct,
+     * because correctness for that case is {@code LocalModels}'s explicit-accelerator validation
+     * territory, not this compatibility path's.
+     *
+     * <p>Package-visible for {@code ModelLoaderProviderBackendTest} and its accelerator sibling.
      */
+    static BackendId providerBackend(boolean useTornadovm) {
+        if (!useTornadovm) {
+            return BackendId.CPU;
+        }
+        BackendId resolved =
+                org.beehive.gpullama3.backend.tornado.device.TornadoDevices.current()
+                        .id()
+                        .backend();
+        return BackendId.CPU.equals(resolved) ? BackendId.CUDA : resolved;
+    }
+
+    /** The dispatch providers replaced, kept selectable for one release. */
+    private static Model loadThroughModelType(
+            ModelSource source, int contextLength, boolean useTornadovm) {
+        ModelType modelType = detectModelType(source.metadata());
+        return modelType.loadModel(
+                source.gguf().getFileChannel(), source.gguf(), contextLength, useTornadovm);
+    }
+
+    /**
+     * Loads a host tensor: describe, then materialize.
+     *
+     * <p>The descriptor is metadata — it allocates nothing and copies nothing — but it is where the
+     * element count is validated, so a tensor too large for an int-indexed array fails naming
+     * itself rather than wrapping around into a smaller one.
+     */
+    /**
+     * The weight footprint of a model file, from its descriptors alone.
+     *
+     * <p>Reads tensor metadata, never tensor data — this is what lets a preflight answer "will it
+     * fit" without a multi-gigabyte upload.
+     *
+     * <p>Lives here because Rule 4 permits the loaders to name GGUF and forbids it to the runtime
+     * and the backends. What leaves this method is a neutral {@link
+     * org.beehive.gpullama3.runtime.memory.WeightFootprint}.
+     *
+     * <p>The per-layer / global split follows the GGUF convention that a layer's tensors are named
+     * {@code blk.N.*}. That is the same convention every loader in this package already relies on
+     * to find them, so the two cannot disagree about what a layer owns.
+     *
+     * <p><b>Sized as the accelerator materializes it, not as the file stores it.</b> This is a
+     * device memory plan, and {@link #loadTornadoTensor} materializes a representation the device
+     * has no kernel for as Q8_0 — so a Q4_K file's weights occupy roughly twice their file size
+     * once loaded. Measuring the file type here under-predicted exactly those models, in the one
+     * direction a preflight must never be wrong: {@code MemoryPlanAccuracyAccelTest} exists because
+     * a prediction below what is actually allocated admits a load that then dies part-allocated.
+     * Found on the real Devstral fixture (Metal parity task 12): a Q4_K 24B predicted 13.5 GiB and
+     * died materializing Q8_0 — {@code OutOfMemoryError: Cannot reserve. direct buffer memory at
+     * TornadoTensorLoader.dequantizeToQ8_0}. The materialized type comes from {@code
+     * DataTypeMapping.materializedType}, the same function {@link #loadTornadoTensor}'s descriptor
+     * uses, so the prediction and the allocation cannot disagree about what a tensor becomes. F16,
+     * Q8_0 and F32 materialize as themselves, so every tuple measured on CUDA is predicted
+     * byte-for-byte as before.
+     */
+    public static org.beehive.gpullama3.runtime.memory.WeightFootprint weightFootprint(
+            Path ggufPath) throws IOException {
+        GGUF gguf = GGUF.loadGGUFMetadata(ggufPath);
+        long perLayer = 0;
+        long global = 0;
+        int perLayerTensors = 0;
+        int globalTensors = 0;
+        for (GGUF.GGUFTensorInfo info : gguf.getTensorInfos().values()) {
+            if (info.name().equals("rope_freqs.weight")) {
+                continue; // not materialized — every loader skips it
+            }
+            long elements = 1L;
+            for (int d : info.dimensions()) {
+                elements *= d;
+            }
+            org.beehive.gpullama3.runtime.tensor.DataType materialized =
+                    org.beehive.gpullama3.format.DataTypeMapping.materializedType(
+                            info.ggmlType(),
+                            org.beehive.gpullama3.runtime.tensor.ExecutionTarget.GPU);
+            long bytes =
+                    org.beehive.gpullama3.format.TensorDescriptors.layoutOf(materialized)
+                            .byteSize(elements);
+            if (info.name().startsWith("blk.")) {
+                perLayer += bytes;
+                perLayerTensors++;
+            } else {
+                global += bytes;
+                globalTensors++;
+            }
+        }
+        return new org.beehive.gpullama3.runtime.memory.WeightFootprint(
+                perLayer, perLayerTensors, global, globalTensors);
+    }
+
     public static FloatTensor loadTensor(GGMLTensorEntry entry) {
-        GGMLType ggmlType = entry.ggmlType();
-        return switch (ggmlType) {
-            case F32 -> new FP32FloatTensor(FloatTensor.numberOfElements(entry.shape()), entry.memorySegment());
-            case Q8_0 -> new Q8_0FloatTensor(FloatTensor.numberOfElements(entry.shape()), entry.memorySegment());
-            case Q4_0 -> new Q4_0FloatTensor(FloatTensor.numberOfElements(entry.shape()), entry.memorySegment());
-            case Q4_K -> new Q4_KFloatTensor(FloatTensor.numberOfElements(entry.shape()), entry.memorySegment());
-            case Q5_K -> new Q5_KFloatTensor(FloatTensor.numberOfElements(entry.shape()), entry.memorySegment());
-            case Q6_K -> new Q6_KFloatTensor(FloatTensor.numberOfElements(entry.shape()), entry.memorySegment());
-            case F16 -> new FP16FloatTensor(FloatTensor.numberOfElements(entry.shape()), entry.memorySegment());
-            case BF16 -> new BF16FloatTensor(FloatTensor.numberOfElements(entry.shape()), entry.memorySegment());
-            default -> throw new UnsupportedOperationException("Quantization format " + ggmlType);
+        TensorDescriptor descriptor = TensorDescriptors.describeSource(entry);
+        int size = descriptor.shape().elementCountAsInt(descriptor.name());
+        MemorySegment data = entry.memorySegment();
+        return switch (entry.ggmlType()) {
+            case F32 -> new FP32FloatTensor(size, data);
+            case Q8_0 -> new Q8_0FloatTensor(size, data);
+            case Q4_0 -> new Q4_0FloatTensor(size, data);
+            case Q4_K -> new Q4_KFloatTensor(size, data);
+            case Q5_K -> new Q5_KFloatTensor(size, data);
+            case Q6_K -> new Q6_KFloatTensor(size, data);
+            case F16 -> new FP16FloatTensor(size, data);
+            case BF16 -> new BF16FloatTensor(size, data);
+            default ->
+                    throw new UnsupportedOperationException(
+                            "Quantization format " + entry.ggmlType());
         };
     }
 
-    /**
-     * Dispatcher method for loading a standard tensor array based on type.
-     * Used in CPU-path.
-     */
-    public static FloatTensor[] loadArrayOfTensors(int size, IntFunction<GGMLTensorEntry> getTensorEntry) {
+    /** Dispatcher method for loading a standard tensor array based on type. Used in CPU-path. */
+    public static FloatTensor[] loadArrayOfTensors(
+            int size, IntFunction<GGMLTensorEntry> getTensorEntry) {
         FloatTensor[] array = new FloatTensor[size];
         for (int i = 0; i < size; i++) {
             array[i] = loadTensor(getTensorEntry.apply(i));
@@ -155,301 +290,95 @@ public abstract class ModelLoader {
         return array;
     }
 
-    /**
-     * Dispatcher method for loading a TornadoVM-compatible tensor based on GGML type.
-     * Used in GPU-path.
-     */
-    public static TornadoTensor loadTornadoTensor(GGMLTensorEntry entry) {
-        GGMLType ggmlType = entry.ggmlType();
-        int size = FloatTensor.numberOfElements(entry.shape());
+    // Helper methods
+
+    public static FloatBuffer toFloatBuffer(GGMLTensorEntry tensorEntry) {
+        GGMLType ggmlType = tensorEntry.ggmlType();
         return switch (ggmlType) {
+            case F32 ->
+                    tensorEntry
+                            .memorySegment()
+                            .asByteBuffer()
+                            .order(ByteOrder.LITTLE_ENDIAN)
+                            .asFloatBuffer();
+            default -> throw new UnsupportedOperationException("Conversion to " + ggmlType);
+        };
+    }
+
+    /** Loads a GGUF tensor as this backend's device tensor. */
+    /** Loads a tensor for the device <b>retaining Q4_K</b> rather than materializing it as Q8_0. */
+    public static TornadoTensor loadTornadoTensorRetainingQ4_K(GGMLTensorEntry entry) {
+        if (entry.ggmlType() == GGMLType.Q4_K) {
+            return org.beehive.gpullama3.backend.tornado.tensor.Q4_KTornadoTensor
+                    .fromTornadoMemorySegment(entry.memorySegment());
+        }
+        if (entry.ggmlType() == GGMLType.Q6_K) {
+            return org.beehive.gpullama3.backend.tornado.tensor.Q6_KTornadoTensor
+                    .fromTornadoMemorySegment(entry.memorySegment());
+        }
+        return loadTornadoTensor(entry);
+    }
+
+    public static TornadoTensor loadTornadoTensor(GGMLTensorEntry entry) {
+        // Describe first: the descriptor states what this tensor becomes on the device — including
+        // the Q8_0 materialization for representations with no kernel — and validates the element
+        // count before any storage is touched. It holds no data, so nothing is copied for it.
+        TensorDescriptor descriptor = TensorDescriptors.describe(entry, ExecutionTarget.GPU);
+        descriptor.shape().elementCountAsInt(descriptor.name());
+        return switch (entry.ggmlType()) {
             case F32 -> FP32TornadoTensor.fromTornadoMemorySegment(entry.memorySegment());
             case F16 -> FP16TornadoTensor.fromTornadoMemorySegment(entry.memorySegment());
-            case BF16 -> convertBF16ToFP16TornadoTensor(entry);
+            case BF16 -> TornadoTensorLoader.convertBF16ToFP16(rawTensorData(entry));
             case Q8_0 -> Q8_0TornadoTensor.fromTornadoMemorySegment(entry.memorySegment());
-            case Q4_K, Q5_K, Q6_K -> dequantizeToQ8_0TornadoTensor(entry);
-            case Q4_0 -> throw new UnsupportedOperationException("Q4_0 format not supported for TornadoVM yet");
-            default -> throw new UnsupportedOperationException("Quantization format " + ggmlType);
+                // A representation the device has no kernel for is materialized as Q8_0 at load
+                // The conversion reads through the CPU tensor for that format, which
+                // already knows how to decode it.
+            case Q4_0, Q4_K, Q5_K, Q6_K ->
+                    TornadoTensorLoader.dequantizeToQ8_0(rawTensorData(entry));
+            default ->
+                    throw new UnsupportedOperationException(
+                            "Quantization format " + entry.ggmlType());
         };
     }
 
     /**
-     * Dequantizes a K-quant tensor (Q4_K, Q5_K, Q6_K) to Q8_0 format for TornadoVM/GPU execution.
-     * This is a load-time conversion that allows K-quant models to run on GPU with existing Q8_0 kernels.
+     * The entry's tensor data, read as a CPU tensor, past the device array header.
+     *
+     * <p>An entry loaded for the device is prefixed with TornadoVM's array header; how wide that is
+     * is the backend's knowledge, so the slice comes from there.
      */
-    private static Q8_0TornadoTensor dequantizeToQ8_0TornadoTensor(GGMLTensorEntry entry) {
-        // The entry's memorySegment includes a TornadoVM ARRAY_HEADER prefix (16 bytes of zeros).
-        // Slice past it so the K-quant FloatTensor reads raw tensor data starting at byte 0.
-        long headerBytes = TornadoNativeArray.ARRAY_HEADER;
-        GGMLTensorEntry dataEntry = new GGMLTensorEntry(
-                entry.mappedFile(), entry.name(), entry.ggmlType(), entry.shape(),
-                entry.memorySegment().asSlice(headerBytes));
-        FloatTensor sourceTensor = loadTensor(dataEntry);
-        int numElements = sourceTensor.size();
-        int blockSize = 32;
-        int blocksNeeded = (numElements + blockSize - 1) / blockSize;
-        int q8BlockBytes = 34; // 2 bytes scale + 32 bytes quants
-        int q8BytesNeeded = blocksNeeded * q8BlockBytes;
-
-        byte[] q8Data = new byte[q8BytesNeeded];
-
-        for (int b = 0; b < blocksNeeded; b++) {
-            int start = b * blockSize;
-            int end = Math.min(start + blockSize, numElements);
-
-            // Find max absolute value for scale
-            float maxAbs = 0;
-            for (int i = start; i < end; i++) {
-                maxAbs = Math.max(maxAbs, Math.abs(sourceTensor.getFloat(i)));
-            }
-            float scale = maxAbs / 127.0f;
-
-            // Write scale as fp16 (little-endian)
-            short scaleF16 = Float.floatToFloat16(scale);
-            int blockOff = b * q8BlockBytes;
-            q8Data[blockOff] = (byte) (scaleF16 & 0xFF);
-            q8Data[blockOff + 1] = (byte) ((scaleF16 >> 8) & 0xFF);
-
-            // Quantize values
-            float invScale = scale != 0 ? 1.0f / scale : 0;
-            for (int i = start; i < end; i++) {
-                int qi = Math.round(sourceTensor.getFloat(i) * invScale);
-                qi = Math.max(-128, Math.min(127, qi));
-                q8Data[blockOff + 2 + (i - start)] = (byte) qi;
-            }
-        }
-
-        // Allocate native memory with TornadoNativeArray header, matching GGUF.loadTensorsTornado layout
-        MemorySegment nativeSegment = Arena.ofAuto().allocate(headerBytes + q8BytesNeeded, 4);
-        // Zero out the header
-        for (int i = 0; i < headerBytes; i++) {
-            nativeSegment.set(ValueLayout.JAVA_BYTE, i, (byte) 0);
-        }
-        // Copy Q8_0 data after header
-        MemorySegment.copy(MemorySegment.ofArray(q8Data), 0, nativeSegment, headerBytes, q8BytesNeeded);
-        return Q8_0TornadoTensor.fromTornadoMemorySegment(nativeSegment);
+    private static FloatTensor rawTensorData(GGMLTensorEntry entry) {
+        GGMLTensorEntry dataEntry =
+                new GGMLTensorEntry(
+                        entry.mappedFile(),
+                        entry.name(),
+                        entry.ggmlType(),
+                        entry.shape(),
+                        TornadoTensorLoader.withoutArrayHeader(entry.memorySegment()));
+        return loadTensor(dataEntry);
     }
 
+    /** Dispatcher for an array of device tensors. Used in the GPU path. */
     /**
-     * Converts a BF16 tensor to an FP16 {@link FP16TornadoTensor} for TornadoVM/GPU execution.
-     * TornadoVM has no native BF16 kernel support, so weights are widened to FP32 (a lossless,
-     * simple bit-shift for BF16) and narrowed to IEEE FP16 at load time -- the same representation
-     * the existing FP16 GPU kernels already expect (see {@link #loadTornadoTensor}).
+     * {@link #loadArrayOfTornadoTensors} that retains Q4_K — see {@link
+     * #loadTornadoTensorRetainingQ4_K}. For the per-layer weights of a family that has Q4_K
+     * kernels.
      */
-    private static FP16TornadoTensor convertBF16ToFP16TornadoTensor(GGMLTensorEntry entry) {
-        long headerBytes = TornadoNativeArray.ARRAY_HEADER;
-        GGMLTensorEntry dataEntry = new GGMLTensorEntry(
-                entry.mappedFile(), entry.name(), entry.ggmlType(), entry.shape(),
-                entry.memorySegment().asSlice(headerBytes));
-        FloatTensor source = loadTensor(dataEntry);
-        int numElements = source.size();
-
-        MemorySegment nativeSegment = Arena.ofAuto().allocate(headerBytes + (long) numElements * Short.BYTES, 4);
-        for (long i = 0; i < headerBytes; i++) {
-            nativeSegment.set(ValueLayout.JAVA_BYTE, i, (byte) 0);
+    public static TornadoTensor[] loadArrayOfTornadoTensorsRetainingQ4_K(
+            int size, IntFunction<GGMLTensorEntry> getTensorEntry) {
+        TornadoTensor[] array = new TornadoTensor[size];
+        for (int i = 0; i < size; i++) {
+            array[i] = loadTornadoTensorRetainingQ4_K(getTensorEntry.apply(i));
         }
-        for (int i = 0; i < numElements; i++) {
-            short f16Bits = Float.floatToFloat16(source.getFloat(i));
-            nativeSegment.set(ValueLayout.JAVA_SHORT_UNALIGNED, headerBytes + (long) i * Short.BYTES, f16Bits);
-        }
-        return FP16TornadoTensor.fromTornadoMemorySegment(nativeSegment);
+        return array;
     }
 
-    /**
-     * Dispatcher method for loading a TornadoVM tensor array based on type.
-     * Used in GPU-path.
-     */
-    public static TornadoTensor[] loadArrayOfTornadoTensors(int size, IntFunction<GGMLTensorEntry> getTensorEntry) {
+    public static TornadoTensor[] loadArrayOfTornadoTensors(
+            int size, IntFunction<GGMLTensorEntry> getTensorEntry) {
         TornadoTensor[] array = new TornadoTensor[size];
         for (int i = 0; i < size; i++) {
             array[i] = loadTornadoTensor(getTensorEntry.apply(i));
         }
         return array;
-    }
-
-    /**
-     * Copies a single {@code rowSize}-element row (selected by {@code rowIndex}) out of a -- possibly
-     * very large -- embedding-table tensor directly into {@code dest}, converting each element to float
-     * on the fly.
-     *
-     * <p>Some tensors (e.g. Gemma4's {@code per_layer_token_embd}, with ~2.35 billion elements) exceed
-     * {@link Integer#MAX_VALUE} elements/bytes, which would overflow the int-based
-     * {@link FloatTensor#numberOfElements} / {@link GGMLType#byteSizeFor} used to wrap a tensor entry in
-     * a {@link FloatTensor}. Such tensors are kept as raw {@link GGMLTensorEntry}s and addressed here with
-     * {@code long} byte offsets instead -- since only single-row (embedding lookup) access is needed.</p>
-     */
-    public static void copyEmbeddingRow(GGMLTensorEntry entry, long rowIndex, int rowSize, FloatTensor dest, int destOffset) {
-        GGMLType type = entry.ggmlType();
-        MemorySegment segment = entry.memorySegment();
-
-        // Q8_0 stores 32 int8 weights behind one FP16 scale, so a row is addressed per block
-        // rather than per element. Gemma4's per_layer_token_embd is Q8_0 in a Q8_0 file, and the
-        // CPU path reads it through here, so without this the whole family fails to run on CPU
-        // with "only supports unblocked (per-element) types".
-        if (type == GGMLType.Q8_0) {
-            final int blockSize = GGMLType.Q8_0.getBlockSize();  // 32 weights per block
-            final int typeSize = GGMLType.Q8_0.getTypeSize();    // 2-byte scale + 32 bytes
-            long firstElement = rowIndex * rowSize;
-            for (int i = 0; i < rowSize; i++) {
-                long element = firstElement + i;
-                long blockOffset = (element / blockSize) * typeSize;
-                int withinBlock = (int) (element % blockSize);
-                float scale = Float.float16ToFloat(segment.get(ValueLayout.JAVA_SHORT_UNALIGNED, blockOffset));
-                byte quant = segment.get(ValueLayout.JAVA_BYTE, blockOffset + Short.BYTES + withinBlock);
-                dest.setFloat(destOffset + i, scale * quant);
-            }
-            return;
-        }
-
-        if (type.getBlockSize() != 1) {
-            throw new UnsupportedOperationException("copyEmbeddingRow only supports unblocked (per-element) types, got " + type);
-        }
-        long elementBytes = type.getTypeSize();
-        long rowByteOffset = rowIndex * rowSize * elementBytes;
-        for (int i = 0; i < rowSize; i++) {
-            long byteOffset = rowByteOffset + (long) i * elementBytes;
-            float value = switch (type) {
-                case F32 -> segment.get(ValueLayout.JAVA_FLOAT_UNALIGNED, byteOffset);
-                case F16 -> Float.float16ToFloat(segment.get(ValueLayout.JAVA_SHORT_UNALIGNED, byteOffset));
-                case BF16 -> Float.intBitsToFloat(((int) segment.get(ValueLayout.JAVA_SHORT_UNALIGNED, byteOffset)) << 16);
-                default -> throw new UnsupportedOperationException("copyEmbeddingRow: unsupported type " + type);
-            };
-            dest.setFloat(destOffset + i, value);
-        }
-    }
-
-    /**
-     * Like {@link #copyEmbeddingRow(GGMLTensorEntry, long, int, FloatTensor, int)}, but writes into a
-     * TornadoVM {@link FloatArray} (optionally scaling each element) -- used by the GPU path to gather
-     * a per-token embedding row directly into a buffer ready for transfer to the device.
-     */
-    public static void copyEmbeddingRowToFloatArray(GGMLTensorEntry entry, long rowIndex, int rowSize, FloatArray dest, float scale) {
-        GGMLType type = entry.ggmlType();
-        MemorySegment segment = entry.memorySegment();
-
-        // Q8_0 is block-quantized (32 int8 values + one FP16 scale per 34-byte block); dequantize the
-        // requested row element-by-element from its global flat index (the blocks tile the row-major data).
-        if (type == GGMLType.Q8_0) {
-            final int blockSize = GGMLType.Q8_0.getBlockSize(); // 32 elements
-            final int typeSize = GGMLType.Q8_0.getTypeSize();   // 2-byte scale + 32 quants = 34 bytes
-            long rowStartElement = rowIndex * rowSize;
-            for (int i = 0; i < rowSize; i++) {
-                long globalElement = rowStartElement + i;
-                long blockOffset = (globalElement / blockSize) * typeSize;
-                int withinBlock = (int) (globalElement % blockSize);
-                float blockScale = Float.float16ToFloat(segment.get(ValueLayout.JAVA_SHORT_UNALIGNED, blockOffset));
-                byte quant = segment.get(ValueLayout.JAVA_BYTE, blockOffset + Short.BYTES + withinBlock);
-                dest.set(i, quant * blockScale * scale);
-            }
-            return;
-        }
-
-        if (type.getBlockSize() != 1) {
-            throw new UnsupportedOperationException("copyEmbeddingRowToFloatArray only supports unblocked (per-element) types, got " + type);
-        }
-        long elementBytes = type.getTypeSize();
-        long rowByteOffset = rowIndex * rowSize * elementBytes;
-        for (int i = 0; i < rowSize; i++) {
-            long byteOffset = rowByteOffset + (long) i * elementBytes;
-            float value = switch (type) {
-                case F32 -> segment.get(ValueLayout.JAVA_FLOAT_UNALIGNED, byteOffset);
-                case F16 -> Float.float16ToFloat(segment.get(ValueLayout.JAVA_SHORT_UNALIGNED, byteOffset));
-                case BF16 -> Float.intBitsToFloat(((int) segment.get(ValueLayout.JAVA_SHORT_UNALIGNED, byteOffset)) << 16);
-                default -> throw new UnsupportedOperationException("copyEmbeddingRowToFloatArray: unsupported type " + type);
-            };
-            dest.set(i, value * scale);
-        }
-    }
-
-    // Helper methods
-
-    public static FloatArray[] loadArrayAsFloatArray(int size, IntFunction<GGMLTensorEntry> getTensorEntry) {
-        FloatArray[] array = new FloatArray[size];
-        for (int i = 0; i < size; i++) {
-            array[i] = loadTensorAsFloatArray(getTensorEntry.apply(i));
-        }
-        return array;
-    }
-
-    public static HalfFloatArray[] loadArrayAsHalfFloatArray(int size, IntFunction<GGMLTensorEntry> getTensorEntry) {
-        HalfFloatArray[] array = new HalfFloatArray[size];
-        for (int i = 0; i < size; i++) {
-            array[i] = loadTensorAsHalfFloatArray(getTensorEntry.apply(i));
-        }
-        return array;
-    }
-
-    public static FloatArray floatBufferToFloatArray(GGMLTensorEntry tensorEntry) {
-        if (tensorEntry.ggmlType() == GGMLType.F32) {
-            FloatBuffer buffer = tensorEntry.memorySegment().asByteBuffer().order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
-            return FloatArray.fromFloatBuffer(buffer);
-        } else {
-            throw new UnsupportedOperationException("Conversion to FloatArray from " + tensorEntry.ggmlType());
-        }
-    }
-
-    public static FloatArray[] loadArrayAsFloatArrayFromBuffer(int size, IntFunction<GGMLTensorEntry> getTensorEntry) {
-        FloatArray[] array = new FloatArray[size];
-        for (int i = 0; i < size; i++) {
-            array[i] = floatBufferToFloatArray(getTensorEntry.apply(i));
-        }
-        return array;
-    }
-
-    public static ByteArray createByteArrayFromTensor(GGMLTensorEntry entry) {
-        FloatTensor tensor = loadTensor(entry);
-        return ByteArray.fromSegment(tensor.asMemorySegment());
-    }
-
-    public static FloatArray loadTensorAsFloatArray(GGMLTensorEntry entry) {
-        if (entry.ggmlType() == GGMLType.F32) {
-            // For F32, we can directly create FloatArray from memory
-            FloatBuffer buffer = entry.memorySegment().asByteBuffer().order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
-            FloatArray array = new FloatArray(buffer.remaining());
-            for (int i = 0; i < buffer.remaining(); i++) {
-                array.set(i, buffer.get());
-            }
-            return array;
-        } else {
-            // For quantized formats, we need to load through FloatTensor
-            FloatTensor tensor = loadTensor(entry);
-            FloatArray array = new FloatArray(tensor.size());
-            for (int i = 0; i < tensor.size(); i++) {
-                array.set(i, tensor.getFloat(i));
-            }
-            return array;
-        }
-    }
-
-    public static HalfFloatArray loadTensorAsHalfFloatArray(GGMLTensorEntry entry) {
-        if (entry.ggmlType() == GGMLType.F32) {
-            System.out.println("Loading F32 tensor as HalfFloatArray");
-            return null;
-        } else {
-            // For quantized formats, we need to load through FloatTensor
-            FloatTensor tensor = loadTensor(entry);
-            HalfFloatArray array = new HalfFloatArray(tensor.size());
-            for (int i = 0; i < tensor.size(); i++) {
-                HalfFloat x = new HalfFloat(tensor.getFloat(i));
-                array.set(i, x);
-            }
-            return array;
-        }
-    }
-
-    public static FloatBuffer[] loadArrayOfFloatBuffer(int size, IntFunction<GGMLTensorEntry> getTensorEntry) {
-        FloatBuffer[] array = new FloatBuffer[size];
-        for (int i = 0; i < size; i++) {
-            array[i] = toFloatBuffer(getTensorEntry.apply(i));
-        }
-        return array;
-    }
-
-    public static FloatBuffer toFloatBuffer(GGMLTensorEntry tensorEntry) {
-        GGMLType ggmlType = tensorEntry.ggmlType();
-        return switch (ggmlType) {
-            case F32 -> tensorEntry.memorySegment().asByteBuffer().order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
-            default -> throw new UnsupportedOperationException("Conversion to " + ggmlType);
-        };
     }
 }

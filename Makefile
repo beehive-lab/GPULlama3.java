@@ -1,5 +1,5 @@
 # Simple Makefile for Maven build without tests
-.PHONY: build clean package help
+.PHONY: build clean package help test-scripts
 
 # Maven wrapper
 MVN = ./mvnw
@@ -26,6 +26,11 @@ package:
 package-with-clean:
 	$(MVN) clean package -DskipTests
 
+# Class A cover for the repository's Python tooling (the benchmark gate, T1.7).
+# Needs nothing but python3 — no accelerator, no model, no TornadoVM.
+test-scripts:
+	python3 -m unittest discover -s scripts/tests
+
 lint:
 	$(MVN) -T12C -Pspotless spotless:check
 
@@ -42,4 +47,5 @@ help:
 	@echo "  clean            - Clean the project"
 	@echo "  package          - Package without running tests"
 	@echo "  package-with-clean - Clean and package in one command"
+	@echo "  test-scripts     - Run the Python tooling tests (benchmark gate)"
 	@echo "  help             - Show this help message"

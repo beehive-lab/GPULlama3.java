@@ -7,8 +7,8 @@ import java.util.Optional;
 /**
  * Pure-string tool-call extraction for Llama and Qwen3 response formats.
  *
- * All methods are stateless and do not require any model or tokenizer instance,
- * making them directly unit-testable.
+ * <p>All methods are stateless and do not require any model or tokenizer instance, making them
+ * directly unit-testable.
  */
 public final class ToolCallParserUtils {
 
@@ -17,25 +17,24 @@ public final class ToolCallParserUtils {
     /**
      * Extracts a single tool call from a model response text.
      *
-     * Recognised formats (in priority order):
-     *  1. {@code <|python_tag|>{…}} — LLaMA 3.1 native
-     *  2. {@code <tool_call>…</tool_call>} — LLaMA 3.2 and Qwen3 (closed or unclosed)
-     *  3. Raw JSON object optionally inside markdown code fences — fallback
+     * <p>Recognised formats (in priority order): 1. {@code <|python_tag|>{…}} — LLaMA 3.1 native 2.
+     * {@code <tool_call>…</tool_call>} — LLaMA 3.2 and Qwen3 (closed or unclosed) 3. Raw JSON
+     * object optionally inside markdown code fences — fallback
      *
-     * Both {@code "parameters"} and {@code "arguments"} are tried as the argument key,
-     * covering LLaMA 3.1/3.2 and Qwen3 variants transparently.
+     * <p>Both {@code "parameters"} and {@code "arguments"} are tried as the argument key, covering
+     * LLaMA 3.1/3.2 and Qwen3 variants transparently.
      */
     public static Optional<ToolCallExtract> parseToolCallResponse(String responseText) {
-        // 1. Native LLaMA 3.1 format: <|python_tag|>{...}
+        // 1. Native LLaMA 3.1 format: <|python_tag|>{.}
         int idx = responseText.indexOf("<|python_tag|>");
         if (idx != -1) {
             String json = responseText.substring(idx + "<|python_tag|>".length()).strip();
             return parseToolCallJson(json);
         }
 
-        // 2. LLaMA 3.2 format: <tool_call>...</tool_call>
+        // 2. LLaMA 3.2 format: <tool_call>.</tool_call>
         int tcStart = responseText.indexOf("<tool_call>");
-        int tcEnd   = responseText.lastIndexOf("</tool_call>");
+        int tcEnd = responseText.lastIndexOf("</tool_call>");
         if (tcStart != -1 && tcEnd != -1 && tcEnd > tcStart) {
             String json = responseText.substring(tcStart + "<tool_call>".length(), tcEnd).strip();
             return parseToolCallJson(json);
@@ -57,8 +56,8 @@ public final class ToolCallParserUtils {
 
     /**
      * Parses a tool call JSON object extracted from a {@code <tool_call>} block or raw JSON.
-     * Accepts {@code {"name":…,"parameters":{…}}}, {@code {"function":…,"parameters":{…}}},
-     * and {@code {"name":…,"arguments":{…}}} — covering both LLaMA and Qwen3 variants.
+     * Accepts {@code {"name":…,"parameters":{…}}}, {@code {"function":…,"parameters":{…}}}, and
+     * {@code {"name":…,"arguments":{…}}} — covering both LLaMA and Qwen3 variants.
      */
     private static Optional<ToolCallExtract> parseToolCallJson(String json) {
         String name = extractStringValue(json, "name");
@@ -77,11 +76,11 @@ public final class ToolCallParserUtils {
     // Batch extraction
 
     /**
-     * Extracts ALL tool calls from a response that may contain multiple
-     * {@code <tool_call>…</tool_call>} blocks (Llama 3.2 and Qwen3 batch calls).
+     * Extracts ALL tool calls from a response that may contain multiple {@code
+     * <tool_call>…</tool_call>} blocks (Llama 3.2 and Qwen3 batch calls).
      *
-     * Falls back to the raw-JSON single-call path if no tags are found.
-     * Returns an empty list when the response contains no tool calls.
+     * <p>Falls back to the raw-JSON single-call path if no tags are found. Returns an empty list
+     * when the response contains no tool calls.
      */
     public static List<ToolCallExtract> parseAllToolCalls(String responseText) {
         List<ToolCallExtract> calls = new ArrayList<>();
@@ -137,9 +136,9 @@ public final class ToolCallParserUtils {
     }
 
     /**
-     * Extracts the string value for {@code "key": "<value>"} from a JSON object.
-     * Tolerates whitespace around {@code :} and correctly skips escaped quotes ({@code \"})
-     * inside the value, so multi-line code strings with embedded {@code "} are returned intact.
+     * Extracts the string value for {@code "key": "<value>"} from a JSON object. Tolerates
+     * whitespace around {@code:} and correctly skips escaped quotes ({@code \"}) inside the value,
+     * so multi-line code strings with embedded {@code "} are returned intact.
      */
     private static String extractStringValue(String json, String key) {
         String marker = "\"" + key + "\"";
@@ -166,13 +165,13 @@ public final class ToolCallParserUtils {
     }
 
     /**
-     * Extracts the JSON object value for {@code "key": {…}} using brace-counting.
-     * Handles nested objects and tolerates whitespace around {@code :}.
+     * Extracts the JSON object value for {@code "key": {…}} using brace-counting. Handles nested
+     * objects and tolerates whitespace around {@code:}.
      *
-     * <p>Brace counting is <em>string-aware</em>: {@code {} and } characters appearing inside
-     * JSON string literals (e.g. a {@code "code"} argument containing Java source) do not affect
-     * the depth counter, and {@code \"} escapes inside strings are skipped. This keeps argument
-     * objects whose string values contain braces intact.
+     * <p>Brace counting is <em>string-aware</em>: {@code {} and } characters appearing inside JSON
+     * string literals (e.g. a {@code "code"} argument containing Java source) do not affect the
+     * depth counter, and {@code \"} escapes inside strings are skipped. This keeps argument objects
+     * whose string values contain braces intact.
      */
     private static String extractNestedObject(String json, String key) {
         String marker = "\"" + key + "\"";

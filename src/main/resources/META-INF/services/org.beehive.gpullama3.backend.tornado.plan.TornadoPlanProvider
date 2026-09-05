@@ -1,0 +1,10 @@
+org.beehive.gpullama3.backend.tornado.plan.LlamaPlanProvider
+org.beehive.gpullama3.backend.tornado.plan.MistralPlanProvider
+org.beehive.gpullama3.backend.tornado.plan.Qwen2PlanProvider
+org.beehive.gpullama3.backend.tornado.plan.DeepSeekR1DistillQwenPlanProvider
+org.beehive.gpullama3.backend.tornado.plan.Qwen3PlanProvider
+org.beehive.gpullama3.backend.tornado.plan.GranitePlanProvider
+org.beehive.gpullama3.backend.tornado.plan.Phi3PlanProvider
+org.beehive.gpullama3.backend.tornado.plan.Gemma4PlanProvider
+org.beehive.gpullama3.backend.tornado.plan.DevstralPlanProvider
+org.beehive.gpullama3.backend.tornado.plan.Qwen2MoePlanProvider

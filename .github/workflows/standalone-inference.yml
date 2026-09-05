@@ -1,0 +1,411 @@
+name: Standalone inference
+
+# One backend's standalone-inference matrix, as a reusable workflow so each OS can be a
+# separate job with its own `needs`. Jobs depend on jobs, not on matrix cells, so a single
+# matrix job would leave every Linux row queued behind an unavailable macOS build.
+
+on:
+  workflow_call:
+    inputs:
+      backend:
+        required: true
+        type: string
+      runner_os:
+        description: 'macOS or Linux, as the self-hosted runner label'
+        required: true
+        type: string
+      timeout_minutes:
+        description: 'Job wall clock. The matrix is 22 rows and its cost is per machine.'
+        required: false
+        default: 40
+        type: number
+
+env:
+  JAVA_VERSION: 21.0.2-open
+  MODELS_DIR: /opt/models
+
+jobs:
+  run:
+    runs-on: ${{ fromJSON(format('["self-hosted","{0}"]', inputs.runner_os)) }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+
+    steps:
+      - name: Checkout GPULlama3
+        uses: actions/checkout@v4
+        with:
+          clean: false
+
+      - name: Set up Java
+        uses: ./.github/actions/setup-java
+        with:
+          java_version: ${{ env.JAVA_VERSION }}
+
+      - name: Setup TornadoVM
+        uses: ./.github/actions/setup-tornadovm
+        env:
+          TORNADO_ROOT: ${{ runner.tool_cache }}/tornadovm/tornadovm-${{ inputs.backend }}-jdk21
+        with:
+          backend: ${{ inputs.backend }}
+          jdk: '21'
+
+      # Built here rather than inherited from the build job's workspace. The build matrix
+      # compiles both JDK lines on the same self-hosted runner, so whatever is left in
+      # target/ belongs to whichever cell finished last -- and a JDK 25 target/ under a
+      # JDK 21 run fails with UnsupportedClassVersionError halfway through the matrix.
+      - name: Build GPULlama3
+        run: ./mvnw -q clean install -DskipTests
+
+      # RUNNER_TEMP survives between runs on a self-hosted runner, so the results file and the
+      # metrics sidecars accumulate. A later run then judges rows recorded by an earlier one:
+      # run 33890692666 recorded 40 rows for a 22-row matrix and uploaded 40 metrics files.
+      # Stale rows are worse than missing ones, because they carry outcomes from a different
+      # commit and a different toolchain while looking exactly like this run's.
+      - name: Clear stale standalone results and metrics
+        shell: bash
+        run: |
+          rm -f "${RUNNER_TEMP}/standalone-results.tsv"
+          rm -f "${RUNNER_TEMP}"/metrics-${{ inputs.backend }}-*.json
+          rm -f "${RUNNER_TEMP}"/metrics-${{ inputs.backend }}-*.meta.json
+
+      # Test standalone mode per model family and quantization
+      # Note: variants can be represented with matrices
+      - name: FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Standard
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ inputs.backend }}
+          model_file: Llama-3.2-1B-Instruct-F16.gguf
+          model: Llama-3.2-1B-Instruct
+          quantization: F16
+          configuration: standard
+          metrics_file: ${{ runner.temp }}/metrics-${{ inputs.backend }}-llama-1b-f16-standard.json
+
+      - name: FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Prefill-Decode
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ inputs.backend }}
+          model_file: Llama-3.2-1B-Instruct-F16.gguf
+          model: Llama-3.2-1B-Instruct
+          quantization: F16
+          configuration: prefill-decode
+          flags: --with-prefill-decode
+          metrics_file: ${{ runner.temp }}/metrics-${{ inputs.backend }}-llama-1b-f16-prefill-decode.json
+
+      - name: FP16 - Run Llama-3.2-1B-Instruct-F16.gguf - Batch-Prefill-Decode
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ inputs.backend }}
+          model_file: Llama-3.2-1B-Instruct-F16.gguf
+          model: Llama-3.2-1B-Instruct
+          quantization: F16
+          configuration: batch-prefill-decode
+          flags: --with-prefill-decode --batch-prefill-size 32
+          metrics_file: ${{ runner.temp }}/metrics-${{ inputs.backend }}-llama-1b-f16-batch-prefill-decode.json
+
+      - name: FP16 - Run Qwen3-0.6B-f16.gguf
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ inputs.backend }}
+          model_file: Qwen3-0.6B-f16.gguf
+          model: Qwen3-0.6B
+          quantization: F16
+          configuration: standard
+          metrics_file: ${{ runner.temp }}/metrics-${{ inputs.backend }}-qwen3-0.6b-f16-standard.json
+
+      - name: FP16 - Run Qwen3-0.6B-f16.gguf - Prefill-Decode
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ inputs.backend }}
+          model_file: Qwen3-0.6B-f16.gguf
+          model: Qwen3-0.6B
+          quantization: F16
+          configuration: prefill-decode
+          flags: --with-prefill-decode
+          metrics_file: ${{ runner.temp }}/metrics-${{ inputs.backend }}-qwen3-0.6b-f16-prefill-decode.json
+
+      - name: FP16 - Run Qwen3-0.6B-f16.gguf - Batch-Prefill-Decode
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ inputs.backend }}
+          model_file: Qwen3-0.6B-f16.gguf
+          model: Qwen3-0.6B
+          quantization: F16
+          configuration: batch-prefill-decode
+          flags: --with-prefill-decode --batch-prefill-size 32
+          metrics_file: ${{ runner.temp }}/metrics-${{ inputs.backend }}-qwen3-0.6b-f16-batch-prefill-decode.json
+
+      - name: FP16 - Run Mistral-7B-Instruct-v0.3.fp16.gguf
+        # TODO: re-enable once the Mistral-7B-on-Metal timeout is root-caused; see the
+        # Metal TornadoOutOfMemoryException also hit by the tiny Llama-3.2-1B quarkus job.
+        if: inputs.backend != 'metal'
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ inputs.backend }}
+          model_file: Mistral-7B-Instruct-v0.3.fp16.gguf
+          model: Mistral-7B-Instruct-v0.3
+          quantization: F16
+          configuration: standard
+          metrics_file: ${{ runner.temp }}/metrics-${{ inputs.backend }}-mistral-7b-fp16-standard.json
+
+      - name: FP16 - Run Qwen2.5-1.5b-instruct-fp16.gguf
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ inputs.backend }}
+          model_file: qwen2.5-1.5b-instruct-fp16.gguf
+          model: Qwen2.5-1.5B-Instruct
+          quantization: F16
+          configuration: standard
+          metrics_file: ${{ runner.temp }}/metrics-${{ inputs.backend }}-qwen2-5-1-5b-fp16-standard.json
+
+      - name: FP16 - Run Phi-3-mini-4k-instruct-fp16.gguf
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ inputs.backend }}
+          model_file: Phi-3-mini-4k-instruct-fp16.gguf
+          model: Phi-3-mini-4k-instruct
+          quantization: F16
+          configuration: standard
+          metrics_file: ${{ runner.temp }}/metrics-${{ inputs.backend }}-phi3-mini-fp16-standard.json
+
+      - name: FP16 - Run Granite-3.2-2b-instruct-f16.gguf
+        # TODO: not yet provisioned under /opt/models on the Mac runner; re-enable once it is.
+        if: inputs.backend != 'metal'
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ inputs.backend }}
+          model_file: granite-3.2-2b-instruct-f16.gguf
+          model: Granite-3.2-2B-Instruct
+          quantization: F16
+          configuration: standard
+          metrics_file: ${{ runner.temp }}/metrics-${{ inputs.backend }}-granite-3-2-2b-f16-standard.json
+
+      - name: FP16 - Run Granite-4.0-1b-F16.gguf
+        # Not provisioned on the macOS runner; same as the other Granite/Mistral models.
+        if: inputs.backend != 'metal'
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ inputs.backend }}
+          model_file: granite-4.0-1b-F16.gguf
+          model: Granite-4.0-1B
+          quantization: F16
+          configuration: standard
+          metrics_file: ${{ runner.temp }}/metrics-${{ inputs.backend }}-granite-4-0-1b-f16-standard.json
+
+      - name: Q8 - Run Llama-3.2-1B-Instruct-Q8_0.gguf
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ inputs.backend }}
+          model_file: Llama-3.2-1B-Instruct-Q8_0.gguf
+          model: Llama-3.2-1B-Instruct
+          quantization: Q8_0
+          configuration: standard
+          metrics_file: ${{ runner.temp }}/metrics-${{ inputs.backend }}-llama-1b-q8-standard.json
+
+      - name: Q8 - Run Llama-3.2-1B-Instruct-Q8_0.gguf - Prefill-Decode
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ inputs.backend }}
+          model_file: Llama-3.2-1B-Instruct-Q8_0.gguf
+          model: Llama-3.2-1B-Instruct
+          quantization: Q8_0
+          configuration: prefill-decode
+          flags: --with-prefill-decode
+          metrics_file: ${{ runner.temp }}/metrics-${{ inputs.backend }}-llama-1b-q8-prefill-decode.json
+
+      - name: Q8 - Run Llama-3.2-1B-Instruct-Q8_0.gguf - Batch-Prefill-Decode
+        # Excluded on CUDA only, for a cause distinct from the batch-prefill defect the other
+        # backends hit here:
+        #   TornadoInternalError: unimplemented: address origin unimplemented: ...calc.Mul
+        #   at CUDAAddressLowering.lower
+        # a TornadoVM CUDA address-lowering gap on the Q8_0 tensor-core batch-prefill kernel
+        # (gemmMMAQKVQ8), reported as beehive-lab/TornadoVM#1057. Drop the guard once it is fixed.
+        if: inputs.backend != 'cuda'
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ inputs.backend }}
+          model_file: Llama-3.2-1B-Instruct-Q8_0.gguf
+          model: Llama-3.2-1B-Instruct
+          quantization: Q8_0
+          configuration: batch-prefill-decode
+          flags: --with-prefill-decode --batch-prefill-size 32
+          metrics_file: ${{ runner.temp }}/metrics-${{ inputs.backend }}-llama-1b-q8-batch-prefill-decode.json
+
+      - name: Q8 - Run Qwen3-0.6B-Q8_0.gguf
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ inputs.backend }}
+          model_file: Qwen3-0.6B-Q8_0.gguf
+          model: Qwen3-0.6B
+          quantization: Q8_0
+          configuration: standard
+          metrics_file: ${{ runner.temp }}/metrics-${{ inputs.backend }}-qwen3-0-6b-q8-standard.json
+
+      - name: Q8 - Run Qwen3-0.6B-Q8_0.gguf - Prefill-Decode
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ inputs.backend }}
+          model_file: Qwen3-0.6B-Q8_0.gguf
+          model: Qwen3-0.6B
+          quantization: Q8_0
+          configuration: prefill-decode
+          flags: --with-prefill-decode
+          metrics_file: ${{ runner.temp }}/metrics-${{ inputs.backend }}-qwen3-0-6b-q8-prefill-decode.json
+
+      - name: Q8 - Run Qwen3-0.6B-Q8_0.gguf - Batch-Prefill-Decode
+        # Same CUDA address-lowering gap as the Llama Q8_0 batch-prefill step above
+        # (beehive-lab/TornadoVM#1057).
+        if: inputs.backend != 'cuda'
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ inputs.backend }}
+          model_file: Qwen3-0.6B-Q8_0.gguf
+          model: Qwen3-0.6B
+          quantization: Q8_0
+          configuration: batch-prefill-decode
+          flags: --with-prefill-decode --batch-prefill-size 32
+          metrics_file: ${{ runner.temp }}/metrics-${{ inputs.backend }}-qwen3-0-6b-q8-batch-prefill-decode.json
+
+      - name: Q8 - Run Phi-3-mini-4k-instruct-Q8_0.gguf
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ inputs.backend }}
+          model_file: Phi-3-mini-4k-instruct-Q8_0.gguf
+          model: Phi-3-mini-4k-instruct
+          quantization: Q8_0
+          configuration: standard
+          metrics_file: ${{ runner.temp }}/metrics-${{ inputs.backend }}-phi3-mini-q8-standard.json
+
+      - name: Q8 - Run Qwen2.5-1.5b-instruct-q8_0.gguf
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ inputs.backend }}
+          model_file: qwen2.5-1.5b-instruct-q8_0.gguf
+          model: Qwen2.5-1.5B-Instruct
+          quantization: Q8_0
+          configuration: standard
+          metrics_file: ${{ runner.temp }}/metrics-${{ inputs.backend }}-qwen2-5-1-5b-q8-standard.json
+
+      - name: Q8 - Run Mistral-7B-Instruct-v0.3.Q8_0.gguf
+        # TODO: re-enable once Mistral-7B-on-Metal is root-caused; see the FP16 step above.
+        if: inputs.backend != 'metal'
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ inputs.backend }}
+          model_file: Mistral-7B-Instruct-v0.3.Q8_0.gguf
+          model: Mistral-7B-Instruct-v0.3
+          quantization: Q8_0
+          configuration: standard
+          metrics_file: ${{ runner.temp }}/metrics-${{ inputs.backend }}-mistral-7b-q8-standard.json
+
+      - name: Q8 - Run Granite-3.2-2b-instruct-Q8_0.gguf
+        # Not provisioned on the macOS runner; same as the other Granite/Mistral models.
+        if: inputs.backend != 'metal'
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ inputs.backend }}
+          model_file: granite-3.2-2b-instruct-Q8_0.gguf
+          model: Granite-3.2-2B-Instruct
+          quantization: Q8_0
+          configuration: standard
+          metrics_file: ${{ runner.temp }}/metrics-${{ inputs.backend }}-granite-3-2-2b-q8-standard.json
+
+      - name: Q8 - Run Granite-4.0-1b-Q8_0.gguf
+        # Not provisioned on the macOS runner; same as the other Granite/Mistral models.
+        if: inputs.backend != 'metal'
+        uses: ./.github/actions/run-inference
+        with:
+          backend: ${{ inputs.backend }}
+          model_file: granite-4.0-1b-Q8_0.gguf
+          model: Granite-4.0-1B
+          quantization: Q8_0
+          configuration: standard
+          metrics_file: ${{ runner.temp }}/metrics-${{ inputs.backend }}-granite-4-0-1b-q8-standard.json
+
+      # Every row above records its outcome and does not abort the job, so this is what decides
+      # the job's result — after the whole matrix has actually run.
+      #
+      # A row is green when it did what .github/standalone-expectations.tsv says it should. Rows not
+      # listed there must pass, with the resolved backend and a real execution_path asserted rather
+      # than the matrix label taken on trust. Rows listed there must fail, and fail with the named
+      # cause — an unexpected pass and a failure for a different reason are both deviations, so a
+      # toolchain fix or a new defect each turn the job red instead of blending in.
+      - name: Assert standalone inference results
+        if: always()
+        shell: bash
+        run: |
+          RESULTS="${RUNNER_TEMP}/standalone-results.tsv"
+          EXPECTATIONS=".github/standalone-expectations.tsv"
+          if [ ! -s "$RESULTS" ]; then
+            echo "::error::No standalone rows were recorded — the job did not run what it claims to verify."
+            exit 1
+          fi
+
+          DEVIATIONS=0
+          printf '%-64s %-8s %s\n' "ROW" "RESULT" "DETAIL"
+          while IFS=$'\t' read -r row result detail; do
+            # Not `[ -z "$row" ] && continue`: this step runs under `bash -e`, where an AND-list
+            # whose final status is non-zero terminates the step. With a non-empty row the test
+            # fails, `continue` never runs, the list returns 1, and the whole assertion died on
+            # its first iteration -- printing the table header and exiting 1 with no rows, which
+            # reads exactly like a matrix-wide failure. Seen on run 33890692666, where all 20
+            # CUDA rows had in fact passed.
+            if [ -z "$row" ]; then
+              continue
+            fi
+            # The expectations file is keyed by the same four fields the row label is built from.
+            #
+            # awk skips the comments itself rather than a `grep -v '^#' | awk` pipeline. When
+            # every line of the table is a comment -- which is the state an empty table is in --
+            # grep finds nothing and returns 1, `pipefail` propagates it, and the command
+            # substitution fails the step under `bash -e`. The result is the table header
+            # followed by exit 1 with no rows printed, which is indistinguishable from a
+            # matrix-wide failure and is not one.
+            key=$(echo "$row" | tr -d ' ' | tr '|' '\t')
+            expected_cause=$(awk -F'\t' -v k="$key" '
+              BEGIN{OFS="\t"}
+              /^#/ {next}
+              {rk=$1 OFS $2 OFS $3 OFS $4; if (rk==k) {print $5; exit}}' "$EXPECTATIONS")
+
+            # A row that produced WRONG-OUTPUT ran fine and returned bad numbers. It is never
+            # "blocked as expected", whatever the table says, and it must never be silenced by
+            # adding a line to the table: a numerical defect is a defect, not a recorded limitation.
+            if [ "$result" = "WRONG-OUTPUT" ]; then
+              printf '%-64s %-8s %s\n' "$row" "!! WRONG-OUTPUT" "$detail"
+              echo "::error::$row executed successfully but produced incorrect output. This is a correctness defect and must be fixed, not recorded in $EXPECTATIONS: $detail"
+              DEVIATIONS=$((DEVIATIONS + 1))
+            elif [ -n "$expected_cause" ]; then
+              if [ "$result" = "FAIL" ] && printf '%s' "$detail" | grep -qF "$expected_cause"; then
+                printf '%-64s %-8s %s\n' "$row" "BLOCKED" "as expected: $expected_cause"
+              elif [ "$result" != "FAIL" ]; then
+                printf '%-64s %-8s %s\n' "$row" "!! NEW PASS" "$detail"
+                echo "::error::$row is recorded as blocked but now succeeds. Remove its line from $EXPECTATIONS."
+                DEVIATIONS=$((DEVIATIONS + 1))
+              else
+                printf '%-64s %-8s %s\n' "$row" "!! WRONG" "$detail"
+                echo "::error::$row failed, but not with its recorded cause. Expected to find: $expected_cause"
+                DEVIATIONS=$((DEVIATIONS + 1))
+              fi
+            elif [ "$result" = "PASS" ]; then
+              printf '%-64s %-8s %s\n' "$row" "PASS" "$detail"
+            else
+              printf '%-64s %-8s %s\n' "$row" "!! FAIL" "$detail"
+              echo "::error::$row failed and is not a recorded limitation: $detail"
+              DEVIATIONS=$((DEVIATIONS + 1))
+            fi
+          done < "$RESULTS"
+
+          echo
+          if [ "$DEVIATIONS" -ne 0 ]; then
+            echo "::error::$DEVIATIONS standalone row(s) deviated from .github/standalone-expectations.tsv"
+            exit 1
+          fi
+          echo "All standalone rows matched .github/standalone-expectations.tsv."
+
+      # Upload metrics for the publish job
+      - name: Upload metrics artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: metrics-${{ inputs.backend }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/metrics-${{ inputs.backend }}-*.json
+          if-no-files-found: warn
+

@@ -67,7 +67,12 @@ mvn clean install
 ```
 
 Confirm the demos resolve the local `quarkus-langchain4j-gpu-llama3` and matching `gpu-llama3`
-artifacts installed in step 2, not stale versions from an earlier local repository cache.
+artifacts installed in step 2, not stale versions from an earlier local repository cache. The
+demos repository pins both `gpu-llama3.version` and `quarkus.version` in its root POM, and both
+drift: a stale `gpu-llama3` pin surfaces as `ClassNotFoundException` on a facade type that the
+extension compiled against, and a Quarkus version that disagrees with the extension's surfaces
+as `TypeNotPresentException: io/quarkus/arc/impl/TypeVariableImpl` during bean generation.
+Neither is an extension defect; check the pins before investigating anything else.
 
 ## 5. Run the required demos
 
@@ -88,7 +93,12 @@ Run the documented TornadoVM commands for at least:
 
 Do not reuse old jar names, model parameters, or JVM options without verifying them against the
 current README. Startup alone is not a pass; each demo must perform inference and reach its
-expected end (e.g. a completed response, not just server boot).
+expected end — a completed response, not just server boot.
+
+The extension calls `System.setProperty("tornado.device.memory", ...)` from its own
+`device-memory` config during model initialization, so a bare `-Dtornado.device.memory` on the
+command line is overwritten. Raise
+`-Dquarkus.langchain4j.gpu-llama3.chat-model.device-memory` instead.
 
 ## Record
 

@@ -1,8 +1,5 @@
 package org.beehive.gpullama3.tokenizer;
 
-import org.beehive.gpullama3.auxiliary.Utf8Mask;
-import org.beehive.gpullama3.auxiliary.Pair;
-
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -15,55 +12,74 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import org.beehive.gpullama3.auxiliary.Pair;
+import org.beehive.gpullama3.auxiliary.Utf8Mask;
 
 public class Qwen3Tokenizer implements Tokenizer {
     static final Map<Integer, Integer> BYTE_ENCODER = bytesToUnicode();
-    static final Map<Integer, Integer> BYTE_DECODER = BYTE_ENCODER.entrySet().stream().collect(Collectors.toMap(Map.Entry::getValue, Map.Entry::getKey));
-    private final static String QWEN3_PATTERN = "(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
+    static final Map<Integer, Integer> BYTE_DECODER =
+            BYTE_ENCODER.entrySet().stream()
+                    .collect(Collectors.toMap(Map.Entry::getValue, Map.Entry::getKey));
+    private static final String QWEN3_PATTERN =
+            "(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
     private final Pattern compiledPattern;
     private final Vocabulary vocabulary;
     private final Map<Pair<Integer, Integer>, Integer> merges;
     private final Map<String, Integer> specialTokens;
     private final int[] tokenTypes;
-    /** Canonical {@code <think>}/{@code </think>} token ids (or -1), captured before they are
-     *  removed from {@link #specialTokens} so reasoning renders as text. Used to prime the
-     *  thinking-disabled control block with the tokens the model was actually trained on. */
+
+    /**
+     * Canonical {@code <think>}/{@code </think>} token ids (or -1), captured before they are
+     * removed from {@link #specialTokens} so reasoning renders as text. Used to prime the
+     * thinking-disabled control block with the tokens the model was actually trained on.
+     */
     private final int thinkStartToken;
+
     private final int thinkEndToken;
+
     /** buffer to store incomplete UTF-8 sequence */
     private final byte[] bufUtf8 = new byte[4];
+
     /** index in UTF-8 buffer */
     private int currUtf8Index = 0;
+
     /** current UTF-8 mask */
     private Utf8Mask currUtf8Mask;
 
     // @formatter:off
-    public Qwen3Tokenizer(Map<String, Object> metadata, Vocabulary vocabulary, boolean isDeepSeekR1DistillQwen) {
+    public Qwen3Tokenizer(
+            Map<String, Object> metadata, Vocabulary vocabulary, boolean isDeepSeekR1DistillQwen) {
         int[] tokenTypes = (int[]) metadata.get("tokenizer.ggml.token_type");
         String[] mergeLines = (String[]) metadata.get("tokenizer.ggml.merges");
-        List<Pair<Integer, Integer>> merges = Arrays.stream(mergeLines)
-                .map(line -> line.split(" "))
-                .map(parts ->
-                        new Pair<>(
-                                vocabulary.getIndex(parts[0]).orElseThrow(),
-                                vocabulary.getIndex(parts[1]).orElseThrow())
-                ).toList();
+        List<Pair<Integer, Integer>> merges =
+                Arrays.stream(mergeLines)
+                        .map(line -> line.split(" "))
+                        .map(
+                                parts ->
+                                        new Pair<>(
+                                                vocabulary.getIndex(parts[0]).orElseThrow(),
+                                                vocabulary.getIndex(parts[1]).orElseThrow()))
+                        .toList();
 
         int allTokens = vocabulary.size();
-        String firstSpecialToken = isDeepSeekR1DistillQwen ? "<｜end▁of▁sentence｜>" : "<|endoftext|>";
-        int baseTokens = vocabulary.getIndex(firstSpecialToken).orElseThrow(); // assume all tokens after the base ones are special.
+        String firstSpecialToken =
+                isDeepSeekR1DistillQwen ? "<｜end▁of▁sentence｜>" : "<|endoftext|>";
+        int baseTokens =
+                vocabulary
+                        .getIndex(firstSpecialToken)
+                        .orElseThrow(); // assume all tokens after the base ones are special.
         // int reservedSpecialTokens = allTokens - baseTokens;
-        List<String> specialTokensList = Arrays.stream(vocabulary.tokens(), baseTokens, allTokens).toList();
+        List<String> specialTokensList =
+                Arrays.stream(vocabulary.tokens(), baseTokens, allTokens).toList();
 
         assert specialTokensList.stream().allMatch(token -> vocabulary.getIndex(token).isPresent());
 
         Map<String, Integer> specialTokens =
                 IntStream.range(0, specialTokensList.size())
                         .boxed()
-                        .collect(Collectors.toMap(
-                                i -> specialTokensList.get(i),
-                                i -> baseTokens + i)
-                        );
+                        .collect(
+                                Collectors.toMap(
+                                        i -> specialTokensList.get(i), i -> baseTokens + i));
         // Capture the canonical think-control token ids BEFORE removing them from the special
         // map (they are removed so reasoning text renders verbatim during decode).
         this.thinkStartToken = specialTokens.getOrDefault("<think>", -1);
@@ -79,7 +95,10 @@ public class Qwen3Tokenizer implements Tokenizer {
         for (Pair<Integer, Integer> pair : merges) {
             int firstIndex = pair.first();
             int secondIndex = pair.second();
-            int mergeIndex = vocabulary.getIndex(vocabulary.get(firstIndex) + vocabulary.get(secondIndex)).orElseThrow();
+            int mergeIndex =
+                    vocabulary
+                            .getIndex(vocabulary.get(firstIndex) + vocabulary.get(secondIndex))
+                            .orElseThrow();
             this.merges.put(pair, mergeIndex);
         }
     }
@@ -98,7 +117,9 @@ public class Qwen3Tokenizer implements Tokenizer {
         int i = 0;
         while (i < ids.size()) {
             // if not at the very last position AND the pair matches, replace it
-            if (ids.get(i).equals(pair.first()) && i < ids.size() - 1 && ids.get(i + 1).equals(pair.second())) {
+            if (ids.get(i).equals(pair.first())
+                    && i < ids.size() - 1
+                    && ids.get(i + 1).equals(pair.second())) {
                 newids.add(idx);
                 i += 2;
             } else {
@@ -110,12 +131,11 @@ public class Qwen3Tokenizer implements Tokenizer {
     }
 
     /**
-     * Returns list of utf-8 byte and a corresponding list of unicode strings.
-     * The reversible bpe codes work on unicode strings.
-     * This means you need a large # of unicode characters in your vocab if you want to avoid UNKs.
-     * When you're at something like a 10B token dataset you end up needing around 5K for decent coverage.
-     * This is a significant percentage of your normal, say, 32K bpe vocab.
-     * To avoid that, we want lookup tables between utf-8 bytes and unicode strings.
+     * Returns list of utf-8 byte and a corresponding list of unicode strings. The reversible bpe
+     * codes work on unicode strings. This means you need a large # of unicode characters in your
+     * vocab if you want to avoid UNKs. When you're at something like a 10B token dataset you end up
+     * needing around 5K for decent coverage. This is a significant percentage of your normal, say,
+     * 32K bpe vocab. To avoid that, we want lookup tables between utf-8 bytes and unicode strings.
      * And avoids mapping to whitespace/control characters the bpe code barfs on.
      */
     static Map<Integer, Integer> bytesToUnicode() {
@@ -135,10 +155,9 @@ public class Qwen3Tokenizer implements Tokenizer {
         }
 
         // return dict(zip(bs, cs))
-        return IntStream.range(0, bs.size())
-                .boxed()
-                .collect(Collectors.toMap(bs::get, cs::get));
+        return IntStream.range(0, bs.size()).boxed().collect(Collectors.toMap(bs::get, cs::get));
     }
+
     // @formatter:on
 
     @Override
@@ -172,13 +191,14 @@ public class Qwen3Tokenizer implements Tokenizer {
     @Override
     public boolean shouldDisplayToken(int token) {
         int tokenType = getTokenType(token);
-        // tokenType 4 allows the display of reasoning ( <think> ... <\think> )
+        // tokenType 4 allows the display of reasoning (<think>. <\think>)
         return tokenType == 1 || tokenType == 4 || tokenType == 6;
     }
 
     public int getTokenType(int tokenIndex) {
         if (tokenTypes == null) {
-            throw new IllegalStateException("Qwen3Tokenizer hasn't been constructed using tokenTypes");
+            throw new IllegalStateException(
+                    "Qwen3Tokenizer hasn't been constructed using tokenTypes");
         }
         return tokenTypes[tokenIndex];
     }
@@ -189,9 +209,7 @@ public class Qwen3Tokenizer implements Tokenizer {
 
     // @formatter:off
 
-    /**
-     * Encoding that ignores any special tokens.
-     */
+    /** Encoding that ignores any special tokens. */
     public List<Integer> encodeOrdinary(String text) {
         // split text into chunks of text by categories defined in regex pattern
         List<String> textChunks = findAll(compiledPattern, text);
@@ -203,6 +221,7 @@ public class Qwen3Tokenizer implements Tokenizer {
         }
         return ids;
     }
+
     // @formatter:on
 
     private Map<Pair<Integer, Integer>, Integer> getStats(List<Integer> ids) {
@@ -216,7 +235,7 @@ public class Qwen3Tokenizer implements Tokenizer {
 
     private List<Integer> encodeChunk(String chunk) {
         // return the token ids
-        // let's begin. first, convert all bytes to integers in range 0..255
+        // let's begin. first, convert all bytes to integers in range 0.255
         List<Integer> ids = new ArrayList<>();
         for (int b : chunk.toCharArray()) {
             int tokenIndex = this.vocabulary.getIndex(String.valueOf((char) b)).orElseThrow();
@@ -226,7 +245,14 @@ public class Qwen3Tokenizer implements Tokenizer {
         while (ids.size() >= 2) {
             // find the pair with the lowest merge index
             Map<Pair<Integer, Integer>, Integer> stats = getStats(ids);
-            Pair<Integer, Integer> pair = stats.keySet().stream().min(Comparator.comparingInt(key -> this.merges.getOrDefault(key, Integer.MAX_VALUE))).orElseThrow();
+            Pair<Integer, Integer> pair =
+                    stats.keySet().stream()
+                            .min(
+                                    Comparator.comparingInt(
+                                            key ->
+                                                    this.merges.getOrDefault(
+                                                            key, Integer.MAX_VALUE)))
+                            .orElseThrow();
             // subtle: if there are no more merges available, the key will
             // result in an inf for every single pair, and the min will be
             // just the first pair in the list, arbitrarily
@@ -258,7 +284,7 @@ public class Qwen3Tokenizer implements Tokenizer {
         assert getSpecialTokens().keySet().containsAll(special);
         if (special.isEmpty()) {
             // shortcut: if no special tokens, just use the ordinary encoding
-            return encodeOrdinary(text);
+            return encodeOrdinaryAsList(text);
         }
 
         // otherwise, we have to be careful with potential special tokens in text
@@ -266,10 +292,8 @@ public class Qwen3Tokenizer implements Tokenizer {
         // based on the occurrence of any exact match with any of the special tokens
         // we can use re.split for this. note that surrounding the pattern with ()
         // makes it into a capturing group, so the special tokens will be included
-        String specialPattern = special
-                .stream()
-                .map(Pattern::quote)
-                .collect(Collectors.joining("|", "(", ")"));
+        String specialPattern =
+                special.stream().map(Pattern::quote).collect(Collectors.joining("|", "(", ")"));
 
         String[] specialChunks = text.split(specialPattern);
         // now all the special characters are separated from the rest of the text
@@ -280,17 +304,22 @@ public class Qwen3Tokenizer implements Tokenizer {
                 // this is a special token, encode it separately as a special case
                 ids.add(getSpecialTokens().get(part));
             } else {
-                // this is an ordinary sequence, encode it normally
-                ids.addAll(encodeOrdinary(part));
+                // this is an ordinary sequence, encode it normally.
+                //
+                // encodeOrdinaryAsList, not encodeOrdinary: this vocabulary is byte-level BPE, so
+                // text has to go through BYTE_ENCODER first — a space is "Ġ" and a newline is "Ċ",
+                // and neither exists in the vocabulary as itself. Every other caller already did
+                // that; this one did not, so any ordinary text reaching here threw
+                // NoSuchElementException from encodeChunk.
+                ids.addAll(encodeOrdinaryAsList(part));
             }
         }
         return ids;
     }
+
     // @formatter:on
 
-    /**
-     * Encode text as ordinary tokens (no special token handling)
-     */
+    /** Encode text as ordinary tokens (no special token handling) */
     public List<Integer> encodeOrdinaryAsList(String text) {
         // First convert to byte-encoded unicode representation
         StringBuilder sb = new StringBuilder();
@@ -320,7 +349,8 @@ public class Qwen3Tokenizer implements Tokenizer {
     public String decode(List<Integer> tokens) {
         String decoded = decodeImpl(tokens);
         // The '｜' in '<｜end▁of▁sentence｜>' of DeepSeek-R1 has code-point 65372.
-        int[] decodedBytesAsInts = decoded.codePoints().map(cp -> cp <= 512 ? BYTE_DECODER.get(cp) : cp).toArray();
+        int[] decodedBytesAsInts =
+                decoded.codePoints().map(cp -> cp <= 512 ? BYTE_DECODER.get(cp) : cp).toArray();
         byte[] rawBytes = new byte[decodedBytesAsInts.length + 3];
         int indexRawByte = 0;
         loopDecoded:

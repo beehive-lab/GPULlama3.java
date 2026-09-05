@@ -12,20 +12,6 @@ enum Backend { OPENCL, PTX, CUDA, METAL }
 // BACKEND_PRIORITY_PROPERTY below.
 List<Backend> BACKEND_PRIORITY = List.of(Backend.CUDA, Backend.PTX, Backend.OPENCL, Backend.METAL);
 
-Map<Backend, String> BACKEND_EXPORTS_FILE = Map.of(
-    Backend.OPENCL, "opencl-exports",
-    Backend.PTX, "ptx-exports",
-    Backend.CUDA, "cuda-exports",
-    Backend.METAL, "metal-exports"
-);
-
-Map<Backend, String> BACKEND_MODULE_NAME = Map.of(
-    Backend.OPENCL, "tornado.drivers.opencl",
-    Backend.PTX, "tornado.drivers.ptx",
-    Backend.CUDA, "tornado.drivers.cuda",
-    Backend.METAL, "tornado.drivers.metal"
-);
-
 // TornadoVM system property that ranks each backend for "driver 0" (default
 // device) selection when more than one backend is loaded - see
 // TornadoOptions.*_BACKEND_PRIORITY. Defaults there favor OpenCL (10) over
@@ -258,9 +244,19 @@ String findLlamaJar(String llamaRoot) {
     }
 }
 
-String modulePath(String tornadoSdk) {
-    var sep = System.getProperty("os.name").toLowerCase().contains("win") ? ";" : ":";
-    return "." + sep + tornadoSdk + "/share/java/tornado";
+// The SDK's own JVM argument file, which is the source of truth for how to start it: module
+// path, Graal/JVMCI arrangement, per-backend export lists and the preview flag all differ by
+// TornadoVM version, JDK and installed backends. The SDK writes it at build time and the
+// `tornado` launcher refreshes it from the template on every invocation.
+String tornadoArgfile(String tornadoSdk) {
+    var argfile = Path.of(tornadoSdk, "tornado-argfile");
+    if (!Files.isRegularFile(argfile)) {
+        System.err.println("Error: " + argfile + " not found");
+        System.err.println("Run '" + tornadoSdk + "/bin/tornado --devices' once to generate it"
+            + " from tornado-argfile.template, or reinstall the SDK");
+        System.exit(1);
+    }
+    return argfile.toString();
 }
 
 List<Backend> detectInstalledBackends(String tornadoSdk) {
@@ -326,25 +322,13 @@ List<String> buildCommand(Config cfg, String javaHome, String tornadoSdk, String
 
     cmd.addAll(List.of(
         javaHome + "/bin/java",
-        "-server",
-        "-XX:+UnlockExperimentalVMOptions",
-        "-XX:+EnableJVMCI",
+        "@" + tornadoArgfile(tornadoSdk),
         "-Xms" + cfg.heapMin(),
         "-Xmx" + cfg.heapMax(),
         "-XX:MaxDirectMemorySize=" + cfg.directMemory(),
-        "--enable-preview",
-        "-Djava.library.path=" + tornadoSdk + "/lib",
-        "-Djdk.module.showModuleResolution=false",
-        "--module-path", modulePath(tornadoSdk)
-    ));
-
-    // TornadoVM configuration
-    cmd.addAll(List.of(
-        "-Dtornado.load.api.implementation=uk.ac.manchester.tornado.runtime.tasks.TornadoTaskGraph",
-        "-Dtornado.load.runtime.implementation=uk.ac.manchester.tornado.runtime.TornadoCoreRuntime",
-        "-Dtornado.load.tornado.implementation=uk.ac.manchester.tornado.runtime.common.Tornado",
-        "-Dtornado.load.annotation.implementation=uk.ac.manchester.tornado.annotation.ASMClassVisitor",
-        "-Dtornado.load.annotation.parallel=uk.ac.manchester.tornado.api.annotations.Parallel",
+        // Not in the argfile: FloatTensor's static initializer reaches the Vector API.
+        "--add-modules", "jdk.incubator.vector",
+        // Prompt ingestion emits more interpreter bytecode than the default buffer holds.
         "-Dtornado.tvm.maxbytecodesize=65536"
     ));
 
@@ -395,24 +379,6 @@ List<String> buildCommand(Config cfg, String javaHome, String tornadoSdk, String
             }
         }
     }
-
-    // Module configuration - TornadoCoreRuntime tries to initialize every
-    // backend listed in tornado.backend at startup (not just cfg.backend()),
-    // so every installed backend needs its exports and driver module here or
-    // it fails with an IllegalAccessError.
-    cmd.addAll(List.of(
-        "--upgrade-module-path", tornadoSdk + "/share/java/graalJars",
-        "@" + tornadoSdk + "/etc/exportLists/common-exports"
-    ));
-
-    var addModules = new ArrayList<>(List.of(
-        "ALL-SYSTEM", "jdk.incubator.vector", "tornado.runtime", "tornado.annotation", "tornado.drivers.common"
-    ));
-    for (var b : installedBackends) {
-        cmd.add("@" + tornadoSdk + "/etc/exportLists/" + BACKEND_EXPORTS_FILE.get(b));
-        addModules.add(BACKEND_MODULE_NAME.get(b));
-    }
-    cmd.addAll(List.of("--add-modules", String.join(",", addModules)));
 
     String mainClass = cfg.bench()
         ? "org.beehive.gpullama3.bench.LlamaBench"

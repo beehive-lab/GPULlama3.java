@@ -1,11 +1,10 @@
 package org.beehive.gpullama3.tensor.standard;
 
-import org.beehive.gpullama3.tensor.GGMLType;
-import jdk.incubator.vector.FloatVector;
-import jdk.incubator.vector.VectorSpecies;
-
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
+import jdk.incubator.vector.FloatVector;
+import jdk.incubator.vector.VectorSpecies;
+import org.beehive.gpullama3.format.GGMLType;
 
 public final class FP32FloatTensor extends FloatTensor {
     final int size;

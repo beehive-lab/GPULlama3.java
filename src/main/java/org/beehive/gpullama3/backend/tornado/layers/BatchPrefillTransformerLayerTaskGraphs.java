@@ -1,0 +1,19 @@
+package org.beehive.gpullama3.backend.tornado.layers;
+
+import java.util.List;
+import uk.ac.manchester.tornado.api.GridScheduler;
+import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
+
+/**
+ * Interface for a group of N batched-prefill transformer-layer TornadoVM TaskGraphs.
+ *
+ * <p>Implemented by {@code LlamaFP16LayersBatchPrefillMMA}, {@code LlamaFP16LayersBatchPrefill},
+ * {@code LlamaQ8_0LayersBatchPrefillMMA} and {@code LlamaQ8_0LayersBatchPrefill}.
+ */
+public interface BatchPrefillTransformerLayerTaskGraphs {
+    List<ImmutableTaskGraph> getLayerImmutableTaskGraphs();
+
+    void updateGridScheduler(GridScheduler scheduler);
+
+    String getLastLayerTaskGraphID();
+}

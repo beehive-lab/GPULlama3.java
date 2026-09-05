@@ -1,7 +1,7 @@
 package org.beehive.gpullama3.inference.weights.tornado;
 
-import org.beehive.gpullama3.tensor.GGMLType;
-import org.beehive.gpullama3.tensor.tornado.TornadoTensor;
+import org.beehive.gpullama3.backend.tornado.tensor.TornadoTensor;
+import org.beehive.gpullama3.runtime.tensor.DataType;
 
 public class LlamaTornadoWeights extends TornadoWeights {
     // @formatter:off
@@ -20,13 +20,21 @@ public class LlamaTornadoWeights extends TornadoWeights {
             TornadoTensor freq_cis_realFlat,
             TornadoTensor freq_cis_imagFlat,
             TornadoTensor wclsByteArray,
-            GGMLType weightType) {
-        super(tokenEmbeddingTable, rms_att_weightLayered,
-                wqLayered, wkLayered, wvLayered, woLayered,
+            DataType weightType) {
+        super(
+                tokenEmbeddingTable,
+                rms_att_weightLayered,
+                wqLayered,
+                wkLayered,
+                wvLayered,
+                woLayered,
                 rms_ffn_weightLayered,
-                w1Layered, w2Layered, w3Layered,
+                w1Layered,
+                w2Layered,
+                w3Layered,
                 rms_final_weight_as_floatArray,
-                freq_cis_realFlat, freq_cis_imagFlat,
+                freq_cis_realFlat,
+                freq_cis_imagFlat,
                 wclsByteArray,
                 weightType);
     }

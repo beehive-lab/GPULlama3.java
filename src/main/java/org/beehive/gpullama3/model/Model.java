@@ -1,22 +1,14 @@
 package org.beehive.gpullama3.model;
 
-import org.beehive.gpullama3.Options;
-import org.beehive.gpullama3.auxiliary.RunMetrics;
+import java.util.List;
+import java.util.Set;
+import java.util.function.IntConsumer;
+import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
 import org.beehive.gpullama3.inference.sampler.Sampler;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.Weights;
 import org.beehive.gpullama3.model.format.ChatFormat;
 import org.beehive.gpullama3.tokenizer.Tokenizer;
-import org.beehive.gpullama3.tornadovm.TornadoVMMasterPlan;
-
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Scanner;
-import java.util.Set;
-import java.util.function.Consumer;
-import java.util.function.IntConsumer;
-
-import static org.beehive.gpullama3.LlamaApp.SHOW_PERF_INTERACTIVE;
 
 public interface Model {
 
@@ -28,15 +20,67 @@ public interface Model {
 
     ChatFormat chatFormat();
 
-    TornadoVMMasterPlan tornadoVMPlan();
-
-    void setTornadoVMPlan(TornadoVMMasterPlan plan);
-
     ModelType getModelType();
+
+    /**
+     * Which architecture this model is, as the identity everything downstream keys on.
+     *
+     * <p><b>Stated by the family, not re-derived.</b> Recognition already happened — a provider
+     * chose this identity when it claimed the file — and asking a second registry to work it out
+     * again from the configuration is how two answers appear for one model. It is also ambiguous
+     * where it matters most: {@code Qwen2Configuration} belongs to both Qwen2 and
+     * DeepSeek-R1-Distill-Qwen, so a configuration-type check cannot tell them apart.
+     *
+     * <p>No central switch: each family returns its own constant (Rule 15). A family with no
+     * program description still has an identity — the architecture registry answers "nothing
+     * computes this", which is the normal unsupported answer, not an error in the model.
+     */
+    default org.beehive.gpullama3.runtime.model.ArchitectureId architectureId() {
+        throw new UnsupportedOperationException(
+                getClass().getSimpleName() + " does not state an architecture identity yet");
+    }
 
     State createNewState();
 
     State createNewState(int batchsize);
+
+    /**
+     * A state whose KV lives in the storage this lease addresses, rather than in arrays the state
+     * allocates for itself.
+     *
+     * <p>Default: ignore the lease and build an ordinary state. That is the retained legacy path
+     * every family except Llama still takes, and it is behaviour-identical to what they did before
+     * — the lease is still held by the session, so the accounting and the pinning are real either
+     * way.
+     *
+     * <p>The parameter is a <b>lease</b>, not a cache: the model reads what it was handed and owns
+     * nothing [Rule 7].
+     */
+    default State createNewState(org.beehive.gpullama3.runtime.kv.KvLease lease) {
+        return createNewState();
+    }
+
+    /**
+     * KV values stored per token, per layer — the {@code kvDim} the KV kernels index by.
+     *
+     * <p>Default: {@code dim * nKvHeads / nHeads}, which is what every family except Qwen3 uses.
+     * Qwen3 sizes its cache from its own head dimensions instead, which is why this is a question
+     * the model answers rather than one the cache derives.
+     */
+    /**
+     * Whether this family may lease <b>shared</b> KV storage, as opposed to merely addressing its
+     * own through a block table.
+     *
+     * <p>Asked of the model rather than kept as a list of families elsewhere [Rule 15].
+     */
+    default boolean supportsSharedKvStorage() {
+        return false;
+    }
+
+    default int kvCacheDim() {
+        Configuration config = configuration();
+        return config.dim() * config.numberOfKeyValueHeads() / config.numberOfHeads();
+    }
 
     default boolean shouldAddBeginOfText() {
         return true;
@@ -50,287 +94,37 @@ public interface Model {
         return false;
     }
 
-    /**
-     * Wrapper for invoking the model-specific forward pass via InferenceCore.
-     *
-     * <p>
-     * Delegates to the appropriate InferenceCore method based on the model type
-     * (e.g., {@code forwardJava}, {@code forwardJavaQwen3}).
-     * </p>
-     */
-    void forward(State state, int token, int position);
+    /** Wrapper for invoking the model-specific {@code TokenGenerationLoop.generateTokens} call. */
+    List<Integer> generateTokens(
+            State state,
+            int startPosition,
+            List<Integer> promptTokens,
+            Set<Integer> stopTokens,
+            int maxTokens,
+            Sampler sampler,
+            boolean echo,
+            IntConsumer onTokenGenerated);
 
-    /**
-     * Wrapper for invoking the model-specific {@code InferenceEngine.generateTokens} call.
-     */
-    List<Integer> generateTokens(State state, int startPosition, List<Integer> promptTokens, Set<Integer> stopTokens, int maxTokens, Sampler sampler, boolean echo, IntConsumer onTokenGenerated);
-
-    List<Integer> generateTokensGPU(State state, int startPosition, List<Integer> promptTokens, Set<Integer> stopTokens, int maxTokens, Sampler sampler, boolean echo, IntConsumer onTokenGenerated,
+    List<Integer> generateTokensGPU(
+            State state,
+            int startPosition,
+            List<Integer> promptTokens,
+            Set<Integer> stopTokens,
+            int maxTokens,
+            Sampler sampler,
+            boolean echo,
+            IntConsumer onTokenGenerated,
             TornadoVMMasterPlan tornadoVMPlan);
 
-    /**
-     * Model agnostic default implementation for interactive mode.
-     * @param sampler
-     * @param options
-     */
-    default void runInteractive(Sampler sampler, Options options) {
-        // Even though might be expensive, create state here for smoother interaction later
-        State state = createNewState();
-        List<Integer> conversationTokens = new ArrayList<>();
-        ChatFormat chatFormat = chatFormat();
-        TornadoVMMasterPlan tornadoVMPlan = null;
-
-        if (shouldAddBeginOfText()) {
-            conversationTokens.add(chatFormat.getBeginOfText());
-        }
-
-        if (shouldAddSystemPrompt() && options.systemPrompt() != null) {
-            conversationTokens.addAll(chatFormat.encodeMessage(new ChatFormat.Message(ChatFormat.Role.SYSTEM, options.systemPrompt())));
-        }
-
-        int startPosition = 0;
-        Scanner in = new Scanner(System.in);
-
-        // Initialize TornadoVM plan once at the beginning if GPU path is enabled
-        if (options.useTornadovm() && tornadoVMPlan == null) {
-            tornadoVMPlan = TornadoVMMasterPlan.initializeTornadoVMPlan(state, this);
-        }
-
-        try {
-            while (true) {
-                System.out.print("> ");
-                System.out.flush();
-                String userText = in.nextLine();
-                if (List.of("quit", "exit").contains(userText)) {
-                    break;
-                }
-
-                conversationTokens.addAll(chatFormat.encodeMessage(new ChatFormat.Message(ChatFormat.Role.USER, userText)));
-                conversationTokens.addAll(chatFormat.encodeHeader(new ChatFormat.Message(ChatFormat.Role.ASSISTANT, "")));
-
-                // Include reasoning for Deepseek-R1-Distill-Qwen
-                if (shouldIncludeReasoning()) {
-                    List<Integer> thinkStartTokens = tokenizer().encode("<think>\n", tokenizer().getSpecialTokens().keySet());
-                    conversationTokens.addAll(thinkStartTokens);
-
-                    // If streaming, immediately output the think start
-                    if (options.stream()) {
-                        System.out.print("<think>\n");
-                    }
-                }
-
-                Set<Integer> stopTokens = chatFormat.getStopTokens();
-
-                List<Integer> responseTokens;
-                IntConsumer tokenConsumer = token -> {
-                    if (options.stream()) {
-                        if (tokenizer().shouldDisplayToken(token)) {
-                            System.out.print(tokenizer().decode(List.of(token)));
-                        }
-                    }
-                };
-
-                // Choose between GPU and CPU path based on configuration
-                if (options.useTornadovm()) {
-                    // GPU path using TornadoVM
-                    responseTokens = generateTokensGPU(state, startPosition, conversationTokens.subList(startPosition, conversationTokens.size()), stopTokens, options.maxTokens(), sampler,
-                            options.echo(), options.stream() ? tokenConsumer : null, tornadoVMPlan);
-                } else {
-                    // CPU path
-                    responseTokens = generateTokens(state, startPosition, conversationTokens.subList(startPosition, conversationTokens.size()), stopTokens, options.maxTokens(), sampler,
-                            options.echo(), tokenConsumer);
-                }
-
-                // Include stop token in the prompt history, but not in the response displayed to the user.
-                conversationTokens.addAll(responseTokens);
-                startPosition = conversationTokens.size();
-                Integer stopToken = null;
-                if (!responseTokens.isEmpty() && stopTokens.contains(responseTokens.getLast())) {
-                    stopToken = responseTokens.getLast();
-                    responseTokens.removeLast();
-                }
-                if (!options.stream()) {
-                    String responseText = tokenizer().decode(responseTokens);
-                    // Add the forced <think>\n prefix for non-streaming output
-                    if (shouldIncludeReasoning()) {
-                        responseText = "<think>\n" + responseText;
-                    }
-                    System.out.println(responseText);
-                }
-                if (stopToken == null) {
-                    System.err.println("\n Ran out of context length...\n Increase context length with by passing to llama-tornado --max-tokens XXX");
-                    break;
-                }
-                System.out.print("\n");
-
-                // Optionally print performance metrics after each response
-                if (SHOW_PERF_INTERACTIVE) {
-                    RunMetrics.printMetrics();
-                }
-            }
-        } finally {
-            // Clean up TornadoVM resources when exiting the chat loop
-            if (options.useTornadovm() && tornadoVMPlan != null) {
-                try {
-                    tornadoVMPlan.freeTornadoExecutionPlan();
-                } catch (Exception e) {
-                    System.err.println("Error while cleaning up TornadoVM resources: " + e.getMessage());
-                }
-            }
-        }
-    }
-
-    /**
-     * Model agnostic default implementation for instruct mode.
-     * @param sampler
-     * @param options
-     */
-    default String runInstructOnce(Sampler sampler, Options options) {
-        State state = createNewState();
-        ChatFormat chatFormat = chatFormat();
-        TornadoVMMasterPlan tornadoVMPlan = null;
-
-        List<Integer> promptTokens = new ArrayList<>();
-
-        if (shouldAddBeginOfText()) {
-            promptTokens.add(chatFormat.getBeginOfText());
-        }
-
-        if (shouldAddSystemPrompt() && options.systemPrompt() != null) {
-            promptTokens.addAll(chatFormat.encodeMessage(new ChatFormat.Message(ChatFormat.Role.SYSTEM, options.systemPrompt())));
-        }
-
-        // Initialize TornadoVM plan once at the beginning if GPU path is enabled
-        if (options.useTornadovm() && tornadoVMPlan == null) {
-            tornadoVMPlan = TornadoVMMasterPlan.initializeTornadoVMPlan(state, this);
-        }
-
-        promptTokens.addAll(chatFormat.encodeMessage(new ChatFormat.Message(ChatFormat.Role.USER, options.prompt())));
-        promptTokens.addAll(chatFormat.encodeHeader(new ChatFormat.Message(ChatFormat.Role.ASSISTANT, "")));
-
-        // Include reasoning for Deepseek-R1-Distill-Qwen
-        if (shouldIncludeReasoning()) {
-            List<Integer> thinkStartTokens = tokenizer().encode("<think>\n", tokenizer().getSpecialTokens().keySet());
-            promptTokens.addAll(thinkStartTokens);
-
-            // If streaming, immediately output the think start
-            if (options.stream()) {
-                System.out.print("<think>\n");
-            }
-        }
-
-        List<Integer> responseTokens;
-
-        IntConsumer tokenConsumer = token -> {
-            if (options.stream()) {
-                if (tokenizer().shouldDisplayToken(token)) {
-                    System.out.print(tokenizer().decode(List.of(token)));
-                }
-            }
-        };
-
-        Set<Integer> stopTokens = chatFormat.getStopTokens();
-
-        if (options.useTornadovm()) {
-            // GPU path using TornadoVM - Call generateTokensGPU without the token consumer parameter
-            responseTokens = generateTokensGPU(state, 0, promptTokens, stopTokens, options.maxTokens(), sampler, options.echo(), options.stream() ? tokenConsumer : null, tornadoVMPlan);
-        } else {
-            // CPU path
-            responseTokens = generateTokens(state, 0, promptTokens, stopTokens, options.maxTokens(), sampler, options.echo(), tokenConsumer);
-        }
-
-        if (!responseTokens.isEmpty() && stopTokens.contains(responseTokens.getLast())) {
-            responseTokens.removeLast();
-        }
-
-        String responseText = "";
-        if (!options.stream()) {
-             responseText = tokenizer().decode(responseTokens);
-            // Add the forced <think>\n prefix for non-streaming output
-            if (shouldIncludeReasoning()) {
-                responseText = "<think>\n" + responseText;
-            }
-        }
-
-        if (tornadoVMPlan != null) {
-            tornadoVMPlan.freeTornadoExecutionPlan();
-        }
-
-        return responseText;
-    }
-
-    default String runInstructOnceLangChain4J(Sampler sampler, Options options, Consumer<String> tokenCallback) {
-        State state = createNewState();
-        ChatFormat chatFormat = chatFormat();
-        TornadoVMMasterPlan tornadoVMPlan = null;
-
-        List<Integer> promptTokens = new ArrayList<>();
-
-        if (shouldAddBeginOfText()) {
-            promptTokens.add(chatFormat.getBeginOfText());
-        }
-
-        if (shouldAddSystemPrompt() && options.systemPrompt() != null) {
-            promptTokens.addAll(chatFormat.encodeMessage(new ChatFormat.Message(ChatFormat.Role.SYSTEM, options.systemPrompt())));
-        }
-
-        // Initialize TornadoVM plan once at the beginning if GPU path is enabled
-        if (options.useTornadovm() && tornadoVMPlan == null) {
-            tornadoVMPlan = TornadoVMMasterPlan.initializeTornadoVMPlan(state, this);
-        }
-
-        promptTokens.addAll(chatFormat.encodeMessage(new ChatFormat.Message(ChatFormat.Role.USER, options.prompt())));
-        promptTokens.addAll(chatFormat.encodeHeader(new ChatFormat.Message(ChatFormat.Role.ASSISTANT, "")));
-
-        if (shouldIncludeReasoning()) {
-            List<Integer> thinkStartTokens = tokenizer().encode("<think>\n", tokenizer().getSpecialTokens().keySet());
-            promptTokens.addAll(thinkStartTokens);
-
-            // If streaming, immediately output the think start
-            if (options.stream()) {
-                System.out.print("<think>\n");
-            }
-        }
-
-        List<Integer> responseTokens;
-
-        IntConsumer tokenConsumer = token -> {
-            if (tokenizer().shouldDisplayToken(token)) {
-                String piece = tokenizer().decode(List.of(token));
-                if (options.stream() && tokenCallback != null) {
-                    tokenCallback.accept(piece);  // ✅ send to LangChain4j handler
-                }
-            }
-        };
-
-        Set<Integer> stopTokens = chatFormat.getStopTokens();
-
-        if (options.useTornadovm()) {
-            // GPU path using TornadoVM Call generateTokensGPU without the token consumer parameter
-            responseTokens = generateTokensGPU(state, 0, promptTokens, stopTokens, options.maxTokens(), sampler, options.echo(), options.stream() ? tokenConsumer : null, tornadoVMPlan);
-        } else {
-            // CPU path
-            responseTokens = generateTokens(state, 0, promptTokens, stopTokens, options.maxTokens(), sampler, options.echo(), tokenConsumer);
-        }
-
-        if (!responseTokens.isEmpty() && stopTokens.contains(responseTokens.getLast())) {
-            responseTokens.removeLast();
-        }
-
-        String responseText = tokenizer().decode(responseTokens);
-
-        if (!options.stream()) {
-            responseText = tokenizer().decode(responseTokens);
-            if (shouldIncludeReasoning()) {
-                responseText = "<think>\n" + responseText;
-            }
-        }
-
-        if (tornadoVMPlan != null) {
-            tornadoVMPlan.freeTornadoExecutionPlan();
-        }
-
-        return responseText;
-    }
-
+    // ── Transitional generation bridges ───────────────────────────────
+    //
+    // The loops moved to org.beehive.gpullama3.generation.ModelGeneration under Rule 8a: a model
+    // that owns a generation loop cannot be an embedding or reranking model, and it drags a CLI
+    // options record and System.out into the interface every backend implements.
+    //
+    // These three remain as thin delegates for callers outside this repository, and because this
+    // project deprecates with a documented replacement before removing. They add no behaviour.
+    //
+    // They are NOT kept for the LangChain4j and Quarkus integrations: both were audited on
+    // 2026-09-01 and neither calls them — they use the lower-level engine API directly.
 }

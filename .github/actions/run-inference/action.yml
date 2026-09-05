@@ -1,5 +1,5 @@
 name: Run Inference
-description: Run one llama-tornado inference pass and write the metrics + sidecar files.
+description: Run one llama-tornado inference pass, assert the backend that actually executed, and record the row's outcome against its declared expectation.
 
 inputs:
   backend:
@@ -21,17 +21,48 @@ inputs:
     description: 'Extra CLI flags passed to llama-tornado (omit for standard run)'
     required: false
     default: ''
+  timeout_minutes:
+    description: 'Per-row wall clock. A row that hangs must not consume the whole job.'
+    required: false
+    default: '15'
   metrics_file:
     description: 'Absolute path for the output metrics JSON file'
     required: true
   prompt:
     description: 'Prompt to pass to the model'
     required: false
-    default: 'Say hello'
+    default: 'What is the capital of France?'
+  max_tokens:
+    description: >-
+      Token budget. Must comfortably exceed the prompt length: when -n does not, generation stops
+      after ingestion and the row reports zero decode tokens while still exiting 0. 160 is enough
+      for every model in the matrix to reach the expected answer, including Qwen3, whose thinking
+      mode spends ~135 tokens getting there.
+    required: false
+    default: '160'
+  seed:
+    description: 'Fixed so a row is reproducible and two runs can be compared.'
+    required: false
+    default: '1'
+  expect_substring:
+    description: >-
+      Case-insensitive substring the generated text must contain. This is the row's only check that
+      the numbers coming off the accelerator are RIGHT rather than merely present — exit code,
+      resolved backend, metrics file and execution_path are all satisfied by a run that emits
+      fluent-looking token salad, which is exactly how the Qwen FP16 Metal defect stayed invisible.
+      Deliberately a word the prompt itself does not contain, so a match can only come from
+      generated output. Set to the empty string to skip the check for a row that has no
+      deterministic answer.
+    required: false
+    default: 'Paris'
 
 runs:
   using: composite
   steps:
+    # Every row records its own outcome and does not abort the job. Aborting at the first failure
+    # hid the rest of the matrix: a single broken tuple made every later row unknown, so nobody
+    # could tell whether one configuration or twenty were affected. The workflow's
+    # "Assert standalone inference results" step is what fails the job, after every row has run.
     - name: Run inference
       shell: bash
       working-directory: ${{ github.workspace }}
@@ -41,13 +72,100 @@ runs:
           -Dllama.metrics.output=file
           -Dllama.metrics.file=${{ inputs.metrics_file }}
         METRICS_FILE: ${{ inputs.metrics_file }}
+        ROW_LABEL: '${{ inputs.backend }} | ${{ inputs.model }} | ${{ inputs.quantization }} | ${{ inputs.configuration }}'
       run: |
-        # Run inference and emit raw metrics JSON via JAVA_TOOL_OPTIONS
+        RESULTS="${RUNNER_TEMP}/standalone-results.tsv"
+        RUN_LOG="$(mktemp)"
+
         # Backend (opencl/cuda/metal) is auto-detected from $TORNADOVM_HOME/etc/tornado.backend
-        ./llama-tornado --gpu \
+        # Bounded, and bounded in Python rather than with `timeout`, which stock macOS does
+        # not ship. A row that hangs used to consume the entire job: the Metal leg was
+        # cancelled at its wall clock every time, so that backend produced no results table
+        # at all even though the rows before the hang had passed. 124 is the conventional
+        # exit code for a timeout.
+        set +e
+        python3 - "$RUN_LOG" ${{ inputs.timeout_minutes }} \
+          ./llama-tornado --gpu \
           --model $MODELS_DIR/${{ inputs.model_file }} \
           --prompt "${{ inputs.prompt }}" \
-          ${{ inputs.flags }}
+          -n ${{ inputs.max_tokens }} \
+          --seed ${{ inputs.seed }} \
+          ${{ inputs.flags }} <<'RUNNER'
+        import subprocess, sys
+        log, minutes, cmd = sys.argv[1], float(sys.argv[2]), sys.argv[3:]
+        with open(log, "wb") as out:
+            p = subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT)
+            try:
+                sys.exit(p.wait(timeout=minutes * 60))
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait()
+                out.write(("\nrow timed out after %s minutes\n" % sys.argv[2]).encode())
+                sys.exit(124)
+        RUNNER
+        RC=$?
+        set -e
+        cat "$RUN_LOG"
+
+        record() {  # status  detail
+          printf '%s\t%s\t%s\n' "$ROW_LABEL" "$1" "$2" >> "$RESULTS"
+        }
+
+        if [ "$RC" -ne 0 ]; then
+          # Record *why* it failed, so the expectations table can require a specific cause rather
+          # than tolerating any failure. First interesting line wins; that is the one that names
+          # the kernel or the null buffer.
+          # `|| true`: with no matching line grep returns 1, `pipefail` propagates it and
+          # `bash -e` kills the step before the row is recorded -- so a failure with no
+          # recognizable exception line, such as a timeout, produced no row at all.
+          SIGNATURE=$(grep -m1 -E "Exception in thread|Unable to build sketch|TornadoInternalError|OutOfMemory" "$RUN_LOG" \
+            | tr -d '\000' | cut -c1-400 || true)
+          if [ "$RC" -eq 124 ]; then
+            SIGNATURE="timed out after ${{ inputs.timeout_minutes }} minutes"
+          fi
+          if [ -z "$SIGNATURE" ]; then
+            SIGNATURE="exit $RC with no recognizable failure line"
+          fi
+          echo "::warning::$ROW_LABEL failed: $SIGNATURE"
+          record "FAIL" "$SIGNATURE"
+          exit 0
+        fi
+
+        # The requested backend is a matrix label, not evidence. Assert what actually executed:
+        # llama-tornado prints the backend it resolved from $TORNADOVM_HOME/etc/tornado.backend,
+        # and RunMetrics records the execution path the run itself took.
+        if ! grep -qE "Detected TornadoVM backend: ${{ inputs.backend }}\b" "$RUN_LOG"; then
+          echo "::error::$ROW_LABEL requested backend '${{ inputs.backend }}' but the run did not report resolving it"
+          record "WRONG-BACKEND" "requested ${{ inputs.backend }}"
+          exit 0
+        fi
+        if [ ! -s "$METRICS_FILE" ]; then
+          echo "::error::$ROW_LABEL produced no metrics file, so the executed path cannot be verified"
+          record "NO-METRICS" "$METRICS_FILE absent or empty"
+          exit 0
+        fi
+        EXEC_PATH=$(grep -o '"execution_path"[[:space:]]*:[[:space:]]*"[^"]*"' "$METRICS_FILE" | head -n 1 | sed 's/.*"\([^"]*\)"$/\1/')
+        if [ -z "$EXEC_PATH" ]; then
+          echo "::error::$ROW_LABEL reported no execution_path, so no accelerator plan was built — a CPU fallback would look identical to success here"
+          record "NO-EXEC-PATH" "metrics lacked execution_path"
+          exit 0
+        fi
+        # Everything above proves the row RAN on the accelerator. None of it proves the numbers
+        # are right: the Qwen FP16 Metal defect exited 0, resolved the requested backend, wrote a
+        # metrics file and reported a real execution_path while emitting fluent-looking token
+        # salad. This is the check that catches that.
+        EXPECT='${{ inputs.expect_substring }}'
+        if [ -n "$EXPECT" ]; then
+          if ! grep -qiF "$EXPECT" "$RUN_LOG"; then
+            SNIPPET=$(tr -d '\000' < "$RUN_LOG" | grep -vE "Detected TornadoVM|achieved tok/s|Tokens:|^====|^$|WARNING" | head -c 200)
+            echo "::error::$ROW_LABEL ran but its output does not contain '$EXPECT' — the accelerator produced wrong numbers. Got: $SNIPPET"
+            record "WRONG-OUTPUT" "expected '$EXPECT'; got: $SNIPPET"
+            exit 0
+          fi
+        fi
+
+        echo "Verified: backend=${{ inputs.backend }} execution_path=$EXEC_PATH output contains '$EXPECT'"
+        record "PASS" "execution_path=$EXEC_PATH"
 
         # Write metadata sidecar so process_metrics.py can identify each metrics file
         SIDECAR="${METRICS_FILE%.json}.meta.json"

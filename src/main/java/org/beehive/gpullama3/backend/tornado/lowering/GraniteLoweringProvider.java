@@ -1,0 +1,39 @@
+package org.beehive.gpullama3.backend.tornado.lowering;
+
+import java.util.Set;
+import org.beehive.gpullama3.backend.tornado.plan.ExecutionMode;
+import org.beehive.gpullama3.runtime.backend.CompileOptions;
+import org.beehive.gpullama3.runtime.backend.DeviceCapabilities;
+import org.beehive.gpullama3.runtime.model.ArchitectureId;
+import org.beehive.gpullama3.runtime.tensor.DataType;
+
+/**
+ * Granite's lowering.
+ *
+ * <p>A file of its own, like every provider: adding an architecture must not mean editing a file
+ * that contains other families. Its service line is the only other thing an addition touches.
+ */
+public final class GraniteLoweringProvider implements TornadoLoweringProvider {
+
+    private static final ArchitectureId ID = ArchitectureId.of("granite");
+
+    @Override
+    public ArchitectureId architecture() {
+        return ID;
+    }
+
+    @Override
+    public Set<DataType> supportedDataTypes() {
+        return TornadoSupportSets.BOTH_REPRESENTATIONS;
+    }
+
+    @Override
+    public Set<ExecutionMode> supportedModes() {
+        return TornadoSupportSets.STANDARD_ONLY;
+    }
+
+    @Override
+    public FamilyLowering create(CompileOptions options, DeviceCapabilities capabilities) {
+        return new GraniteLowering(options, capabilities);
+    }
+}

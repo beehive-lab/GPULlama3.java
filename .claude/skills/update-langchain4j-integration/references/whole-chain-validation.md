@@ -1,6 +1,6 @@
 # Whole-chain validation
 
-This is the verification source of truth. Run all five stages for every claimed JDK/backend.
+The verification source of truth. Run all five stages for every JDK/backend you claim.
 
 ## Inputs
 
@@ -10,86 +10,109 @@ export DEMO_DIR=/path/to/gpullama3-langchain4j-demo
 export MODEL=/exact/path/to/model.gguf
 ```
 
-Use an exact tool-capable model path for tool ITs when needed. Never commit model paths.
+Never commit a model path.
 
-## 1. Set up Java and TornadoVM
+## 1. Java and TornadoVM
 
 ```bash
-source "$HOME/.sdkman/bin/sdkman-init.sh"
-sdk use java <java-candidate>
-sdk use tornadovm <matching-jdk-and-backend-candidate>
+export JAVA_HOME=/path/to/jdk-21          # or a JDK 25
+export TORNADOVM_HOME=/path/to/tornadovm-<version>-<backend>
+export PATH="$JAVA_HOME/bin:$TORNADOVM_HOME/bin:$PATH"
 
 java -version
-test -n "$TORNADOVM_HOME"
 "$TORNADOVM_HOME/bin/tornado" --version
 "$TORNADOVM_HOME/bin/tornado" --devices
 test -f "$MODEL"
 ```
 
-The Java and TornadoVM JDKs must match. Obtain any required native-library environment from the
-selected SDK; do not put backend-specific paths in project configuration.
+The Java and TornadoVM lines must match: an SDK built with `make BACKEND=...` is the JDK 21
+line, and one built with `make jdk22plus BACKEND=...` serves JDK 22 and up, which is what a
+JDK 25 run needs. Export in the same shell command as whatever uses them — each tool call is
+a fresh shell. `sdk use` is interactive-only; set `JAVA_HOME`/`PATH` explicitly instead.
 
-## 2. Build the required LangChain4j modules
+## 2. Build the modules
 
 ```bash
 cd "$LANGCHAIN4J_DIR"
 ./mvnw \
   -pl langchain4j-bom,langchain4j-agentic,langchain4j-gpu-llama3 \
   -am clean install \
-  -DskipTests \
-  -DskipITs \
-  -Drevapi.skip=true
+  -DskipTests -DskipITs -Drevapi.skip=true
 
 ./mvnw -pl langchain4j-gpu-llama3 dependency:tree \
   -Dincludes=io.github.beehive-lab:gpu-llama3
 ```
 
-Confirm the resolved GPULlama artifact matches the active JDK.
+Confirm the resolved artifact ends in the suffix the active JDK implies — `-jdk21` on JDK 21,
+`-jdk25` on JDK 25. The module's own `jdk21`/`jdk25` profiles do that; there is no flag.
 
-## 3. Run the integration tests
+`attach-javadocs` runs with doclint on and warnings fatal. Every public and protected member
+needs a comment, and a method with a return value needs `@return`. A missing one fails
+`install`, not just the javadoc jar.
+
+## 3. Run the suite
 
 ```bash
 /path/to/GPULlama3.java/.claude/skills/update-langchain4j-integration/scripts/validate-langchain4j-integration.sh \
   "$LANGCHAIN4J_DIR"
 ```
 
-This stage passes only when tests are discovered, at least one starts, JUnit reports zero failures,
-and the command exits successfully. Use isolated tests only for diagnosis, then rerun this stage.
+Two environment facts the suite depends on, both of which fail in ways that look like
+adapter defects:
+
+- `src/test/resources/tornado-jvm.args` must carry `--add-modules jdk.incubator.vector`.
+  Without it every test dies in `FloatTensor`'s static initializer with
+  `NoClassDefFoundError: jdk/incubator/vector/Vector`, before any assertion runs. The SDK's
+  own flags do not supply it.
+- The device budget in the same file must fit the whole suite, not one model. It stands up
+  several models and sessions in one JVM, and device memory a closed session frees goes back
+  to TornadoVM's buffer provider rather than to the driver — so the later classes fail on
+  allocation while the earlier ones passed. 20GB is enough on a 24GB device.
+
+### The inherited tests measure the model as much as the adapter
+
+Several of LangChain4j's shared contract tests assert model behaviour. Which of them pass
+depends on the fixture, and no single small fixture passes all of them:
+
+| Fixture | Result |
+| --- | --- |
+| `Qwen3-0.6B-f16` | 15/19 — the tool tests pass; `should_respect_multiple_messages` fails |
+| `Llama-3.2-3B-Instruct-Q8_0` | 11/19 — `should_respect_multiple_messages` passes; the six tool tests fail |
+
+Before recording either as an adapter defect, establish which it is. The multi-message
+failure is not one: the engine receives and encodes the whole conversation, which the 0.6B
+model's own reasoning trace confirms by repeating the earlier turn before declining to
+answer. Tool transport is covered deterministically by `GPULlama3ConversionsTest`, whatever
+a given fixture emits.
+
+**Report the fixture with the counts, and never call the inherited suite green.**
 
 ## 4. Build the demos
 
 ```bash
 cd "$DEMO_DIR"
-mvn clean package dependency:build-classpath \
-  -Dmdep.outputFile=cp.txt \
-  -DskipTests
-
+mvn clean package dependency:build-classpath -Dmdep.outputFile=cp.txt -DskipTests
 mvn dependency:tree \
   -Dincludes=dev.langchain4j:langchain4j-gpu-llama3,io.github.beehive-lab:gpu-llama3
 ```
 
-Confirm the intended local artifacts were resolved. Do not commit `cp.txt`.
+Confirm the local artifacts resolved rather than a stale release. Do not commit `cp.txt`.
 
 ## 5. Run the demos
 
-Read current commands and classes first:
+Read the current commands and classes first — do not reuse remembered ones:
 
 ```bash
 cd "$DEMO_DIR"
-rg -n "tornado|--params|public static void main|TicTacToe" README.md src/main/java
+rg -n "tornado|--params|public static void main" README.md src/main/java
 ```
 
-Run the documented TornadoVM commands for:
-
-1. basic chat
-2. streaming chat
-3. the capability changed by this release, when applicable
-4. Tic-Tac-Toe through completion
-
-Do not reuse old class names, JAR names, model parameters, or JVM options without verifying them.
-Startup alone is not a pass; each demo must perform inference and reach its expected end.
+Run basic chat, streaming chat, the capability this release changed, and any long-running
+demo through to its end. Startup is not a pass: each demo must perform inference and reach
+its expected end.
 
 ## Record
 
-Record Java/TornadoVM versions, backend/device, resolved dependencies, model, IT counts, build
-results, and every demo command/result.
+Java and TornadoVM versions, backend and device, resolved dependencies, the fixture, test
+counts with the fixture that produced them, build results, and every demo command with its
+result.

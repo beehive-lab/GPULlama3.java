@@ -1,370 +1,533 @@
 <?xml version="1.0" encoding="UTF-8"?>
-    <project xmlns="http://maven.apache.org/POM/4.0.0"
-             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-             xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
-        <modelVersion>4.0.0</modelVersion>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
 
-        <!-- Use your verified namespace -->
-        <groupId>io.github.beehive-lab</groupId>
-        <artifactId>gpu-llama3</artifactId>
-        <version>${revision}${jdk.version.suffix}</version>
+    <!-- Use your verified namespace -->
+    <groupId>io.github.beehive-lab</groupId>
+    <artifactId>gpu-llama3</artifactId>
+    <version>${revision}${jdk.version.suffix}</version>
 
-        <name>GPU Llama3</name>
-        <description>GPU-accelerated LLaMA3 inference using TornadoVM</description>
+    <name>GPU Llama3</name>
+    <description>GPU-accelerated LLaMA3 inference using TornadoVM</description>
+    <url>https://github.com/beehive-lab/GPULlama3.java</url>
+
+    <licenses>
+        <license>
+            <name>MIT License</name>
+            <url>https://opensource.org/licenses/MIT</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <id>mikepapadim</id>
+            <name>Michalis Papadimitriou</name>
+            <url>https://github.com/mikepapadim</url>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:git://github.com/beehive-lab/GPULlama3.java.git</connection>
+        <developerConnection>scm:git:ssh://github.com/beehive-lab/GPULlama3.java.git</developerConnection>
+        <tag>HEAD</tag>
         <url>https://github.com/beehive-lab/GPULlama3.java</url>
+    </scm>
 
-        <licenses>
-            <license>
-                <name>MIT License</name>
-                <url>https://opensource.org/licenses/MIT</url>
-                <distribution>repo</distribution>
-            </license>
-        </licenses>
+    <properties>
+        <!-- CI-friendly version: resolved by flatten-maven-plugin at build time -->
+        <revision>1.0.0</revision>
+        <!-- Floor is >= 5.2.0, for two independent reasons: BFloat16Array lands in 5.2.0
+                 (FP8Array in 5.1.0), along with deterministic generated kernel source and the
+                 graph-sized interpreter bytecode buffer; and the packed-half2 split-KV
+                 attention needs KernelContext.allocateHalf2LocalArray, which 5.0.0 lacks.
 
-        <developers>
-            <developer>
-                <id>mikepapadim</id>
-                <name>Michalis Papadimitriou</name>
-                <url>https://github.com/mikepapadim </url>
-            </developer>
-        </developers>
+                 Pinned to 6.0.0 rather than the 5.2.0 floor because 5.2.0's interpreter cannot
+                 run batched prefill at all. consumeFromDevice(producer, ...) resolved its source
+                 against the *previously executed* graph instead of the named one, and imported
+                 that graph's device buffer unconditionally — so in a plan that revisits graphs
+                 (prefill layers -> decodeActivation -> decode layers -> logits -> decodeActivation
+                 -> ...) the second decode pass imported a null buffer and the next ALLOC
+                 dereferenced it:
+                   NullPointerException: XPUDeviceBufferState.getXPUBuffer() is null
+                     at TornadoVMInterpreter.executeAlloc
+                 Fixed upstream in beehive-lab/TornadoVM 8603a9fa2d ("Fix consumeFromDevice
+                 silently reading a stale buffer when the named producer is not the previously
+                 executed graph", PR #996), released in 6.0.0. The path is backend-independent —
+                 reproduced here on Metal, and CI recorded the same NPE on its cuda and opencl
+                 legs. 6.0.0 also carries the sketch-phase fix for the LambdaForm hidden-class
+                 reader, which took out every F16 family on OpenCL.
+                 See docs/architecture/metal/SESSION-2026-09-04.md §1. -->
+        <tornadovm.base.version>6.0.0</tornadovm.base.version>
+        <archunit.version>1.4.2</archunit.version>
+        <jdk.version.suffix>-jdk21</jdk.version.suffix>
+        <!-- TornadoVM's own JDK suffix, deliberately a SEPARATE property from
+                 jdk.version.suffix above: that one names *this* project's published artifact
+                 (see <version> at the top of this POM) and must keep saying -jdk25, while
+                 TornadoVM 6.0.0 collapsed its jdk25/jdk26/jdk27 lines into a single jdk22plus
+                 profile and publishes only 6.0.0-jdk21 and 6.0.0-jdk22plus to Maven Central.
+                 Tying the two together would silently rename gpu-llama3's own coordinates. -->
+        <tornadovm.version.suffix>-jdk21</tornadovm.version.suffix>
+        <!-- CUDA backend is only available after 5.0.0 TornadoVM version -->
+        <tornadovm.version>${tornadovm.base.version}${tornadovm.version.suffix}</tornadovm.version>
+        <!-- Compiler defaults (overridden by JDK profiles below) -->
+        <maven.compiler.source>25</maven.compiler.source>
+        <maven.compiler.target>25</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.javadoc.skip>true</maven.javadoc.skip>
+        <gpg.skip>true</gpg.skip>
+    </properties>
 
-        <scm>
-            <connection>scm:git:git://github.com/beehive-lab/GPULlama3.java.git</connection>
-            <developerConnection>scm:git:ssh://github.com/beehive-lab/GPULlama3.java.git</developerConnection>
-            <url>https://github.com/beehive-lab/GPULlama3.java</url>
-            <tag>HEAD</tag>
-        </scm>
+    <dependencies>
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>4.13.2</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- Architecture rules (M1 guardrails). Test scope only: must never
+                 reach the shaded jar. See docs/architecture/architecture.md -->
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit4</artifactId>
+            <version>${archunit.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.github.beehive-lab</groupId>
+            <artifactId>tornado-api</artifactId>
+            <version>${tornadovm.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.beehive-lab</groupId>
+            <artifactId>tornado-runtime</artifactId>
+            <version>${tornadovm.version}</version>
+        </dependency>
+    </dependencies>
 
-        <properties>
-            <!-- CI-friendly version: resolved by flatten-maven-plugin at build time -->
-            <revision>1.0.0</revision>
-            <!-- Floor is >= 5.2.0: the packed-half2 split-KV attention below needs
-                 KernelContext.allocateHalf2LocalArray, which 5.0.0 does not have. 5.2.0 is the
-                 newest release published to Maven Central for both the -jdk21 and -jdk25
-                 suffixes (5.1.1 and 5.2.1 are not published for either). -->
-            <tornadovm.base.version>5.2.0</tornadovm.base.version>
-            <jdk.version.suffix>-jdk21</jdk.version.suffix>
-            <!-- CUDA backend is only available after 5.0.0 TornadoVM version -->
-            <tornadovm.version>${tornadovm.base.version}${jdk.version.suffix}</tornadovm.version>
-            <!-- Compiler defaults (overridden by JDK profiles below) -->
-            <maven.compiler.source>25</maven.compiler.source>
-            <maven.compiler.target>25</maven.compiler.target>
-            <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-            <maven.javadoc.skip>true</maven.javadoc.skip>
-            <gpg.skip>true</gpg.skip>
-        </properties>
+    <build>
+        <plugins>
+            <!-- The Vector API is an incubator module on both supported JDKs (JEP 508 in
+                     JDK 25), so add-modules is required to compile against it. enable-preview is
+                     added by the JDK 21 profile only: java.lang.foreign was a preview API in 21
+                     and final from 22, so the JDK 25 artifact carries no preview class file and
+                     is therefore not pinned to one JDK version. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.11.0</version>
+                <configuration>
+                    <compilerArgs>
+                        <arg>--add-modules</arg>
+                        <arg>jdk.incubator.vector</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
 
-        <dependencies>
-            <dependency>
-                <groupId>junit</groupId>
-                <artifactId>junit</artifactId>
-                <version>4.13.2</version>
-                <scope>test</scope>
-            </dependency>
-            <dependency>
-                <groupId>io.github.beehive-lab</groupId>
-                <artifactId>tornado-api</artifactId>
-                <version>${tornadovm.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>io.github.beehive-lab</groupId>
-                <artifactId>tornado-runtime</artifactId>
-                <version>${tornadovm.version}</version>
-            </dependency>
-        </dependencies>
+            <!-- Class A gates only by default: `mvn test` must never need a model file,
+                     a TornadoVM installation or an accelerator. The Class B tests are named
+                     *AccelTest and run under -Paccel-tests. See verification-gates.md -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.2</version>
+                <configuration>
+                    <excludes>
+                        <exclude>**/*AccelTest.java</exclude>
+                    </excludes>
+                    <!-- Class A tests reference TornadoVM API types and this project's
+                             foreign-memory tensors, which are preview class files on JDK 21. No
+                             accelerator, model or TornadoVM installation is implied — those stay
+                             exclusive to -Paccel-tests, whose argLine replaces this one. -->
+                    <argLine>--enable-preview --add-modules jdk.incubator.vector</argLine>
+                </configuration>
+            </plugin>
 
-        <build>
-            <plugins>
-                <!-- Compiler: enable-preview for both JDKs.
-                     add-modules jdk.incubator.vector is added per JDK profile (see below).
-                     The Vector API remains in jdk.incubator.vector on both JDK 21 and JDK 25
-                     (JEP 508 — 10th Incubator in JDK 25); the flag is required for all JDKs. -->
-                <plugin>
-                    <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-compiler-plugin</artifactId>
-                    <version>3.11.0</version>
-                    <configuration>
-                        <compilerArgs>
-                            <arg>--enable-preview</arg>
-                        </compilerArgs>
-                    </configuration>
-                </plugin>
+            <!-- Only JDK 21 and JDK 25 are supported, and each one publishes its own
+                     artifact. Without this, an in-between JDK activates neither profile (or the
+                     wrong one) and the build silently produces a -jdk21 artifact compiled by, and
+                     linked against, something else. Fail at validate instead. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <id>enforce-supported-jdk</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <phase>validate</phase>
+                        <configuration>
+                            <rules>
+                                <requireJavaVersion>
+                                    <version>[21,22),[25,26)</version>
+                                    <message>GPULlama3.java builds on JDK 21 or JDK 25 only. JDK 21 produces gpu-llama3:*-jdk21 against tornado *-jdk21; JDK 25 produces gpu-llama3:*-jdk25 against tornado *-jdk22plus. Any other JDK would activate neither profile and publish a mislabelled artifact.</message>
+                                </requireJavaVersion>
+                            </rules>
+                            <fail>true</fail>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
 
-                <!-- Flatten: resolves ${revision}${jdk.version.suffix} in the published POM -->
-                <plugin>
-                    <groupId>org.codehaus.mojo</groupId>
-                    <artifactId>flatten-maven-plugin</artifactId>
-                    <version>1.6.0</version>
-                    <configuration>
-                        <updatePomFile>true</updatePomFile>
-                        <flattenMode>resolveCiFriendliesOnly</flattenMode>
-                    </configuration>
-                    <executions>
-                        <execution>
-                            <id>flatten</id>
-                            <phase>process-resources</phase>
-                            <goals><goal>flatten</goal></goals>
-                        </execution>
-                        <execution>
-                            <id>flatten.clean</id>
-                            <phase>clean</phase>
-                            <goals><goal>clean</goal></goals>
-                        </execution>
-                    </executions>
-                </plugin>
+            <!-- Flatten: resolves ${revision}${jdk.version.suffix} in the published POM -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>flatten-maven-plugin</artifactId>
+                <version>1.6.0</version>
+                <configuration>
+                    <updatePomFile>true</updatePomFile>
+                    <flattenMode>resolveCiFriendliesOnly</flattenMode>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>flatten</id>
+                        <goals>
+                            <goal>flatten</goal>
+                        </goals>
+                        <phase>process-resources</phase>
+                    </execution>
+                    <execution>
+                        <id>flatten.clean</id>
+                        <goals>
+                            <goal>clean</goal>
+                        </goals>
+                        <phase>clean</phase>
+                    </execution>
+                </executions>
+            </plugin>
 
-                <!-- Shade (fat jar) -->
-                <plugin>
-                    <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-shade-plugin</artifactId>
-                    <version>3.5.0</version>
-                    <executions>
-                        <execution>
-                            <phase>package</phase>
-                            <goals><goal>shade</goal></goals>
-                            <configuration>
-                                <transformers>
-                                    <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                        <mainClass>io.github.beehive-lab.gpullama3.LlamaApp</mainClass>
-                                    </transformer>
-                                </transformers>
-                            </configuration>
-                        </execution>
-                    </executions>
-                </plugin>
-            </plugins>
-        </build>
+            <!-- Shade (fat jar) -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <phase>package</phase>
+                        <configuration>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>io.github.beehive-lab.gpullama3.LlamaApp</mainClass>
+                                </transformer>
+                            </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 
-        <!-- Profiles for optional/conditional builds -->
-        <profiles>
+    <!-- Profiles for optional/conditional builds -->
+    <profiles>
 
-            <!-- ─── JDK 21 ───────────────────────────────────────────────────────────
-                 Auto-activates for JDK 21.x builds.
-                 Publishes: gpu-llama3:${revision}  (no suffix)
-                 TornadoVM: ${tornadovm.base.version}
-                 Adds add-modules jdk.incubator.vector (still incubating in JDK21)
+        <!-- ─── Class B: accelerator qualification gates ─────────────────────────
+                 Opt-in: `mvn verify -Paccel-tests`. Needs TORNADOVM_HOME, a device, and
+                 the pinned model fixtures (GPULLAMA_TEST_MODELS or ~/.gpullama3/test-models).
+                 On a machine without them the tests skip with an explicit marker — a skip
+                 is recorded, never reported as a pass.
+
+                 recover.bailout=False is mandatory (capability C4): with the default TRUE a
+                 failed kernel silently falls back to sequential Java, which would produce a
+                 wrong golden instead of an error.
+
+                 The device memory budget is 20GB, raised from 16GB when T7.4 added the batched
+                 engine plan: the Class B suite stands up several GPU plans in one JVM (goldens,
+                 parity, compiled-program identity, metrics, façade parity, and now a B-wide
+                 batched decode plan whose padded logits buffer alone is tens of megabytes), and
+                 each plan holds its own device copy of the weights until its owner is closed.
+                 A budget sized for one plan fails the last test to run, not the one that is
+                 wrong — which is exactly how this was noticed, twice.
+
+                 The backend is pinned to CUDA because the goldens are recorded on it. An SDK
+                 built with several backends otherwise defaults to OpenCL, which is a different
+                 tuple, and the golden test then degrades itself to comparing token ids only —
+                 passing while asserting almost nothing. The priorities are harmless on an
+                 OpenCL-only SDK, where the CUDA backend simply is not present.
             ─────────────────────────────────────────────────────────────────────── -->
-            <profile>
-                <id>jdk21</id>
-                <activation><jdk>[21,25)</jdk></activation>
-                <properties>
-                    <maven.compiler.source>21</maven.compiler.source>
-                    <maven.compiler.target>21</maven.compiler.target>
-                    <jdk.version.suffix>-jdk21</jdk.version.suffix>
-                    <tornadovm.version>${tornadovm.base.version}${jdk.version.suffix}</tornadovm.version>
-                </properties>
-                <build>
-                    <plugins>
-                        <plugin>
-                            <groupId>org.apache.maven.plugins</groupId>
-                            <artifactId>maven-compiler-plugin</artifactId>
-                            <configuration>
-                                <!-- Appended to enable-preview already in main build -->
-                                <compilerArgs combine.children="append">
-                                    <arg>--add-modules</arg>
-                                    <arg>jdk.incubator.vector</arg>
-                                </compilerArgs>
-                            </configuration>
-                        </plugin>
-                    </plugins>
-                </build>
-            </profile>
+        <profile>
+            <id>accel-tests</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <excludes combine.self="override"/>
+                            <includes>
+                                <include>**/*AccelTest.java</include>
+                            </includes>
+                            <useModulePath>false</useModulePath>
+                            <!-- One JVM per test class. Device memory a closed session frees
+                                     is returned to TornadoVM's buffer provider but not to the
+                                     driver, and the provider only recycles it under budget
+                                     pressure - measured: five sequential load/session/close cycles
+                                     grow resident device memory by ~2.1 GiB each and never shrink,
+                                     on the legacy path and the lowered one alike. A shared JVM
+                                     therefore exhausts the device after a handful of classes,
+                                     whichever tests those are. Process exit is what actually
+                                     releases it. -->
+                            <reuseForks>false</reuseForks>
+                            <!-- -da:tornado.graal... — assertions OFF inside TornadoVM's
+                                     vendored Graal only, and nowhere else.
 
-            <!-- ─── JDK 25 ───────────────────────────────────────────────────────────
-                 Auto-activates for JDK 25.0.2+ builds (minimum required version).
+                                     TornadoVM's OpenCL backend registers an invocation plugin for
+                                     `set(int, <storage array>)` on every vector type
+                                     (OCLVectorPlugins.registerVectorPlugins), but the vector types
+                                     declare only set(int, <element>) and set(<vector>). Graal's
+                                     InvocationPlugins$Checks.checkResolvable notices, and it runs
+                                     only when assertions are enabled — so backend initialisation
+                                     dies before any test does:
+                                       ExceptionInInitializerError: NoSuchMethodError:
+                                       Float2.set(ILuk/.../FloatArray;)
+                                     TornadoCoreRuntime.loadBackends initialises EVERY installed
+                                     backend, so on an SDK built with metal,opencl this takes out
+                                     the Metal tests too.
+
+                                     The mismatch is long-standing and identical in 5.2.1-dev; what
+                                     changed at 6.0.0 is the Graal *packaging*. 5.x shipped it as
+                                     jdk.internal.vm.compiler, a platform module that plain -ea does
+                                     not cover; 6.0.0 vendors it as the ordinary module
+                                     tornado.graal, which -ea does cover. So this surfaced as a
+                                     version bump without any behaviour changing.
+
+                                     Scoped to that package prefix rather than surefire's
+                                     enableAssertions=false, which would also silence assertions in
+                                     this project's own code. Remove once TornadoVM's registration
+                                     and its vector types agree. -->
+                            <argLine>@${env.TORNADOVM_HOME}/tornado-argfile
+                                    --add-modules jdk.incubator.vector
+                                    -da:tornado.graal...
+                                    -Dtornado.recover.bailout=False
+                                    -Dllama.deviceSample=false
+                                    -Dtornado.device.memory=20GB
+                                    -Dtornado.cuda.priority=100
+                                    -Dtornado.opencl.priority=0</argLine>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!-- ─── JDK 21 ───────────────────────────────────────────────────────────
+                 Auto-activates on JDK 21.
+                 Publishes: gpu-llama3:${revision}-jdk21
+                 TornadoVM: ${tornadovm.base.version}-jdk21
+            ─────────────────────────────────────────────────────────────────────── -->
+        <profile>
+            <id>jdk21</id>
+            <activation>
+                <jdk>[21,22)</jdk>
+            </activation>
+            <properties>
+                <maven.compiler.source>21</maven.compiler.source>
+                <maven.compiler.target>21</maven.compiler.target>
+                <jdk.version.suffix>-jdk21</jdk.version.suffix>
+                <tornadovm.version.suffix>-jdk21</tornadovm.version.suffix>
+                <tornadovm.version>${tornadovm.base.version}${tornadovm.version.suffix}</tornadovm.version>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <configuration>
+                            <!-- java.lang.foreign (GGUF mapping, the tensor classes) is a
+                                     preview API on JDK 21, and the TornadoVM 21 line's array
+                                     types are compiled against it too. -->
+                            <compilerArgs combine.children="append">
+                                <arg>--enable-preview</arg>
+                            </compilerArgs>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!-- ─── JDK 25 ───────────────────────────────────────────────────────────
+                 Auto-activates on JDK 25.
                  Publishes: gpu-llama3:${revision}-jdk25
-                 TornadoVM: ${tornadovm.base.version}-jdk25
-                 Vector API is still incubating in JDK 25 (JEP 508 — 10th Incubator);
-                 add-modules jdk.incubator.vector is required for compilation.
+                 TornadoVM: ${tornadovm.base.version}-jdk22plus (see tornadovm.version.suffix)
             ─────────────────────────────────────────────────────────────────────── -->
-            <profile>
-                <id>jdk25</id>
-                <activation><jdk>[25.0.2,)</jdk></activation>
-                <properties>
-                    <maven.compiler.source>25</maven.compiler.source>
-                    <maven.compiler.target>25</maven.compiler.target>
-                    <jdk.version.suffix>-jdk25</jdk.version.suffix>
-                    <tornadovm.version>${tornadovm.base.version}${jdk.version.suffix}</tornadovm.version>
-                </properties>
-                <build>
-                    <plugins>
-                        <plugin>
-                            <groupId>org.apache.maven.plugins</groupId>
-                            <artifactId>maven-compiler-plugin</artifactId>
-                            <configuration>
-                                <!-- Appended to enable-preview already in main build -->
-                                <compilerArgs combine.children="append">
-                                    <arg>--add-modules</arg>
-                                    <arg>jdk.incubator.vector</arg>
-                                </compilerArgs>
-                            </configuration>
-                        </plugin>
-                    </plugins>
-                </build>
-            </profile>
+        <profile>
+            <id>jdk25</id>
+            <activation>
+                <jdk>[25,26)</jdk>
+            </activation>
+            <properties>
+                <maven.compiler.source>25</maven.compiler.source>
+                <maven.compiler.target>25</maven.compiler.target>
+                <jdk.version.suffix>-jdk25</jdk.version.suffix>
+                <!-- -jdk22plus, not -jdk25: TornadoVM 6.0.0 replaced its per-version jdk25 /
+                         jdk26 / jdk27 profiles with one jdk22plus profile, so 6.0.0-jdk25 does not
+                         exist on Maven Central. This project's own artifact stays -jdk25. -->
+                <tornadovm.version.suffix>-jdk22plus</tornadovm.version.suffix>
+                <tornadovm.version>${tornadovm.base.version}${tornadovm.version.suffix}</tornadovm.version>
+            </properties>
+        </profile>
 
-            <profile>
-                <id>release</id>
-                <properties>
-                    <maven.javadoc.skip>false</maven.javadoc.skip>
-                    <gpg.skip>false</gpg.skip>
-                </properties>
-                <build>
-                    <plugins>
-                        <!-- Sources -->
-                        <plugin>
-                            <groupId>org.apache.maven.plugins</groupId>
-                            <artifactId>maven-source-plugin</artifactId>
-                            <version>3.3.1</version>
-                            <executions>
-                                <execution>
-                                    <id>attach-sources</id>
-                                    <goals>
-                                        <goal>jar-no-fork</goal>
-                                    </goals>
-                                </execution>
-                            </executions>
-                        </plugin>
+        <profile>
+            <id>release</id>
+            <properties>
+                <maven.javadoc.skip>false</maven.javadoc.skip>
+                <gpg.skip>false</gpg.skip>
+            </properties>
+            <build>
+                <plugins>
+                    <!-- Sources -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <version>3.3.1</version>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals>
+                                    <goal>jar-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
 
-                        <!-- Javadocs with preview feature support.
-                             add-modules jdk.incubator.vector is required on all currently
-                             supported JDKs (21 and 25) because the Vector API remains in the
-                             incubator module (JEP 508 — 10th Incubator in JDK 25). -->
-                        <plugin>
-                            <groupId>org.apache.maven.plugins</groupId>
-                            <artifactId>maven-javadoc-plugin</artifactId>
-                            <version>3.6.3</version>
-                            <configuration>
-                                <source>${maven.compiler.source}</source>
-                                <release>${maven.compiler.source}</release>
-                                <additionalJOptions>
-                                    <additionalJOption>--enable-preview</additionalJOption>
-                                    <additionalJOption>--add-modules</additionalJOption>
-                                    <additionalJOption>jdk.incubator.vector</additionalJOption>
-                                </additionalJOptions>
-                                <additionalOptions>
-                                    <additionalOption>--enable-preview</additionalOption>
-                                    <additionalOption>--add-modules jdk.incubator.vector</additionalOption>
-                                </additionalOptions>
-                                <failOnError>false</failOnError>
-                                <failOnWarnings>false</failOnWarnings>
-                                <doclint>none</doclint>
-                            </configuration>
-                            <executions>
-                                <execution>
-                                    <id>attach-javadocs</id>
-                                    <phase>package</phase>
-                                    <goals>
-                                        <goal>jar</goal>
-                                    </goals>
-                                </execution>
-                            </executions>
-                        </plugin>
+                    <!-- add-modules jdk.incubator.vector for the same reason the compiler
+                             needs it: the Vector API is still an incubator module on both
+                             supported JDKs. -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <version>3.6.3</version>
+                        <configuration>
+                            <source>${maven.compiler.source}</source>
+                            <release>${maven.compiler.source}</release>
+                            <additionalJOptions>
+                                <additionalJOption>--add-modules</additionalJOption>
+                                <additionalJOption>jdk.incubator.vector</additionalJOption>
+                            </additionalJOptions>
+                            <additionalOptions>
+                                <additionalOption>--add-modules jdk.incubator.vector</additionalOption>
+                            </additionalOptions>
+                            <failOnError>false</failOnError>
+                            <failOnWarnings>false</failOnWarnings>
+                            <doclint>none</doclint>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                                <phase>package</phase>
+                            </execution>
+                        </executions>
+                    </plugin>
 
-                        <!-- GPG Signing -->
-                        <plugin>
-                            <groupId>org.apache.maven.plugins</groupId>
-                            <artifactId>maven-gpg-plugin</artifactId>
-                            <version>3.2.4</version>
-                            <executions>
-                                <execution>
-                                    <id>sign-artifacts</id>
-                                    <phase>verify</phase>
-                                    <goals>
-                                        <goal>sign</goal>
-                                    </goals>
-                                </execution>
-                            </executions>
-                        </plugin>
+                    <!-- GPG Signing -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.2.4</version>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                                <phase>verify</phase>
+                            </execution>
+                        </executions>
+                    </plugin>
 
-                        <!-- Central Publishing -->
-                        <plugin>
-                            <groupId>org.sonatype.central</groupId>
-                            <artifactId>central-publishing-maven-plugin</artifactId>
-                            <version>0.8.0</version>
-                            <extensions>true</extensions>
-                            <configuration>
-                                <publishingServerId>central</publishingServerId>
-                                <autoPublish>true</autoPublish>
-                            </configuration>
-                        </plugin>
-                    </plugins>
-                </build>
-            </profile>
-            <!-- Spotless: Code formatting and style checking (Optional)
+                    <!-- Central Publishing -->
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>0.8.0</version>
+                        <extensions>true</extensions>
+                        <configuration>
+                            <publishingServerId>central</publishingServerId>
+                            <autoPublish>true</autoPublish>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <!-- Spotless: Code formatting and style checking (Optional)
                  Usage: mvn -Pspotless spotless:check     (to check violations)
                         mvn -Pspotless spotless:apply     (to apply fixes)
             -->
-            <profile>
-                <id>spotless</id>
-                <build>
-                    <plugins>
-                        <plugin>
-                            <groupId>com.diffplug.spotless</groupId>
-                            <artifactId>spotless-maven-plugin</artifactId>
-                            <version>2.44.4</version>
-                            <configuration>
-                                <!-- Only check files changed since main branch (smart incremental checking) -->
-                                <ratchetFrom>origin/main</ratchetFrom>
+        <profile>
+            <id>spotless</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>com.diffplug.spotless</groupId>
+                        <artifactId>spotless-maven-plugin</artifactId>
+                        <version>2.44.4</version>
+                        <configuration>
+                            <!-- Only check files changed since main branch (smart incremental checking) -->
+                            <ratchetFrom>origin/main</ratchetFrom>
 
-                                <!-- Java files formatting -->
-                                <java>
-                                    <includes>
-                                        <include>src/main/java/**/*.java</include>
-                                        <include>src/test/java/**/*.java</include>
-                                    </includes>
-                                    <excludes>
-                                        <exclude>**/target/**</exclude>
-                                    </excludes>
-                                    <!-- Google Java Format (AOSP style) -->
-                                    <googleJavaFormat>
-                                        <version>1.19.2</version>
-                                        <style>AOSP</style>
-                                    </googleJavaFormat>
-                                    <!-- Ensure newline at end of file -->
-                                    <endWithNewline/>
-                                    <!-- Remove trailing whitespace -->
-                                    <trimTrailingWhitespace/>
-                                </java>
+                            <!-- Java files formatting -->
+                            <java>
+                                <includes>
+                                    <include>src/main/java/**/*.java</include>
+                                    <include>src/test/java/**/*.java</include>
+                                </includes>
+                                <excludes>
+                                    <exclude>**/target/**</exclude>
+                                </excludes>
+                                <!-- Google Java Format (AOSP style) -->
+                                <googleJavaFormat>
+                                    <version>1.19.2</version>
+                                    <style>AOSP</style>
+                                </googleJavaFormat>
+                                <!-- Ensure newline at end of file -->
+                                <endWithNewline/>
+                                <!-- Remove trailing whitespace -->
+                                <trimTrailingWhitespace/>
+                            </java>
 
-                                <!-- XML files formatting -->
-                                <pom>
-                                    <includes>
-                                        <include>pom.xml</include>
-                                    </includes>
-                                    <sortPom>
-                                        <nrOfIndentSpace>4</nrOfIndentSpace>
-                                        <expandEmptyElements>false</expandEmptyElements>
-                                    </sortPom>
-                                </pom>
+                            <!-- XML files formatting -->
+                            <pom>
+                                <includes>
+                                    <include>pom.xml</include>
+                                </includes>
+                                <sortPom>
+                                    <nrOfIndentSpace>4</nrOfIndentSpace>
+                                    <expandEmptyElements>false</expandEmptyElements>
+                                </sortPom>
+                            </pom>
 
-                                <!-- Markdown files -->
-                                <markdown>
-                                    <includes>
-                                        <include>**/*.md</include>
-                                    </includes>
-                                    <excludes>
-                                        <exclude>**/target/**</exclude>
-                                    </excludes>
-                                </markdown>
+                            <!-- Markdown files -->
+                            <markdown>
+                                <includes>
+                                    <include>**/*.md</include>
+                                </includes>
+                                <excludes>
+                                    <exclude>**/target/**</exclude>
+                                </excludes>
+                            </markdown>
 
-                                <!-- Properties files -->
-                                <format>
-                                    <name>props</name>
-                                    <includes>
-                                        <include>src/**/*.properties</include>
-                                    </includes>
-                                    <excludes>
-                                        <exclude>**/target/**</exclude>
-                                    </excludes>
-                                    <trimTrailingWhitespace/>
-                                    <endWithNewline/>
-                                </format>
-                            </configuration>
-                        </plugin>
-                    </plugins>
-                </build>
-            </profile>
-        </profiles>
-    </project>
+                            <!-- Properties files -->
+                            <format>
+                                <name>props</name>
+                                <includes>
+                                    <include>src/**/*.properties</include>
+                                </includes>
+                                <excludes>
+                                    <exclude>**/target/**</exclude>
+                                </excludes>
+                                <trimTrailingWhitespace/>
+                                <endWithNewline/>
+                            </format>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>

@@ -34,20 +34,6 @@ BACKEND_NAME_MAP: Dict[str, Backend] = {
     "metal-backend": Backend.METAL,
 }
 
-BACKEND_EXPORTS_FILE: Dict[Backend, str] = {
-    Backend.OPENCL: "opencl-exports",
-    Backend.PTX: "ptx-exports",
-    Backend.CUDA: "cuda-exports",
-    Backend.METAL: "metal-exports",
-}
-
-BACKEND_MODULE_NAME: Dict[Backend, str] = {
-    Backend.OPENCL: "tornado.drivers.opencl",
-    Backend.PTX: "tornado.drivers.ptx",
-    Backend.CUDA: "tornado.drivers.cuda",
-    Backend.METAL: "tornado.drivers.metal",
-}
-
 # TornadoVM system property that ranks each backend for "driver 0" (default
 # device) selection when more than one backend is loaded - see
 # TornadoOptions.*_BACKEND_PRIORITY. Defaults there favor OpenCL (10) over
@@ -127,37 +113,40 @@ class LlamaRunner:
                 return backend
         return installed[0]
 
-    @staticmethod
-    def module_path_colon_sep(paths: List[str]) -> str:
-        """Return OS-specific separator for Java module paths."""
-        return ";".join(paths) if platform.system() == "Windows" else ":".join(paths)
+    def _tornado_argfile(self) -> str:
+        """The SDK's own JVM argument file, which is the source of truth for how to start it.
+
+        It carries the module path, the Graal/JVMCI arrangement, the per-backend export lists
+        and the preview flag -- all of which differ by TornadoVM version, JDK and installed
+        backends. Reproducing them here is how a launcher silently starts the wrong thing on a
+        JDK it was not written for. The SDK writes it at build time, and the `tornado` launcher
+        refreshes it from the template on every invocation.
+        """
+        argfile = os.path.join(self.tornado_sdk, "tornado-argfile")
+        if not os.path.isfile(argfile):
+            print(
+                f"Error: {argfile} not found.\n"
+                f"Run '{self.tornado_sdk}/bin/tornado --devices' once to generate it from "
+                f"tornado-argfile.template, or reinstall the SDK.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        return argfile
 
     def _build_base_command(self, args: argparse.Namespace) -> List[str]:
         """Build the base Java command with JVM options."""
         cmd = [
             f"{self.java_home}/bin/java",
-            "-server",
-            "-XX:+UnlockExperimentalVMOptions",
-            "-XX:+EnableJVMCI",
+            f"@{self._tornado_argfile()}",
             f"-Xms{args.heap_min}",
             f"-Xmx{args.heap_max}",
-            "--enable-preview",
-            f"-Djava.library.path={self.tornado_sdk}/lib",
-            "-Djdk.module.showModuleResolution=false",
-            "--module-path",
-            self.module_path_colon_sep([".", f"{self.tornado_sdk}/share/java/tornado"]),
+            # Not supplied by the argfile: the Vector API is what FloatTensor's static
+            # initializer reaches for, and without it every run dies in class initialization.
+            "--add-modules",
+            "jdk.incubator.vector",
+            # Prompt ingestion emits more interpreter bytecode than the default buffer holds.
+            "-Dtornado.tvm.maxbytecodesize=65536",
         ]
-
-        # TornadoVM configuration
-        tornado_config = [
-            "-Dtornado.load.api.implementation=uk.ac.manchester.tornado.runtime.tasks.TornadoTaskGraph",
-            "-Dtornado.load.runtime.implementation=uk.ac.manchester.tornado.runtime.TornadoCoreRuntime",
-            "-Dtornado.load.tornado.implementation=uk.ac.manchester.tornado.runtime.common.Tornado",
-            "-Dtornado.load.annotation.implementation=uk.ac.manchester.tornado.annotation.ASMClassVisitor",
-            "-Dtornado.load.annotation.parallel=uk.ac.manchester.tornado.api.annotations.Parallel",
-            "-Dtornado.tvm.maxbytecodesize=65536"
-        ]
-        cmd.extend(tornado_config)
 
         # GPU options
         if args.use_gpu:
@@ -245,26 +234,7 @@ class LlamaRunner:
                 if backend in args.installed_backends:
                     cmd.append(f"-D{BACKEND_PRIORITY_PROPERTY[backend]}={n - rank}")
 
-        # Module configuration - TornadoCoreRuntime tries to initialize every
-        # backend listed in tornado.backend at startup (not just the one we
-        # picked as primary), so every installed backend needs its exports and
-        # driver module here or it fails with an IllegalAccessError.
-        module_config = [
-            f"--upgrade-module-path",
-            f"{self.tornado_sdk}/share/java/graalJars",
-            f"@{self.tornado_sdk}/etc/exportLists/common-exports",
-        ]
-        add_modules = [
-            "ALL-SYSTEM",
-            "jdk.incubator.vector",
-            "tornado.runtime",
-            "tornado.annotation",
-            "tornado.drivers.common",
-        ]
-        for backend in args.installed_backends:
-            module_config.append(f"@{self.tornado_sdk}/etc/exportLists/{BACKEND_EXPORTS_FILE[backend]}")
-            add_modules.append(BACKEND_MODULE_NAME[backend])
-        module_config.extend(["--add-modules", ",".join(add_modules)])
+        module_config: List[str] = []
 
         if getattr(args, "server", False):
             main_class = "org.beehive.gpullama3.server.OpenAIServer"
@@ -315,6 +285,11 @@ class LlamaRunner:
             # supplies -m, use those verbatim (don't also prepend --model → duplicate rows).
             extra = args.bench_args.split() if args.bench_args else []
             bench_args = extra if ("-m" in extra or "--model" in extra) else ["-m", args.model_path] + extra
+            # Without --gpu the benchmark measures the host forward pass; say so explicitly, or it
+            # builds an accelerator plan and reports a GPU backend for a run the user asked to be
+            # on the CPU.
+            if not args.use_gpu and "--cpu" not in bench_args:
+                bench_args = bench_args + ["--cpu"]
             return cmd + bench_args
         llama_args = [
             "-m",
@@ -657,6 +632,32 @@ def create_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def validate_backend_selection(args):
+    """Reject a backend flag that was given without --gpu (T12.1d).
+
+    --opencl/--ptx/--cuda/--metal only rank TornadoVM's backends; they do not enable
+    acceleration. --gpu is what sets -Duse.tornadovm=true. So `--cuda` on its own used to
+    run the whole model on the CPU while printing "using cuda", which reads as a slow GPU
+    rather than as a mistake -- about 21 tok/s where the GPU gives 82, with no error and
+    nothing in the output naming the cause.
+
+    The engine cannot catch this: the JVM never sees --cuda. The flags are resolved into
+    -Dtornado.*.priority ranks and a boolean before it starts, so the combination has to be
+    refused here or not at all.
+    """
+    if args.backend_override is None or args.use_gpu:
+        return
+    flag = f"--{args.backend_override.value}"
+    print(
+        f"Error: {flag} was given without --gpu, so the model would run on the CPU.\n"
+        f"  {flag} only chooses which TornadoVM backend to prefer; --gpu is what enables "
+        f"acceleration.\n"
+        f"  Use: llama-tornado --gpu {flag} ...   (or drop {flag} to run on the CPU "
+        f"deliberately)"
+    )
+    sys.exit(1)
+
+
 def main():
     """Main entry point."""
     load_env_from_script()
@@ -675,6 +676,8 @@ def main():
     # Handle mode selection logic
     if args.interactive:
         args.instruct = False
+
+    validate_backend_selection(args)
 
     # Create the LLaMA runner and auto-detect the TornadoVM backend(s)
     runner = LlamaRunner()

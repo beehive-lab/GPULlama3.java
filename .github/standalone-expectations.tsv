@@ -1,0 +1,73 @@
+# Standalone-inference rows that do NOT work on the pinned toolchain, and why.
+#
+# Read by the "Assert standalone inference results" step. Any row not listed here must pass, with
+# the backend it resolved and a real execution_path both asserted. A row listed here must FAIL, and
+# fail with the named cause — if it starts passing, or fails for a different reason, the job goes
+# red and says so. These are recorded limitations, not silenced ones.
+#
+# Toolchain: TornadoVM v6.0.0, which pom.xml declares (tornadovm.base.version), built from its tag
+# by .github/actions/setup-tornadovm.
+#
+# Columns, tab-separated:
+#   backend  model  quantization  configuration  cause-substring
+#
+# ── THE TABLE IS INTENTIONALLY EMPTY ─────────────────────────────────────────────────────────────
+#
+# Every row this table used to carry was a symptom of the TornadoVM release pin, not of this
+# project. Moving the pin from v5.2.0-jdk21 to v6.0.0 removed both causes at once.
+#
+# Cause A — batch-prefill-decode died in TornadoVM's interpreter with
+#   NullPointerException: XPUDeviceBufferState.getXPUBuffer() is null
+#   at TornadoVMInterpreter.executeAlloc
+# In 5.2.0, consumeFromDevice(producerName, ...) ignored the name and resolved against whichever
+# graph ran *previously*, then imported that graph's device buffer unconditionally. The batched
+# plan revisits graphs (prefill layers -> decodeActivation -> decode layers -> logits ->
+# decodeActivation -> ...), so from the SECOND decode pass on, decode layer 0 imported
+# decodeActivation's null buffer for wrapKeyCache/wrapValueCache/wrapBlockTable and the next ALLOC
+# dereferenced it. The first decode token always succeeded, which is why this looked like a
+# mid-generation crash rather than a wiring fault. Fixed upstream in 8603a9fa2d ("Fix
+# consumeFromDevice silently reading a stale buffer when the named producer is not the previously
+# executed graph", PR #996): producers now resolve by name, and both the import and the
+# pre-allocated-size lookup are guarded against a producer that has not run.
+#
+# It was never Metal-specific — the code path is backend-independent, and this table's own previous
+# revision recorded it on cuda and opencl too. The earlier "works on CUDA, fails on Metal" reading
+# came from comparing a locally installed SDK that already carried the fix against a tag-source
+# build that did not. That also settles the discrepancy the previous revision flagged as unresolved.
+#
+# Cause B — the FP16 sketch-phase failure:
+#   TornadoBailoutRuntimeException: Unable to build sketch for method: <kernel>
+#   ([ERROR] Class reader could not be instantiated for class file: java/lang/invoke/LambdaForm$MH...)
+# TornadoVM's ASM visitor failing to read a JVM-synthesized hidden class. Recorded by task 6 as
+# fixed on TornadoVM's development line but not in 5.2.0; 6.0.0 is the release that carries it.
+#
+# ── Verification status ──────────────────────────────────────────────────────────────────────────
+#
+# Measured on an Apple M4 Pro against a v6.0.0 tag build, all 14 locally reproducible metal rows —
+# Llama-3.2-1B F16 and Q8_0, Qwen3-0.6B F16 and Q8_0 across standard / prefill-decode /
+# batch-prefill-decode, plus Mistral-7B Q8_0 and a Qwen2.5 F16 — pass, including every metal row
+# this table used to list.
+#
+# The cuda and opencl legs run on Linux and could NOT be verified locally (a Mac's OpenCL is
+# Apple's own implementation, not the one CI uses), and neither could the metal rows for models
+# not held locally (Phi-3-mini, Granite, Qwen2.5-1.5B). Those rows are cleared on the strength of
+# both causes being backend-independent runtime/compiler-frontend fixes, which is a prediction
+# rather than a measurement. This job is the check: any row that still fails will go red and name
+# its own cause, which is exactly what the table is for. Re-record a row here only with its
+# observed cause substring, never pre-emptively.
+#
+# ── Known, and deliberately NOT a row here ───────────────────────────────────────────────────────
+#
+# Running --opencl on macOS fails for Qwen3 (both F16 and Q8_0, every configuration) with
+#   clCreateKernel(processHeadsFlashAttentionSplitKVPaged) failed: CL error -48 (CL_INVALID_KERNEL)
+#   UNSUPPORTED (log once): createKernel: newComputePipelineState failed
+# That is Apple's OpenCL-over-Metal shim refusing the paged flash-attention kernel; the same model
+# and kernel run correctly on metal. It does not affect CI, whose opencl leg is Linux, so it has no
+# row here — but it will bite anyone benchmarking --opencl on a Mac.
+# Phi-3-mini in FP16 does not complete on Metal. Observed twice: the run reaches the
+# accelerator, emits a few tokens ("aysaysays") and then makes no further progress, so it
+# consumes whatever budget it is given. It is a real hang with no diagnostic, not a
+# toolchain refusal, and it is recorded here only so the other Metal rows stay enforceable
+# -- it is unresolved, not accepted. Q8_0 on the same model and backend is unaffected.
+metal	Phi-3-mini-4k-instruct	F16	standard	timed out
+metal	Phi-3-mini-4k-instruct	Q8_0	standard	timed out

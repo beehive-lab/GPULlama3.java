@@ -1,10 +1,8 @@
 package org.beehive.gpullama3.inference.sampler;
 
-import org.beehive.gpullama3.tensor.standard.FloatTensor;
-import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
-
 import java.util.Comparator;
 import java.util.random.RandomGenerator;
+import org.beehive.gpullama3.inference.Logits;
 
 /**
  * Top-p sampling (nucleus sampling) implementation supporting both FloatTensor and FloatArray.
@@ -44,49 +42,12 @@ public final class ToppSampler implements Sampler {
         }
     }
 
+    /** Top-p sampling. */
     @Override
-    public int sampleToken(Object tensor) {
-        if (tensor instanceof FloatTensor) {
-            return sampleFromFloatTensor((FloatTensor) tensor);
-        } else if (tensor instanceof FloatArray) {
-            return sampleFromFloatArray((FloatArray) tensor);
-        }
-        throw new IllegalArgumentException("Unsupported tensor type: " +
-                (tensor != null ? tensor.getClass().getName() : "null"));
-    }
-
-    /**
-     * Implementation of top-p sampling for FloatTensor.
-     */
-    private int sampleFromFloatTensor(FloatTensor logits) {
-        // Create a comparator that compares indices based on their values in the tensor
-        Comparator<Integer> comparator = Comparator.comparingDouble(logits::getFloat).reversed();
+    public int sampleToken(Logits logits) {
+        Comparator<Integer> comparator = (a, b) -> Float.compare(logits.get(b), logits.get(a));
 
         int n = logits.size();
-        int head = 0;
-        int tail = n - 1;
-        // values smaller than (1 - topp) / (n - 1) cannot be part of the result
-        // so for efficiency we crop these out as candidates before sorting
-        float cutoff = (1.0f - topp) / (n - 1);
-        for (int i = 0; i < indices.length; i++) {
-            if (logits.getFloat(i) >= cutoff) {
-                indices[head++] = i;
-            } else {
-                indices[tail--] = i;
-            }
-        }
-
-        return processTopP(logits, comparator, head);
-    }
-
-    /**
-     * Implementation of top-p sampling for FloatArray.
-     */
-    private int sampleFromFloatArray(FloatArray logits) {
-        // Create a comparator that compares indices based on their values in the array
-        Comparator<Integer> comparator = (a, b) -> Float.compare(logits.get(b), logits.get(a)); // reversed order
-
-        int n = logits.getSize();
         int head = 0;
         int tail = n - 1;
         // values smaller than (1 - topp) / (n - 1) cannot be part of the result
@@ -104,10 +65,10 @@ public final class ToppSampler implements Sampler {
     }
 
     /**
-     * Common implementation for processing top-p sampling once indices are prepared.
-     * Uses a type-specific value getter function to access tensor values.
+     * Common implementation for processing top-p sampling once indices are prepared. Uses a
+     * type-specific value getter function to access tensor values.
      */
-    private int processTopP(Object logits, Comparator<Integer> comparator, int n0) {
+    private int processTopP(Logits logits, Comparator<Integer> comparator, int n0) {
         // build heap O(n0)
         for (int i = n0 / 2 - 1; i >= 0; --i) {
             siftDown(indices, i, n0, comparator);
@@ -120,14 +81,7 @@ public final class ToppSampler implements Sampler {
         for (int i = n0 - 1; i >= 0; i--) {
             swap(indices, 0, i);
 
-            float value;
-            if (logits instanceof FloatTensor) {
-                value = ((FloatTensor) logits).getFloat(indices[i]);
-            } else {
-                value = ((FloatArray) logits).get(indices[i]);
-            }
-
-            cumulativeProb += value;
+            cumulativeProb += logits.get(indices[i]);
             if (cumulativeProb > topp) {
                 lastIndex = i;
                 break; // we've exceeded topp by including lastIndex
@@ -139,14 +93,7 @@ public final class ToppSampler implements Sampler {
         float r = rng.nextFloat(1f) * cumulativeProb;
         float cdf = 0.0f;
         for (int i = n0 - 1; i >= lastIndex; i--) {
-            float value;
-            if (logits instanceof FloatTensor) {
-                value = ((FloatTensor) logits).getFloat(indices[i]);
-            } else {
-                value = ((FloatArray) logits).get(indices[i]);
-            }
-
-            cdf += value;
+            cdf += logits.get(indices[i]);
             if (r < cdf) {
                 return indices[i];
             }

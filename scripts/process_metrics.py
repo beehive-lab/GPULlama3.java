@@ -35,6 +35,13 @@ def parse_args():
     p.add_argument("--run-number",  default="",    dest="run_number")
     p.add_argument("--run-attempt", required=True, dest="run_attempt")
     p.add_argument("--workflow",    required=True)
+    # Gate tuple fields (M1.7): used when the sidecar does not carry them itself.
+    p.add_argument("--machine",     default="", help="Runner identity, e.g. rtx5090-laptop or github-hosted")
+    p.add_argument("--gpu",         default="", help="Device name as reported by the driver")
+    p.add_argument("--tornadovm-version", default="", dest="tornadovm_version")
+    p.add_argument("--cache-warm",  default=None, dest="cache_warm",
+                   type=lambda v: v.strip().lower() in ("true", "1", "yes", "warm"),
+                   help="Whether the on-disk cubin cache was warm for these runs")
     return p.parse_args()
 
 
@@ -70,6 +77,12 @@ def build_row(m, meta, args):
         "model":                meta.get("model"),
         "quantization":         meta.get("quantization"),
         "configuration":        meta.get("configuration"),
+        # Gate tuple fields (M1.7). Comparisons only happen within one tuple, so a row
+        # missing any of these can never serve as a baseline — see scripts/perf_gate.py.
+        "machine":              meta.get("machine", args.machine or None),
+        "gpu":                  meta.get("gpu", args.gpu or None),
+        "tornadovm_version":    meta.get("tornadovm_version", args.tornadovm_version or None),
+        "cache_warm":           meta.get("cache_warm", args.cache_warm),
         # Key metrics promoted to top level — null when absent in the metrics file
         "eval_rate":            m.get("eval_rate"),
         "prompt_eval_rate":     m.get("prompt_eval_rate"),

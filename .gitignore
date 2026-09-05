@@ -68,3 +68,25 @@ logs/target/
 .classpath
 .vscode/
 external/
+
+# Python bytecode from scripts/
+__pycache__/
+*.pyc
+
+# Generated performance and profiling output.
+#
+# Raw benchmark runs, profiler traces and scratch logs are not repository
+# content: they are large, machine-specific and reproducible. The curated
+# baseline summary under perf-results/baseline-*/ is deliberate and stays
+# tracked -- an already-tracked file is unaffected by an ignore rule. A new
+# baseline directory that is genuinely worth keeping must be force-added
+# (git add -f) and reviewed, never picked up automatically.
+/perf-results/*
+!/perf-results/baseline-rtx5090-tvm520-20260803/
+/profiler-log.json
+/out.txt
+
+# Scratch analysis notes, kept locally. Maintainer decision 2026-09-02: not
+# repository content, and ignored rather than merely untracked so it cannot be
+# swept up by a `git add -A`.
+/CODEX_ANALYSIS_WARMUP.md

@@ -1,24 +1,26 @@
 package org.beehive.gpullama3.tensor.standard;
 
-import org.beehive.gpullama3.auxiliary.Parallel;
-import org.beehive.gpullama3.tensor.GGMLType;
-import jdk.incubator.vector.FloatVector;
-import jdk.incubator.vector.VectorShape;
-import jdk.incubator.vector.VectorSpecies;
-import sun.misc.Unsafe;
-
 import java.lang.foreign.MemorySegment;
 import java.lang.reflect.Field;
 import java.util.Arrays;
+import jdk.incubator.vector.FloatVector;
+import jdk.incubator.vector.VectorShape;
+import jdk.incubator.vector.VectorSpecies;
+import org.beehive.gpullama3.auxiliary.Parallel;
+import org.beehive.gpullama3.format.DataTypeMapping;
+import org.beehive.gpullama3.format.GGMLType;
+import org.beehive.gpullama3.runtime.tensor.DataType;
+import sun.misc.Unsafe;
 
 /**
  * Over-simplified, shapeless, float tensor.
- * <p>
- * Not a strict tensor, but rather just a sequence of floats, not required to be backed by memory
+ *
+ * <p>Not a strict tensor, but rather just a sequence of floats, not required to be backed by memory
  * e.g. can represent a sequence of quantized floats.
  */
 public abstract class FloatTensor {
-    static final int VECTOR_BIT_SIZE = Integer.getInteger("llama.VectorBitSize", VectorShape.preferredShape().vectorBitSize());
+    static final int VECTOR_BIT_SIZE =
+            Integer.getInteger("llama.VectorBitSize", VectorShape.preferredShape().vectorBitSize());
     static final boolean USE_VECTOR_API = VECTOR_BIT_SIZE != 0;
 
     // The use of Unsafe in this file is a temporary workaround to support native-image.
@@ -44,7 +46,8 @@ public abstract class FloatTensor {
         if (USE_VECTOR_API) {
             F_SPECIES = VectorShape.forBitSize(VECTOR_BIT_SIZE).withLanes(float.class);
             I_SPECIES = F_SPECIES.withLanes(int.class);
-            S_SPECIES_HALF = VectorShape.forBitSize(F_SPECIES.vectorBitSize() / 2).withLanes(short.class);
+            S_SPECIES_HALF =
+                    VectorShape.forBitSize(F_SPECIES.vectorBitSize() / 2).withLanes(short.class);
             assert F_SPECIES.length() == S_SPECIES_HALF.length();
         } else {
             F_SPECIES = null;
@@ -74,7 +77,17 @@ public abstract class FloatTensor {
 
     protected abstract FloatVector getFloatVector(VectorSpecies<Float> species, int offset);
 
+    /**
+     * @deprecated Use {@link #dataType()}; see {@link
+     *     org.beehive.gpullama3.runtime.tensor.DataType}.
+     */
+    @Deprecated
     protected abstract GGMLType type();
+
+    /** The representation this tensor holds, in the runtime's vocabulary. */
+    public DataType dataType() {
+        return DataTypeMapping.sourceType(type());
+    }
 
     public abstract MemorySegment asMemorySegment();
 
@@ -83,7 +96,8 @@ public abstract class FloatTensor {
         return Arrays.stream(dimensions).reduce(Math::multiplyExact).orElseThrow();
     }
 
-    static float scalarDot(FloatTensor thiz, int thisOffset, FloatTensor that, int thatOffset, int size) {
+    static float scalarDot(
+            FloatTensor thiz, int thisOffset, FloatTensor that, int thatOffset, int size) {
         float result = 0f;
         for (int j = 0; j < size; j++) {
             result += thiz.getFloat(thisOffset + j) * that.getFloat(thatOffset + j);
@@ -99,15 +113,19 @@ public abstract class FloatTensor {
         Parallel.parallelFor(0, dim0, i -> out.setFloat(i, dot(i * dim1, that, 0, dim1)));
     }
 
-   public void matmul(int context, FloatTensor[] that, FloatTensor[] out, int dim0, int dim1) {
+    public void matmul(int context, FloatTensor[] that, FloatTensor[] out, int dim0, int dim1) {
         if (that.length != out.length) {
-            throw new IllegalArgumentException(String.format("that.len=%d, out.len=%d", that.length, out.length));
+            throw new IllegalArgumentException(
+                    String.format("that.len=%d, out.len=%d", that.length, out.length));
         }
-        Parallel.parallelForLong(0, dim0 * context, ti -> {
-            int idxArr = (int) (ti / dim0);
-            int i = (int) (ti % dim0);
-            out[idxArr].setFloat(i, dot(i * dim1, that[idxArr], 0, dim1));
-        });
+        Parallel.parallelForLong(
+                0,
+                dim0 * context,
+                ti -> {
+                    int idxArr = (int) (ti / dim0);
+                    int i = (int) (ti % dim0);
+                    out[idxArr].setFloat(i, dot(i * dim1, that[idxArr], 0, dim1));
+                });
     }
 
     @FunctionalInterface
@@ -132,7 +150,8 @@ public abstract class FloatTensor {
     }
 
     public void copyTo(int thisOffset, FloatTensor that, int thatOffset, int size) {
-        that.mapWithIndexInPlace(thatOffset, size, (value, index) -> this.getFloat(index - thatOffset + thisOffset));
+        that.mapWithIndexInPlace(
+                thatOffset, size, (value, index) -> this.getFloat(index - thatOffset + thisOffset));
     }
 
     int argmax(int thisOffset, int size) {
@@ -155,12 +174,12 @@ public abstract class FloatTensor {
     }
 
     @FunctionalInterface
-    public  interface MapFunction {
+    public interface MapFunction {
         float apply(float value);
     }
 
     @FunctionalInterface
-  public interface MapWithIndexFunction {
+    public interface MapWithIndexFunction {
         float apply(float value, int index);
     }
 
@@ -176,7 +195,8 @@ public abstract class FloatTensor {
         return mapInPlace(0, size(), mapFunction);
     }
 
-    public FloatTensor mapWithIndexInPlace(int thisOffset, int size, FloatTensor.MapWithIndexFunction mapWithIndexFunction) {
+    public FloatTensor mapWithIndexInPlace(
+            int thisOffset, int size, FloatTensor.MapWithIndexFunction mapWithIndexFunction) {
         int endOffset = thisOffset + size;
         for (int i = thisOffset; i < endOffset; ++i) {
             setFloat(i, mapWithIndexFunction.apply(getFloat(i), i));
@@ -185,7 +205,10 @@ public abstract class FloatTensor {
     }
 
     FloatTensor addInPlace(int thisOffset, FloatTensor that, int thatOffset, int size) {
-        return mapWithIndexInPlace(thisOffset, size, (value, index) -> value + that.getFloat(index - thisOffset + thatOffset));
+        return mapWithIndexInPlace(
+                thisOffset,
+                size,
+                (value, index) -> value + that.getFloat(index - thisOffset + thatOffset));
     }
 
     public FloatTensor addInPlace(FloatTensor that) {
@@ -193,7 +216,10 @@ public abstract class FloatTensor {
     }
 
     FloatTensor multiplyInPlace(int thisOffset, FloatTensor that, int thatOffset, int size) {
-        return mapWithIndexInPlace(thisOffset, size, (value, index) -> value * that.getFloat(index - thisOffset + thatOffset));
+        return mapWithIndexInPlace(
+                thisOffset,
+                size,
+                (value, index) -> value * that.getFloat(index - thisOffset + thatOffset));
     }
 
     public FloatTensor multiplyInPlace(FloatTensor that) {
@@ -218,10 +244,14 @@ public abstract class FloatTensor {
         return divideInPlace(thisOffset, size, sum);
     }
 
-    public FloatTensor saxpyInPlace(int thisOffset, FloatTensor that, int thatOffset, int size, float a) {
-        // this[thatOffset ... thatOffset + size) = a * that[thatOffset ... thatOffset + size) + this[thisOffset ... thisOffset + size)
+    public FloatTensor saxpyInPlace(
+            int thisOffset, FloatTensor that, int thatOffset, int size, float a) {
+        // this[thatOffset. thatOffset + size) = a * that[thatOffset. thatOffset + size) +
+        // this[thisOffset. thisOffset + size)
         for (int i = 0; i < size; ++i) {
-            setFloat(thisOffset + i, a * that.getFloat(thatOffset + i) + this.getFloat(thisOffset + i));
+            setFloat(
+                    thisOffset + i,
+                    a * that.getFloat(thatOffset + i) + this.getFloat(thisOffset + i));
         }
         return this;
     }

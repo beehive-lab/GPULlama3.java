@@ -1,0 +1,10 @@
+org.beehive.gpullama3.backend.cpu.LlamaCpuForwardProvider
+org.beehive.gpullama3.backend.cpu.MistralCpuForwardProvider
+org.beehive.gpullama3.backend.cpu.Qwen2CpuForwardProvider
+org.beehive.gpullama3.backend.cpu.DeepSeekR1DistillQwenCpuForwardProvider
+org.beehive.gpullama3.backend.cpu.Qwen3CpuForwardProvider
+org.beehive.gpullama3.backend.cpu.Qwen2MoECpuForwardProvider
+org.beehive.gpullama3.backend.cpu.Phi3CpuForwardProvider
+org.beehive.gpullama3.backend.cpu.Gemma4CpuForwardProvider
+org.beehive.gpullama3.backend.cpu.GraniteCpuForwardProvider
+org.beehive.gpullama3.backend.cpu.DevstralCpuForwardProvider

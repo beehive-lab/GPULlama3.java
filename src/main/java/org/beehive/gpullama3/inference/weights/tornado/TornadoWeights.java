@@ -1,50 +1,52 @@
 package org.beehive.gpullama3.inference.weights.tornado;
 
-import org.beehive.gpullama3.tensor.GGMLType;
-import org.beehive.gpullama3.tensor.tornado.TornadoTensor;
+import org.beehive.gpullama3.backend.tornado.tensor.TornadoTensor;
 import org.beehive.gpullama3.inference.weights.Weights;
 import org.beehive.gpullama3.model.loader.ModelLoader;
+import org.beehive.gpullama3.runtime.tensor.DataType;
 
 /**
- * Base class for TornadoVM-optimized weights.
- * All weight fields are TornadoTensor types (parallel to StandardWeights using FloatTensor).
- * <p>
- * Notes:
+ * Base class for TornadoVM-optimized weights. All weight fields are TornadoTensor types (parallel
+ * to StandardWeights using FloatTensor).
+ *
+ * <p>Notes:
+ *
  * <ul>
- *     {@link TornadoWeights#tokenEmbeddingTable} should always be loaded as F32 see {@link ModelLoader#loadTornadoTensorAsFP32}.
- *     {@link TornadoWeights#rms_ffn_weightLayered} should always be loaded as F32 see {@link ModelLoader#loadTornadoTensorAsFP32}.
- *     {@link TornadoWeights#rms_final_weight_as_floatArray} should always be loaded as F32 see {@link ModelLoader#loadTornadoTensorAsFP32}.
+ *   {@link TornadoWeights#tokenEmbeddingTable} should always be loaded as F32 see {@link
+ *   ModelLoader#loadTornadoTensorAsFP32}. {@link TornadoWeights#rms_ffn_weightLayered} should
+ *   always be loaded as F32 see {@link ModelLoader#loadTornadoTensorAsFP32}. {@link
+ *   TornadoWeights#rms_final_weight_as_floatArray} should always be loaded as F32 see {@link
+ *   ModelLoader#loadTornadoTensorAsFP32}.
  * </ul>
- * </p>
  */
 public abstract class TornadoWeights implements Weights {
     // Token embedding table
-    public final TornadoTensor tokenEmbeddingTable;             // (vocab_size, dim)
+    public final TornadoTensor tokenEmbeddingTable; // (vocab_size, dim)
 
     // Weights for RMSNorms
-    public final TornadoTensor[] rms_att_weightLayered;         // (layer, dim) rmsnorm weights
+    public final TornadoTensor[] rms_att_weightLayered; // (layer, dim) rmsnorm weights
 
     // Weights for attention
-    public final TornadoTensor[] wqLayered;                     // (layer, n_heads * head_size)
-    public final TornadoTensor[] wkLayered;                     // (layer, n_kv_heads, head_size)
-    public final TornadoTensor[] wvLayered;                     // (layer, n_kv_heads * head_size)
-    public final TornadoTensor[] woLayered;                     // (layer, n_heads * head_size, dim)
-    public final TornadoTensor[] rms_ffn_weightLayered;         // (layer, dim)
+    public final TornadoTensor[] wqLayered; // (layer, n_heads * head_size)
+    public final TornadoTensor[] wkLayered; // (layer, n_kv_heads, head_size)
+    public final TornadoTensor[] wvLayered; // (layer, n_kv_heads * head_size)
+    public final TornadoTensor[] woLayered; // (layer, n_heads * head_size, dim)
+    public final TornadoTensor[] rms_ffn_weightLayered; // (layer, dim)
 
     // Weights for FFN
-    public final TornadoTensor[] w1Layered;                     // (layer, hidden_dim, dim)
-    public final TornadoTensor[] w2Layered;                     // (layer, dim, hidden_dim)
-    public final TornadoTensor[] w3Layered;                     // (layer, hidden_dim, dim)
+    public final TornadoTensor[] w1Layered; // (layer, hidden_dim, dim)
+    public final TornadoTensor[] w2Layered; // (layer, dim, hidden_dim)
+    public final TornadoTensor[] w3Layered; // (layer, hidden_dim, dim)
 
     // Final weights
-    public final TornadoTensor rms_final_weight_as_floatArray;  // (dim,)
-    public final TornadoTensor wclsByteArray;                   // (vocab_size, dim)
+    public final TornadoTensor rms_final_weight_as_floatArray; // (dim,)
+    public final TornadoTensor wclsByteArray; // (vocab_size, dim)
 
     // RoPE frequencies (always F32)
-    public final TornadoTensor freq_cis_realFlat;               // (seq_len, head_size/2)
-    public final TornadoTensor freq_cis_imagFlat;               // (seq_len, head_size/2)
+    public final TornadoTensor freq_cis_realFlat; // (seq_len, head_size/2)
+    public final TornadoTensor freq_cis_imagFlat; // (seq_len, head_size/2)
 
-    protected final GGMLType weightType;
+    protected final DataType weightType;
 
     protected TornadoWeights(
             TornadoTensor tokenEmbeddingTable,
@@ -61,7 +63,7 @@ public abstract class TornadoWeights implements Weights {
             TornadoTensor freq_cis_realFlat,
             TornadoTensor freq_cis_imagFlat,
             TornadoTensor wclsByteArray,
-            GGMLType weightType) {
+            DataType weightType) {
         this.tokenEmbeddingTable = tokenEmbeddingTable;
         this.rms_att_weightLayered = rms_att_weightLayered;
         this.wqLayered = wqLayered;
@@ -84,7 +86,7 @@ public abstract class TornadoWeights implements Weights {
     }
 
     @Override
-    public GGMLType getWeightType() {
+    public DataType dataType() {
         return weightType;
     }
 }

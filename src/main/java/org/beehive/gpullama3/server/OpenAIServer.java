@@ -1,11 +1,9 @@
 package org.beehive.gpullama3.server;
 
+import static org.beehive.gpullama3.model.loader.ModelLoader.loadModel;
+
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
-import org.beehive.gpullama3.Options;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.format.ChatFormat;
-
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
@@ -18,35 +16,88 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
-
-import static org.beehive.gpullama3.model.loader.ModelLoader.loadModel;
+import org.beehive.gpullama3.Options;
+import org.beehive.gpullama3.model.Model;
+import org.beehive.gpullama3.model.format.ChatFormat;
 
 /**
  * OpenAI-compatible HTTP server for GPULlama3, built on the JDK {@link HttpServer} (no external
  * dependencies). Exposes the loaded model behind the endpoints an OpenAI client already speaks:
  *
  * <ul>
- *   <li>{@code POST /v1/chat/completions} — chat, streaming (SSE) or full JSON.</li>
- *   <li>{@code POST /v1/completions} — text completion (prompt as a single user turn).</li>
- *   <li>{@code GET  /v1/models} — the one served model.</li>
- *   <li>{@code GET  /health} — liveness.</li>
+ *   <li>{@code POST /v1/chat/completions} — chat, streaming (SSE) or full JSON.
+ *   <li>{@code POST /v1/completions} — text completion (prompt as a single user turn).
+ *   <li>{@code GET /v1/models} — the one served model.
+ *   <li>{@code GET /health} — liveness.
  * </ul>
  *
  * <p>Generation is serialized on a single {@link InferenceService} (the GPU is one context); HTTP
- * accept is multi-threaded so clients queue cleanly. Run:</p>
+ * accept is multi-threaded so clients queue cleanly. Run:
+ *
  * <pre>
- *   java ... org.beehive.gpullama3.server.OpenAIServer --model model.gguf --port 8080 --gpu
+ *   java. org.beehive.gpullama3.server.OpenAIServer --model model.gguf --port 8080 --gpu
  * </pre>
  */
 public final class OpenAIServer {
 
-    private final InferenceService service;
+    /**
+     * Either path, behind one call. The engine-backed service batches several conversations; the
+     * original serializes them behind a lock. The HTTP handlers do not need to know which.
+     */
+    private interface Generator extends AutoCloseable {
+        InferenceService.Result generate(
+                InferenceService.Request request, java.util.function.Consumer<String> onToken);
+
+        @Override
+        void close();
+    }
+
+    private final Generator service;
     private final String servedModel;
     private final boolean gpu;
     private int port;
     private final AtomicLong seq = new AtomicLong();
 
     public OpenAIServer(InferenceService service, String servedModel, boolean gpu) {
+        this(wrap(service), servedModel, gpu);
+    }
+
+    /** Engine-backed: concurrent requests share one batch instead of one lock. */
+    public OpenAIServer(EngineInferenceService service, String servedModel, boolean gpu) {
+        this(wrap(service), servedModel, gpu);
+    }
+
+    private static Generator wrap(InferenceService delegate) {
+        return new Generator() {
+            @Override
+            public InferenceService.Result generate(
+                    InferenceService.Request request, java.util.function.Consumer<String> onToken) {
+                return delegate.generate(request, onToken);
+            }
+
+            @Override
+            public void close() {
+                delegate.close();
+            }
+        };
+    }
+
+    private static Generator wrap(EngineInferenceService delegate) {
+        return new Generator() {
+            @Override
+            public InferenceService.Result generate(
+                    InferenceService.Request request, java.util.function.Consumer<String> onToken) {
+                return delegate.generate(request, onToken);
+            }
+
+            @Override
+            public void close() {
+                delegate.close();
+            }
+        };
+    }
+
+    private OpenAIServer(Generator service, String servedModel, boolean gpu) {
         this.service = service;
         this.servedModel = servedModel;
         this.gpu = gpu;
@@ -55,30 +106,65 @@ public final class OpenAIServer {
     public static void main(String[] args) throws IOException {
         String modelPath = null;
         int port = 8080;
+        // Continuous batching: several conversations decode in one batch instead of queueing
+        // behind one lock. Off by default until it has served real traffic; --batch B turns it on.
+        int batch = 0;
+        // The queue bound is the deployment's, not the library's. The server's default
+        // is its own choice — generous, because rejecting a request the GPU could have absorbed is
+        // worse here than a little queue wait.
+        int maxQueued = Integer.getInteger("server.maxQueuedRequests", 64);
+        // Prefix sharing: off unless asked for, because it trades pool capacity for prefill and
+        // only a deployment whose traffic repeats its openings gets that trade back.
+        int prefixEntries = Integer.getInteger("server.prefixCacheEntries", 0);
         boolean gpu = false;
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--model", "-m" -> modelPath = args[++i];
                 case "--port", "-p" -> port = Integer.parseInt(args[++i]);
                 case "--gpu" -> gpu = true;
-                default -> { }
+                case "--batch", "-b" -> batch = Integer.parseInt(args[++i]);
+                default -> {}
             }
         }
         if (modelPath == null) {
-            System.err.println("usage: OpenAIServer --model <model.gguf> [--port 8080] [--gpu]");
+            System.err.println(
+                    "usage: OpenAIServer --model <model.gguf> [--port 8080] [--gpu]"
+                            + " [--batch B]");
             System.exit(1);
         }
         System.setProperty("llama.enableTornadoVM", String.valueOf(gpu));
 
         Path path = Paths.get(modelPath);
         // interactive=true bypasses the --prompt-required check; the server never uses it.
-        Options options = new Options(path, "server", null, null, true, 0.0f, 0.95f, 1234L, 512, false, false, gpu, false, 1);
+        Options options =
+                new Options(
+                        path, "server", null, null, true, 0.0f, 0.95f, 1234L, 512, false, false,
+                        gpu, false, 1);
         System.err.println("[server] loading " + path.getFileName() + " (gpu=" + gpu + ") ...");
         Model model = loadModel(options);
-        InferenceService service = new InferenceService(model, gpu);
         String served = path.getFileName().toString().replaceAll("\\.gguf$", "");
 
-        OpenAIServer server = new OpenAIServer(service, served, gpu);
+        OpenAIServer server;
+        if (batch > 0) {
+            if (!gpu) {
+                System.err.println("[server] --batch needs --gpu; the batched plan is a GPU plan");
+                System.exit(1);
+            }
+            System.err.println(
+                    "[server] continuous batching: B="
+                            + batch
+                            + " maxQueuedRequests="
+                            + maxQueued
+                            + (prefixEntries > 0 ? " prefixCacheEntries=" + prefixEntries : ""));
+            server =
+                    new OpenAIServer(
+                            new EngineInferenceService(
+                                    model, batch, maxQueued, options.maxTokens(), prefixEntries),
+                            served,
+                            gpu);
+        } else {
+            server = new OpenAIServer(new InferenceService(model, gpu), served, gpu);
+        }
         server.start(port);
     }
 
@@ -94,7 +180,8 @@ public final class OpenAIServer {
         http.setExecutor(Executors.newFixedThreadPool(8));
         Runtime.getRuntime().addShutdownHook(new Thread(service::close));
         http.start();
-        System.err.println("[server] listening on http://localhost:" + port + "  model=" + servedModel);
+        System.err.println(
+                "[server] listening on http://localhost:" + port + "  model=" + servedModel);
     }
 
     // ── Endpoints ─────────────────────────────────────────────────────────────
@@ -104,11 +191,12 @@ public final class OpenAIServer {
             sendError(ex, 404, "Not found");
             return;
         }
-        byte[] bytes = INDEX_HTML
-                .replace("{{model}}", servedModel)
-                .replace("{{backend}}", gpu ? "GPU (TornadoVM)" : "CPU")
-                .replace("{{port}}", String.valueOf(port))
-                .getBytes(StandardCharsets.UTF_8);
+        byte[] bytes =
+                INDEX_HTML
+                        .replace("{{model}}", servedModel)
+                        .replace("{{backend}}", gpu ? "GPU (TornadoVM)" : "CPU")
+                        .replace("{{port}}", String.valueOf(port))
+                        .getBytes(StandardCharsets.UTF_8);
         ex.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
         ex.sendResponseHeaders(200, bytes.length);
         try (OutputStream os = ex.getResponseBody()) {
@@ -116,7 +204,8 @@ public final class OpenAIServer {
         }
     }
 
-    private static final String INDEX_HTML = """
+    private static final String INDEX_HTML =
+            """
             <!doctype html>
             <html lang="en">
             <head>
@@ -234,7 +323,8 @@ public final class OpenAIServer {
                 }
             } else {
                 Object prompt = body.get("prompt");
-                String text = prompt instanceof String s ? s : prompt == null ? "" : prompt.toString();
+                String text =
+                        prompt instanceof String s ? s : prompt == null ? "" : prompt.toString();
                 if (text.isEmpty()) {
                     sendError(ex, 400, "'prompt' must be a non-empty string");
                     return;
@@ -246,7 +336,11 @@ public final class OpenAIServer {
             return;
         }
 
-        int maxTokens = Json.intVal(body, "max_tokens", chat ? Json.intVal(body, "max_completion_tokens", 256) : 256);
+        int maxTokens =
+                Json.intVal(
+                        body,
+                        "max_tokens",
+                        chat ? Json.intVal(body, "max_completion_tokens", 256) : 256);
         float temperature = (float) Json.num(body, "temperature", 0.0);
         float topP = (float) Json.num(body, "top_p", 0.95);
         long seed = (long) Json.num(body, "seed", 1234);
@@ -265,7 +359,9 @@ public final class OpenAIServer {
 
     // ── Non-streaming ─────────────────────────────────────────────────────────
 
-    private void fullResponse(HttpExchange ex, InferenceService.Request req, String id, long created, boolean chat) throws IOException {
+    private void fullResponse(
+            HttpExchange ex, InferenceService.Request req, String id, long created, boolean chat)
+            throws IOException {
         InferenceService.Result r;
         try {
             r = service.generate(req, null);
@@ -289,16 +385,20 @@ public final class OpenAIServer {
         resp.put("created", created);
         resp.put("model", servedModel);
         resp.put("choices", List.of(choice));
-        resp.put("usage", Map.of(
-                "prompt_tokens", r.promptTokens(),
-                "completion_tokens", r.completionTokens(),
-                "total_tokens", r.promptTokens() + r.completionTokens()));
+        resp.put(
+                "usage",
+                Map.of(
+                        "prompt_tokens", r.promptTokens(),
+                        "completion_tokens", r.completionTokens(),
+                        "total_tokens", r.promptTokens() + r.completionTokens()));
         sendJson(ex, 200, resp);
     }
 
     // ── Streaming (Server-Sent Events) ────────────────────────────────────────
 
-    private void streamResponse(HttpExchange ex, InferenceService.Request req, String id, long created, boolean chat) throws IOException {
+    private void streamResponse(
+            HttpExchange ex, InferenceService.Request req, String id, long created, boolean chat)
+            throws IOException {
         ex.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
         ex.getResponseHeaders().set("Cache-Control", "no-cache");
         ex.getResponseHeaders().set("Connection", "keep-alive");
@@ -311,13 +411,24 @@ public final class OpenAIServer {
                 // First chunk carries the assistant role.
                 writeSse(os, chunk(id, object, created, roleDelta(), null));
             }
-            InferenceService.Result r = service.generate(req, piece -> {
-                try {
-                    writeSse(os, chunk(id, object, created, chat ? contentDelta(piece) : textField(piece), null));
-                } catch (IOException io) {
-                    throw new RuntimeException(io); // client disconnected — abort generation
-                }
-            });
+            InferenceService.Result r =
+                    service.generate(
+                            req,
+                            piece -> {
+                                try {
+                                    writeSse(
+                                            os,
+                                            chunk(
+                                                    id,
+                                                    object,
+                                                    created,
+                                                    chat ? contentDelta(piece) : textField(piece),
+                                                    null));
+                                } catch (IOException io) {
+                                    throw new RuntimeException(
+                                            io); // client disconnected — abort generation
+                                }
+                            });
             String finish = r.stopped() ? "stop" : "length";
             writeSse(os, chunk(id, object, created, chat ? Map.of() : textField(""), finish));
             os.write("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
@@ -345,7 +456,8 @@ public final class OpenAIServer {
     }
 
     /** One SSE data object. {@code delta} is the chat delta map or the completion text map. */
-    private String chunk(String id, String object, long created, Map<String, Object> delta, String finish) {
+    private String chunk(
+            String id, String object, long created, Map<String, Object> delta, String finish) {
         Map<String, Object> choice = new LinkedHashMap<>();
         choice.put("index", 0);
         if (object.startsWith("chat")) {
@@ -370,7 +482,8 @@ public final class OpenAIServer {
 
     // ── Wire helpers ──────────────────────────────────────────────────────────
 
-    private void sendJson(HttpExchange ex, int status, Map<String, Object> body) throws IOException {
+    private void sendJson(HttpExchange ex, int status, Map<String, Object> body)
+            throws IOException {
         byte[] bytes = Json.write(body).getBytes(StandardCharsets.UTF_8);
         ex.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
         ex.sendResponseHeaders(status, bytes.length);
@@ -380,9 +493,8 @@ public final class OpenAIServer {
     }
 
     private void sendError(HttpExchange ex, int status, String message) throws IOException {
-        Map<String, Object> err = Map.of("error", Map.of(
-                "message", message,
-                "type", "invalid_request_error"));
+        Map<String, Object> err =
+                Map.of("error", Map.of("message", message, "type", "invalid_request_error"));
         sendJson(ex, status, err);
     }
 }

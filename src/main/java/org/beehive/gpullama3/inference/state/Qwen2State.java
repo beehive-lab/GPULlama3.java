@@ -1,23 +1,30 @@
 package org.beehive.gpullama3.inference.state;
 
-import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
-import org.beehive.gpullama3.tensor.standard.FloatTensor;
+import java.util.stream.Stream;
+import org.beehive.gpullama3.backend.tornado.workspace.TornadoWorkspaces;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.qwen2.Qwen2Configuration;
-import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
-import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
-import uk.ac.manchester.tornado.api.types.arrays.IntArray;
-
-import java.util.stream.Stream;
+import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
+import org.beehive.gpullama3.tensor.standard.FloatTensor;
 
 public class Qwen2State extends State {
 
     protected static final int QWEN2_LOCAL_SIZE = 32;
 
     public Qwen2State(Configuration config, int batchsize) {
-        super(config, batchsize);
+        this(config, batchsize, null);
+    }
+
+    /**
+     * @param lease the KV lease whose shared storage this state addresses, or {@code null} to
+     *     allocate its own arrays
+     */
+    public Qwen2State(
+            Configuration config, int batchsize, org.beehive.gpullama3.runtime.kv.KvLease lease) {
+        super(config, batchsize, lease);
         this.localSize = QWEN2_LOCAL_SIZE;
     }
+
     @Override
     protected StateFields createStateFields(Configuration configuration) {
         StateFields fields = new StateFields();
@@ -39,42 +46,56 @@ public class Qwen2State extends State {
         fields.logits = ArrayFloatTensor.allocate(config.vocabularySize());
 
         // Key-value cache with Qwen2 dimensions
-        fields.keyCache = Stream.generate(() -> ArrayFloatTensor.allocate(config.contextLength(), nEmbdGqa)).limit(config.numberOfLayers()).toArray(FloatTensor[]::new);
-        fields.valueCache = Stream.generate(() -> ArrayFloatTensor.allocate(config.contextLength(), nEmbdGqa)).limit(config.numberOfLayers()).toArray(FloatTensor[]::new);
+        fields.keyCache =
+                Stream.generate(() -> ArrayFloatTensor.allocate(config.contextLength(), nEmbdGqa))
+                        .limit(config.numberOfLayers())
+                        .toArray(FloatTensor[]::new);
+        fields.valueCache =
+                Stream.generate(() -> ArrayFloatTensor.allocate(config.contextLength(), nEmbdGqa))
+                        .limit(config.numberOfLayers())
+                        .toArray(FloatTensor[]::new);
 
         // TornadoVM wrappers with Qwen2 dimensions
         switch (config.quantization()) {
-            case "FP16" -> fields.createActivationFP16(config.dim());
-            case "Q8_0" -> fields.createActivationQ8_0(config.dim());
-            default -> throw new UnsupportedOperationException("Unsupported quantization format: " + config.quantization());
+            case "FP16" -> TornadoWorkspaces.activationFP16(workspace, config.dim());
+            case "Q8_0" -> TornadoWorkspaces.activationQ8_0(workspace, config.dim());
+            default ->
+                    throw new UnsupportedOperationException(
+                            "Unsupported quantization format: " + config.quantization());
         }
-        fields.wrapX = new FloatArray(config.dim());
-        fields.wrapXb = new FloatArray(config.dim());
-        fields.wrapXbFP16 = new HalfFloatArray(config.dim());
-        fields.wrapXb2 = new FloatArray(config.dim());
-        fields.wrapHb = new FloatArray(config.hiddenDim());
-        fields.wrapHb2 = new FloatArray(config.hiddenDim());
+        workspace.wrapX = TornadoWorkspaces.floats(config.dim());
+        workspace.wrapXb = TornadoWorkspaces.floats(config.dim());
+        workspace.wrapXbFP16 = TornadoWorkspaces.halfFloats(config.dim());
+        workspace.wrapXb2 = TornadoWorkspaces.floats(config.dim());
+        workspace.wrapHb = TornadoWorkspaces.floats(config.hiddenDim());
+        workspace.wrapHb2 = TornadoWorkspaces.floats(config.hiddenDim());
 
-        fields.wrapLogits = new FloatArray(config.vocabularySize());
-        fields.wrapQ = new FloatArray(config.dim());
-        fields.wrapK = new FloatArray(config.kvDim());
-        fields.wrapV = new FloatArray(config.kvDim());
+        workspace.wrapLogits = TornadoWorkspaces.floats(config.vocabularySize());
+        workspace.wrapQ = TornadoWorkspaces.floats(config.dim());
+        workspace.wrapK = TornadoWorkspaces.floats(config.kvDim());
+        workspace.wrapV = TornadoWorkspaces.floats(config.kvDim());
 
-        fields.wrapKeyCache = new FloatArray(config.contextLength() * nEmbdGqa * config.numberOfLayers());
-        fields.wrapValueCache = new FloatArray(config.contextLength() * nEmbdGqa * config.numberOfLayers());
-        fields.wrapValueCache.init(0.f);
-        fields.wrapKeyCache.init(0.f);
-        fields.wrapAtt = new FloatArray(config.numberOfHeads() * config.contextLength());
-        fields.positionHolder = new IntArray(1);
+        // KV cache: leased from the manager's pool when this state holds a lease, otherwise
+        // allocated here, block-major when paged and contiguous when not.
+        fillKvFields(fields, config, nEmbdGqa, false);
+        workspace.wrapAtt =
+                TornadoWorkspaces.floats(config.numberOfHeads() * config.contextLength());
+        // [0] = position, [1] = table-local KV slot.
+        workspace.positionHolder = TornadoWorkspaces.ints(2);
 
         // Temporary arrays
         // State invokes this override before the Qwen2State constructor body runs,
         // so use the Qwen2 work-group size directly instead of State.localSize.
-        fields.temp = new FloatArray(1 + ((config.dim() + QWEN2_LOCAL_SIZE - 1) / QWEN2_LOCAL_SIZE));
-        fields.tempFFN = new FloatArray(1 + ((config.dim() + QWEN2_LOCAL_SIZE - 1) / QWEN2_LOCAL_SIZE));
-        fields.tempLogits = new FloatArray(1 + ((config.dim() + QWEN2_LOCAL_SIZE - 1) / QWEN2_LOCAL_SIZE));
+        workspace.temp =
+                TornadoWorkspaces.floats(
+                        1 + ((config.dim() + QWEN2_LOCAL_SIZE - 1) / QWEN2_LOCAL_SIZE));
+        workspace.tempFFN =
+                TornadoWorkspaces.floats(
+                        1 + ((config.dim() + QWEN2_LOCAL_SIZE - 1) / QWEN2_LOCAL_SIZE));
+        workspace.tempLogits =
+                TornadoWorkspaces.floats(
+                        1 + ((config.dim() + QWEN2_LOCAL_SIZE - 1) / QWEN2_LOCAL_SIZE));
 
         return fields;
-
     }
 }
