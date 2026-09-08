@@ -230,6 +230,39 @@ the quantization as well as the residency, and the two answers differ.
 Agreement between the device and host decoders is necessary but not sufficient, which is why the
 specification check is there too: two implementations can agree and both be a different format.
 
+## Gated Delta Net device kernels
+
+The mixer's four kernels, against the host operations, lane by lane, at Qwen3.8-27B's own
+dimensions — 10240 convolution channels, 48 value heads against 16 key heads, a 128×128 state
+per head.
+
+| Check | Result |
+| --- | --- |
+| Causal convolution output and its advanced window | bit-exact |
+| Per-head L2 norm | bit-exact |
+| Delta rule readout and the state it leaves behind | bit-exact |
+| A value head reads key head `h % keyHeads`, asserted directly | pass |
+| Decay and write strength | equal to float rounding |
+| Gated norm | equal to float rounding |
+
+Two of those are not bit-exact and the reason is arithmetic rather than addressing: the host
+takes its reciprocal square root, its logarithm and its logistic in double and narrows once,
+where `TornadoMath` works in float throughout. Everything else asserts **bit equality**, because
+everywhere else the operations and their order are identical and a tolerance would hide a real
+difference.
+
+This is a host test, and it is possible at all only because each kernel body is a static method
+taking its lane index, with the kernel a two-line wrapper passing `context.globalIdx`. A body
+written directly against `KernelContext` cannot be called on the host, so it can only be
+exercised by running a model on a device — and an indexing mistake in it surfaces as slightly
+wrong text rather than as a failure. The delta rule needs no barrier and no cross-lane reduction
+to begin with: a lane owning one value column of a head's state finds every quantity it needs is
+its own.
+
+**What this does not establish**: that the kernels compile and run on a device, that the layer
+graph binds them correctly, or that the family runs on a GPU at all. Those are separate gates and
+none of them is met yet.
+
 ## Known limitations
 
 - **`qwen35` has no accelerator path, and no CPU/GPU parity gate.** Nothing claims the
