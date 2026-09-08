@@ -263,6 +263,37 @@ its own.
 graph binds them correctly, or that the family runs on a GPU at all. Those are separate gates and
 none of them is met yet.
 
+## `qwen35` attention device kernels
+
+The three things that separate a `qwen35` attention layer from Qwen3's, at Qwen3.8-27B's geometry
+— 24 query heads against 4 key/value heads, a 256-wide head, a rotary width of 64.
+
+| Check | Result |
+| --- | --- |
+| Query/gate de-interleave | bit-exact |
+| The split is per head, not per buffer, asserted directly | pass |
+| Partial rotation, four positions | bit-exact |
+| The tail of each head above the rotary width is untouched | pass |
+| Key/value append lands at the paged offset, and disturbs nothing else | pass |
+| Output gate | equal to float rounding |
+
+The rotation is bit-exact because the device reads the same precomputed tables the host does.
+Recomputing the frequencies on the device with `pow` and `cos` — which is what Qwen3's own rope
+kernel does — would put a float-versus-double rounding difference at the front of every layer,
+for no saving.
+
+Two checks assert a property directly rather than against the host, and both guard the same
+class of mistake: a wrong reading that is *also well-formed*. The whole-buffer split is the
+obvious reading of a tensor twice the expected width and yields a query made of half the heads'
+queries and gates; a paged append with the wrong stride lands inside another layer's slice and
+reads back as a plausible cache. Neither would fail a comparison in which both sides had made
+the same assumption.
+
+**Not established, and not claimed**: `Qwen3Kernels.fusedQKRmsNorm` is expected to serve this
+family's 256-wide head unchanged, being parameterized by head count and width — but it reduces
+through local memory and barriers, so it cannot be exercised on the host, and nothing has yet run
+it at that width.
+
 ## Known limitations
 
 - **`qwen35` has no accelerator path, and no CPU/GPU parity gate.** Nothing claims the
