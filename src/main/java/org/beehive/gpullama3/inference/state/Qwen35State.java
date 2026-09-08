@@ -302,6 +302,12 @@ public final class Qwen35State extends State {
         workspace.wrapV = TornadoWorkspaces.floats(kvDim);
         workspace.wrapAtt =
                 TornadoWorkspaces.floats(config.numberOfHeads() * config.contextLength());
+        // Split-KV attention's per-head partials: a running max and a running denominator beside
+        // each split's accumulated value. Sized by the value-head width, which here is stated by
+        // the file rather than being dim / heads.
+        workspace.wrapAttSplit =
+                TornadoWorkspaces.floats(
+                        config.numberOfHeads() * SPLIT_KV * (config.numberOfHeadsValue() + 2));
 
         // The delta-net branch's scratch.
         workspace.wrapSsmQkv = TornadoWorkspaces.floats(config.deltaNetConvDim());

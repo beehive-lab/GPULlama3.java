@@ -255,6 +255,73 @@ the format-decoded types are CPU-only.** The engine's position is now:
 Qwen3.8-27B-Q4_0's weight bytes, retained, total **14.944 GiB**. Materialized as `Q8_0` they are
 roughly 27 GiB. Nothing about the model changed; only what the loader does with it.
 
+## 4b. Device plan topology
+
+One task graph per trunk layer, plus the activation graph in front and the logits graph behind:
+**64 layer graphs, 66 in the plan**. Not one graph per task — a graph per task would put the
+per-token launch cost of a 64-layer model into four figures.
+
+Every task is bound to a kernel chosen from the representation of the tensor it reads, before
+compilation. The fused gate/up task is the only one that reads two weights, and it requires them
+to share a representation.
+
+### Recurrent layer — 20 tasks
+
+| # | Task | Reads | Representation (27B) |
+| --- | --- | --- | --- |
+| 1 | `attn_rms_reduce` | — | — |
+| 2 | `attn_rms_apply` | `attn_norm` | F32 |
+| 3 | `ssm_qkv_proj` | `attn_qkv` | Q4_0 |
+| 4 | `ssm_gate_proj` | `attn_gate` | Q4_0 |
+| 5 | `ssm_beta_proj` | `ssm_beta` | F32 |
+| 6 | `ssm_alpha_proj` | `ssm_alpha` | F32 |
+| 7 | `ssm_decay_beta` | `ssm_dt.bias`, `ssm_a` | F32 |
+| 8 | `ssm_conv` | `ssm_conv1d`, conv window | F32 |
+| 9 | `ssm_conv_silu` | — | — |
+| 10 | `ssm_split_qkv` | — | — |
+| 11 | `ssm_l2norm_q` | — | — |
+| 12 | `ssm_l2norm_k` | — | — |
+| 13 | `ssm_scale_q` | — | — |
+| 14 | `ssm_delta_rule` | delta-net state | — |
+| 15 | `ssm_gated_norm` | `ssm_norm` | F32 |
+| 16 | `ssm_out_proj` (+residual) | `ssm_out` | **Q5_K** |
+| 17 | `ffn_rms_reduce` | — | — |
+| 18 | `ffn_rms_apply` | `post_attention_norm` | F32 |
+| 19 | `ffn_gate_up` | `ffn_gate`, `ffn_up` | Q4_0 (must agree) |
+| 20 | `ffn_down_proj` (+residual) | `ffn_down` | Q4_0, **Q4_1** on blocks 0–7 |
+
+### Attention layer — 17 tasks
+
+| # | Task | Reads | Representation (27B) |
+| --- | --- | --- | --- |
+| 1 | `attn_rms_reduce` | — | — |
+| 2 | `attn_rms_apply` | `attn_norm` | F32 |
+| 3 | `attn_q_proj` | `attn_q` (query ‖ gate) | Q4_0 |
+| 4 | `attn_k_proj` | `attn_k` | Q4_0 |
+| 5 | `attn_v_proj` | `attn_v` | Q4_0 |
+| 6 | `attn_split_query_gate` | — | — |
+| 7 | `attn_qk_norm` | `attn_q_norm`, `attn_k_norm` | F32 |
+| 8 | `attn_rope` | rope tables | F32 |
+| 9 | `attn_kv_append` | key/value store | — |
+| 10 | `attention` | key/value store | — |
+| 11 | `attention_combine` | — | — |
+| 12 | `attn_output_gate` | — | — |
+| 13 | `attn_output_proj` (+residual) | `attn_output` | Q4_0 |
+| 14 | `ffn_rms_reduce` | — | — |
+| 15 | `ffn_rms_apply` | `post_attention_norm` | F32 |
+| 16 | `ffn_gate_up` | `ffn_gate`, `ffn_up` | Q4_0 |
+| 17 | `ffn_down_proj` (+residual) | `ffn_down` | Q4_0 |
+
+On the NON_NVIDIA path each normalization gains a `*_rms_finalize` task, so both counts rise by two.
+
+The 27B's trunk is 48 recurrent and 16 attention layers: **1232 layer tasks**, plus the activation
+graph's one and the logits graph's three. The MTP block is not built: it is a draft head, and
+`numberOfLayers()` excludes it.
+
+Key/value storage is addressed by a **dense** index — the store is sized by the sixteen layers that
+attend — while weights are addressed by absolute block. The convolution window and the delta-net
+state are per-layer slices of one array each, addressed by an offset.
+
 ## 5. Backends
 
 | Backend | Position |
