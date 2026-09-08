@@ -294,8 +294,38 @@ family's 256-wide head unchanged, being parameterized by head count and width �
 through local memory and barriers, so it cannot be exercised on the host, and nothing has yet run
 it at that width.
 
+## `qwen35` session state
+
+| Check | Result |
+| --- | --- |
+| Host path allocates no device arrays | pass |
+| Key/value storage sized by the blocks that attend, not the block count | pass |
+| The dense key/value and recurrent indices cover each block exactly once | pass |
+| Recurrent state allocated and zeroed | pass |
+| A reset clears both representations of it | pass |
+
+Two of these are about size rather than correctness, which is why they need asserting. Only one
+block in four attends, so a store sized by the block count would be nearly four times what the
+model uses — gigabytes at any useful context — and the dense indexing that avoids it is easy to
+get subtly wrong in a way nothing else would notice.
+
+The recurrent state must start at zero on **whichever** path is running, and a reset must clear
+both representations. A key/value cache needs neither: attention reads no further than the current
+position. A recurrence has no such mask, so whatever was in the allocation is read as the
+sequence's own history.
+
+Whether the device arrays are allocated is currently decided by the `use.tornadovm` property,
+which is the facade's own default and **not** the same question as which backend a session
+resolved. It is adequate only because no plan provider claims this architecture, so nothing can
+disagree with it; a construction-scoped answer from the session has to replace it when one does.
+
 ## Known limitations
 
+- **The memory preflight does not know about retained representations.** It refuses Qwen3.8-27B
+  on a 24 GB device at 27760 MiB, which is what the model costs *materialized as Q8_0*. With Q4_0
+  retained the figure is roughly 17 GB and the configuration fits, so a preflight that stays
+  materialization-only will refuse a run that would have worked. It is correct today, because
+  qwen35's loader does not retain, and it becomes wrong the moment that changes.
 - **`qwen35` has no accelerator path, and no CPU/GPU parity gate.** Nothing claims the
   architecture, so the gate that matters most for every other family does not apply here and
   the CPU is verified against llama.cpp instead. The delta-net layers have no kernels. The

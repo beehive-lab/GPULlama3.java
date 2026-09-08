@@ -108,7 +108,7 @@ public class Qwen35DeltaNetKernelParityTest {
         FloatArray deviceOut = new FloatArray(CONV_DIM);
         for (int channel = 0; channel < CONV_DIM; channel++) {
             Qwen35DeltaNetKernels.causalConv1dLane(
-                    deviceInput, deviceWeight, deviceWindow, deviceOut, CONV_KERNEL, channel);
+                    deviceInput, deviceWeight, deviceWindow, deviceOut, CONV_KERNEL, 0, channel);
         }
 
         assertSame("conv out", hostOut, deviceOut);
@@ -184,6 +184,7 @@ public class Qwen35DeltaNetKernelParityTest {
                     deviceOut,
                     KEY_HEADS,
                     STATE_DIM,
+                    0,
                     lane);
         }
 
@@ -235,6 +236,7 @@ public class Qwen35DeltaNetKernelParityTest {
                     out,
                     keyHeads,
                     stateDim,
+                    0,
                     lane);
         }
 
@@ -247,6 +249,104 @@ public class Qwen35DeltaNetKernelParityTest {
                     expected,
                     out.get(head * stateDim),
                     1e-6f);
+        }
+    }
+
+    /**
+     * Two layers sharing one state array do not disturb each other.
+     *
+     * <p>Every recurrent layer's state lives in one allocation, addressed by an offset, so a lane
+     * that dropped the offset — or applied it to one of its two passes and not the other — would
+     * read layer 0's state while writing layer 1's. Nothing about the output would look wrong for
+     * a while.
+     *
+     * <p>The check is that a layer at a non-zero offset produces exactly what the same layer
+     * produces alone at offset zero, and that its neighbour is untouched.
+     */
+    @Test
+    public void aLayerOffsetIsolatesOneLayersState() {
+        int heads = 4;
+        int keyHeads = 2;
+        int dim = 8;
+        int perLayer = heads * dim * dim;
+
+        float[] q = noise(keyHeads * dim, 0.3f);
+        float[] k = noise(keyHeads * dim, 0.3f);
+        float[] v = noise(heads * dim, 1.0f);
+        float[] decay = new float[heads];
+        float[] beta = new float[heads];
+        for (int h = 0; h < heads; h++) {
+            decay[h] = 0.5f + 0.5f * random.nextFloat();
+            beta[h] = random.nextFloat();
+        }
+        float[] layerState = noise(perLayer, 0.05f);
+        float[] neighbour = noise(perLayer, 0.05f);
+
+        // Alone, at offset zero.
+        FloatArray alone = toDevice(layerState);
+        FloatArray aloneOut = new FloatArray(heads * dim);
+        for (int lane = 0; lane < heads * dim; lane++) {
+            Qwen35DeltaNetKernels.deltaRuleLane(
+                    toDevice(q), toDevice(k), toDevice(v), toDevice(decay), toDevice(beta),
+                    alone, aloneOut, keyHeads, dim, 0, lane);
+        }
+
+        // The same layer as the second of two, with a neighbour in front of it.
+        float[] both = new float[2 * perLayer];
+        System.arraycopy(neighbour, 0, both, 0, perLayer);
+        System.arraycopy(layerState, 0, both, perLayer, perLayer);
+        FloatArray shared = toDevice(both);
+        FloatArray sharedOut = new FloatArray(heads * dim);
+        for (int lane = 0; lane < heads * dim; lane++) {
+            Qwen35DeltaNetKernels.deltaRuleLane(
+                    toDevice(q), toDevice(k), toDevice(v), toDevice(decay), toDevice(beta),
+                    shared, sharedOut, keyHeads, dim, perLayer, lane);
+        }
+
+        for (int i = 0; i < heads * dim; i++) {
+            assertEquals("readout[" + i + "]", aloneOut.get(i), sharedOut.get(i), EXACT);
+        }
+        for (int i = 0; i < perLayer; i++) {
+            assertEquals("offset state[" + i + "]", alone.get(i), shared.get(perLayer + i), EXACT);
+            assertEquals("neighbour disturbed at " + i, neighbour[i], shared.get(i), EXACT);
+        }
+    }
+
+    /** The same, for the convolution's window. */
+    @Test
+    public void aWindowOffsetIsolatesOneLayersWindow() {
+        int channels = 32;
+        int kernel = 4;
+        int perLayer = channels * (kernel - 1);
+
+        float[] input = noise(channels, 1.0f);
+        float[] weight = noise(channels * kernel, 0.5f);
+        float[] layerWindow = noise(perLayer, 1.0f);
+        float[] neighbour = noise(perLayer, 1.0f);
+
+        FloatArray alone = toDevice(layerWindow);
+        FloatArray aloneOut = new FloatArray(channels);
+        for (int channel = 0; channel < channels; channel++) {
+            Qwen35DeltaNetKernels.causalConv1dLane(
+                    toDevice(input), toDevice(weight), alone, aloneOut, kernel, 0, channel);
+        }
+
+        float[] both = new float[2 * perLayer];
+        System.arraycopy(neighbour, 0, both, 0, perLayer);
+        System.arraycopy(layerWindow, 0, both, perLayer, perLayer);
+        FloatArray shared = toDevice(both);
+        FloatArray sharedOut = new FloatArray(channels);
+        for (int channel = 0; channel < channels; channel++) {
+            Qwen35DeltaNetKernels.causalConv1dLane(
+                    toDevice(input), toDevice(weight), shared, sharedOut, kernel, perLayer, channel);
+        }
+
+        for (int i = 0; i < channels; i++) {
+            assertEquals("conv out[" + i + "]", aloneOut.get(i), sharedOut.get(i), EXACT);
+        }
+        for (int i = 0; i < perLayer; i++) {
+            assertEquals("offset window[" + i + "]", alone.get(i), shared.get(perLayer + i), EXACT);
+            assertEquals("neighbour disturbed at " + i, neighbour[i], shared.get(i), EXACT);
         }
     }
 

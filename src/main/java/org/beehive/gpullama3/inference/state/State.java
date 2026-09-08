@@ -431,6 +431,27 @@ public abstract class State {
      */
     protected boolean fillKvFields(
             StateFields fields, Configuration config, int kvDim, boolean useFp16) {
+        return fillKvFields(fields, config, kvDim, config.numberOfLayers(), useFp16);
+    }
+
+    /**
+     * {@link #fillKvFields(StateFields, Configuration, int, boolean)} for a family where not every
+     * layer holds key/value entries.
+     *
+     * <p>{@code qwen35} attends in one layer of four; the other three mix with a recurrence and
+     * have nothing to retain. Sizing the store by the layer count would allocate four times what
+     * the model uses — gigabytes at any useful context — so the store is sized by the layers that
+     * actually write to it, and those layers address it by a <b>dense</b> index rather than their
+     * own. The kernels need no change: {@code layer} is already just a stride multiplier to them.
+     *
+     * @param kvLayers how many layers hold key/value entries; the dense index space they address
+     */
+    protected boolean fillKvFields(
+            StateFields fields,
+            Configuration config,
+            int kvDim,
+            int kvLayers,
+            boolean useFp16) {
         // The caller says whether this family has FP16 kernels at all; the storage options say
         // whether they were asked for. Both must hold.
         useFp16 = useFp16 && storageOptions.usesFp16KeyValueCache();
@@ -458,9 +479,9 @@ public abstract class State {
         // Its own arrays, laid out [block][layer][posInBlock][c] — a permutation of the contiguous
         // layout plus at most blockSize-1 positions of padding.
         int blocksPerSeq = (config.contextLength() + KV_BLOCK_SIZE - 1) / KV_BLOCK_SIZE;
-        int kvElements = blocksPerSeq * config.numberOfLayers() * KV_BLOCK_SIZE * kvDim;
+        int kvElements = blocksPerSeq * kvLayers * KV_BLOCK_SIZE * kvDim;
         fields.kvBlockCfg = KV_BLOCK_SIZE | (blocksPerSeq << 16);
-        fields.kvBlockStride = config.numberOfLayers() * KV_BLOCK_SIZE * kvDim;
+        fields.kvBlockStride = kvLayers * KV_BLOCK_SIZE * kvDim;
         // One sequence's private table, identity-mapped: logical block i is physical block i.
         // Addressed only at slot 0 — it is sized blocksPerSeq, so no larger slot fits in it.
         TornadoWorkspaces.identityBlockTable(workspace, blocksPerSeq);

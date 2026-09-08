@@ -52,6 +52,12 @@ public final class Qwen35DeltaNetKernels {
      * <p>Both the kernel and the window are channel-major — a channel's taps are contiguous, oldest
      * first — matching how GGUF stores {@code ssm_conv1d} and how the host path reads it.
      *
+     * <p>{@code windowOffset} is where this layer's window starts. Every recurrent layer's window
+     * lives in one array — a device buffer per layer would be 48 of them to transfer and persist —
+     * so the layer is an offset rather than a separate allocation. It is a parameter and not
+     * derived from anything, because deriving it would mean the kernel knowing how many layers
+     * there are.
+     *
      * @param channel the lane: which of {@code channels} this call computes
      */
     static void causalConv1dLane(
@@ -60,10 +66,11 @@ public final class Qwen35DeltaNetKernels {
             FloatArray window,
             FloatArray out,
             int kernel,
+            int windowOffset,
             int channel) {
         int history = kernel - 1;
         int wBase = channel * kernel;
-        int hBase = channel * history;
+        int hBase = windowOffset + channel * history;
         float x = input.get(channel);
 
         float sum = 0.0f;
@@ -89,12 +96,13 @@ public final class Qwen35DeltaNetKernels {
             FloatArray window,
             FloatArray out,
             int channels,
-            int kernel) {
+            int kernel,
+            int windowOffset) {
         int channel = context.globalIdx;
         if (channel >= channels) {
             return;
         }
-        causalConv1dLane(input, weight, window, out, kernel, channel);
+        causalConv1dLane(input, weight, window, out, kernel, windowOffset, channel);
     }
 
     /**
@@ -210,6 +218,10 @@ public final class Qwen35DeltaNetKernels {
      * key and produces fluent, slowly degrading output — the defect this port already made once on
      * the host, which is why it is stated here rather than left to the caller.
      *
+     * <p>{@code stateOffset} is where this layer's state starts, for the reason the convolution's
+     * window offset exists: every recurrent layer's state lives in one array, and 48 separate
+     * device buffers would be 48 transfers to arrange and keep resident.
+     *
      * @param lane {@code head * stateDim + column}
      */
     static void deltaRuleLane(
@@ -222,11 +234,12 @@ public final class Qwen35DeltaNetKernels {
             FloatArray out,
             int keyHeads,
             int stateDim,
+            int stateOffset,
             int lane) {
         int head = lane / stateDim;
         int column = lane - head * stateDim;
 
-        int stateBase = head * stateDim * stateDim;
+        int stateBase = stateOffset + head * stateDim * stateDim;
         int kvBase = (head % keyHeads) * stateDim;
         int valueBase = head * stateDim;
 
@@ -265,12 +278,13 @@ public final class Qwen35DeltaNetKernels {
             FloatArray out,
             int valueHeads,
             int keyHeads,
-            int stateDim) {
+            int stateDim,
+            int stateOffset) {
         int lane = context.globalIdx;
         if (lane >= valueHeads * stateDim) {
             return;
         }
-        deltaRuleLane(q, k, v, decay, beta, state, out, keyHeads, stateDim, lane);
+        deltaRuleLane(q, k, v, decay, beta, state, out, keyHeads, stateDim, stateOffset, lane);
     }
 
     // ---- the gated norm ------------------------------------------------------

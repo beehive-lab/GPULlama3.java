@@ -100,6 +100,56 @@ public record Qwen35Configuration(String quantization,
         return count;
     }
 
+    /**
+     * Where layer {@code l} addresses its key/value entries, or -1 if it holds none.
+     *
+     * <p>A <b>dense</b> index over the layers that attend, not the layer's own. Only one trunk
+     * layer in four attends, so a store sized and addressed by the layer index would be four times
+     * larger than the model uses — gigabytes at any useful context. Every MTP block attends and
+     * follows the trunk's attention layers in this numbering.
+     */
+    public int keyValueLayerIndex(int l) {
+        if (isRecurrentLayer(l)) {
+            return -1;
+        }
+        int index = 0;
+        for (int layer = 0; layer < l; layer++) {
+            if (!isRecurrentLayer(layer)) {
+                index++;
+            }
+        }
+        return index;
+    }
+
+    /** How many blocks hold key/value entries: the attending trunk layers plus the MTP blocks. */
+    public int keyValueLayerCount() {
+        return numberOfAttentionLayers() + numberOfNextnLayers;
+    }
+
+    /**
+     * Where layer {@code l} addresses its recurrent state, or -1 if it holds none.
+     *
+     * <p>The counterpart of {@link #keyValueLayerIndex}: a dense index over the layers that recur,
+     * because their convolution windows and delta-net matrices share one allocation each.
+     */
+    public int recurrentLayerIndex(int l) {
+        if (!isRecurrentLayer(l)) {
+            return -1;
+        }
+        int index = 0;
+        for (int layer = 0; layer < l; layer++) {
+            if (isRecurrentLayer(layer)) {
+                index++;
+            }
+        }
+        return index;
+    }
+
+    /** How many layers hold recurrent state. */
+    public int recurrentLayerCount() {
+        return numberOfLayers - numberOfAttentionLayers();
+    }
+
     /** Total blocks the file carries: the trunk plus its MTP blocks. */
     public int numberOfBlocks() {
         return numberOfLayers + numberOfNextnLayers;

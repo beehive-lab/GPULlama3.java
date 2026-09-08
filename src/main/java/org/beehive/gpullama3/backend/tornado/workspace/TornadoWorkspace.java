@@ -113,6 +113,26 @@ public final class TornadoWorkspace {
     public FloatArray wrapHbU; // TornadoVM wrapper for up states
     public FloatArray wrapRouterLogits;
     public IntArray wrapSelectedExperts;
+
+    // qwen35. Its recurrent layers hold state that is neither a key/value cache nor scratch: the
+    // convolution's rolling window and the delta-net matrices persist across tokens and are
+    // updated in place. Both live in one array per kind, addressed by a per-layer offset, because
+    // a device buffer per layer would be 48 of them to transfer and keep resident.
+    public FloatArray wrapConvState;
+    public FloatArray wrapDeltaState;
+    public FloatArray wrapSsmQkv;
+    public FloatArray wrapSsmConvOut;
+    public FloatArray wrapSsmZ;
+    public FloatArray wrapSsmAlpha;
+    public FloatArray wrapSsmBeta;
+    public FloatArray wrapSsmQ;
+    public FloatArray wrapSsmK;
+    public FloatArray wrapSsmV;
+    public FloatArray wrapSsmOut;
+    /** The query half of an attention layer's fused query/gate projection, de-interleaved. */
+    public FloatArray wrapAttnQ;
+    /** Its gate half, applied through a logistic to the attention result. */
+    public FloatArray wrapAttnGate;
     public FloatArray wrapRoutingWeights;
     public FloatArray wrapExpertGate;
     public FloatArray wrapSharedGate;
