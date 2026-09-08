@@ -373,6 +373,67 @@ public abstract class ModelLoader {
         return loadTornadoTensor(entry);
     }
 
+    /**
+     * Loads a tensor for the device in <b>whatever representation the file gave it</b>, for every
+     * quantization the backend has device storage and kernels for.
+     *
+     * <p>The general form of the two helpers above, and the one a family uses when its layer graph
+     * dispatches per tensor rather than assuming one representation. Nothing is converted: a Q4_1
+     * tensor stays Q4_1, a Q5_K tensor stays Q5_K, and a representation with no device storage is
+     * an error here rather than a quiet promotion to Q8_0.
+     *
+     * @throws ModelLoadException if the file holds a representation the device cannot store
+     */
+    public static TornadoTensor loadTornadoTensorNative(GGMLTensorEntry entry) {
+        return switch (entry.ggmlType()) {
+            case F32 ->
+                    org.beehive.gpullama3.backend.tornado.tensor.FP32TornadoTensor
+                            .fromTornadoMemorySegment(entry.memorySegment());
+            case F16 ->
+                    org.beehive.gpullama3.backend.tornado.tensor.FP16TornadoTensor
+                            .fromTornadoMemorySegment(entry.memorySegment());
+            case Q8_0 ->
+                    org.beehive.gpullama3.backend.tornado.tensor.Q8_0TornadoTensor
+                            .fromTornadoMemorySegment(entry.memorySegment());
+            case Q4_0 ->
+                    org.beehive.gpullama3.backend.tornado.tensor.Q4_0TornadoTensor
+                            .fromTornadoMemorySegment(entry.memorySegment());
+            case Q4_1 ->
+                    org.beehive.gpullama3.backend.tornado.tensor.Q4_1TornadoTensor
+                            .fromTornadoMemorySegment(entry.memorySegment());
+            case Q4_K ->
+                    org.beehive.gpullama3.backend.tornado.tensor.Q4_KTornadoTensor
+                            .fromTornadoMemorySegment(entry.memorySegment());
+            case Q5_K ->
+                    org.beehive.gpullama3.backend.tornado.tensor.Q5_KTornadoTensor
+                            .fromTornadoMemorySegment(entry.memorySegment());
+            case Q6_K ->
+                    org.beehive.gpullama3.backend.tornado.tensor.Q6_KTornadoTensor
+                            .fromTornadoMemorySegment(entry.memorySegment());
+            case BF16 -> TornadoTensorLoader.convertBF16ToFP16(rawTensorData(entry));
+            default ->
+                    throw new ModelLoadException(
+                            org.beehive.gpullama3.runtime.diagnostics.DiagnosticCode.MODEL_MALFORMED
+                                            .prefix()
+                                    + entry.name()
+                                    + " is "
+                                    + entry.ggmlType()
+                                    + ", for which this backend has no device storage. It is not"
+                                    + " converted to Q8_0: a representation the device cannot hold"
+                                    + " is a gap to fill, not something to promote silently.");
+        };
+    }
+
+    /** {@link #loadArrayOfTornadoTensors} keeping every representation as the file gave it. */
+    public static TornadoTensor[] loadArrayOfTornadoTensorsNative(
+            int size, IntFunction<GGMLTensorEntry> getTensorEntry) {
+        TornadoTensor[] array = new TornadoTensor[size];
+        for (int i = 0; i < size; i++) {
+            array[i] = loadTornadoTensorNative(getTensorEntry.apply(i));
+        }
+        return array;
+    }
+
     /** {@link #loadArrayOfTornadoTensors} that retains Q4_0. */
     public static TornadoTensor[] loadArrayOfTornadoTensorsRetainingQ4_0(
             int size, IntFunction<GGMLTensorEntry> getTensorEntry) {
