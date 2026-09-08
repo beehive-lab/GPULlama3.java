@@ -1,4 +1,12 @@
-# Qwen3.5 (`qwen35`) port — design proposal
+# `qwen35` architecture port — design proposal
+
+**On the name.** The model is **Qwen3.8-27B**. The *architecture* it declares is `qwen35`,
+and that string — not the model's name — is what `GgufRecognition` turns into an
+`ArchitectureId`. llama.cpp does the same: one `LLM_ARCH_QWEN35` serves the Qwen3.5, 3.6 and
+3.8 releases, which share this layer topology. Java types are therefore named `Qwen35*` after
+the architecture, never `Qwen38*` after this one file; a Qwen3.5 GGUF declares the same
+architecture and must reach the same family.
+
 
 Motivating file: `Qwen3.8-27B-Q4_0.gguf` (Unsloth, 16 GB, `general.architecture = qwen35`).
 Reference implementation: `llama.cpp` `src/models/qwen35.cpp` and `src/models/delta-net-base.cpp`.

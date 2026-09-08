@@ -269,6 +269,7 @@ public abstract class ModelLoader {
             case F32 -> new FP32FloatTensor(size, data);
             case Q8_0 -> new Q8_0FloatTensor(size, data);
             case Q4_0 -> new Q4_0FloatTensor(size, data);
+            case Q4_1 -> new Q4_1FloatTensor(size, data);
             case Q4_K -> new Q4_KFloatTensor(size, data);
             case Q5_K -> new Q5_KFloatTensor(size, data);
             case Q6_K -> new Q6_KFloatTensor(size, data);
@@ -333,7 +334,7 @@ public abstract class ModelLoader {
                 // A representation the device has no kernel for is materialized as Q8_0 at load
                 // The conversion reads through the CPU tensor for that format, which
                 // already knows how to decode it.
-            case Q4_0, Q4_K, Q5_K, Q6_K ->
+            case Q4_0, Q4_1, Q4_K, Q5_K, Q6_K ->
                     TornadoTensorLoader.dequantizeToQ8_0(rawTensorData(entry));
             default ->
                     throw new UnsupportedOperationException(

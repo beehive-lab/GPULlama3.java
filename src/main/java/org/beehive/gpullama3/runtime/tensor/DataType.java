@@ -13,7 +13,7 @@ import org.beehive.gpullama3.api.Experimental;
  *
  * <h2>What is not here</h2>
  *
- * <p>{@link #Q4_0}, {@link #Q4_K}, {@link #Q5_K} and {@link #Q6_K} are here for one specific
+ * <p>{@link #Q4_0}, {@link #Q4_1}, {@link #Q4_K}, {@link #Q5_K} and {@link #Q6_K} are here for one specific
  * reason: the CPU path executes them directly, decoding blocks inside the dot product. They are
  * {@linkplain #isFormatDecoded() format-decoded} — no target materializes a tensor in them, and the
  * GPU path does not execute them at all: the loader materializes {@link #Q8_0} instead. That is why
@@ -51,6 +51,16 @@ public enum DataType {
      * decoded during compute on the CPU and materialized as {@link #Q8_0} for the GPU.
      */
     Q4_0(true, true),
+
+    /**
+     * 4-bit block quantization with a per-block minimum as well as a scale: {@code d * q + m}, 32
+     * values to a block. Like {@link #Q4_0} it is decoded during compute on the CPU and
+     * materialized as {@link #Q8_0} for the GPU.
+     *
+     * <p>Here because Qwen3.8-27B mixes it into an otherwise Q4_0 file — the first eight layers'
+     * {@code ffn_down} tensors of `Qwen3.8-27B-Q4_0.gguf` are Q4_1.
+     */
+    Q4_1(true, true),
 
     /**
      * 4-bit K-quantization. CPU only, decoded during compute; the GPU materializes {@link #Q8_0}.
@@ -107,7 +117,7 @@ public enum DataType {
      */
     public DataType materializedFallback() {
         return switch (this) {
-            case Q4_0, Q4_K, Q5_K, Q6_K -> Q8_0; // format-decoded: the GPU never sees them
+            case Q4_0, Q4_1, Q4_K, Q5_K, Q6_K -> Q8_0; // format-decoded: the GPU never sees them
             case BF16 -> F16; // narrowed at load; no BF16 kernels yet
             default -> this;
         };
