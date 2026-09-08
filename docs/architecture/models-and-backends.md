@@ -140,7 +140,7 @@ assuming the CUDA result carries over.
 | Prefix caching | yes | yes | yes | yes |
 | Compiled-program caching | n/a | yes | yes | yes |
 | Lowered execution path under `auto` | n/a | Llama/F16/`STANDARD` | selects legacy | selects legacy |
-| `qwen35` (Qwen3.5 / 3.8) | yes | `STANDARD`, Q4_0 | untested | untested |
+| `qwen35` (Qwen3.5 / 3.8) | yes | all three modes, Q4_0 | untested | untested |
 | Conversations, tools, thinking control, streaming | yes | yes | yes | yes |
 | Memory preflight confidence | n/a | `EXACT` | `EXACT` | capped at `CONSERVATIVE` |
 | Reset / close / multi-session | yes | yes | yes | yes |
@@ -160,10 +160,11 @@ Recorded external limitations, each with its named cause:
 - **Kernel capture on Metal** — `withPrintKernel()` produces no kernel source, so
   `CompiledProgramIdentityAccelTest` cannot observe there. A capture-path gap, not a
   numerical one.
-- **`qwen35` runs single-token decode only.** Its provider declares `STANDARD` and nothing
-  else: there are no prefill or batched layer graphs for this family, and the MTP draft head
-  is not built into the generation plan. Verified on CUDA against the CPU reference on
-  Qwen3.8-27B; OpenCL and Metal have not been run.
+- **`qwen35` runs all three modes on CUDA, and only on CUDA.** Sequential prefill reuses the
+  single-token layer graphs with the logits graph skipped; batched prefill has its own layer
+  graphs, in which the convolution and the delta rule scan the chunk in token order inside the
+  kernel rather than treating its rows as independent. The MTP draft head is not built into any
+  of them. OpenCL and Metal have not been run.
 - **`qwen35` attention does not use the split-KV kernel.** Its head is 256 wide and
   `processHeadsFlashAttentionSplitKVPaged` fixes its query staging and per-thread accumulator
   at 128 floats per head, so a 256-wide head reads and writes past them — on CUDA an illegal
