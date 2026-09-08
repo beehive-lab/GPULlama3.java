@@ -152,26 +152,55 @@ public final class Qwen35State extends State {
     }
 
     /**
-     * Whether a device plan could be built for this session, and the device arrays are worth
-     * allocating.
+     * Whether this session is being built for a device, handed in for one construction.
      *
-     * <p>Read from the same property the facade defaults its backend from. That is <b>not</b> the
-     * same question as which backend a session actually resolved: a caller may name {@code
-     * BackendId.CPU} explicitly with the property set, or the reverse. It is adequate only because
-     * no {@code TornadoPlanProvider} claims this architecture, so today no device plan exists to
-     * disagree with it — and inadequate the moment one does, when a session that answered "no" here
-     * would hand a plan null buffers.
-     *
-     * <p>What replaces it is a construction-scoped answer from the session that knows the backend,
-     * alongside {@code withStorageOptions} and {@code withPrefillBatchSize}. That belongs with the
-     * plan provider, not ahead of it.
-     *
-     * <p>Why gate at all, when every other family allocates its device arrays unconditionally: for
-     * them the waste is a few megabytes, and here it is over a gigabyte — 151 MB of recurrent state
-     * and the key/value store — on a host path that has already allocated its own.
+     * <p>The same shape as {@code State.withStorageOptions}, and for the same mechanical reason:
+     * {@code createStateFields} runs inside the {@code State} constructor, so a subclass field
+     * assigned afterwards is too late to be read by it.
      */
+    private static final ThreadLocal<Boolean> DEVICE_FOR_CONSTRUCTION = new ThreadLocal<>();
+
+    /**
+     * Builds a state that allocates its device arrays, or does not.
+     *
+     * @param device whether a device plan will be built for this session — in practice, whether
+     *     the model's weights are device weights
+     */
+    public static <T> T withDeviceArrays(boolean device, java.util.function.Supplier<T> build) {
+        Boolean previous = DEVICE_FOR_CONSTRUCTION.get();
+        DEVICE_FOR_CONSTRUCTION.set(device);
+        try {
+            return build.get();
+        } finally {
+            if (previous == null) {
+                DEVICE_FOR_CONSTRUCTION.remove();
+            } else {
+                DEVICE_FOR_CONSTRUCTION.set(previous);
+            }
+        }
+    }
+
+    // @formatter:off
+    /**
+     * Whether the device arrays are worth allocating for this session.
+     *
+     * <p>Answered by the caller that knows — the model, from whether its weights are device
+     * weights — and only otherwise from the property the facade defaults its backend from. The
+     * property alone was wrong as soon as a plan provider existed: a caller that loads device
+     * weights without setting it got a session whose device arrays were all null, and the failure
+     * arrived from inside TornadoVM as {@code null object passed into streamIn()} in the
+     * activation graph rather than anywhere that named the cause.
+     *
+     * <p>Why gate at all, when every other family allocates unconditionally: for them the waste is
+     * a few megabytes, and here it is over a gigabyte — 151 MB of recurrent state and the
+     * key/value store — on a host path that has already allocated its own.
+     */
+    // @formatter:on
     private static boolean deviceInPlay() {
-        return Boolean.parseBoolean(System.getProperty("use.tornadovm", "false"));
+        Boolean handedIn = DEVICE_FOR_CONSTRUCTION.get();
+        return handedIn != null
+                ? handedIn
+                : Boolean.parseBoolean(System.getProperty("use.tornadovm", "false"));
     }
 
     /**
@@ -302,12 +331,6 @@ public final class Qwen35State extends State {
         workspace.wrapV = TornadoWorkspaces.floats(kvDim);
         workspace.wrapAtt =
                 TornadoWorkspaces.floats(config.numberOfHeads() * config.contextLength());
-        // Split-KV attention's per-head partials: a running max and a running denominator beside
-        // each split's accumulated value. Sized by the value-head width, which here is stated by
-        // the file rather than being dim / heads.
-        workspace.wrapAttSplit =
-                TornadoWorkspaces.floats(
-                        config.numberOfHeads() * SPLIT_KV * (config.numberOfHeadsValue() + 2));
 
         // The delta-net branch's scratch.
         workspace.wrapSsmQkv = TornadoWorkspaces.floats(config.deltaNetConvDim());

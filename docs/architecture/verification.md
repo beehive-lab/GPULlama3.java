@@ -345,21 +345,21 @@ configuration the caller has no way to overrule.
   a file today. The direction is the tolerable one: this prediction is used to *refuse*, and a
   refusal cannot be overruled, so an over-estimate blocks a configuration that would have run
   where an under-estimate proceeds to the backend's own allocation error.
-- **The preflight's retention only helps a family with a plan provider.** It reads the provider's
-  declared representations, and `qwen35` has no provider, so Qwen3.8-27B is still predicted at
-  its materialized 27760 MiB. That is the right answer while nothing can build it a plan, and it
-  becomes the retained figure — roughly 17 GB — when Slice 5 registers one.
+- **The preflight's retention reads the provider's per-tensor declaration.** It is
+  `nativeTensorTypes()`, which is separate from the admission set a plan is selected on: a mixed
+  model reports one representation and holds several, and reading admission as retention
+  mispredicts every tensor whose representation is not the model's. Qwen3.8-27B declares eight and
+  is predicted at its retained 14.944 GiB rather than its materialized ~27 GiB.
 - **Devstral's retention is under-declared.** It retains Q6_K as well as Q4_K, but declares only
   Q4_K, so the preflight predicts its Q6_K tensors at the Q8_0 size. Conservative rather than
   wrong, and correcting it means adding a representation to `supportedDataTypes` that no plan is
   actually built for.
-- **`qwen35` has no accelerator path, and no CPU/GPU parity gate.** Nothing claims the
-  architecture, so the gate that matters most for every other family does not apply here and
-  the CPU is verified against llama.cpp instead. The delta-net layers have no kernels. The
-  memory objection is now weaker than it was: Q4_0 device residency exists, and this file is
-  mostly Q4_0, so retaining it would leave roughly 17 GB rather than 28 GB against 24 GB of
-  VRAM — plausible at a modest context. Retention would still have to be wired into this
-  family's loader, and the kernels are the real work.
+- **`qwen35` on an accelerator is single-token decode, CUDA only.** Its provider declares
+  `STANDARD` and no other mode, and no lowering. Nothing is materialized: Q4_0 projections and
+  embeddings, Q4_1 down projections, Q5_K recurrent outputs, a Q6_K vocabulary projection and F32
+  norms and SSM parameters are each decoded by a kernel selected from that tensor's own
+  representation. OpenCL and Metal have not been run for this family, and no claim is made for
+  them.
 - **`qwen35` speculative decoding is not a speedup on the host path.** The draft head is
   correct and its acceptance rate is high, but an accepted draft only saves work where several
   positions are verified in one forward pass, and the host path verifies them one at a time.

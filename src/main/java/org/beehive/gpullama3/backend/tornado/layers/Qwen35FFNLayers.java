@@ -14,12 +14,10 @@ import org.beehive.gpullama3.backend.tornado.kernels.TransformerComputeKernelsQ5
 import org.beehive.gpullama3.backend.tornado.kernels.TransformerComputeKernelsQ6_K;
 import org.beehive.gpullama3.backend.tornado.kernels.TransformerPagedKvKernels;
 import org.beehive.gpullama3.backend.tornado.plan.FusedOperandSupport;
-import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerDetectionService;
 import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerType;
 import org.beehive.gpullama3.backend.tornado.scheduling.WorkerGridFactory;
 import org.beehive.gpullama3.backend.tornado.tensor.TornadoTensor;
 import org.beehive.gpullama3.inference.state.Qwen35State;
-import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.tornado.Qwen35TornadoWeights;
 import org.beehive.gpullama3.model.qwen35.Qwen35Configuration;
 import org.beehive.gpullama3.runtime.tensor.DataType;
@@ -73,9 +71,6 @@ public class Qwen35FFNLayers
     private static final int ELEMENTWISE_LOCAL = 128;
 
     private final Qwen35State qwen35State;
-
-    private final boolean isMetalBackend = SchedulerDetectionService.isMetalBackend();
-    private final int attentionSplits = isMetalBackend ? 1 : State.SPLIT_KV;
 
     /**
      * What each weight-reading task was bound to, in construction order.
@@ -679,53 +674,37 @@ public class Qwen35FFNLayers
                 qwen35State.kvBlockCfg,
                 qwen35State.kvBlockStride);
 
-        if (isMetalBackend) {
-            layer.task(
-                    "attention",
-                    TransformerPagedKvKernels::processHeadsFlashAttentionPaged,
-                    context,
-                    qwen35State.workspace.wrapAttnQ,
-                    qwen35State.workspace.wrapKeyCache,
-                    qwen35State.workspace.wrapValueCache,
-                    qwen35State.workspace.wrapXb,
-                    config.numberOfHeads(),
-                    headDim,
-                    kvDim,
-                    config.kvMul(),
-                    qwen35State.workspace.positionHolder,
-                    kvLayer,
-                    qwen35State.workspace.wrapBlockTable,
-                    qwen35State.kvBlockCfg,
-                    qwen35State.kvBlockStride);
-        } else {
-            layer.task(
-                    "attention",
-                    TransformerPagedKvKernels::processHeadsFlashAttentionSplitKVPaged,
-                    context,
-                    qwen35State.workspace.wrapAttnQ,
-                    qwen35State.workspace.wrapKeyCache,
-                    qwen35State.workspace.wrapValueCache,
-                    qwen35State.workspace.wrapAttSplit,
-                    config.numberOfHeads(),
-                    headDim,
-                    kvDim,
-                    config.kvMul(),
-                    qwen35State.workspace.positionHolder,
-                    kvLayer,
-                    qwen35State.workspace.wrapBlockTable,
-                    qwen35State.kvBlockCfg,
-                    qwen35State.kvBlockStride,
-                    attentionSplits);
-            layer.task(
-                    "attention_combine",
-                    TransformerComputeKernelsLayered::combineSplitKVAttention,
-                    context,
-                    qwen35State.workspace.wrapAttSplit,
-                    qwen35State.workspace.wrapXb,
-                    config.numberOfHeads(),
-                    headDim,
-                    attentionSplits);
-        }
+        // @formatter:off
+        // The single-workgroup online-softmax kernel, on every backend.
+        //
+        // Not the split-KV (flash-decoding) kernel every other family decodes with: that one
+        // stages the query and a per-thread accumulator in local arrays fixed at 128 floats per
+        // head, and this family's head is 256 wide. Handing it a 256-wide head reads and writes
+        // past those arrays — an illegal address on CUDA, which surfaces as a poisoned context and
+        // an allocation failure several calls later rather than as a fault in the kernel that
+        // caused it. This kernel sizes its shared memory from the head width it is given.
+        //
+        // The cost is the parallelism the splits would have given: one workgroup per head rather
+        // than eight per head. A split-KV variant whose local arrays are sized from parameters
+        // would recover it, and belongs with a measurement rather than ahead of one.
+        // @formatter:on
+        layer.task(
+                "attention",
+                TransformerPagedKvKernels::processHeadsFlashAttentionPaged,
+                context,
+                qwen35State.workspace.wrapAttnQ,
+                qwen35State.workspace.wrapKeyCache,
+                qwen35State.workspace.wrapValueCache,
+                qwen35State.workspace.wrapXb,
+                config.numberOfHeads(),
+                headDim,
+                kvDim,
+                config.kvMul(),
+                qwen35State.workspace.positionHolder,
+                kvLayer,
+                qwen35State.workspace.wrapBlockTable,
+                qwen35State.kvBlockCfg,
+                qwen35State.kvBlockStride);
 
         // A logistic, not a SiLU: reusing the SwiGLU kernel would multiply by the gate twice.
         layer.task(
@@ -986,7 +965,6 @@ public class Qwen35FFNLayers
                     qwen35State.workspace.wrapKeyCache,
                     qwen35State.workspace.wrapValueCache,
                     qwen35State.workspace.wrapAtt,
-                    qwen35State.workspace.wrapAttSplit,
                     qwen35State.workspace.wrapHb);
             // The recurrent state persists across tokens and is updated in place, so it is
             // uploaded once — zeroed — and never read back. Uploading it every execution would
@@ -1018,7 +996,6 @@ public class Qwen35FFNLayers
                     qwen35State.workspace.wrapKeyCache,
                     qwen35State.workspace.wrapValueCache,
                     qwen35State.workspace.wrapAtt,
-                    qwen35State.workspace.wrapAttSplit,
                     qwen35State.workspace.wrapHb,
                     qwen35State.workspace.positionHolder);
             layer.consumeFromDevice(predecessor, qwen35State.workspace.wrapBlockTable);
@@ -1063,9 +1040,6 @@ public class Qwen35FFNLayers
                         config.numberOfHeads() * (config.ropeDimensionCount() / 2), 32);
         WorkerGrid kvAppend = WorkerGridFactory.genericWorker(config.kvDim(), ELEMENTWISE_LOCAL);
         WorkerGrid attention =
-                WorkerGridFactory.createAttentionWorker(
-                        config.numberOfHeads() * attentionSplits, headDim);
-        WorkerGrid attentionCombine =
                 WorkerGridFactory.createAttentionWorker(config.numberOfHeads(), headDim);
         WorkerGrid outputGate =
                 WorkerGridFactory.genericWorker(
@@ -1126,10 +1100,7 @@ public class Qwen35FFNLayers
                 scheduler.addWorkerGrid(prefix + "attn_qk_norm", qkNorm);
                 scheduler.addWorkerGrid(prefix + "attn_rope", rope);
                 scheduler.addWorkerGrid(prefix + "attn_kv_append", kvAppend);
-                scheduler.addWorkerGrid(prefix + "attention", isMetalBackend ? attentionCombine : attention);
-                if (!isMetalBackend) {
-                    scheduler.addWorkerGrid(prefix + "attention_combine", attentionCombine);
-                }
+                scheduler.addWorkerGrid(prefix + "attention", attention);
                 scheduler.addWorkerGrid(prefix + "attn_output_gate", outputGate);
                 scheduler.addWorkerGrid(prefix + "attn_output_proj", matVecWorker(config.dim()));
             }

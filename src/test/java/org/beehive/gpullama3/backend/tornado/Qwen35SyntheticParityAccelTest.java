@@ -54,21 +54,21 @@ import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 // @formatter:on
 public class Qwen35SyntheticParityAccelTest {
 
-    private static final int DIM = 256;
-    private static final int HIDDEN = 512;
+    private static final int DIM = 5120;
+    private static final int HIDDEN = 17408;
     private static final int TRUNK = 8;
     private static final int BLOCKS = TRUNK + 1;
-    private static final int HEADS = 4;
-    private static final int KV_HEADS = 2;
-    private static final int HEAD_DIM = 32;
+    private static final int HEADS = 24;
+    private static final int KV_HEADS = 4;
+    private static final int HEAD_DIM = 256;
     private static final int INTERVAL = 4;
     private static final int CONV_KERNEL = 4;
-    private static final int STATE_SIZE = 64;
-    private static final int GROUPS = 4;
-    private static final int VALUE_HEADS = 4;
-    private static final int INNER = 256;
-    private static final int ROPE_DIM = 16;
-    private static final int VOCAB = 512;
+    private static final int STATE_SIZE = 128;
+    private static final int GROUPS = 16;
+    private static final int VALUE_HEADS = 48;
+    private static final int INNER = 6144;
+    private static final int ROPE_DIM = 64;
+    private static final int VOCAB = 2048;
     private static final int CONTEXT = 32;
 
     private final Random random = new Random(20260908L);

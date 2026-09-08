@@ -326,13 +326,24 @@ state are per-layer slices of one array each, addressed by an offset.
 
 | Backend | Position |
 | --- | --- |
-| CPU | The reference, and initially the only one. |
-| CUDA / OpenCL / Metal | Unclaimed. No `TornadoPlanProvider` is registered, so a GPU request fails by name rather than silently running something else. |
+| CPU | The reference. |
+| CUDA | `STANDARD` single-token decode, verified against the CPU on the real fixture. Nothing is materialized: each task decodes the representation of the tensor it reads. |
+| OpenCL / Metal | Not run. No claim is made for either. |
 
-**Superseded by §4a.** This originally said the GPU was blocked by memory, because the loader
+**Superseded.** This originally said the GPU was blocked by memory, because the loader
 materialized `Q4_0`, `Q4_1`, `Q5_K` and `Q6_K` as `Q8_0`, turning a 16 GB file into roughly 28 GB
 against a 24 GB device. Native retention removes that: the file's own weight bytes are 14.944 GiB
-and that is what the device holds. What remains is kernels.
+and that is what the device holds.
+
+Two facts the port established that are not obvious from the kernels:
+
+- **A 256-wide head does not fit the split-KV attention kernel.**
+  `processHeadsFlashAttentionSplitKVPaged` fixes its query staging at 128 floats and its
+  per-thread accumulator at 64x128, so this family uses the single-workgroup online-softmax
+  kernel, which sizes its shared memory from the head width it is given.
+- **A quantized row must be a whole number of blocks.** Every block-decoding kernel addresses a
+  row by its block offset. The layer graphs check it rather than discovering it as a numerical
+  disagreement.
 
 ## 6. Verification plan
 

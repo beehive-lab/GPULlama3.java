@@ -9,6 +9,7 @@ import org.beehive.gpullama3.inference.sampler.Sampler;
 import org.beehive.gpullama3.inference.state.Qwen35State;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.Weights;
+import org.beehive.gpullama3.inference.weights.tornado.TornadoWeights;
 import org.beehive.gpullama3.model.AbstractModel;
 import org.beehive.gpullama3.model.ModelType;
 import org.beehive.gpullama3.model.format.ChatFormat;
@@ -67,14 +68,28 @@ public class Qwen35 extends AbstractModel {
 
     @Override
     public State createNewState() {
-        State state = new Qwen35State(configuration(), -1);
-        state.latestToken = chatFormat.getBeginOfText();
-        return state;
+        return newState(-1);
     }
 
     @Override
     public State createNewState(int batchsize) {
-        State state = new Qwen35State(configuration(), batchsize);
+        return newState(batchsize);
+    }
+
+    /**
+     * A session's state, told whether it is being built for a device.
+     *
+     * <p>This family's device arrays are over a gigabyte — the recurrent state and the key/value
+     * store — so a host session does not allocate them. What decides is the weights this model
+     * actually holds, which is the only thing here that knows: reading a system property instead
+     * gave a device session with null buffers whenever a caller loaded device weights without
+     * setting it.
+     */
+    private State newState(int batchsize) {
+        boolean device = weights instanceof TornadoWeights;
+        State state =
+                Qwen35State.withDeviceArrays(
+                        device, () -> new Qwen35State(configuration(), batchsize));
         state.latestToken = chatFormat.getBeginOfText();
         return state;
     }
