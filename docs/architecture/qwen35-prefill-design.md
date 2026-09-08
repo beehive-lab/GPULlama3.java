@@ -118,6 +118,55 @@ The batched path accumulates in **FP32**, like the single-token path. The existi
 GEMM dequantizes to FP16 and accumulates through tensor cores, which is why it cannot meet the
 single-token bounds; this family does not use it, and inherits no looser contract.
 
+## 5a. Measured
+
+RTX 5090 Laptop (24 GB), CUDA, TornadoVM 5.2.1-jdk21-dev, JDK 21, Qwen3.8-27B-Q4_0.
+
+**Correctness.** Teacher-forced against the CPU `STANDARD` reference at the single-token bounds,
+63 rows of 248320 logits:
+
+| Mode | Violations (budget 0.01%) | Worst ratio | Argmax |
+| --- | --- | --- | --- |
+| `STANDARD` | 0 | 0.074 | 63/63 |
+| `PREFILL_DECODE` | 0 | 0.074 | 63/63 |
+| `BATCH_PREFILL_DECODE`, widths 2, 7, 32, 64 | 0 | 0.056 | 63/63 |
+
+The four batched widths produce the same numbers to the last digit, which is the chunk-invariance
+claim measured rather than argued.
+
+**Prompt evaluation**, 381 prompt tokens, paired and repeated:
+
+| Mode | Prompt eval | Prefill | Decode |
+| --- | --- | --- | --- |
+| `STANDARD` | 11.97 ± 0.15 tok/s | 31.8 s | 10.59 ± 0.04 tok/s |
+| `BATCH_PREFILL_DECODE`, 32 | **25.99 ± 0.07 tok/s** | 14.7 s | 10.24 ± 0.02 tok/s |
+
+`PREFILL_DECODE` is within noise of `STANDARD` on prompt throughput, as it should be: it runs the
+same graphs and only skips the vocabulary projection for prompt positions.
+
+**What the batched speed came from, and what it did not.** The first batched implementation was
+*no faster than STANDARD* — one workgroup per (row, output row) reads the weight matrix once per
+row, which is exactly what running the rows separately reads. A quantized projection is
+memory-bound, so the chunk only pays once it reuses what it reads: the Q4_0 projections now cover
+eight rows per workgroup and the fused gate/up four, decoding each block once for the tile. That
+took prompt evaluation from 1.0x to 1.69x to **2.17x**.
+
+The rest is bounded by the recurrence. The convolution and delta-rule scans are serial in the
+chunk by construction, so batching cannot speed them up — only the projections and the launch
+count. A stack that is three quarters recurrent therefore has a lower ceiling here than an
+attention-only one, and that is a property of the architecture rather than of this implementation.
+
+**Memory**, by bisecting the device budget at context 4:
+
+| Mode | Predicted | Measured minimum |
+| --- | --- | --- |
+| `STANDARD` | 15453.6 MiB | 15455 MiB (15450 fails) |
+| `PREFILL_DECODE` | 15453.6 MiB | ≤15470 MiB (15450 fails) |
+| `BATCH_PREFILL_DECODE`, 32 | 15468.8 MiB | ≤15470 MiB (15450 fails) |
+
+Batched prefill costs about 15 MiB more than single-token decode, not a second copy of the model,
+because its decode graphs consume the weights the prefill graphs uploaded.
+
 ## 6. Verification
 
 The CPU `STANDARD` path is the reference for both modes, teacher-forced, at the bounds the
