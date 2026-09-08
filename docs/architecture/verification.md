@@ -354,6 +354,14 @@ configuration the caller has no way to overrule.
   Q4_K, so the preflight predicts its Q6_K tensors at the Q8_0 size. Conservative rather than
   wrong, and correcting it means adding a representation to `supportedDataTypes` that no plan is
   actually built for.
+- **`qwen35`'s memory plan is accurate to 0.01%, and that last hair is on the low side.**
+  Measured on Qwen3.8-27B at context 4 (the CLI sizes the context from the token budget) by
+  bisecting `--gpu-memory`: 15455 MiB succeeds, 15450 MiB fails, against a prediction of
+  15453.6 MiB. The remaining 1.4 MiB is TornadoVM's own per-buffer overhead beyond the header
+  model, not a missing component. Two components were wrong before this and both by far more:
+  the key/value cache was predicted over every layer where this family attends in one of four,
+  and the recurrent state — 149.6 MiB, neither cache nor scratch — was not counted at all.
+
 - **`qwen35` on an accelerator is single-token decode, CUDA only.** Its provider declares
   `STANDARD` and no other mode, and no lowering. Nothing is materialized: Q4_0 projections and
   embeddings, Q4_1 down projections, Q5_K recurrent outputs, a Q6_K vocabulary projection and F32

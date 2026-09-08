@@ -41,6 +41,36 @@ public interface Configuration {
 
     int numberOfHeadsKey();
 
+    // @formatter:off
+    /**
+     * How many layers hold key/value entries.
+     *
+     * <p>Every layer, for a stack that is attention throughout — which is every family but one.
+     * {@code qwen35} attends in one layer of four and mixes the rest with a recurrence that
+     * retains nothing per position, so its key/value store is sized by this rather than by the
+     * layer count, and a memory prediction built from {@link #numberOfLayers()} over-predicts it
+     * fourfold.
+     */
+    // @formatter:on
+    default int keyValueLayerCount() {
+        return numberOfLayers();
+    }
+
+    // @formatter:off
+    /**
+     * Bytes of per-session state that is neither key/value cache nor scratch.
+     *
+     * <p>Zero for a stack that is attention throughout. A recurrent layer keeps its history in a
+     * fixed-size state instead of in a growing cache — a convolution window and a delta-net matrix
+     * per head — which persists across tokens, is updated in place, and is sized from the
+     * configuration rather than from the context length. It is not scratch, so a workspace figure
+     * derived from the transformer's dimensions does not include it.
+     */
+    // @formatter:on
+    default long recurrentStateBytes() {
+        return 0L;
+    }
+
     /** Size of the vocabulary (token set) */
     int vocabularySize();
 

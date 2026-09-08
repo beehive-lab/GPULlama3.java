@@ -122,6 +122,7 @@ public record Qwen35Configuration(String quantization,
     }
 
     /** How many blocks hold key/value entries: the attending trunk layers plus the MTP blocks. */
+    @Override
     public int keyValueLayerCount() {
         return numberOfAttentionLayers() + numberOfNextnLayers;
     }
@@ -230,5 +231,11 @@ public record Qwen35Configuration(String quantization,
     public int convStateSize() {
         return (ssmConvKernel - 1) * deltaNetConvDim();
     }
+    /** The convolution windows and delta-net matrices, one set per recurrent layer. */
+    @Override
+    public long recurrentStateBytes() {
+        return (long) recurrentLayerCount()
+                * (convStateSize() + deltaNetStateSize())
+                * Float.BYTES;
+    }
 }
-// @formatter:on
