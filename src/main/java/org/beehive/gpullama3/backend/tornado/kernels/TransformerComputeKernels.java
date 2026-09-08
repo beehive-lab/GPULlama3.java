@@ -18,6 +18,81 @@ public class TransformerComputeKernels {
      * copy + host scan removed). Launch with one workgroup: {@code global == local ==
      * localMemSize}.
      */
+    // @formatter:off
+    /**
+     * {@code x[i] *= scale}, in place, one lane per element.
+     *
+     * <p>Format-neutral and family-neutral: Gemma scales an embedding by {@code sqrt(dim)}, and a
+     * delta-net layer scales its queries by {@code 1/sqrt(headKeyDim)} before the recurrence. Same
+     * arithmetic, so one kernel — a copy named after either family would be the second one.
+     *
+     * <p>Each lane reads and writes only its own element, so the in-place write destroys nothing
+     * another lane still needs.
+     */
+    // @formatter:on
+    static void scaleInPlaceLane(FloatArray x, float scale, int lane) {
+        x.set(lane, x.get(lane) * scale);
+    }
+
+    /** One lane per element. */
+    public static void scaleInPlace(KernelContext context, FloatArray x, float scale, int size) {
+        int lane = context.globalIdx;
+        if (lane >= size) {
+            return;
+        }
+        scaleInPlaceLane(x, scale, lane);
+    }
+
+    // @formatter:off
+    /**
+     * One element of a fused three-way projection, copied into the slice it belongs to.
+     *
+     * <p>The widths are stated separately rather than as {@code (q, kv, kv)}. {@code splitQKV} in
+     * {@code TransformerComputeKernelsLayered} assumes a key and a value of equal width, which is
+     * true of attention and false of a delta-net mixer: its fused projection is {@code 2048 |
+     * 2048 | 6144}, and splitting it on equal halves would take the value slice from inside the
+     * keys.
+     *
+     * <p>Source and destinations are distinct buffers, so no lane overwrites an element another
+     * lane has yet to read.
+     *
+     * @param lane an element of the fused buffer, {@code 0 .. dimA + dimB + dimC - 1}
+     */
+    // @formatter:on
+    static void splitThreeWayLane(
+            FloatArray fused,
+            FloatArray a,
+            FloatArray b,
+            FloatArray c,
+            int dimA,
+            int dimB,
+            int lane) {
+        if (lane < dimA) {
+            a.set(lane, fused.get(lane));
+        } else if (lane < dimA + dimB) {
+            b.set(lane - dimA, fused.get(lane));
+        } else {
+            c.set(lane - dimA - dimB, fused.get(lane));
+        }
+    }
+
+    /** One lane per element of the fused buffer. */
+    public static void splitThreeWay(
+            KernelContext context,
+            FloatArray fused,
+            FloatArray a,
+            FloatArray b,
+            FloatArray c,
+            int dimA,
+            int dimB,
+            int dimC) {
+        int lane = context.globalIdx;
+        if (lane >= dimA + dimB + dimC) {
+            return;
+        }
+        splitThreeWayLane(fused, a, b, c, dimA, dimB, lane);
+    }
+
     public static void argmaxLogits(
             KernelContext context, FloatArray logits, IntArray out, int vocab, int localMemSize) {
         int tid = context.localIdx;
