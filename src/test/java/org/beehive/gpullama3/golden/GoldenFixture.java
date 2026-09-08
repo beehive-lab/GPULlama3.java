@@ -85,7 +85,22 @@ public final class GoldenFixture {
                 "Phi-3-mini-4k-instruct-Q8_0.gguf",
                 "Q8_0",
                 "0ac8ee48aeebf7d1b354691fd1e29e91c32ad88bbad10ad45ac880dcd4372a47",
-                "phi3-mini-4k");
+                "phi3-mini-4k"),
+
+        /**
+         * The {@code qwen35} hybrid architecture, and the only fixture here that is not a small
+         * model: 27B in 16 GB. Host-only, because no accelerator claims the architecture and the
+         * device would need roughly 28 GB once its Q4_0 weights were materialized as Q8_0.
+         *
+         * <p>Quantization is recorded as the file's own {@code Q4_0} rather than the {@code Q8_0}
+         * every quantized model reports for its activations, because what distinguishes this
+         * fixture is what the weights are, and it also mixes Q4_1, Q5_K, Q6_K and Q8_0 tensors.
+         */
+        QWEN3_8_27B_Q4_0(
+                "Qwen3.8-27B-Q4_0.gguf",
+                "Q4_0",
+                "ede16c7b36e578ca87a8c70e011e4b4633a32c831c0ce76d0f474582384e671d",
+                "qwen3.8-27b");
 
         public final String fileName;
         public final String quantization;

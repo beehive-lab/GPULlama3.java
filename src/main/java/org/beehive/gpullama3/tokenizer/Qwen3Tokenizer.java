@@ -49,6 +49,24 @@ public class Qwen3Tokenizer implements Tokenizer {
     // @formatter:off
     public Qwen3Tokenizer(
             Map<String, Object> metadata, Vocabulary vocabulary, boolean isDeepSeekR1DistillQwen) {
+        this(metadata, vocabulary, isDeepSeekR1DistillQwen, QWEN3_PATTERN);
+    }
+
+    /**
+     * The same tokenizer under a different pre-tokenizer split.
+     *
+     * <p>The BPE merges, the byte encoder, the special-token block and the {@code <think>} handling
+     * are shared across the Qwen 3 line; only the regex that carves text into chunks before merging
+     * differs between generations. {@code qwen35} widens letter runs to take combining marks. That
+     * is a parameter, not a second tokenizer, so it is passed in rather than branched on.
+     *
+     * @param splitPattern the pre-tokenizer regex this model was trained with
+     */
+    protected Qwen3Tokenizer(
+            Map<String, Object> metadata,
+            Vocabulary vocabulary,
+            boolean isDeepSeekR1DistillQwen,
+            String splitPattern) {
         int[] tokenTypes = (int[]) metadata.get("tokenizer.ggml.token_type");
         String[] mergeLines = (String[]) metadata.get("tokenizer.ggml.merges");
         List<Pair<Integer, Integer>> merges =
@@ -88,7 +106,7 @@ public class Qwen3Tokenizer implements Tokenizer {
         specialTokens.remove("</think>");
 
         this.vocabulary = vocabulary;
-        this.compiledPattern = Pattern.compile(QWEN3_PATTERN);
+        this.compiledPattern = Pattern.compile(splitPattern);
         this.specialTokens = new HashMap<>(specialTokens);
         this.merges = new HashMap<>();
         this.tokenTypes = tokenTypes;

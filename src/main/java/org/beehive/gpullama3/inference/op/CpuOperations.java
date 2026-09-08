@@ -282,6 +282,44 @@ public final class CpuOperations {
                 * (1.0f + (float) Math.tanh(0.7978845608028654 * x * (1.0 + 0.044715 * x * x)));
     }
 
+    /**
+     * {@code RoPE}, NeoX layout, rotating only the first {@code rotaryDim} of each head.
+     *
+     * <p>Partial rotation is a parameter of RoPE, not a second scheme: the head's first {@code
+     * rotaryDim} elements rotate in pairs {@code (ic, ic + rotaryDim/2)} and everything above
+     * {@code rotaryDim} passes through untouched. Qwen3.5 states {@code rope.dimension_count = 64}
+     * against a 256-wide head, so three quarters of every head is unrotated.
+     *
+     * <p>The frequency tables must have been precomputed over {@code rotaryDim}, not over the head
+     * width — they are indexed {@code position * rotaryDim / 2 + ic}.
+     *
+     * @param vec the buffer to rotate in place, {@code heads * headDim} long
+     * @param heads how many heads it holds
+     * @param headDim the head width
+     * @param rotaryDim how much of each head rotates; must be even and at most {@code headDim}
+     */
+    public static void ropeNeoxPartial(
+            FloatTensor vec,
+            int heads,
+            int headDim,
+            int rotaryDim,
+            int position,
+            FloatTensor freqCisReal,
+            FloatTensor freqCisImag) {
+        final int half = rotaryDim / 2;
+        for (int h = 0; h < heads; h++) {
+            final int base = h * headDim;
+            for (int ic = 0; ic < half; ic++) {
+                float fcr = freqCisReal.getFloat(position * half + ic);
+                float fci = freqCisImag.getFloat(position * half + ic);
+                float v0 = vec.getFloat(base + ic);
+                float v1 = vec.getFloat(base + ic + half);
+                vec.setFloat(base + ic, v0 * fcr - v1 * fci);
+                vec.setFloat(base + ic + half, v0 * fci + v1 * fcr);
+            }
+        }
+    }
+
     /** {@code RoPE}, NeoX layout, over one vector with its own head count. */
     public static void ropeNeoxSingle(
             FloatTensor vec,
@@ -354,6 +392,217 @@ public final class CpuOperations {
     public static void swiGLUIntoUp(FloatTensor gate, FloatTensor up) {
         gate.mapInPlace(value -> value / (float) (1.0 + Math.exp(-value)));
         up.multiplyInPlace(gate);
+    }
+
+    /**
+     * {@code L2Norm} — scale one slice to unit length, in place.
+     *
+     * <p>Not {@link #rmsNormUnweighted}: that divides by the root <i>mean</i> square, a factor of
+     * {@code √size} larger, and the two are not interchangeable. Qwen3.5's delta-net layers
+     * normalize each convolved query and key head this way before the state update.
+     *
+     * @param values the buffer holding the slice
+     * @param offset where the slice starts
+     * @param size how many elements it spans
+     * @param eps a floor on the divisor, so an all-zero slice yields zeros rather than NaN. A
+     *     floor rather than a term added under the root: that is what {@code ggml_l2_norm} does,
+     *     and the two differ by more than rounding once the norm approaches {@code eps}.
+     */
+    public static void l2Norm(FloatTensor values, int offset, int size, float eps) {
+        float ss = values.reduce(offset, size, 0f, (acc, xi) -> acc + xi * xi);
+        final float inv = 1.0f / Math.max((float) Math.sqrt(ss), eps);
+        values.mapWithIndexInPlace(offset, size, (value, index) -> inv * value);
+    }
+
+    /**
+     * {@code CausalConv1d} — one step of a depthwise causal convolution, advancing its window.
+     *
+     * <p>Depthwise: each channel is convolved with its own taps and never mixes with another, so
+     * this is {@code channels} independent dot products of length {@code kernel}, not a matrix
+     * multiply. Causal: the taps run over this step and the {@code kernel - 1} before it, never
+     * ahead.
+     *
+     * <p>Both the kernel and the window are <b>channel-major</b>: a channel's taps are contiguous.
+     * That is how GGUF stores {@code ssm_conv1d} — its shape is {@code (kernel, channels)} with the
+     * kernel as the fast axis, so element {@code c * kernel + t} is channel {@code c}'s tap {@code
+     * t} — and matching it here means the weight is read as it lies. Taps run oldest first, so tap
+     * {@code kernel - 1} is this step.
+     *
+     * <p>The window is state, and this operation owns advancing it. On return {@code window} holds
+     * the last {@code kernel - 1} inputs including {@code input}, oldest first per channel, so the
+     * next call continues the sequence. That is why the update is here and not in the caller: a
+     * convolution whose window is advanced somewhere else is one refactor away from being advanced
+     * twice.
+     *
+     * @param input this step's value per channel, {@code channels} long
+     * @param weight the taps, {@code channels * kernel}, channel-major as GGUF stores them
+     * @param window the retained inputs, {@code channels * (kernel - 1)}, channel-major
+     * @param out the convolved result, {@code channels} long; may not alias {@code input}
+     * @param channels how many independent channels
+     * @param kernel how many taps, this step included
+     */
+    public static void causalConv1d(
+            FloatTensor input,
+            FloatTensor weight,
+            FloatTensor window,
+            FloatTensor out,
+            int channels,
+            int kernel) {
+        final int history = kernel - 1;
+        for (int c = 0; c < channels; c++) {
+            final int wBase = c * kernel;
+            final int hBase = c * history;
+            final float x = input.getFloat(c);
+            float sum = 0f;
+            for (int t = 0; t < history; t++) {
+                sum += weight.getFloat(wBase + t) * window.getFloat(hBase + t);
+            }
+            sum += weight.getFloat(wBase + history) * x;
+            out.setFloat(c, sum);
+            // Advance this channel's window: drop the oldest tap, append this step. Safe to do
+            // here because a channel's taps have all been read by now.
+            for (int t = 0; t + 1 < history; t++) {
+                window.setFloat(hBase + t, window.getFloat(hBase + t + 1));
+            }
+            if (history > 0) {
+                window.setFloat(hBase + history - 1, x);
+            }
+        }
+    }
+
+    /**
+     * {@code DeltaRuleUpdate} — one step of the gated delta rule, for every value head.
+     *
+     * <p>The recurrent counterpart of {@link #attention}. Where attention scores a query against a
+     * growing key/value store, this keeps one {@code stateDim × stateDim} matrix per head into
+     * which the entire history has been summed, and updates it in place:
+     *
+     * <pre>
+     *   S      *= decay[h]                      // forget, per head
+     *   d       = (v[h] - Sᵀ·k[h]) * beta[h]    // what the state does not already predict
+     *   S      += k[h] ⊗ d                      // write the correction
+     *   out[h]  = Sᵀ·q[h]                       // read it back out
+     * </pre>
+     *
+     * <p>The correction is the delta rule proper: the state is only moved by the part of the value
+     * it does not already produce for this key, which is what keeps a fixed-size state from
+     * saturating. {@code beta} is how much of that correction to apply.
+     *
+     * <p>Query and key heads may be fewer than value heads — this model has 16 of each against 48
+     * value heads — so value head {@code h} reads key head {@code h % keyHeads}. <b>Modulo, not
+     * division.</b> The reference repeats the key heads with a tiling repeat, which cycles
+     * {@code 0,1,…,15,0,1,…} rather than blocking {@code 0,0,0,1,1,1,…}; the fused kernel states
+     * the same mapping directly. Both orderings produce well-formed output, and the wrong one
+     * degrades slowly with sequence length rather than failing outright.
+     *
+     * <p>State layout is {@code (h * stateDim + i) * stateDim + j}: row {@code i} indexes the key
+     * dimension and column {@code j} the value dimension.
+     *
+     * @param q queries, {@code keyHeads * stateDim}, already normalized and scaled
+     * @param k keys, {@code keyHeads * stateDim}, already normalized
+     * @param v values, {@code valueHeads * stateDim}
+     * @param decay per value head, already exponentiated
+     * @param beta per value head, already through the logistic
+     * @param state the retained matrices, updated in place
+     * @param out the readout, {@code valueHeads * stateDim}
+     * @param valueHeads how many value heads
+     * @param keyHeads how many key heads there are to cycle through
+     * @param stateDim the head width, equal for keys and values here
+     */
+    public static void deltaRuleUpdate(
+            FloatTensor q,
+            FloatTensor k,
+            FloatTensor v,
+            FloatTensor decay,
+            FloatTensor beta,
+            FloatTensor state,
+            FloatTensor out,
+            int valueHeads,
+            int keyHeads,
+            int stateDim) {
+        final float[] correction = new float[stateDim];
+        for (int h = 0; h < valueHeads; h++) {
+            final int stateBase = h * stateDim * stateDim;
+            final int kvBase = (h % keyHeads) * stateDim;
+            final int vBase = h * stateDim;
+            final float g = decay.getFloat(h);
+            final float b = beta.getFloat(h);
+
+            // Forget, and read what the state already predicts for this key, in one sweep: the
+            // decayed state is what the prediction must be taken against.
+            for (int j = 0; j < stateDim; j++) {
+                correction[j] = 0f;
+            }
+            for (int i = 0; i < stateDim; i++) {
+                final float ki = k.getFloat(kvBase + i);
+                final int row = stateBase + i * stateDim;
+                for (int j = 0; j < stateDim; j++) {
+                    float decayed = state.getFloat(row + j) * g;
+                    state.setFloat(row + j, decayed);
+                    correction[j] += decayed * ki;
+                }
+            }
+
+            // The delta: how far the value is from that prediction, scaled by beta.
+            for (int j = 0; j < stateDim; j++) {
+                correction[j] = (v.getFloat(vBase + j) - correction[j]) * b;
+            }
+
+            // Write the outer product, and read the state back out against the query in the same
+            // sweep — the readout must see the updated state.
+            for (int j = 0; j < stateDim; j++) {
+                out.setFloat(vBase + j, 0f);
+            }
+            for (int i = 0; i < stateDim; i++) {
+                final float ki = k.getFloat(kvBase + i);
+                final float qi = q.getFloat(kvBase + i);
+                final int row = stateBase + i * stateDim;
+                for (int j = 0; j < stateDim; j++) {
+                    float updated = state.getFloat(row + j) + ki * correction[j];
+                    state.setFloat(row + j, updated);
+                    out.setFloat(vBase + j, out.getFloat(vBase + j) + updated * qi);
+                }
+            }
+        }
+    }
+
+    /**
+     * {@code GatedNorm} — {@code rms_norm(x, weight) * silu(gate)}, per head.
+     *
+     * <p>Neither {@link #rmsNorm} nor {@link #swiGLU} alone: the normalization is per head over
+     * {@code headDim} elements against a weight of that width shared by every head, and the gate
+     * is applied to the normalized result rather than to a parallel projection.
+     *
+     * @param values the branch output, {@code heads * headDim}, normalized and gated in place
+     * @param gate the {@code z} branch, the same shape, read through a SiLU
+     * @param weight the learned scale, {@code headDim} long, shared across heads
+     * @param heads how many heads
+     * @param headDim the width normalization runs over
+     */
+    public static void gatedNorm(
+            FloatTensor values,
+            FloatTensor gate,
+            FloatTensor weight,
+            int heads,
+            int headDim,
+            float rmsNormEps) {
+        for (int h = 0; h < heads; h++) {
+            final int base = h * headDim;
+            float ss = values.reduce(base, headDim, 0f, (acc, xi) -> acc + xi * xi);
+            ss /= headDim;
+            ss += rmsNormEps;
+            final float inv = (float) (1.0 / Math.sqrt(ss));
+            for (int i = 0; i < headDim; i++) {
+                float z = gate.getFloat(base + i);
+                float silu = z / (float) (1.0 + Math.exp(-z));
+                values.setFloat(base + i, weight.getFloat(i) * (inv * values.getFloat(base + i)) * silu);
+            }
+        }
+    }
+
+    /** The softplus {@code log(1 + exp(x))}, evaluated so a large argument does not overflow. */
+    public static float softplus(float x) {
+        return x > 20f ? x : (float) Math.log1p(Math.exp(x));
     }
 
     /**

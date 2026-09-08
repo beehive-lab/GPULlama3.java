@@ -163,7 +163,54 @@ result after the whole matrix has run, against `.github/standalone-expectations.
 - A row that ran and produced **wrong output** is a correctness defect. It can never be
   silenced by adding a line to the table, and the assertion step enforces that.
 
+## `qwen35` (Qwen3.5 / Qwen3.8)
+
+Verified on `Qwen3.8-27B-Q4_0.gguf`
+(`ede16c7b36e578ca87a8c70e011e4b4633a32c831c0ce76d0f474582384e671d`), host path only.
+
+| Check | Result |
+| --- | --- |
+| Synthetic decomposition, both layer kinds, against an independently written reference | pass (`Qwen35CpuOperationEquivalenceTest`) |
+| MTP draft head against an independently written reference | pass (`Qwen35MtpTest`) |
+| Q4_1 block decode against hand-encoded blocks | pass (`Q4_1FloatTensorTest`) |
+| Derived geometry against the real metadata block | pass (`Qwen35ConfigurationTest`) |
+| Text against llama.cpp, same file, same prompt, greedy, both on CPU | agrees except at single-token near-ties |
+| MTP draft agreement with the trunk, real model | 63 of 79 (80%) |
+| CPU/accelerator parity | n/a — no backend claims the architecture |
+
+**Two things this port got wrong first, both of which produced fluent output.**
+
+The delta rule pairs 48 value heads with 16 key heads, and the reference repeats the key heads
+by *tiling* — value head `h` reads key head `h % 16`. Dividing instead (`h / 3`) pairs every value
+head with the wrong key. Short answers stayed correct; a 220-token generation collapsed into a
+repetition loop, because the error compounds through the recurrence rather than failing outright.
+
+The equivalence test passed throughout, because its reference had been written from the same
+misreading. **A reference that shares the implementation's misunderstanding is not a check** —
+it is the trap in the porting skill's own list, and it cost a full generation run to notice. What
+found it was reading the fused kernel in the reference implementation, which states the mapping
+directly, rather than re-reading the graph builder that expresses it as a repeat.
+
+The second is why the MTP acceptance rate is measured at all. The trunk's own token is what gets
+emitted whether or not the draft head is fed correctly, so a head reading the wrong hidden state
+produces output indistinguishable from a correct one. Agreement with the trunk is the only visible
+signal: ~80% for a head that is fed correctly, chance for one that is not.
+
 ## Known limitations
+
+- **`qwen35` has no accelerator path, and no CPU/GPU parity gate.** Nothing claims the
+  architecture, so the gate that matters most for every other family does not apply here and
+  the CPU is verified against llama.cpp instead. Two things block a GPU path: the delta-net
+  layers have no kernels, and materializing this file's Q4_0 weights as Q8_0 — what the loader
+  does for every representation the device cannot execute — turns 16 GB into roughly 28 GB.
+- **`qwen35` speculative decoding is not a speedup on the host path.** The draft head is
+  correct and its acceptance rate is high, but an accepted draft only saves work where several
+  positions are verified in one forward pass, and the host path verifies them one at a time.
+  Measured cost of enabling it: 0.90 → 0.70 tok/s. Default off.
+- **`qwen35` tool calling emits Qwen3's format, not this family's.** The chat template in the
+  file specifies `<tool_call><function=name><parameter=x>…`, where the reused `Qwen3ChatFormat`
+  emits JSON inside `<tool_call>`. Conversation, streaming and thinking control are unaffected;
+  tool calling on this family is untested and expected to be wrong.
 
 Recorded honestly rather than gated away. None of these is a passing configuration.
 

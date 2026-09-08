@@ -136,6 +136,8 @@ final class LegacySessionRuntime implements SessionRuntime {
     @Override
     public void reset() {
         state.latestToken = initialToken;
+        // Families with recurrent state clear it here; for everyone else this does nothing.
+        state.resetSequenceState();
     }
 
     /** This session built its plan, so this session frees it. */

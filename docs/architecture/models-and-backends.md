@@ -26,7 +26,14 @@ an identity nobody registered is reported as unrecognized (`GPUL-MOD-002`). It i
 mapped to the nearest family.
 
 Registered architectures today: Llama, Mistral, Qwen2, Qwen3, DeepSeek-R1-Distill-Qwen,
-Granite, Phi-3, Gemma-4, Devstral.
+Granite, Phi-3, Gemma-4, Devstral, Qwen3.5 (`qwen35`).
+
+`qwen35` needed no recognition case at all — the file declares that architecture, nothing
+else claims the name, and the pass-through branch resolved it. A provider class and one
+service line were the whole registration, which is what rule 15 is for. It is also the first
+family with **two kinds of layer**: only every fourth trunk layer attends, and the other
+three mix with a Gated Delta Net recurrence holding fixed-size state instead of a key/value
+cache. See [`qwen35-port-proposal.md`](qwen35-port-proposal.md).
 
 ## Data types and materialization
 
@@ -34,7 +41,7 @@ Granite, Phi-3, Gemma-4, Devstral.
 | --- | --- | --- |
 | `F32`, `F16`, `BF16` | no | no |
 | `Q8_0` | yes | no |
-| `Q4_0`, `Q4_K`, `Q5_K`, `Q6_K` | yes | yes |
+| `Q4_0`, `Q4_1`, `Q4_K`, `Q5_K`, `Q6_K` | yes | yes |
 
 **Dequantization is a materialization concern**, not a model concern and not a kernel
 concern. The runtime tensor vocabulary names no file-format type; the format layer parses
@@ -108,6 +115,7 @@ assuming the CUDA result carries over.
 | Prefix caching | yes | yes | yes | yes |
 | Compiled-program caching | n/a | yes | yes | yes |
 | Lowered execution path under `auto` | n/a | Llama/F16/`STANDARD` | selects legacy | selects legacy |
+| `qwen35` (Qwen3.5 / 3.8) | yes | **unclaimed** | **unclaimed** | **unclaimed** |
 | Conversations, tools, thinking control, streaming | yes | yes | yes | yes |
 | Memory preflight confidence | n/a | `EXACT` | `EXACT` | capped at `CONSERVATIVE` |
 | Reset / close / multi-session | yes | yes | yes | yes |
@@ -127,6 +135,13 @@ Recorded external limitations, each with its named cause:
 - **Kernel capture on Metal** — `withPrintKernel()` produces no kernel source, so
   `CompiledProgramIdentityAccelTest` cannot observe there. A capture-path gap, not a
   numerical one.
+- **`qwen35` has no accelerator path.** No `TornadoPlanProvider` claims it, so a device
+  request is refused by name from both the loader and the model rather than falling back to
+  the host — a fallback would report GPU throughput for CPU work. Two things block it, and
+  the second is the harder one: its delta-net layers have no kernels, and materializing
+  Qwen3.8-27B's Q4_0 weights as `Q8_0` (what the loader does for every representation the
+  device cannot execute) turns a 16 GB file into roughly 28 GB of device memory. A GPU path
+  needs native low-bit device tensors first.
 - **Memory preflight on Metal** is capped at `CONSERVATIVE`. The multiplicity/header model
   `EXACT` depends on was bisected against measurement on CUDA only, and admission acts on
   the confidence level.

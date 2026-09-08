@@ -77,7 +77,7 @@ public class ForwardPlanFactory {
         switch (quantization) {
             case F16, Q8_0, Q4_K -> {}
             case F32 -> throw new UnsupportedOperationException("F32 plans not yet implemented");
-            case Q4_0, Q5_K, Q6_K ->
+            case Q4_0, Q4_1, Q5_K, Q6_K ->
                     throw new UnsupportedOperationException(
                             quantization
                                     + " is decoded during compute and is never materialized on the"

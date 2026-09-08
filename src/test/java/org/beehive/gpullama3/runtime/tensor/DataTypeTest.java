@@ -25,6 +25,7 @@ public class DataTypeTest {
                         DataType.BF16,
                         DataType.Q8_0,
                         DataType.Q4_0,
+                        DataType.Q4_1,
                         DataType.Q4_K,
                         DataType.Q5_K,
                         DataType.Q6_K),
@@ -41,13 +42,19 @@ public class DataTypeTest {
         }
         assertEquals(
                 "the CPU-decoded quantizations, and only those, are format-decoded",
-                EnumSet.of(DataType.Q4_0, DataType.Q4_K, DataType.Q5_K, DataType.Q6_K),
+                EnumSet.of(
+                        DataType.Q4_0,
+                        DataType.Q4_1,
+                        DataType.Q4_K,
+                        DataType.Q5_K,
+                        DataType.Q6_K),
                 formatDecoded);
     }
 
     @Test
     public void aFormatDecodedTypeMaterializesAsQ8_0() {
         assertSame(DataType.Q8_0, DataType.Q4_0.materializedFallback());
+        assertSame(DataType.Q8_0, DataType.Q4_1.materializedFallback());
         assertSame(DataType.Q8_0, DataType.Q4_K.materializedFallback());
         assertSame(DataType.Q8_0, DataType.Q5_K.materializedFallback());
         assertSame(DataType.Q8_0, DataType.Q6_K.materializedFallback());

@@ -10,6 +10,7 @@ import org.beehive.gpullama3.auxiliary.RunMetrics;
 import org.beehive.gpullama3.backend.cpu.InferenceCore;
 import org.beehive.gpullama3.backend.cpu.InferenceCoreBatchPrefillDecode;
 import org.beehive.gpullama3.backend.cpu.InferenceCoreWithPrefillDecode;
+import org.beehive.gpullama3.backend.cpu.Qwen35Forward;
 import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
 import org.beehive.gpullama3.inference.sampler.Sampler;
 import org.beehive.gpullama3.inference.state.State;
@@ -593,6 +594,143 @@ public final class TokenGenerationLoop {
                 decodeStart - startNanos,
                 generatedTokens.size(),
                 endNanos - decodeStart,
+                endNanos - startNanos);
+
+        return generatedTokens;
+    }
+
+    // @formatter:off
+    /**
+     * Qwen3.5 generation with the MTP (NextN) draft head.
+     *
+     * <p>Speculative decoding, in the form this architecture ships a head for. Every trunk step
+     * additionally runs the one-block draft head over <i>(the hidden state the trunk just produced,
+     * the token just chosen)</i>, which predicts the token after that. The next trunk step both
+     * commits the chosen token and tells us whether the draft was right.
+     *
+     * <h2>What this buys, and what it does not</h2>
+     *
+     * <p>On a backend that verifies several positions in <b>one</b> forward pass, an accepted draft
+     * is a token that cost no trunk pass at all. This host path has no batched verification: it
+     * runs positions one at a time, so an accepted draft saves nothing and the draft head's block
+     * is pure overhead. It is default-off for that reason. What is here is the part that is hard to
+     * get right — where the head's inputs come from, and what a rejection has to undo — so that a
+     * batched backend only has to replace two sequential calls with one.
+     *
+     * <p>Its value today is that it is measurable. {@code -Dllama.qwen35.speculative.stats=true}
+     * reports how often the draft agreed with the trunk. A head being fed correctly agrees most of
+     * the time; one being fed the wrong hidden state agrees at chance — and no amount of fluent
+     * output would reveal that, because the trunk's own token is what gets emitted either way.
+     */
+    // @formatter:on
+    public static List<Integer> generateTokensQwen35(
+            Model model,
+            State state,
+            int startPosition,
+            List<Integer> promptTokens,
+            Set<Integer> stopTokens,
+            int maxTokens,
+            Sampler sampler,
+            boolean echo,
+            IntConsumer onTokenGenerated) {
+
+        long startNanos = System.nanoTime();
+
+        if (maxTokens < 0 || model.configuration().contextLength() < maxTokens) {
+            maxTokens = model.configuration().contextLength();
+        }
+
+        final org.beehive.gpullama3.model.qwen35.Qwen35Configuration config =
+                (org.beehive.gpullama3.model.qwen35.Qwen35Configuration) model.configuration();
+        final org.beehive.gpullama3.inference.weights.standard.Qwen35StandardWeights weights =
+                (org.beehive.gpullama3.inference.weights.standard.Qwen35StandardWeights)
+                        model.weights();
+        final org.beehive.gpullama3.inference.state.Qwen35State qwenState =
+                (org.beehive.gpullama3.inference.state.Qwen35State) state;
+        final ForwardPass forward = hostForward(model);
+
+        List<Integer> generatedTokens = new ArrayList<>();
+        int generatedTokenBudget = Math.max(0, maxTokens - startPosition - promptTokens.size());
+
+        PromptIngestion ingestion = PromptIngestion.of(state, promptTokens, startPosition);
+        int position = startPosition;
+        int promptConsumed = 0;
+
+        // The prompt only advances the state; its last token produces the first response logits.
+        if (promptTokens.isEmpty()) {
+            forward.forward(model, state, ingestion.firstToken(), position);
+            position++;
+        } else {
+            for (int i = ingestion.firstIndex(); i < promptTokens.size(); i++) {
+                forward.forward(model, state, promptTokens.get(i), position);
+                position++;
+                promptConsumed++;
+            }
+        }
+
+        long inferenceStartNanos = System.nanoTime();
+
+        int drafted = -1; // the head's guess for the token after the one about to be committed
+        int drafts = 0;
+        int accepted = 0;
+
+        while (generatedTokens.size() < generatedTokenBudget && position < maxTokens) {
+            // The trunk's logits predict the token at this position.
+            int token = sampler.sampleToken(asLogits(state.logits));
+
+            if (drafted >= 0) {
+                drafts++;
+                if (drafted == token) {
+                    accepted++;
+                }
+            }
+
+            if (echo) {
+                System.err.print(
+                        Tokenizer.replaceControlCharacters(
+                                model.tokenizer().decode(List.of(token))));
+            }
+            generatedTokens.add(token);
+            if (onTokenGenerated != null) {
+                onTokenGenerated.accept(token);
+            }
+            if (generatedTokens.size() >= generatedTokenBudget || stopTokens.contains(token)) {
+                break;
+            }
+
+            // Draft the token after this one, from the hidden state that produced this one. It has
+            // to happen before the trunk moves on: that hidden state is what the head is defined
+            // over, and the next trunk step overwrites it.
+            drafted = -1;
+            if (position + 1 < maxTokens) {
+                Qwen35Forward.forwardMtp(config, weights, qwenState, token, position);
+                drafted = sampler.sampleToken(asLogits(qwenState.nextnLogits));
+            }
+
+            state.latestToken = token;
+            forward.forward(model, state, token, position);
+            position++;
+        }
+
+        if (drafts > 0 && Boolean.getBoolean("llama.qwen35.speculative.stats")) {
+            System.getLogger(TokenGenerationLoop.class.getName())
+                    .log(
+                            System.Logger.Level.INFO,
+                            "qwen35 MTP draft agreed with the trunk "
+                                    + accepted
+                                    + " of "
+                                    + drafts
+                                    + " times ("
+                                    + Math.round(100.0 * accepted / drafts)
+                                    + "%)");
+        }
+
+        long endNanos = System.nanoTime();
+        RunMetrics.setInferenceMetrics(
+                promptConsumed,
+                inferenceStartNanos - startNanos,
+                generatedTokens.size(),
+                endNanos - inferenceStartNanos,
                 endNanos - startNanos);
 
         return generatedTokens;
