@@ -27,6 +27,15 @@ public class Qwen35 extends AbstractModel {
 
     private static final ArchitectureId ARCHITECTURE = ArchitectureId.of("qwen35");
 
+    /**
+     * Whether to drive generation through the MTP draft head.
+     *
+     * <p>Default off, and it stays off until a backend can verify several positions in one forward
+     * pass: without that, an accepted draft saves no work and the draft head's own block is added
+     * cost. Read once, here, so a session cannot change it halfway through a sequence.
+     */
+    private static final boolean SPECULATIVE = Boolean.getBoolean("llama.qwen35.speculative");
+
     private final Qwen35Configuration configuration;
 
     public Qwen35(
@@ -77,6 +86,18 @@ public class Qwen35 extends AbstractModel {
             Sampler sampler,
             boolean echo,
             IntConsumer onTokenGenerated) {
+        if (SPECULATIVE && configuration.numberOfNextnLayers() > 0) {
+            return TokenGenerationLoop.generateTokensQwen35(
+                    this,
+                    state,
+                    startPosition,
+                    promptTokens,
+                    stopTokens,
+                    maxTokens,
+                    sampler,
+                    echo,
+                    onTokenGenerated);
+        }
         return TokenGenerationLoop.generateTokensQwen3(
                 this,
                 state,

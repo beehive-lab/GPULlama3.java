@@ -85,6 +85,20 @@ public final class Qwen35State extends State {
     /** The MTP block's concatenated {@code [enorm(embedding) ‖ hnorm(hidden)]}, {@code 2 * dim}. */
     public final FloatTensor nextnConcat;
 
+    /**
+     * The MTP block's residual stream, kept apart from {@link #x} so a draft step does not disturb
+     * the trunk's. The two are alive at the same time: the draft is computed from the trunk's
+     * hidden state while the trunk is between steps.
+     */
+    public final FloatTensor nextnX;
+
+    /**
+     * The draft head's logits, kept apart from {@link #logits} so drafting cannot overwrite the
+     * trunk's prediction. The speculative loop holds both at once — the trunk's, to sample the
+     * token being committed, and the draft's, to guess the one after it.
+     */
+    public final FloatTensor nextnLogits;
+
     /** The query half of an attention layer's fused query/gate projection, de-interleaved. */
     public final FloatTensor attnQ;
 
@@ -127,6 +141,8 @@ public final class Qwen35State extends State {
         this.ssmNormed = ArrayFloatTensor.allocate(c.deltaNetValueDim());
         this.hNextn = ArrayFloatTensor.allocate(c.dim());
         this.nextnConcat = ArrayFloatTensor.allocate(2 * c.dim());
+        this.nextnX = ArrayFloatTensor.allocate(c.dim());
+        this.nextnLogits = ArrayFloatTensor.allocate(c.vocabularySize());
         this.attnQ = ArrayFloatTensor.allocate(c.attentionOutputInputDim());
         this.attnGate = ArrayFloatTensor.allocate(c.attentionOutputInputDim());
         this.ssmQ = ArrayFloatTensor.allocate(c.deltaNetKeyDim());

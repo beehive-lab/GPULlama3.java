@@ -86,6 +86,74 @@ public final class Qwen35Forward {
         return state.logits;
     }
 
+    // @formatter:off
+    /**
+     * One step of the MTP (NextN) draft head.
+     *
+     * <p>The block is a complete attention decoder layer with three tensors in front of it. Its
+     * input is not the previous layer's output — the trunk has already finished — but the pair
+     * <i>(what the trunk was thinking at position p, what token was actually chosen for position
+     * p+1)</i>, each normalized by its own norm, concatenated, and projected back down to {@code
+     * dim}. From there it predicts the token at {@code p + 2}.
+     *
+     * <p>It shares the trunk's attention scratch and its own key/value cache at block index {@code
+     * numberOfLayers()}, and it shares the trunk's vocabulary projection: this file carries neither
+     * {@code nextn.embed_tokens} nor {@code nextn.shared_head_head}, so both fall back to the
+     * trunk's, which is what llama.cpp does when they are absent.
+     *
+     * <p>It does <b>not</b> touch {@link Qwen35State#x} or any recurrent state. A draft is a
+     * question about the future, and asking it must not move the trunk.
+     *
+     * @param drafted the token chosen for {@code position}, whose successor is being predicted
+     * @param position where {@code drafted} sits — the MTP block attends at that position
+     * @return logits for the token at {@code position + 1}
+     */
+    // @formatter:on
+    public static FloatTensor forwardMtp(
+            Qwen35Configuration config,
+            Qwen35StandardWeights weights,
+            Qwen35State state,
+            int drafted,
+            int position) {
+
+        final int block = config.numberOfLayers();
+        if (config.numberOfNextnLayers() < 1) {
+            throw new UnsupportedOperationException(
+                    "this qwen35 file carries no MTP block, so it cannot draft");
+        }
+        final int dim = config.dim();
+        final float eps = config.rmsNormEps();
+
+        // [ enorm(embedding of the drafted token) | hnorm(the trunk's hidden state) ]
+        CpuOperations.embeddingLookup(
+                weights.tokenEmbeddingTable, drafted, state.nextnConcat, dim);
+        CpuOperations.rmsNorm(
+                state.nextnConcat, state.nextnConcat, weights.nextnENorm[block], 0, dim, eps);
+        state.hNextn.copyTo(0, state.nextnConcat, dim, dim);
+        CpuOperations.rmsNorm(
+                state.nextnConcat, state.nextnConcat, weights.nextnHNorm[block], dim, dim, eps);
+
+        CpuOperations.matVec(
+                weights.nextnEhProj[block], state.nextnConcat, state.nextnX, dim, 2 * dim);
+
+        CpuOperations.rmsNorm(state.xb, state.nextnX, weights.attnNorm[block], 0, dim, eps);
+        attentionBranch(config, weights, state, block, position);
+        CpuOperations.residualAdd(state.nextnX, state.xb2);
+
+        CpuOperations.rmsNorm(state.xb, state.nextnX, weights.ffnNorm[block], 0, dim, eps);
+        feedForward(config, weights, state, block);
+        CpuOperations.residualAdd(state.nextnX, state.xb2);
+
+        FloatTensor headNorm =
+                weights.nextnSharedHeadNorm[block] != null
+                        ? weights.nextnSharedHeadNorm[block]
+                        : weights.outputNorm;
+        CpuOperations.rmsNorm(state.nextnX, state.nextnX, headNorm, 0, dim, eps);
+        CpuOperations.vocabProjection(
+                weights.output, state.nextnX, state.nextnLogits, config.vocabularySize(), dim);
+        return state.nextnLogits;
+    }
+
     /** The dense SwiGLU feed-forward both layer kinds share, from {@code xb} into {@code xb2}. */
     private static void feedForward(
             Qwen35Configuration config,
