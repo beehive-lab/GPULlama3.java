@@ -159,8 +159,8 @@ the main forward pass must expose it.
 
 The smallest possible change: `Q4_1` is GGML block type 3, 32 values per block, `d` and `m`
 as two halves followed by 16 packed bytes; `value = d * nibble + m`. `GGMLType.Q4_1` already
-carries the right block size. It is format-decoded like `Q4_0`, and materializes as `Q8_0`
-for a GPU that cannot decode it.
+carries the right block size. Like `Q4_0` it is block-encoded — decoded inside the arithmetic
+that consumes it, on the host and on a device alike (see §4a). It is not converted for either.
 
 *Alternative rejected:* dequantizing those 8 tensors to F32 at load. It costs 1.1 GB of heap
 for a saving of one small class, and hides a supported quantization behind a special case.
@@ -213,6 +213,48 @@ current program description emits; `DataType` gains one value no current model f
 pre-tokenizer differs from Qwen3's only in that letter runs also consume combining marks
 (`[\p{L}\p{M}]+` for `\p{L}+`, and `\p{M}` excluded from the punctuation run).
 
+## 4a. Quantized weights are retained on every backend
+
+**This supersedes the memory reasoning in §3.1 and §5, and the `DataType` documentation that said
+the format-decoded types are CPU-only.** The engine's position is now:
+
+- **Quantized storage is retained on the CPU and on accelerators alike.** A tensor keeps the block
+  layout the file gave it, and the blocks and their scales and minima are transferred as they lie.
+- **Decoding during compute is an implementation property, not a CPU-only one.** Both a host dot
+  product and a device kernel decode a block inside the arithmetic that consumes it. That is what
+  "block-encoded" means, and it says nothing about which backend can hold the representation.
+- **Materialization to `Q8_0` is not the normal accelerator fallback.** It nearly doubles a 4-bit
+  model's device footprint, which is the difference between a 27B model fitting in 24 GB and not.
+  Where it still happens it is a stated, declared decision, never an unremarked one.
+- **Support is declared per operation, per dtype, and where it matters per tensor role.** Not per
+  backend and not per model. "The GPU cannot do Q5_K" was never true as stated; what is true is
+  that a particular operation may have no Q5_K kernel yet.
+- **Fusion remains the backend's choice.** A program says what is computed; whether three
+  projections become one task is the backend's business.
+- **Mixed quantization between tensors is legal and normal.** Qwen3.8-27B is mixed by
+  construction: Q4_0 projections, eight Q4_1 `ffn_down`, Q5_K `ssm_out`, a Q6_K output projection,
+  a Q8_0 MTP projection, F32 norms and SSM parameters.
+- **Every operand fused into one kernel must have a layout combination that kernel explicitly
+  supports.** A fused kernel written for three Q4_0 operands must *reject* a Q4_0/Q5_K/Q4_0 triple,
+  at load or plan construction — not read one block layout as another. That rejection is a named
+  failure, never a silent conversion of the odd tensor.
+
+### What `DataType` says, and what it does not
+
+`DataType` describes a representation. It answers whether values are stored in blocks with scales
+(`isQuantized`), and nothing else about capability. It does **not** answer:
+
+- whether a backend can store the representation — that is the backend's storage vocabulary;
+- whether a given operation has a kernel for it — that is `OperationSupport`;
+- what to convert it to — there is no general answer, and `materializedFallback` is narrowed to the
+  one case that is a real narrowing rather than a capability gap (`BF16` to `F16`, because no BF16
+  device arithmetic is used).
+
+### The fixture, measured
+
+Qwen3.8-27B-Q4_0's weight bytes, retained, total **14.944 GiB**. Materialized as `Q8_0` they are
+roughly 27 GiB. Nothing about the model changed; only what the loader does with it.
+
 ## 5. Backends
 
 | Backend | Position |
@@ -220,11 +262,10 @@ pre-tokenizer differs from Qwen3's only in that letter runs also consume combini
 | CPU | The reference, and initially the only one. |
 | CUDA / OpenCL / Metal | Unclaimed. No `TornadoPlanProvider` is registered, so a GPU request fails by name rather than silently running something else. |
 
-The GPU is blocked by memory, not only by kernels: the loader materializes `Q4_0`, `Q4_1`,
-`Q5_K` and `Q6_K` as `Q8_0` for the device, which turns a 16 GB file into roughly 28 GB of
-device weights. The development GPU has 24 GB. A GPU path for this model therefore requires
-**native `Q4_0` device tensors and matvec kernels** — a separate piece of work with its own
-proposal, not a detail of this port.
+**Superseded by §4a.** This originally said the GPU was blocked by memory, because the loader
+materialized `Q4_0`, `Q4_1`, `Q5_K` and `Q6_K` as `Q8_0`, turning a 16 GB file into roughly 28 GB
+against a 24 GB device. Native retention removes that: the file's own weight bytes are 14.944 GiB
+and that is what the device holds. What remains is kernels.
 
 ## 6. Verification plan
 

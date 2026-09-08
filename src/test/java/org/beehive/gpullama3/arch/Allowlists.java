@@ -154,7 +154,9 @@ public final class Allowlists {
                     "org.beehive.gpullama3.backend.tornado.tensor.FP32TornadoTensor",
                     "org.beehive.gpullama3.backend.tornado.tensor.Q4_0TornadoTensor",
                     "org.beehive.gpullama3.backend.tornado.tensor.Q8_0TornadoTensor",
+                    "org.beehive.gpullama3.backend.tornado.tensor.Q4_1TornadoTensor",
                     "org.beehive.gpullama3.backend.tornado.tensor.Q4_KTornadoTensor",
+                    "org.beehive.gpullama3.backend.tornado.tensor.Q5_KTornadoTensor",
                     "org.beehive.gpullama3.backend.tornado.tensor.Q6_KTornadoTensor");
 
     // Rule 7 and Rule 11 have no allowlist: they pass on today's code (policy item 4).
