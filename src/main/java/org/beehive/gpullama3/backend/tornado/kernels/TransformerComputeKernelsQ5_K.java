@@ -52,6 +52,61 @@ public final class TransformerComputeKernelsQ5_K {
     private TransformerComputeKernelsQ5_K() {}
 
     /**
+     * The fp16 at {@code index}, assembled from two plain byte loads.
+     *
+     * <p>Deliberately not {@code ByteArray.getHalfFloat}: that call is what TornadoVM 5.2.0's
+     * sketcher chokes on in this decode ("Unable to build sketch for method: fillInStackTrace"),
+     * while whole-byte loads compile. Reading the two bytes and widening the half here keeps the
+     * kernel on constructs the sketcher handles.
+     *
+     * <p>Subnormals are handled explicitly; infinities and NaNs are not, because a quantized block
+     * scale is neither.
+     */
+    private static float halfFromBytes(ByteArray w, int index) {
+        int lo = w.get(index) & 0xFF;
+        int hi = w.get(index + 1) & 0xFF;
+        int h = (hi << 8) | lo;
+        int mantissa = h & 0x3FF;
+        int exponent = (h >>> 10) & 0x1F;
+        float magnitude;
+        if (exponent == 0) {
+            magnitude = mantissa * 5.9604645E-8f; // 2^-24, the subnormal step
+        } else {
+            // 2^(exponent-15) without a bit-pattern reinterpret and without a data-dependent
+            // loop. Float.intBitsToFloat reaches the Metal backend as a node its LIR builder does
+            // not implement ("TornadoInternalError: unimplemented" in MetalNodeLIRBuilder.doBlock),
+            // and a counted loop over the exponent compiled but took minutes and produced zero.
+            // The exponent is 1.30, so |e| < 16 and four fixed tests cover every case.
+            int e = exponent - 15;
+            int magnitudeOfE = e;
+            if (e < 0) {
+                magnitudeOfE = -e;
+            }
+            float scale = 1.0f;
+            if ((magnitudeOfE & 1) != 0) {
+                scale *= 2.0f;
+            }
+            if ((magnitudeOfE & 2) != 0) {
+                scale *= 4.0f;
+            }
+            if ((magnitudeOfE & 4) != 0) {
+                scale *= 16.0f;
+            }
+            if ((magnitudeOfE & 8) != 0) {
+                scale *= 256.0f;
+            }
+            if (e < 0) {
+                scale = 1.0f / scale;
+            }
+            magnitude = (1.0f + mantissa * (1.0f / 1024.0f)) * scale;
+        }
+        if ((h & 0x8000) != 0) {
+            return -magnitude;
+        }
+        return magnitude;
+    }
+
+    /**
      * One weight, decoded from its super-block.
      *
      * <p>Package-private so the decode test can hold it against the host tensor directly on the
@@ -62,8 +117,10 @@ public final class TransformerComputeKernelsQ5_K {
      * @param withinBlock the element's index inside the super-block, 0..255
      */
     static float decode(ByteArray w, int blockByteOffset, int withinBlock) {
-        float d = w.getHalfFloat(blockByteOffset).getFloat32();
-        float dmin = w.getHalfFloat(blockByteOffset + 2).getFloat32();
+        // Byte-assembled, like the kernel: the parity test calls this, and a decode that read its
+        // scale differently from the one the device runs would be testing something else.
+        float d = halfFromBytes(w, blockByteOffset);
+        float dmin = halfFromBytes(w, blockByteOffset + 2);
 
         int pairIndex = withinBlock / 64; // 0..3
         int posInPair = withinBlock - pairIndex * 64; // 0..63
@@ -75,24 +132,64 @@ public final class TransformerComputeKernelsQ5_K {
         int q = (highNibble == 0) ? (qsByte & 0xF) : ((qsByte >> 4) & 0xF);
 
         // The fifth bit is indexed by position within the pair's half, and by which nibble the
-        // element came from — not by the element's index in the super-block.
+        // element came from — not by the element's index in the super-block. Its bit position is
+        // `pairIndex * 2 + highNibble`.
+        //
+        // Written as three index-derived branches with constant shift amounts, which is neither
+        // the obvious formulation nor an arbitrary one. Two shorter versions do not survive
+        // TornadoVM's CUDA backend:
+        //
+        //   (qh >>> shift) & 1            a variable shift amount, which makes it emit
+        //                                 deoptimization scaffolding it cannot declare —
+        //                                 "identifier 'context' is undefined", "identifier
+        //                                 'slots' is undefined"
+        //   (qh & mask) == 0 ? 0 : 16     a conditional move, which asserts inside
+        //                                 CUDALIRGenerator.emitIntegerTestMove
+        //
+        // Branching on a *loaded* value fails the same way as the variable shift. Branching on an
+        // index does not — Q4_K's own `subBlock < 4` does exactly that and compiles. So the shift
+        // is decomposed against the index: 4 for the high pair, 2 for an odd pair, 1 for the high
+        // nibble, summing to the same amount, with the value's dataflow branch-free.
         int qhByte = w.get(blockByteOffset + QH_OFFSET + posInHalf) & 0xFF;
-        int highBit = (qhByte >> (pairIndex * 2 + highNibble)) & 1;
-        q += highBit * 16;
-
-        int scalesBase = blockByteOffset + SCALES_OFFSET;
-        int sc;
-        int m;
-        if (subBlock < 4) {
-            sc = w.get(scalesBase + subBlock) & 63;
-            m = w.get(scalesBase + subBlock + 4) & 63;
-        } else {
-            int lowScale = w.get(scalesBase + subBlock + 4) & 0xFF;
-            int highScale = w.get(scalesBase + subBlock - 4) & 0xFF;
-            sc = (lowScale & 0xF) | ((highScale >> 6) << 4);
-            m = ((lowScale >> 4) & 0xF) | (((w.get(scalesBase + subBlock) & 0xFF) >> 6) << 4);
+        int bits = qhByte;
+        if (pairIndex >= 2) {
+            bits = bits >> 4;
         }
-        return d * sc * q - dmin * m;
+        if ((pairIndex & 1) == 1) {
+            bits = bits >> 2;
+        }
+        if (highNibble == 1) {
+            bits = bits >> 1;
+        }
+        q += (bits & 1) * 16;
+
+        int packed = scaleAndMin(w, blockByteOffset + SCALES_OFFSET, subBlock);
+        return d * (packed >> 8) * q - dmin * (packed & 0xFF);
+    }
+
+    /**
+     * A sub-block's 6-bit scale and minimum, packed as {@code (scale << 8) | min}.
+     *
+     * <p>Its own method rather than eight lines inside {@link #decode}, and that is a code
+     * generation constraint rather than a style choice. Inlined, the whole decode was large enough
+     * that TornadoVM's CUDA backend emitted a kernel referring to an undeclared {@code context} and
+     * an undeclared local array — {@code identifier "context" is undefined}, {@code identifier
+     * "slots" is undefined} — for the shared-memory reduction that calls it. The decode compiles
+     * perfectly well on its own; it is the combination with the reduction that broke, and keeping
+     * this branch in a separate method is what fixes it.
+     *
+     * <p>Both values are six bits, so they pack into one int with room to spare and no information
+     * is lost. The {@code subBlock >= 4} case is the one where a 6-bit value straddles two bytes.
+     */
+    private static int scaleAndMin(ByteArray w, int scalesBase, int subBlock) {
+        if (subBlock < 4) {
+            return ((w.get(scalesBase + subBlock) & 63) << 8) | (w.get(scalesBase + subBlock + 4) & 63);
+        }
+        int lowScale = w.get(scalesBase + subBlock + 4) & 0xFF;
+        int highScale = w.get(scalesBase + subBlock - 4) & 0xFF;
+        int sc = (lowScale & 0xF) | ((highScale >> 6) << 4);
+        int m = ((lowScale >> 4) & 0xF) | (((w.get(scalesBase + subBlock) & 0xFF) >> 6) << 4);
+        return (sc << 8) | m;
     }
 
     /** One row's dot product against {@code x}, reduced across a 32-lane subgroup. */
@@ -102,12 +199,10 @@ public final class TransformerComputeKernelsQ5_K {
         int blocksPerRow = (n + QK_K - 1) / QK_K;
         int rowBlockOffset = rowId * blocksPerRow;
 
+        int subBlocks = n / 32;
         float partialSum = 0.0f;
-        for (int j = localId; j < n; j += 32) {
-            int blockIdx = j / QK_K;
-            int withinBlock = j - blockIdx * QK_K;
-            int blockByteOffset = (rowBlockOffset + blockIdx) * BLOCK_BYTES;
-            partialSum += decode(w, blockByteOffset, withinBlock) * x.get(j);
+        for (int sb = localId; sb < subBlocks; sb += 32) {
+            partialSum += laneSum(x, w, n, rowBlockOffset, sb);
         }
 
         partialSum += context.simdShuffleDown(partialSum, 16);
@@ -118,6 +213,53 @@ public final class TransformerComputeKernelsQ5_K {
         return partialSum;
     }
 
+    /**
+     * One lane's contribution to a row, walking whole 32-element sub-blocks.
+     *
+     * <p>Not the element-strided loop its Q4_K sibling uses, and the reason is a code generation
+     * one as much as an efficiency one. Q5_K's per-element decode is large enough that TornadoVM's
+     * CUDA backend emitted deoptimization scaffolding it cannot declare when the decode was inlined
+     * into a loop — {@code identifier "context" is undefined}, {@code identifier "slots" is
+     * undefined} — with the same decode compiling perfectly well outside a loop, and with both the
+     * shared-memory and the shuffle reduction affected, so it was never about local memory.
+     *
+     * <p>Walking sub-blocks makes the per-element body small: a sub-block's scale, minimum, nibble
+     * plane and fifth-bit position are all constant across its 32 elements, so they are computed
+     * once instead of thirty-two times. That is the shape a Q5_K kernel should have had anyway.
+     */
+    private static float laneSum(FloatArray x, ByteArray w, int n, int rowBlockOffset, int subBlockIndex) {
+        int block = subBlockIndex / 8;
+        int subInBlock = subBlockIndex - block * 8;
+        int blockByteOffset = (rowBlockOffset + block) * BLOCK_BYTES;
+
+        float d = halfFromBytes(w, blockByteOffset);
+        float dmin = halfFromBytes(w, blockByteOffset + 2);
+        int packed = scaleAndMin(w, blockByteOffset + SCALES_OFFSET, subInBlock);
+        float scale = d * (packed >> 8);
+        float minimum = dmin * (packed & 0xFF);
+
+        int pairIndex = subInBlock >> 1;
+        int highNibble = subInBlock & 1;
+        int qsBase = blockByteOffset + QS_OFFSET + pairIndex * 32;
+        int qhBase = blockByteOffset + QH_OFFSET;
+        // Loop-invariant: the fifth bit's position depends only on the sub-block.
+        int bitShift = pairIndex * 2 + highNibble;
+        int elementBase = subBlockIndex * 32;
+
+        float sum = 0.0f;
+        for (int t = 0; t < 32; t++) {
+            int qsByte = w.get(qsBase + t) & 0xFF;
+            int low = qsByte & 0xF;
+            if (highNibble == 1) {
+                low = (qsByte >> 4) & 0xF;
+            }
+            int qhByte = w.get(qhBase + t) & 0xFF;
+            int high = (qhByte >> bitShift) & 1;
+            sum += (scale * (low + high * 16) - minimum) * x.get(elementBase + t);
+        }
+        return sum;
+    }
+
     /** One row's dot product against {@code x}, reduced through shared memory. */
     private static float rowDotShared(
             KernelContext context, int localSize, FloatArray x, ByteArray w, int n, int rowId) {
@@ -126,13 +268,11 @@ public final class TransformerComputeKernelsQ5_K {
 
         int blocksPerRow = (n + QK_K - 1) / QK_K;
         int rowBlockOffset = rowId * blocksPerRow;
+        int subBlocks = n / 32;
 
         float partialSum = 0.0f;
-        for (int j = localId; j < n; j += localSize) {
-            int blockIdx = j / QK_K;
-            int withinBlock = j - blockIdx * QK_K;
-            int blockByteOffset = (rowBlockOffset + blockIdx) * BLOCK_BYTES;
-            partialSum += decode(w, blockByteOffset, withinBlock) * x.get(j);
+        for (int sb = localId; sb < subBlocks; sb += localSize) {
+            partialSum += laneSum(x, w, n, rowBlockOffset, sb);
         }
 
         localSums[localId] = partialSum;
