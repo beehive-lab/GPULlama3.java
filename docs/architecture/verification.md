@@ -176,6 +176,7 @@ Verified on `Qwen3.8-27B-Q4_0.gguf`
 | Derived geometry against the real metadata block | pass (`Qwen35ConfigurationTest`) |
 | Text against llama.cpp, same file, same prompt, greedy, both on CPU | agrees except at single-token near-ties |
 | MTP draft agreement with the trunk, real model | 63 of 79 (80%) |
+| Tool-call wire format, both directions, including round-trip | pass (`Qwen35ToolCallsTest`) |
 | CPU/accelerator parity | n/a — no backend claims the architecture |
 
 **No CI rows, deliberately.** `standalone-inference.yml` is an accelerator matrix: every row
@@ -213,10 +214,11 @@ signal: ~80% for a head that is fed correctly, chance for one that is not.
   correct and its acceptance rate is high, but an accepted draft only saves work where several
   positions are verified in one forward pass, and the host path verifies them one at a time.
   Measured cost of enabling it: 0.90 → 0.70 tok/s. Default off.
-- **`qwen35` tool calling emits Qwen3's format, not this family's.** The chat template in the
-  file specifies `<tool_call><function=name><parameter=x>…`, where the reused `Qwen3ChatFormat`
-  emits JSON inside `<tool_call>`. Conversation, streaming and thinking control are unaffected;
-  tool calling on this family is untested and expected to be wrong.
+- **`qwen35` does not describe itself as an `InferenceProgram`.** It has a provider and a host
+  forward pass but no `ModelArchitecture`, exactly as Gemma-4 does. A description is consumed by
+  the lowered path, nothing lowers this family, and writing one would mean adding roughly a dozen
+  `TensorRole` values and two `OperationKind` values that no backend reads — vocabulary ahead of a
+  kernel, which is what the support tables exist to prevent. It arrives with the backend.
 
 Recorded honestly rather than gated away. None of these is a passing configuration.
 

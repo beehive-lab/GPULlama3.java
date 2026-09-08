@@ -12,7 +12,7 @@ import org.beehive.gpullama3.format.GGUF;
 import org.beehive.gpullama3.inference.weights.Weights;
 import org.beehive.gpullama3.inference.weights.standard.Qwen35StandardWeights;
 import org.beehive.gpullama3.model.format.ChatFormat.ChatTokens;
-import org.beehive.gpullama3.model.format.Qwen3ChatFormat;
+import org.beehive.gpullama3.model.format.Qwen35ChatFormat;
 import org.beehive.gpullama3.model.qwen35.Qwen35;
 import org.beehive.gpullama3.model.qwen35.Qwen35Configuration;
 import org.beehive.gpullama3.runtime.diagnostics.DiagnosticCode;
@@ -39,6 +39,16 @@ import org.beehive.gpullama3.tokenizer.Vocabulary;
  */
 public class Qwen35ModelLoader extends AbstractModelLoader<Qwen35, Qwen35Configuration> {
 
+    /**
+     * What a caller who asked for no particular context length gets. Chosen to make the key/value
+     * arrays about a gigabyte rather than thirty-four; it is the same order as llama.cpp's own
+     * default for the same reason.
+     */
+    private static final int DEFAULT_CONTEXT_LENGTH = 8192;
+
+    private static final System.Logger LOGGER =
+            System.getLogger(Qwen35ModelLoader.class.getName());
+
     public Qwen35ModelLoader(
             FileChannel fileChannel, GGUF gguf, int contextLength, boolean useTornadovm) {
         super(fileChannel, gguf, contextLength, useTornadovm);
@@ -58,10 +68,7 @@ public class Qwen35ModelLoader extends AbstractModelLoader<Qwen35, Qwen35Configu
     @Override
     protected Qwen35Configuration createConfiguration(Map<String, Object> metadata) {
         int modelContextLength = (int) metadata.get("qwen35.context_length");
-        int finalContextLength =
-                (contextLength < 0 || modelContextLength < contextLength)
-                        ? modelContextLength
-                        : contextLength;
+        int finalContextLength = resolveContextLength(modelContextLength);
 
         // block_count counts the MTP blocks with the trunk; the trunk is what the forward pass
         // runs, so the two are separated here rather than at every use.
@@ -98,6 +105,38 @@ public class Qwen35ModelLoader extends AbstractModelLoader<Qwen35, Qwen35Configu
         return config;
     }
     // @formatter:on
+
+    /**
+     * The context this family claims, when nobody asked for one, would not fit in memory.
+     *
+     * <p>Qwen3.5 declares 262144. Sixteen of its layers attend, each holding a 1024-wide key and
+     * value per position: at the declared maximum that is 34 GB of host arrays, allocated eagerly
+     * at session construction. A caller who passed no context length gets this instead, and one who
+     * asked for a specific length gets exactly what they asked for, up to the model's own maximum.
+     *
+     * <p>Scoped to this family deliberately. Every long-context family has the same shape of
+     * problem — it is the facade's default of "the model's own maximum" that is optimistic, not
+     * anything about this loader — but this is the first model where the default cannot run at all,
+     * and quietly changing the rule for everyone is not this port's decision to make.
+     */
+    private int resolveContextLength(int modelContextLength) {
+        if (contextLength > 0) {
+            return Math.min(contextLength, modelContextLength);
+        }
+        int resolved = Math.min(modelContextLength, DEFAULT_CONTEXT_LENGTH);
+        if (resolved < modelContextLength) {
+            LOGGER.log(
+                    System.Logger.Level.INFO,
+                    () ->
+                            "qwen35 declares a context of "
+                                    + modelContextLength
+                                    + ", whose key/value storage does not fit in host memory;"
+                                    + " using "
+                                    + DEFAULT_CONTEXT_LENGTH
+                                    + ". Ask for a length explicitly to override.");
+        }
+        return resolved;
+    }
 
     /**
      * Refuses a metadata block that cannot be run, naming which relationship fails.
@@ -193,7 +232,7 @@ public class Qwen35ModelLoader extends AbstractModelLoader<Qwen35, Qwen35Configu
                 config,
                 tokenizer,
                 weights,
-                new Qwen3ChatFormat((Qwen35Tokenizer) tokenizer, chatTokens));
+                new Qwen35ChatFormat((Qwen35Tokenizer) tokenizer, chatTokens));
     }
 
     // @formatter:off

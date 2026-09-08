@@ -35,6 +35,11 @@ family with **two kinds of layer**: only every fourth trunk layer attends, and t
 three mix with a Gated Delta Net recurrence holding fixed-size state instead of a key/value
 cache. See [`qwen35-port-proposal.md`](qwen35-port-proposal.md).
 
+It reuses Qwen 3's tokenizer, turn structure and thinking control, and **does not** reuse its
+tool-call format: Qwen 3 puts a JSON object inside `<tool_call>`, and Qwen 3.5 puts nested
+pseudo-XML there (`<function=name><parameter=x>`). Inheriting the wrong one would have produced a
+model that converses correctly and gets tool calling silently wrong in both directions.
+
 ## Data types and materialization
 
 | `DataType` | Quantized | Block-structured |
