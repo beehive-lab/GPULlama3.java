@@ -345,6 +345,46 @@ Two facts the port established that are not obvious from the kernels:
   row by its block offset. The layer graphs check it rather than discovering it as a numerical
   disagreement.
 
+## 5a. Measured, on the real fixture
+
+RTX 5090 Laptop (24 GB), CUDA backend, TornadoVM 5.2.1-jdk21-dev, JDK 21, Qwen3.8-27B-Q4_0.
+
+| | |
+| --- | --- |
+| CPU decode | 0.77 tok/s |
+| CUDA decode | 15.0 tok/s (19x) |
+| Plan construction | 0.36 s |
+| TornadoVM compilation | 5.7-6.0 s, once |
+| Weight copy-in | 3.8-4.0 s |
+| Predicted device memory | 15453.6 MiB at context 4; 16542.5 MiB at context 8192 |
+| Measured minimum budget | 15455 MiB at context 4 (15450 MiB fails) |
+
+Device kernel time per decode step, 62 ms total, from the TornadoVM profiler over 120 tokens:
+
+| Share | Task | Kernel |
+| --- | --- | --- |
+| 24.8% | `ffn_gate_up` (x64) | `fusedFFNGateUpSiLUQ4_0` |
+| 14.4% | `ffn_down_proj` (x64) | `matrixVectorGenericWithResidualQ4_0` |
+| 14.4% | `ssm_out_proj` (x48) | `matrixVectorGenericWithResidualQ5_K` |
+| 11.2% | `vocab_proj` (x1) | `matrixVectorGenericQ6_K` |
+| 8.0% | `attention` (x16) | `processHeadsFlashAttentionPaged` |
+| 6.5% | `ssm_qkv_proj` (x48) | `matrixVectorGenericQ4_0` |
+| 4.2% | `ssm_delta_rule` (x48) | `deltaRule` |
+| 4.1% | `ssm_gate_proj` (x48) | `matrixVectorGenericQ4_0` |
+| 12.4% | everything else | |
+
+Grouped: the dense feed-forward every block runs is 39%, the recurrent mixers 34%, the attention
+layers 13%, and the vocabulary projection 11%.
+
+**One optimization was tried and rejected.** The Q4_0 kernels move about 400 GB/s and the K-quant
+ones about 120, so the Q6_K vocabulary projection was rewritten to walk 32-element groups — which
+hoists the fp16 super-block scale, assembled through a dozen branches, out of a loop that was
+paying it per element. It was **slower**: 989 ms against 836 ms for the same 120 tokens, and the
+whole run 12.5% slower with it. Reverting reproduced the original timing to within 0.05%. The
+element-strided loop has consecutive lanes reading consecutive bytes; walking groups gives each
+lane its own 32-byte run, and losing the coalescing costs more than the arithmetic saves. A
+dedicated K-quant kernel has to keep the access pattern, not just the decode count.
+
 ## 6. Verification plan
 
 In dependency order, each step testable before the next exists.
