@@ -28,7 +28,9 @@ public final class LlamaPlanProvider implements TornadoPlanProvider {
 
     @Override
     public Set<DataType> supportedDataTypes() {
-        return TornadoSupportSets.BOTH_REPRESENTATIONS;
+        // BOTH_REPRESENTATIONS plus Q4_0, which this family retains rather than materializing.
+        // Q4_0 is single-token only; the registry refuses the other modes by name.
+        return java.util.Set.of(DataType.F16, DataType.Q8_0, DataType.Q4_0);
     }
 
     @Override
@@ -39,8 +41,15 @@ public final class LlamaPlanProvider implements TornadoPlanProvider {
     @Override
     public SingleTokenForwardPlanComponents components(DataType weights, State state, Model model) {
         LlamaState typed = PlanStates.expect(LlamaState.class, state, ID);
-        return weights == DataType.F16
-                ? new LlamaFP16PlanComponents(typed, model)
-                : new LlamaQ8_0PlanComponents(typed, model);
+        if (weights == DataType.F16) {
+            return new LlamaFP16PlanComponents(typed, model);
+        }
+        // Q4_0 reaches here as itself rather than as a Q8_0 materialization: the loader retained it
+        // because every per-layer weight in the file is Q4_0 and these layers have kernels for it.
+        if (weights == DataType.Q4_0) {
+            return new org.beehive.gpullama3.backend.tornado.plan.components.q4_0
+                    .LlamaQ4_0PlanComponents(typed, model);
+        }
+        return new LlamaQ8_0PlanComponents(typed, model);
     }
 }

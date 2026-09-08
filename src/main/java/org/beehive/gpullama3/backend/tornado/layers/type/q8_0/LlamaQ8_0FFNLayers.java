@@ -347,7 +347,8 @@ public class LlamaQ8_0FFNLayers
         return tornadoForwardScheduler;
     }
 
-    private TaskGraph configureAttention(TaskGraph unifiedLayer, int layerIndex) {
+    /** Attention is dtype-independent — a Q4_0 sibling reuses this unchanged. */
+    protected TaskGraph configureAttention(TaskGraph unifiedLayer, int layerIndex) {
         if (schedulerType == SchedulerType.NVIDIA) {
             return unifiedLayer.task(
                     "attention",

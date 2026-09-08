@@ -115,6 +115,17 @@ public final class TornadoPlanRegistry {
 
         SingleTokenForwardPlanComponents components =
                 provider.components(quantization, state, model);
+        // A provider may support a mode for one representation and not for another — Llama has
+        // prefill and batch kernels for Q8_0 and F16 but only single-token ones for Q4_0. Without
+        // this the cast below fails with a ClassCastException naming two internal interfaces,
+        // where the contract of this method is that an unsupported combination is refused by name.
+        if (mode == ExecutionMode.PREFILL_DECODE
+                        && !(components instanceof PrefillDecodeForwardPlanComponents)
+                || mode == ExecutionMode.BATCH_PREFILL_DECODE
+                        && !(components instanceof BatchPrefillDecodeForwardPlanComponents)) {
+            throw new UnsupportedOperationException(
+                    mode + " not yet supported for " + model.getModelType() + " + " + quantization);
+        }
         return Optional.of(
                 switch (mode) {
                     case STANDARD -> new SingleTokenForwardPlan(model, components);
