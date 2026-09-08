@@ -485,7 +485,8 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 kvLayer,
                 state.workspace.wrapBlockTable,
                 state.kvBlockCfg,
-                state.kvBlockStride);
+                state.kvBlockStride,
+                ATTENTION_LOCAL);
 
         layer.task(
                 "attn_output_gate",

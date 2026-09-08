@@ -25,9 +25,9 @@ import org.beehive.gpullama3.runtime.tensor.DataType;
  *       fits: 14.944 GiB retained against roughly 27 GiB converted, on a 24 GiB device.
  * </ul>
  *
- * <p>{@code STANDARD} and {@code PREFILL_DECODE}. Sequential prefill is the same layer
- * computation with the logits graph skipped, so it needs no second set of graphs; batched prefill
- * does, and is not declared until it has them.
+ * <p>All three modes. Sequential prefill is the same layer computation with the logits graph
+ * skipped; batched prefill has its own layer graphs, because a chunk of prompt tokens is not a
+ * token and this family's recurrence has to be scanned in order inside the kernel.
  */
 // @formatter:on
 public final class Qwen35PlanProvider implements TornadoPlanProvider {
@@ -59,7 +59,7 @@ public final class Qwen35PlanProvider implements TornadoPlanProvider {
 
     @Override
     public Set<ExecutionMode> supportedModes() {
-        return Set.of(ExecutionMode.STANDARD, ExecutionMode.PREFILL_DECODE);
+        return Set.of(ExecutionMode.values());
     }
 
     @Override

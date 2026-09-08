@@ -69,6 +69,17 @@ final class Qwen35SyntheticModel {
     static final int CONTEXT = 32;
 
     static Qwen35Configuration config() {
+        return config(INTERVAL);
+    }
+
+    /**
+     * The same model with a stated attention interval.
+     *
+     * <p>{@code isRecurrentLayer} is {@code (l + 1) % interval != 0}, so an interval of one makes
+     * every block attend and an interval past the layer count makes every block recurrent. That is
+     * what lets a test separate the two mixers instead of inferring which one moved.
+     */
+    static Qwen35Configuration config(int attentionInterval) {
         return new Qwen35Configuration(
                 "Q8_0",
                 DIM,
@@ -79,7 +90,7 @@ final class Qwen35SyntheticModel {
                 KV_HEADS,
                 HEAD_DIM,
                 HEAD_DIM,
-                INTERVAL,
+                attentionInterval,
                 CONV_KERNEL,
                 STATE_SIZE,
                 GROUPS,

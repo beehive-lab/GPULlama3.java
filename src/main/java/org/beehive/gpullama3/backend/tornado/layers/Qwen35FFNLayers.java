@@ -929,6 +929,20 @@ public class Qwen35FFNLayers
      * <p>A weight array bound with {@code transferToDevice} in two graphs of one execution plan
      * gets a device buffer in each, so a layer uploads only its own and never another's.
      */
+    // @formatter:off
+    /**
+     * The graph that has already uploaded this layer's weights, or {@code null} to upload them
+     * here.
+     *
+     * <p>A weight array bound with {@code transferToDevice} in two graphs of one execution plan
+     * gets a device buffer in each, so a plan holding both a batch-prefill and a decode family
+     * would hold the model twice. The decode family consumes what the batch family uploaded.
+     */
+    // @formatter:on
+    protected String weightSourceGraphName(int layerIndex) {
+        return null;
+    }
+
     private void transferLayerWeights(TaskGraph layer, int layerIndex) {
         List<Object> tensors = new ArrayList<>();
         tensors.add(weights.rms_att_weightLayered[layerIndex].asFloatArray());
@@ -954,7 +968,12 @@ public class Qwen35FFNLayers
             tensors.add(require(weights.attnQNorm, layerIndex, "attn_q_norm").asFloatArray());
             tensors.add(require(weights.attnKNorm, layerIndex, "attn_k_norm").asFloatArray());
         }
-        layer.transferToDevice(DataTransferMode.FIRST_EXECUTION, tensors.toArray());
+        String source = weightSourceGraphName(layerIndex);
+        if (source != null) {
+            layer.consumeFromDevice(source, tensors.toArray());
+        } else {
+            layer.transferToDevice(DataTransferMode.FIRST_EXECUTION, tensors.toArray());
+        }
     }
 
     /** A tensor's device array, in whatever representation it is retained in. */

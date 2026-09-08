@@ -155,6 +155,8 @@ public class Qwen35 extends AbstractModel {
         if (state.executionPolicy().phaseStrategy()
                 == org.beehive.gpullama3.runtime.policy.ExecutionPolicy.PhaseStrategy
                         .PREFILL_DECODE) {
+            // Sequential and batched both enter here: the loop reads the batch width from the
+            // policy and ingests the prompt in chunks of it, one token at a time when it is one.
             // The shared prefill loop, told that this family's decode loop charges the whole
             // prompt against the token budget — which is what makes a prompt produce the same
             // number of tokens here as it does in STANDARD.

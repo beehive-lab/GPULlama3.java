@@ -491,9 +491,13 @@ public final class Qwen35BatchKernels {
             int layer,
             IntArray blockTable,
             int blockCfg,
-            int blockStride) {
+            int blockStride,
+            int localWorkGroupSize) {
         int tid = context.localIdx;
-        int localSize = context.localGroupSizeX;
+        // The workgroup width as a parameter, not as context.localGroupSizeX: a local array's
+        // extent has to be a compile-time constant on CUDA, and a value read from the context is
+        // not one ("expression must have a constant value" from nvrtc, on the __shared__ decl).
+        int localSize = localWorkGroupSize;
         int group = context.groupIdx;
         int row = group / heads;
         int head = group - row * heads;
@@ -508,8 +512,8 @@ public final class Qwen35BatchKernels {
         float invSqrt = 1.0f / TornadoMath.sqrt(headSize);
 
         float[] qShared = context.allocateFloatLocalArray(headSize);
-        float[] partialMax = context.allocateFloatLocalArray(localSize);
-        float[] partialSum = context.allocateFloatLocalArray(localSize);
+        float[] partialMax = context.allocateFloatLocalArray(localWorkGroupSize);
+        float[] partialSum = context.allocateFloatLocalArray(localWorkGroupSize);
         float[] reduced = context.allocateFloatLocalArray(2);
 
         int queryBase = row * heads * headSize + head * headSize;

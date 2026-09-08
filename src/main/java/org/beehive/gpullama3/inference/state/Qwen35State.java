@@ -374,13 +374,17 @@ public final class Qwen35State extends State {
      * {@code q ‖ k ‖ v} of unequal parts, and the delta-net's own inputs and readout. The generic
      * ones are sized from {@code batchQDim}/{@code batchKvDim}, which cannot describe these.
      *
+     * <p>The width comes from the same place {@code State}'s own batch buffers take it — how this
+     * state was built — and not from the execution policy, which is resolved per generation and
+     * would report a width this workspace was never sized for.
+     *
      * <p>The recurrent <b>state</b> is not among them. It is one allocation for the whole session,
      * updated in place by both the batched and the single-token graphs — allocating a second copy
      * for prefill is what would break the continuity the mode exists to preserve.
      */
     // @formatter:on
     private void allocateBatchWorkspace(Qwen35Configuration config, int kvDim) {
-        int batch = executionPolicy().prefillBatchSize();
+        int batch = prefillBatchWidth;
         if (batch <= 1) {
             return;
         }

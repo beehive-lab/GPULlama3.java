@@ -87,6 +87,9 @@ public abstract class State {
     public final FloatTensor logits; // output logits
     public final int batchsize;
 
+    /** The prefill batch width this state's workspace was sized for; 1 when it holds none. */
+    protected final int prefillBatchWidth;
+
     /** The device arrays this session executes against, or {@code null} on the host-only path. */
     public final org.beehive.gpullama3.backend.tornado.workspace.TornadoWorkspace workspace;
 
@@ -289,6 +292,10 @@ public abstract class State {
         // Assigned before createStateFields, which the subclass overrides and which needs to know
         // whether there is leased storage to bind rather than arrays to allocate.
         this.storageOptions = storageForConstruction();
+        // The width the prefill workspace is sized from, taken once. A family that allocates its
+        // own chunk-wide buffers reads this rather than the execution policy: the policy is
+        // resolved per generation and says nothing about how this state was built.
+        this.prefillBatchWidth = prefillBatchForConstruction();
         this.kvLease = lease;
         this.kvSlot = lease != null ? lease.slot() : 0;
         this.batchsize = batchsize;
@@ -327,7 +334,7 @@ public abstract class State {
 
         // You need at least 9 elements: 1 for the final result + 8 for the workgroup partial sums
 
-        int gpuBatchSize = prefillBatchForConstruction();
+        int gpuBatchSize = prefillBatchWidth;
         if (gpuBatchSize > 1) {
             // The tensor-core GEMM kernels operate on full 128-row M tiles
             // (BM = 128). Pad the GEMM-adjacent activation buffers so any
