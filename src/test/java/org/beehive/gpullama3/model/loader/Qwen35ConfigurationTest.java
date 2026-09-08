@@ -88,6 +88,30 @@ public class Qwen35ConfigurationTest {
         assertFalse(c.isRecurrentLayer(64));
     }
 
+    /**
+     * The declared context is not a runnable one, and the state allocates eagerly.
+     *
+     * <p>Sixteen attending layers hold a 1024-wide key and a 1024-wide value per position. At the
+     * declared 262144 that is 34 GB of host arrays before a token is generated, which is why the
+     * loader caps the length a caller who asked for nothing gets. The numbers are asserted rather
+     * than described so that a later change to the head geometry cannot quietly make the cap
+     * inadequate.
+     */
+    @Test
+    public void theDeclaredContextWouldNotFitInMemory() {
+        Qwen35Configuration c = qwen38_27b();
+        long perPosition = 2L * c.kvDim() * Float.BYTES; // key and value
+        long atDeclaredMaximum = perPosition * c.numberOfAttentionLayers() * 262144L;
+        assertTrue(
+                "the declared context needs " + (atDeclaredMaximum >> 30) + " GiB of key/value",
+                atDeclaredMaximum > 30L * (1L << 30));
+
+        long atCappedDefault = perPosition * c.numberOfAttentionLayers() * 8192L;
+        assertTrue(
+                "the capped default needs " + (atCappedDefault >> 20) + " MiB of key/value",
+                atCappedDefault < 2L * (1L << 30));
+    }
+
     @Test
     public void rotaryWidthIsSmallerThanTheHead() {
         Qwen35Configuration c = qwen38_27b();

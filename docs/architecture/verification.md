@@ -176,7 +176,21 @@ Verified on `Qwen3.8-27B-Q4_0.gguf`
 | Derived geometry against the real metadata block | pass (`Qwen35ConfigurationTest`) |
 | Text against llama.cpp, same file, same prompt, greedy, both on CPU | agrees except at single-token near-ties |
 | MTP draft agreement with the trunk, real model | 63 of 79 (80%) |
+| Tool-call wire format, both directions, including round-trip | pass (`Qwen35ToolCallsTest`) |
+| Full tool round-trip through the public API, real model | pass (`examples.ToolCalling`) |
 | CPU/accelerator parity | n/a — no backend claims the architecture |
+
+**No CI rows, deliberately.** `standalone-inference.yml` is an accelerator matrix: every row
+asserts a resolved backend and a real `execution_path`, and this family has neither. The
+smallest `qwen35` release is also far larger than the fixtures that matrix carries — the one
+verified here is 16 GB. The unit gates above run in CI as ordinary tests; the fixture-backed
+checks are local, and `GoldenFixture` skips them by name when the file is absent.
+
+The tool round-trip is the check that could not be replaced by a unit test: the model has to
+emit the format we prompt for, and no amount of parser testing says whether it does. It called
+`get_weather({"city":"Athens"})`, the call was parsed, the assistant turn was replayed, and the
+final answer used the tool's data. A model prompted for the wrong format simply answers in prose,
+which is indistinguishable from one that decided a tool was unnecessary.
 
 **Two things this port got wrong first, both of which produced fluent output.**
 
@@ -207,10 +221,14 @@ signal: ~80% for a head that is fed correctly, chance for one that is not.
   correct and its acceptance rate is high, but an accepted draft only saves work where several
   positions are verified in one forward pass, and the host path verifies them one at a time.
   Measured cost of enabling it: 0.90 → 0.70 tok/s. Default off.
-- **`qwen35` tool calling emits Qwen3's format, not this family's.** The chat template in the
-  file specifies `<tool_call><function=name><parameter=x>…`, where the reused `Qwen3ChatFormat`
-  emits JSON inside `<tool_call>`. Conversation, streaming and thinking control are unaffected;
-  tool calling on this family is untested and expected to be wrong.
+- **Consecutive `qwen35` tool results become separate user turns.** The template puts them in
+  one, `ConversationEncoder` encodes one turn per result. No difference for a single result;
+  merging needs a batched entry point on the shared encoder, which would change every family.
+- **`qwen35` does not describe itself as an `InferenceProgram`.** It has a provider and a host
+  forward pass but no `ModelArchitecture`, exactly as Gemma-4 does. A description is consumed by
+  the lowered path, nothing lowers this family, and writing one would mean adding roughly a dozen
+  `TensorRole` values and two `OperationKind` values that no backend reads — vocabulary ahead of a
+  kernel, which is what the support tables exist to prevent. It arrives with the backend.
 
 Recorded honestly rather than gated away. None of these is a passing configuration.
 
