@@ -320,7 +320,7 @@ public class Qwen35GraphTopologyAccelTest {
         }
 
         assertEquals("a recurrent layer's tasks", 20, recurrentTasks);
-        assertEquals("an attention layer's tasks", 17, attentionTasks);
+        assertEquals("an attention layer's tasks", 16, attentionTasks);
         assertEquals(
                 "the plan's layer tasks",
                 6 * recurrentTasks + 2 * attentionTasks,

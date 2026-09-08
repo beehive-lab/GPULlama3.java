@@ -290,7 +290,7 @@ to share a representation.
 | 19 | `ffn_gate_up` | `ffn_gate`, `ffn_up` | Q4_0 (must agree) |
 | 20 | `ffn_down_proj` (+residual) | `ffn_down` | Q4_0, **Q4_1** on blocks 0–7 |
 
-### Attention layer — 17 tasks
+### Attention layer — 16 tasks
 
 | # | Task | Reads | Representation (27B) |
 | --- | --- | --- | --- |
@@ -303,18 +303,17 @@ to share a representation.
 | 7 | `attn_qk_norm` | `attn_q_norm`, `attn_k_norm` | F32 |
 | 8 | `attn_rope` | rope tables | F32 |
 | 9 | `attn_kv_append` | key/value store | — |
-| 10 | `attention` | key/value store | — |
-| 11 | `attention_combine` | — | — |
-| 12 | `attn_output_gate` | — | — |
-| 13 | `attn_output_proj` (+residual) | `attn_output` | Q4_0 |
-| 14 | `ffn_rms_reduce` | — | — |
-| 15 | `ffn_rms_apply` | `post_attention_norm` | F32 |
-| 16 | `ffn_gate_up` | `ffn_gate`, `ffn_up` | Q4_0 |
-| 17 | `ffn_down_proj` (+residual) | `ffn_down` | Q4_0 |
+| 10 | `attention` (single workgroup per head) | key/value store | — |
+| 11 | `attn_output_gate` | — | — |
+| 12 | `attn_output_proj` (+residual) | `attn_output` | Q4_0 |
+| 13 | `ffn_rms_reduce` | — | — |
+| 14 | `ffn_rms_apply` | `post_attention_norm` | F32 |
+| 15 | `ffn_gate_up` | `ffn_gate`, `ffn_up` | Q4_0 |
+| 16 | `ffn_down_proj` (+residual) | `ffn_down` | Q4_0 |
 
 On the NON_NVIDIA path each normalization gains a `*_rms_finalize` task, so both counts rise by two.
 
-The 27B's trunk is 48 recurrent and 16 attention layers: **1232 layer tasks**, plus the activation
+The 27B's trunk is 48 recurrent and 16 attention layers: **1216 layer tasks**, plus the activation
 graph's one and the logits graph's three. The MTP block is not built: it is a draft head, and
 `numberOfLayers()` excludes it.
 
