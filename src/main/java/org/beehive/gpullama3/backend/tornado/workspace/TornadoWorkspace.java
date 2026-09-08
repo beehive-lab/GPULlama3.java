@@ -133,6 +133,24 @@ public final class TornadoWorkspace {
     public FloatArray wrapAttnQ;
     /** Its gate half, applied through a logistic to the attention result. */
     public FloatArray wrapAttnGate;
+
+    // qwen35 batched prefill. The same scratch a chunk wide, row-major: a row is one prompt
+    // token, and every kernel that walks a chunk strides by the buffer's own width. The
+    // single-token buffers are not reused with a stride parameter because a projection's input
+    // width and its output width differ, and a shared buffer would make one of the two a lie.
+    public FloatArray wrapNormedBatch;
+    public FloatArray wrapQGateBatch;
+    public FloatArray wrapAttnQBatch;
+    public FloatArray wrapAttnGateBatch;
+    public FloatArray wrapSsmQkvBatch;
+    public FloatArray wrapSsmConvOutBatch;
+    public FloatArray wrapSsmZBatch;
+    public FloatArray wrapSsmAlphaBatch;
+    public FloatArray wrapSsmBetaBatch;
+    public FloatArray wrapSsmQBatch;
+    public FloatArray wrapSsmKBatch;
+    public FloatArray wrapSsmVBatch;
+    public FloatArray wrapSsmOutBatch;
     public FloatArray wrapRoutingWeights;
     public FloatArray wrapExpertGate;
     public FloatArray wrapSharedGate;

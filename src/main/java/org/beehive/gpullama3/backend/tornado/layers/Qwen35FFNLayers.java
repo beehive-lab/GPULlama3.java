@@ -84,14 +84,35 @@ public class Qwen35FFNLayers
     /** One weight-reading task: where it is, what it reads, and which kernel decodes it. */
     public record Dispatch(int layer, String task, String role, DataType representation) {}
 
+    /**
+     * The graph layer 0 consumes its activation from.
+     *
+     * <p>{@code activationUpdate} in the single-token plan and {@code decodeActivation} in the
+     * prefill/decode one. The layer computation is identical in both — sequential prefill is these
+     * graphs with the logits graph skipped — so the plan shape is the only thing that differs, and
+     * it differs by a name.
+     */
+    private final String activationGraphName;
+
     public Qwen35FFNLayers(
             String taskGraphName,
             Qwen35State state,
             Qwen35TornadoWeights weights,
             Qwen35Configuration config,
             SchedulerType schedulerType) {
+        this(taskGraphName, state, weights, config, schedulerType, "activationUpdate");
+    }
+
+    public Qwen35FFNLayers(
+            String taskGraphName,
+            Qwen35State state,
+            Qwen35TornadoWeights weights,
+            Qwen35Configuration config,
+            SchedulerType schedulerType,
+            String activationGraphName) {
         super(taskGraphName, state, weights, config, schedulerType);
         this.qwen35State = state;
+        this.activationGraphName = activationGraphName;
         setupFFNLayers();
     }
 
@@ -477,7 +498,8 @@ public class Qwen35FFNLayers
     protected TaskGraph createFFNLayerTaskGraph(int layerIndex) {
         TaskGraph layer = new TaskGraph("layer_" + layerIndex);
 
-        String predecessor = layerIndex == 0 ? "activationUpdate" : "layer_" + (layerIndex - 1);
+        String predecessor =
+                layerIndex == 0 ? activationGraphName : "layer_" + (layerIndex - 1);
         layer.consumeFromDevice(predecessor, qwen35State.workspace.wrapX);
         configureLayerDataTransfers(layer, layerIndex);
         transferLayerWeights(layer, layerIndex);

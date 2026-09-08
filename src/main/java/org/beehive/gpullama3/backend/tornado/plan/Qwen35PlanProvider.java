@@ -25,8 +25,9 @@ import org.beehive.gpullama3.runtime.tensor.DataType;
  *       fits: 14.944 GiB retained against roughly 27 GiB converted, on a 24 GiB device.
  * </ul>
  *
- * <p>Only {@code STANDARD}. There are no prefill or batched layer graphs for this family, and a
- * mode nothing can build is a claim the selection layer would discover from inside TornadoVM.
+ * <p>{@code STANDARD} and {@code PREFILL_DECODE}. Sequential prefill is the same layer
+ * computation with the logits graph skipped, so it needs no second set of graphs; batched prefill
+ * does, and is not declared until it has them.
  */
 // @formatter:on
 public final class Qwen35PlanProvider implements TornadoPlanProvider {
@@ -58,7 +59,7 @@ public final class Qwen35PlanProvider implements TornadoPlanProvider {
 
     @Override
     public Set<ExecutionMode> supportedModes() {
-        return Set.of(ExecutionMode.STANDARD);
+        return Set.of(ExecutionMode.STANDARD, ExecutionMode.PREFILL_DECODE);
     }
 
     @Override

@@ -136,8 +136,9 @@ public class Qwen35 extends AbstractModel {
      * embedding, runs the plan's graphs in order and samples, and everything that makes this model
      * what it is lives in the graphs the plan holds.
      *
-     * <p>The plan is single-token only. A caller who asked for sequential or batched prefill has
-     * already been refused by the provider, which declares neither.
+     * <p>Sequential prefill ingests the prompt through the plan's prefill graphs — the same layer
+     * computation with the logits graph skipped — and then decodes. Batched prefill is refused by
+     * the provider, which does not declare it.
      */
     // @formatter:on
     @Override
@@ -151,6 +152,24 @@ public class Qwen35 extends AbstractModel {
             boolean echo,
             IntConsumer onTokenGenerated,
             TornadoVMMasterPlan tornadoVMPlan) {
+        if (state.executionPolicy().phaseStrategy()
+                == org.beehive.gpullama3.runtime.policy.ExecutionPolicy.PhaseStrategy
+                        .PREFILL_DECODE) {
+            // The shared prefill loop, told that this family's decode loop charges the whole
+            // prompt against the token budget — which is what makes a prompt produce the same
+            // number of tokens here as it does in STANDARD.
+            return TokenGenerationLoop.generateTokensGPUPrefillDecode(
+                    this,
+                    state,
+                    startPosition,
+                    promptTokens,
+                    stopTokens,
+                    maxTokens,
+                    sampler,
+                    echo,
+                    onTokenGenerated,
+                    tornadoVMPlan);
+        }
         return TokenGenerationLoop.generateTokensGPUQwen3(
                 this,
                 state,

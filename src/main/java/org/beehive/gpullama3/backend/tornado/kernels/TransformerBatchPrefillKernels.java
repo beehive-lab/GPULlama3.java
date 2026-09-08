@@ -2502,4 +2502,51 @@ public final class TransformerBatchPrefillKernels {
     }
 
     // @formatter:on
+
+    // @formatter:off
+    /**
+     * {@code out[b][row] = w[row]·x[b]} for <b>F32</b> weights, one workgroup per (row, output row).
+     *
+     * <p>The batched counterpart of {@code TransformerComputeKernelsLayered.matrixVectorGeneric}
+     * over a float weight matrix — what an SSM projection needs, whose weights are F32 in every
+     * file that carries them.
+     */
+    // @formatter:on
+    public static void batchedMatVecF32(
+            KernelContext context,
+            FloatArray inputBatch,
+            FloatArray outputBatch,
+            FloatArray w,
+            int n,
+            int d,
+            int activeRows,
+            int localWorkGroupSize) {
+        int groupId = context.groupIdx;
+        int localId = context.localIdx;
+        int batchIdx = groupId / d;
+        int rowIdx = groupId - batchIdx * d;
+        if (batchIdx >= activeRows) {
+            return;
+        }
+
+        float[] localSum = context.allocateFloatLocalArray(localWorkGroupSize);
+        int inputOff = batchIdx * n;
+        int rowOff = rowIdx * n;
+
+        float partial = 0.0f;
+        for (int j = localId; j < n; j += localWorkGroupSize) {
+            partial += w.get(rowOff + j) * inputBatch.get(inputOff + j);
+        }
+        localSum[localId] = partial;
+        context.localBarrier();
+        for (int s = localWorkGroupSize / 2; s > 0; s >>= 1) {
+            if (localId < s) {
+                localSum[localId] += localSum[localId + s];
+            }
+            context.localBarrier();
+        }
+        if (localId == 0) {
+            outputBatch.set(batchIdx * d + rowIdx, localSum[0]);
+        }
+    }
 }

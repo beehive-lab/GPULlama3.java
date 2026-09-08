@@ -94,6 +94,24 @@ public final class TransformerComputeKernelsQ4_0 {
     /** One row's dot product against {@code x}, reduced through shared memory. */
     private static float rowDotShared(
             KernelContext context, int localSize, FloatArray x, ByteArray w, int n, int rowId) {
+        return rowDotShared(context, localSize, x, 0, w, n, rowId);
+    }
+
+    /**
+     * The same reduction over a row of a <b>batch</b> of activations.
+     *
+     * <p>{@code xOffset} is where this row's activation starts. Everything else — the block
+     * addressing, the decode, the reduction — is the single-token path's, so a batched projection
+     * is the same arithmetic in the same order over a different input offset.
+     */
+    private static float rowDotShared(
+            KernelContext context,
+            int localSize,
+            FloatArray x,
+            int xOffset,
+            ByteArray w,
+            int n,
+            int rowId) {
         int localId = context.localIdx;
         float[] localSums = context.allocateFloatLocalArray(localSize);
 
@@ -105,7 +123,7 @@ public final class TransformerComputeKernelsQ4_0 {
             int blockIdx = j / QK;
             int withinBlock = j - blockIdx * QK;
             int blockByteOffset = (rowBlockOffset + blockIdx) * BLOCK_BYTES;
-            partialSum += decode(w, blockByteOffset, withinBlock) * x.get(j);
+            partialSum += decode(w, blockByteOffset, withinBlock) * x.get(xOffset + j);
         }
 
         localSums[localId] = partialSum;
@@ -290,6 +308,122 @@ public final class TransformerComputeKernelsQ4_0 {
             float gateSum = localSums[0];
             float silu = gateSum / (1.0f + TornadoMath.exp(-gateSum));
             hb.set(rowId, silu * localSums[localWorkGroupSize]);
+        }
+    }
+
+    // @formatter:off
+    /**
+     * {@code out[b][row] = w[row]·x[b]} over a chunk of activations, one workgroup per (row, output
+     * row).
+     *
+     * <p>The kernel launches a fixed number of rows and is told how many are active: a padding row
+     * returns before reading anything, so a chunk shorter than the batch width costs launches and
+     * nothing else.
+     */
+    // @formatter:on
+    public static void matrixVectorBatchQ4_0(
+            KernelContext context,
+            FloatArray xBatch,
+            FloatArray outBatch,
+            ByteArray w,
+            int n,
+            int d,
+            int activeRows,
+            int localWorkGroupSize) {
+        int groupId = context.groupIdx;
+        int batchIdx = groupId / d;
+        int rowId = groupId - batchIdx * d;
+        if (batchIdx >= activeRows) {
+            return;
+        }
+        float sum = rowDotShared(context, localWorkGroupSize, xBatch, batchIdx * n, w, n, rowId);
+        if (context.localIdx == 0) {
+            outBatch.set(batchIdx * d + rowId, sum);
+        }
+    }
+
+    /** {@code out[b][row] += w[row]·x[b]}, the residual form. */
+    public static void matrixVectorBatchWithResidualQ4_0(
+            KernelContext context,
+            FloatArray xBatch,
+            FloatArray outBatch,
+            ByteArray w,
+            int n,
+            int d,
+            int activeRows,
+            int localWorkGroupSize) {
+        int groupId = context.groupIdx;
+        int batchIdx = groupId / d;
+        int rowId = groupId - batchIdx * d;
+        if (batchIdx >= activeRows) {
+            return;
+        }
+        float sum = rowDotShared(context, localWorkGroupSize, xBatch, batchIdx * n, w, n, rowId);
+        if (context.localIdx == 0) {
+            int index = batchIdx * d + rowId;
+            outBatch.set(index, outBatch.get(index) + sum);
+        }
+    }
+
+    // @formatter:off
+    /**
+     * The fused gate/up feed-forward with SwiGLU over a chunk of activations.
+     *
+     * <p>One workgroup per (row, hidden row), and the same single pass over one local array the
+     * single-token kernel makes: gate in the first half, up in the second, one reduction tree for
+     * both.
+     */
+    // @formatter:on
+    public static void fusedFFNGateUpSiLUBatchQ4_0(
+            KernelContext context,
+            FloatArray xBatch,
+            FloatArray hbBatch,
+            ByteArray w1,
+            ByteArray w3,
+            int n,
+            int d,
+            int activeRows,
+            int localWorkGroupSize) {
+        int groupId = context.groupIdx;
+        int localId = context.localIdx;
+        int batchIdx = groupId / d;
+        int rowId = groupId - batchIdx * d;
+        if (batchIdx >= activeRows) {
+            return;
+        }
+
+        float[] localSums = context.allocateFloatLocalArray(localWorkGroupSize * 2);
+        int blocksPerRow = (n + QK - 1) / QK;
+        int rowBlockOffset = rowId * blocksPerRow;
+        int inputOffset = batchIdx * n;
+
+        float gate = 0.0f;
+        float up = 0.0f;
+        for (int j = localId; j < n; j += localWorkGroupSize) {
+            int blockIdx = j / QK;
+            int withinBlock = j - blockIdx * QK;
+            int blockByteOffset = (rowBlockOffset + blockIdx) * BLOCK_BYTES;
+            float activation = xBatch.get(inputOffset + j);
+            gate += decode(w1, blockByteOffset, withinBlock) * activation;
+            up += decode(w3, blockByteOffset, withinBlock) * activation;
+        }
+        localSums[localId] = gate;
+        localSums[localWorkGroupSize + localId] = up;
+        context.localBarrier();
+
+        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSums[localId] += localSums[localId + stride];
+                localSums[localWorkGroupSize + localId] +=
+                        localSums[localWorkGroupSize + localId + stride];
+            }
+            context.localBarrier();
+        }
+
+        if (localId == 0) {
+            float gateSum = localSums[0];
+            float silu = gateSum / (1.0f + TornadoMath.exp(-gateSum));
+            hbBatch.set(batchIdx * d + rowId, silu * localSums[localWorkGroupSize]);
         }
     }
 }

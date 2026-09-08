@@ -100,10 +100,28 @@ abstract class CpuGpuParity {
      */
     void assertParityBatched(Fixture fixture, Bounds bounds, int prefillBatchSize)
             throws Exception {
-        assertParity(fixture, bounds, prefillBatchSize);
+        assertParity(fixture, bounds, prefillBatchSize, true);
+    }
+
+    /**
+     * The same comparison with the accelerator ingesting the prompt as its own sequential phase.
+     *
+     * <p>{@code PREFILL_DECODE} at a batch of one. It runs the same layer graphs as {@code
+     * STANDARD} with the logits graph skipped for prompt positions, so what it can disagree about
+     * is the boundary rather than the arithmetic: where decode resumes, and whether anything the
+     * prompt left behind — a key/value entry, a convolution window, a recurrent matrix — carried.
+     */
+    void assertParityPrefillDecode(Fixture fixture, Bounds bounds) throws Exception {
+        assertParity(fixture, bounds, 1, true);
     }
 
     private void assertParity(Fixture fixture, Bounds bounds, int prefillBatchSize)
+            throws Exception {
+        assertParity(fixture, bounds, prefillBatchSize, false);
+    }
+
+    private void assertParity(
+            Fixture fixture, Bounds bounds, int prefillBatchSize, boolean separatePrefillPhase)
             throws Exception {
         Path model = GoldenFixture.locate(fixture);
         if (model == null) {
@@ -118,9 +136,13 @@ abstract class CpuGpuParity {
 
         GoldenCapture.Result cpu = GoldenCapture.capture(model, false);
         GoldenCapture.Result gpu =
-                GoldenCapture.capture(model, true, cpu.tokenIds, prefillBatchSize);
-        if (prefillBatchSize > 1) {
-            System.out.printf("  batched prefill, batch %d%n", prefillBatchSize);
+                GoldenCapture.capture(
+                        model, true, cpu.tokenIds, prefillBatchSize, separatePrefillPhase);
+        if (separatePrefillPhase) {
+            System.out.printf(
+                    "  %s, batch %d%n",
+                    prefillBatchSize > 1 ? "batched prefill" : "sequential prefill",
+                    prefillBatchSize);
         }
 
         assertEquals("compared row count", cpu.rows.size(), gpu.rows.size());

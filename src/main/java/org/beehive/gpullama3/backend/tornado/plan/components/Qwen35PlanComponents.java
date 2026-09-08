@@ -22,10 +22,11 @@ import org.beehive.gpullama3.model.qwen35.Qwen35Configuration;
  * table and the vocabulary projection — and the layer graphs do the same per weight, so one set of
  * components serves the whole family rather than one per dtype.
  *
- * <p>Single-token only. Prefill and batched decode would need their own layer graphs, and the
- * provider declares neither.
+ * <p>Sequential prefill reuses the same layer graphs: prompt ingestion is the decode computation
+ * with the logits graph skipped, and the recurrent state it advances is the same device buffer
+ * decode continues from. Only the graph layer 0 consumes from differs.
  */
-public class Qwen35PlanComponents implements SingleTokenForwardPlanComponents {
+public class Qwen35PlanComponents implements PrefillDecodeForwardPlanComponents {
 
     private final Qwen35State state;
     private final Qwen35TornadoWeights weights;
@@ -53,5 +54,23 @@ public class Qwen35PlanComponents implements SingleTokenForwardPlanComponents {
     public AbstractLogitsTaskGraph singleTokenLogits(String previousGraphId) {
         return new LogitsQ8_0Layer(
                 "logits", state, weights, config, previousGraphId, schedulerType);
+    }
+
+    // ── Sequential prefill/decode ─────────────────────────────────────────────
+
+    @Override
+    public ActivationTaskGraph prefillDecodeActivation() {
+        return new Activation("decodeActivation", state, weights, config);
+    }
+
+    @Override
+    public TransformerLayerTaskGraphs prefillDecodeTransformerLayers() {
+        return new Qwen35FFNLayers(
+                "qwen35FFN", state, weights, config, schedulerType, "decodeActivation");
+    }
+
+    @Override
+    public AbstractLogitsTaskGraph decodeLogits(String previousGraphId) {
+        return singleTokenLogits(previousGraphId);
     }
 }

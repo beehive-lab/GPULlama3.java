@@ -873,7 +873,8 @@ public final class TokenGenerationLoop {
                     sampler,
                     echo,
                     onTokenGenerated,
-                    tornadoVMPlan);
+                    tornadoVMPlan,
+                    false);
         }
         return generateInterleaved(
                 model,
@@ -900,6 +901,49 @@ public final class TokenGenerationLoop {
      * it handles the Qwen2-MoE seed. Both behaviours are preserved here, in one place, where the
      * difference is visible instead of being spread across two files.
      */
+    // @formatter:off
+    /**
+     * Prompt ingestion as its own phase, for a family whose decode loop charges the <b>whole</b>
+     * prompt against the generated-token budget.
+     *
+     * <p>The two families' decode loops disagree about what a prompt costs. {@code
+     * generateInterleaved} charges the positions it actually feeds, which is one fewer when the
+     * seed is the prompt's own first token; {@code generateTokensGPUQwen3} charges {@code
+     * promptTokens.size()} and stops there. That difference is invisible while a family stays in
+     * one mode and becomes a row-count mismatch the moment prompt ingestion moves into its own
+     * phase: measured on Qwen3-0.6B, {@code STANDARD} produced 63 rows and prefill 64.
+     *
+     * <p>So the rule travels with the caller instead of being guessed here. A family whose decode
+     * loop caps on the prompt size asks for the same cap in this one, and a prompt produces the
+     * same number of tokens however it was scheduled.
+     */
+    // @formatter:on
+    public static List<Integer> generateTokensGPUPrefillDecode(
+            Model model,
+            State state,
+            int startPosition,
+            List<Integer> promptTokens,
+            Set<Integer> stopTokens,
+            int maxTokens,
+            Sampler sampler,
+            boolean echo,
+            IntConsumer onTokenGenerated,
+            TornadoVMMasterPlan tornadoVMPlan) {
+        return generateWithPrefill(
+                model,
+                state,
+                GenerationCursor.forState(state),
+                startPosition,
+                promptTokens,
+                stopTokens,
+                maxTokens,
+                sampler,
+                echo,
+                onTokenGenerated,
+                tornadoVMPlan,
+                true);
+    }
+
     private static List<Integer> generateWithPrefill(
             Model model,
             State state,
@@ -911,7 +955,8 @@ public final class TokenGenerationLoop {
             Sampler sampler,
             boolean echo,
             IntConsumer onTokenGenerated,
-            TornadoVMMasterPlan tornadoVMPlan) {
+            TornadoVMMasterPlan tornadoVMPlan,
+            boolean promptChargedInFull) {
         long startNanos = System.nanoTime();
         final Configuration config = model.configuration();
         int actualMaxTokens =
@@ -927,7 +972,12 @@ public final class TokenGenerationLoop {
         int currentToken = ingestion.firstToken();
         int pos = startPosition;
         int promptSize = promptTokens.size();
-        int generatedTokenBudget = Integer.MAX_VALUE;
+        // The whole prompt against the budget, for a family whose decode loop counts that way.
+        // Otherwise the budget is the positions themselves, as the interleaved loop leaves it.
+        int generatedTokenBudget =
+                promptChargedInFull
+                        ? Math.max(0, actualMaxTokens - startPosition - promptSize)
+                        : Integer.MAX_VALUE;
 
         if (batched) {
             var plan =
@@ -990,7 +1040,10 @@ public final class TokenGenerationLoop {
             // loop now runs to actualMaxTokens exactly as the sequential branch does, and a batched
             // run emits the same number of tokens as a single-token run instead of one fewer. That
             // missing token was the same off-by-one, seen from the other end.
-            generatedTokenBudget = Math.max(0, actualMaxTokens - startPosition - prefillTokenCount);
+            if (!promptChargedInFull) {
+                generatedTokenBudget =
+                        Math.max(0, actualMaxTokens - startPosition - prefillTokenCount);
+            }
         } else {
             var plan =
                     (org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlanPrefillDecode)
