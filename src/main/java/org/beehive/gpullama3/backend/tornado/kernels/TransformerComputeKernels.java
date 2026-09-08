@@ -93,6 +93,64 @@ public class TransformerComputeKernels {
         wrapX.set(i, x.get(i).getFloat32());
     }
 
+    /**
+     * The embedding row, decoded from Q4_0 blocks into FP32.
+     *
+     * <p>The Q4_0 twin of {@link #convertQ8_0toFP32}. A model whose token embeddings are retained
+     * as Q4_0 stages 18-byte blocks rather than 34-byte ones, and this is what turns them into the
+     * activation the first layer reads. Without it a Q4_0 embedding would have to be materialized
+     * as Q8_0 purely to be looked up, which is the conversion the rest of this backend no longer
+     * does.
+     */
+    public static void convertQ4_0toFP32(KernelContext context, ByteArray x, FloatArray wrapX) {
+        int globalId = context.globalIdx;
+        if (globalId >= wrapX.getSize()) {
+            return;
+        }
+
+        int blockSize = 32;
+        int Q4_0_BLOCK_BYTES = 18; // 2 bytes scale + 16 bytes of packed nibbles
+
+        int blockIdx = globalId / blockSize;
+        int withinBlockIdx = globalId - blockIdx * blockSize;
+        int blockByteOffset = blockIdx * Q4_0_BLOCK_BYTES;
+
+        // Assembled from two byte loads rather than through getHalfFloat: that call inlined into a
+        // kernel is one TornadoVM's sketcher rejects, as TransformerComputeKernelsQ6_K records.
+        int lo = x.get(blockByteOffset) & 0xFF;
+        int hi = x.get(blockByteOffset + 1) & 0xFF;
+        int h = (hi << 8) | lo;
+        int mantissa = h & 0x3FF;
+        int exponent = (h >>> 10) & 0x1F;
+        float magnitude;
+        if (exponent == 0) {
+            magnitude = mantissa * 5.9604645E-8f;
+        } else {
+            float scaled = 1.0f + mantissa * 9.765625E-4f;
+            int shift = exponent - 15;
+            float power = 1.0f;
+            if (shift > 0) {
+                power = (float) (1 << shift);
+            } else if (shift < 0) {
+                power = 1.0f / (float) (1 << (-shift));
+            }
+            magnitude = scaled * power;
+        }
+        float scale = magnitude;
+        if ((h & 0x8000) != 0) {
+            scale = -magnitude;
+        }
+
+        int half = withinBlockIdx / 16;
+        int byteIndex = withinBlockIdx - half * 16;
+        int packed = x.get(blockByteOffset + 2 + byteIndex) & 0xFF;
+        int q = packed & 0xF;
+        if (half == 1) {
+            q = (packed >> 4) & 0xF;
+        }
+        wrapX.set(globalId, scale * (q - 8));
+    }
+
     public static void convertQ8_0toFP32(KernelContext context, ByteArray x, FloatArray wrapX) {
         int globalId = context.globalIdx;
         int totalElements = wrapX.getSize();
