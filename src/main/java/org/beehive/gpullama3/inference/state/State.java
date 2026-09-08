@@ -510,6 +510,20 @@ public abstract class State {
         return (config.dim() * config.numberOfKeyValueHeads()) / config.numberOfHeads();
     }
 
+    /**
+     * Discards whatever this state carries that a position rewind does not.
+     *
+     * <p>A no-op for every family whose only per-sequence memory is a key/value cache: attention
+     * reads no further than the current position, so rewinding the position <i>is</i> the reset,
+     * and clearing the cache would cost a context-length write for no effect.
+     *
+     * <p>It is not a no-op for a family with recurrent state. A convolution window or a delta-net
+     * matrix has summed the whole sequence into a fixed-size buffer with no notion of position, so
+     * a reused session would condition the new sequence on the old one — fluent output, silently
+     * wrong. Such a family overrides this.
+     */
+    public void resetSequenceState() {}
+
     // Abstract method - subclasses implement their specific allocation logic and sizes
     protected abstract StateFields createStateFields(Configuration config);
 

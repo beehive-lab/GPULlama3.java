@@ -110,9 +110,16 @@ public final class OperationSupport {
                             SPLIT_FUSED_QKV,
                             SPLIT_GATE_UP,
                             LOGIT_SOFT_CAP,
+                            L2_NORM,
+                            GATED_NORM,
+                            DELTA_RULE_UPDATE,
                             ARG_MAX,
                             SAMPLE ->
                     Set.of(DataType.F32);
+
+                // The convolution kernel is F32 in every file that carries one, and the window it
+                // convolves is an activation.
+            case CAUSAL_CONV_1D -> Set.of(DataType.F32);
 
                 // Mixture of experts: routing and accumulation are float work; expert weights carry
                 // whatever representation the stacked tensors were materialized in.
@@ -173,6 +180,10 @@ public final class OperationSupport {
             case LOGIT_SOFT_CAP, ARG_MAX, SAMPLE -> Set.of(DataType.F32);
 
             case MOE_ROUTER, EXPERT_FEED_FORWARD, WEIGHTED_ACCUMULATE -> Set.of();
+
+                // The recurrent operations: no TornadoVM backend claims the one architecture that
+                // uses them, so they are unsupported by name rather than absent.
+            case L2_NORM, CAUSAL_CONV_1D, DELTA_RULE_UPDATE, GATED_NORM -> Set.of();
         };
     }
 
