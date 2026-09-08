@@ -229,7 +229,18 @@ public abstract class ModelLoader {
      */
     public static org.beehive.gpullama3.runtime.memory.WeightFootprint weightFootprint(Path ggufPath)
             throws IOException {
-        return weightFootprint(ggufPath, java.util.Set.of());
+        return weightFootprint(
+                ggufPath, org.beehive.gpullama3.runtime.memory.DeviceRetention.converting());
+    }
+
+    /** {@link #weightFootprint(Path, DeviceRetention)} for a flat set of retained types. */
+    public static org.beehive.gpullama3.runtime.memory.WeightFootprint weightFootprint(
+            Path ggufPath,
+            java.util.Set<org.beehive.gpullama3.runtime.tensor.DataType> nativeDeviceTypes)
+            throws IOException {
+        return weightFootprint(
+                ggufPath,
+                org.beehive.gpullama3.runtime.memory.DeviceRetention.retaining(nativeDeviceTypes));
     }
 
     // @formatter:off
@@ -252,12 +263,11 @@ public abstract class ModelLoader {
      * error. No quantizer produces such a file today; a real one would be a reason to move the
      * whole-model rule here rather than to reverse this.
      *
-     * @param nativeDeviceTypes what the loading family reads as it lies; empty for none
+     * @param retention what representation each tensor will occupy on the device
      */
     // @formatter:on
     public static org.beehive.gpullama3.runtime.memory.WeightFootprint weightFootprint(
-            Path ggufPath,
-            java.util.Set<org.beehive.gpullama3.runtime.tensor.DataType> nativeDeviceTypes)
+            Path ggufPath, org.beehive.gpullama3.runtime.memory.DeviceRetention retention)
             throws IOException {
         GGUF gguf = GGUF.loadGGUFMetadata(ggufPath);
         long perLayer = 0;
@@ -274,14 +284,10 @@ public abstract class ModelLoader {
             }
             org.beehive.gpullama3.runtime.tensor.DataType source =
                     org.beehive.gpullama3.format.DataTypeMapping.sourceType(info.ggmlType());
-            // A representation the family's plans read as it lies is not materialized, and costs
-            // its own size rather than Q8_0's.
+            // Per tensor, by name and representation: a model is not one dtype, and support can
+            // differ by role as well as by format.
             org.beehive.gpullama3.runtime.tensor.DataType materialized =
-                    nativeDeviceTypes.contains(source)
-                            ? source
-                            : org.beehive.gpullama3.format.DataTypeMapping.materializedType(
-                                    info.ggmlType(),
-                                    org.beehive.gpullama3.runtime.tensor.ExecutionTarget.GPU);
+                    retention.deviceType(info.name(), source);
             long bytes =
                     org.beehive.gpullama3.format.TensorDescriptors.layoutOf(materialized)
                             .byteSize(elements);
