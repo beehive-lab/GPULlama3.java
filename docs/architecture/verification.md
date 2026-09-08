@@ -177,6 +177,7 @@ Verified on `Qwen3.8-27B-Q4_0.gguf`
 | Text against llama.cpp, same file, same prompt, greedy, both on CPU | agrees except at single-token near-ties |
 | MTP draft agreement with the trunk, real model | 63 of 79 (80%) |
 | Tool-call wire format, both directions, including round-trip | pass (`Qwen35ToolCallsTest`) |
+| Full tool round-trip through the public API, real model | pass (`examples.ToolCalling`) |
 | CPU/accelerator parity | n/a — no backend claims the architecture |
 
 **No CI rows, deliberately.** `standalone-inference.yml` is an accelerator matrix: every row
@@ -184,6 +185,12 @@ asserts a resolved backend and a real `execution_path`, and this family has neit
 smallest `qwen35` release is also far larger than the fixtures that matrix carries — the one
 verified here is 16 GB. The unit gates above run in CI as ordinary tests; the fixture-backed
 checks are local, and `GoldenFixture` skips them by name when the file is absent.
+
+The tool round-trip is the check that could not be replaced by a unit test: the model has to
+emit the format we prompt for, and no amount of parser testing says whether it does. It called
+`get_weather({"city":"Athens"})`, the call was parsed, the assistant turn was replayed, and the
+final answer used the tool's data. A model prompted for the wrong format simply answers in prose,
+which is indistinguishable from one that decided a tool was unnecessary.
 
 **Two things this port got wrong first, both of which produced fluent output.**
 
