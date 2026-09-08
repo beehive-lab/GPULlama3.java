@@ -84,12 +84,18 @@ public class DataTypeMappingTest {
         }
     }
 
-    /** The two targets must genuinely disagree, or the target parameter is decoration. */
+    /**
+     * The two targets disagree exactly where the converting path converts.
+     *
+     * <p>Restored after an over-eager edit removed it alongside the test beside it. The property is
+     * still worth holding: if {@link DataTypeMapping#materializedType}'s target parameter made no
+     * difference anywhere, it would be decoration.
+     */
     @Test
     public void theTargetsDisagreeExactlyWhereTheDeviceLacksAKernel() {
         for (GGMLType fileType : DEVICE_MATERIALIZED) {
             assertFalse(
-                    fileType + ": CPU and GPU must not agree here",
+                    fileType + ": CPU and the converting device path must not agree here",
                     DataTypeMapping.materializedType(fileType, ExecutionTarget.CPU)
                             == DataTypeMapping.materializedType(fileType, ExecutionTarget.GPU));
         }
@@ -101,14 +107,29 @@ public class DataTypeMappingTest {
         }
     }
 
-    /** Whatever a target materializes, storage must be allocatable in it. */
+    /**
+     * The converting device path promotes every block quantization to Q8_0, and says so.
+     *
+     * <p>This replaces a test asserting that no target materializes a "format-decoded" type. That
+     * framing is gone: the quantizations are kept in the file's own layout by
+     * {@code ModelLoader.loadTornadoTensorNative}, and what {@link DataTypeMapping#materializedType}
+     * still describes is the older loading path some families remain on. Naming it is the point —
+     * the conversion is a declared decision that reaches the memory plan, not a silent one.
+     */
     @Test
-    public void noTargetMaterializesAFormatDecodedType() {
-        for (GGMLType fileType : RECOGNIZED) {
-            assertFalse(
-                    fileType + " materializes as a type nothing can allocate on the GPU",
-                    DataTypeMapping.materializedType(fileType, ExecutionTarget.GPU)
-                            .isFormatDecoded());
+    public void theConvertingDevicePathPromotesToQ8_0() {
+        for (GGMLType fileType :
+                new GGMLType[] {
+                    GGMLType.Q4_0, GGMLType.Q4_1, GGMLType.Q4_K, GGMLType.Q5_K, GGMLType.Q6_K
+                }) {
+            assertEquals(
+                    fileType + " on the converting device path",
+                    DataType.Q8_0,
+                    DataTypeMapping.materializedType(fileType, ExecutionTarget.GPU));
+            assertEquals(
+                    fileType + " is untouched on the host",
+                    DataTypeMapping.sourceType(fileType),
+                    DataTypeMapping.materializedType(fileType, ExecutionTarget.CPU));
         }
     }
 

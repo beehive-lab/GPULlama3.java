@@ -230,8 +230,129 @@ the quantization as well as the residency, and the two answers differ.
 Agreement between the device and host decoders is necessary but not sufficient, which is why the
 specification check is there too: two implementations can agree and both be a different format.
 
+## Gated Delta Net device kernels
+
+The mixer's four kernels, against the host operations, lane by lane, at Qwen3.8-27B's own
+dimensions — 10240 convolution channels, 48 value heads against 16 key heads, a 128×128 state
+per head.
+
+| Check | Result |
+| --- | --- |
+| Causal convolution output and its advanced window | bit-exact |
+| Per-head L2 norm | bit-exact |
+| Delta rule readout and the state it leaves behind | bit-exact |
+| A value head reads key head `h % keyHeads`, asserted directly | pass |
+| Decay and write strength | equal to float rounding |
+| Gated norm | equal to float rounding |
+
+Two of those are not bit-exact and the reason is arithmetic rather than addressing: the host
+takes its reciprocal square root, its logarithm and its logistic in double and narrows once,
+where `TornadoMath` works in float throughout. Everything else asserts **bit equality**, because
+everywhere else the operations and their order are identical and a tolerance would hide a real
+difference.
+
+This is a host test, and it is possible at all only because each kernel body is a static method
+taking its lane index, with the kernel a two-line wrapper passing `context.globalIdx`. A body
+written directly against `KernelContext` cannot be called on the host, so it can only be
+exercised by running a model on a device — and an indexing mistake in it surfaces as slightly
+wrong text rather than as a failure. The delta rule needs no barrier and no cross-lane reduction
+to begin with: a lane owning one value column of a head's state finds every quantity it needs is
+its own.
+
+**What this does not establish**: that the kernels compile and run on a device, that the layer
+graph binds them correctly, or that the family runs on a GPU at all. Those are separate gates and
+none of them is met yet.
+
+## `qwen35` attention device kernels
+
+The three things that separate a `qwen35` attention layer from Qwen3's, at Qwen3.8-27B's geometry
+— 24 query heads against 4 key/value heads, a 256-wide head, a rotary width of 64.
+
+| Check | Result |
+| --- | --- |
+| Query/gate de-interleave | bit-exact |
+| The split is per head, not per buffer, asserted directly | pass |
+| Partial rotation, four positions | bit-exact |
+| The tail of each head above the rotary width is untouched | pass |
+| Key/value append lands at the paged offset, and disturbs nothing else | pass |
+| Output gate | equal to float rounding |
+
+The rotation is bit-exact because the device reads the same precomputed tables the host does.
+Recomputing the frequencies on the device with `pow` and `cos` — which is what Qwen3's own rope
+kernel does — would put a float-versus-double rounding difference at the front of every layer,
+for no saving.
+
+Two checks assert a property directly rather than against the host, and both guard the same
+class of mistake: a wrong reading that is *also well-formed*. The whole-buffer split is the
+obvious reading of a tensor twice the expected width and yields a query made of half the heads'
+queries and gates; a paged append with the wrong stride lands inside another layer's slice and
+reads back as a plausible cache. Neither would fail a comparison in which both sides had made
+the same assumption.
+
+**Not established, and not claimed**: `Qwen3Kernels.fusedQKRmsNorm` is expected to serve this
+family's 256-wide head unchanged, being parameterized by head count and width — but it reduces
+through local memory and barriers, so it cannot be exercised on the host, and nothing has yet run
+it at that width.
+
+## `qwen35` session state
+
+| Check | Result |
+| --- | --- |
+| Host path allocates no device arrays | pass |
+| Key/value storage sized by the blocks that attend, not the block count | pass |
+| The dense key/value and recurrent indices cover each block exactly once | pass |
+| Recurrent state allocated and zeroed | pass |
+| A reset clears both representations of it | pass |
+
+Two of these are about size rather than correctness, which is why they need asserting. Only one
+block in four attends, so a store sized by the block count would be nearly four times what the
+model uses — gigabytes at any useful context — and the dense indexing that avoids it is easy to
+get subtly wrong in a way nothing else would notice.
+
+The recurrent state must start at zero on **whichever** path is running, and a reset must clear
+both representations. A key/value cache needs neither: attention reads no further than the current
+position. A recurrence has no such mask, so whatever was in the allocation is read as the
+sequence's own history.
+
+Whether the device arrays are allocated is currently decided by the `use.tornadovm` property,
+which is the facade's own default and **not** the same question as which backend a session
+resolved. It is adequate only because no plan provider claims this architecture, so nothing can
+disagree with it; a construction-scoped answer from the session has to replace it when one does.
+
+## Retained weights in the memory preflight
+
+| Check | Result |
+| --- | --- |
+| A Q4_0 file's per-layer weights predicted at the 34/18 block ratio, not at Q8_0's | pass (`RetainedWeightFootprintTest`) |
+| A representation nothing retains predicted the same either way | pass |
+| A representation this family does not retain changes nothing | pass |
+
+Measured on `Llama-3.2-1B-Instruct-Q4_0.gguf`: per-layer weights **547 MB retained against 1034 MB
+materialized**. Before this the preflight reported the second figure for both, which is the
+difference between refusing a 4-bit model and running it.
+
+This is the half of Q4_0 residency that is not about arithmetic. Correct kernels make a model
+right; a correct footprint makes it loadable, and a preflight that over-predicts refuses a
+configuration the caller has no way to overrule.
+
 ## Known limitations
 
+- **The memory preflight predicts per tensor, where a loader may decide per model.** Llama
+  retains Q4_0 only when every per-layer projection is Q4_0 and materializes all of them
+  otherwise, because a fused kernel reading two block layouts would read 18-byte blocks as
+  34-byte ones. The preflight decides tensor by tensor, so a file mixing Q4_0 with another
+  quantization in its layers would be predicted smaller than it loads. No quantizer produces such
+  a file today. The direction is the tolerable one: this prediction is used to *refuse*, and a
+  refusal cannot be overruled, so an over-estimate blocks a configuration that would have run
+  where an under-estimate proceeds to the backend's own allocation error.
+- **The preflight's retention only helps a family with a plan provider.** It reads the provider's
+  declared representations, and `qwen35` has no provider, so Qwen3.8-27B is still predicted at
+  its materialized 27760 MiB. That is the right answer while nothing can build it a plan, and it
+  becomes the retained figure — roughly 17 GB — when Slice 5 registers one.
+- **Devstral's retention is under-declared.** It retains Q6_K as well as Q4_K, but declares only
+  Q4_K, so the preflight predicts its Q6_K tensors at the Q8_0 size. Conservative rather than
+  wrong, and correcting it means adding a representation to `supportedDataTypes` that no plan is
+  actually built for.
 - **`qwen35` has no accelerator path, and no CPU/GPU parity gate.** Nothing claims the
   architecture, so the gate that matters most for every other family does not apply here and
   the CPU is verified against llama.cpp instead. The delta-net layers have no kernels. The

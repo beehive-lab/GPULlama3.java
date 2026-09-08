@@ -6,16 +6,22 @@ import java.nio.channels.FileChannel;
 import java.util.Map;
 import java.util.function.IntFunction;
 import org.beehive.gpullama3.auxiliary.Pair;
+import org.beehive.gpullama3.backend.tornado.tensor.TornadoTensor;
+import org.beehive.gpullama3.backend.tornado.tensor.TornadoTensorLoader;
 import org.beehive.gpullama3.format.DataTypeMapping;
 import org.beehive.gpullama3.format.GGMLTensorEntry;
+import org.beehive.gpullama3.format.GGMLType;
 import org.beehive.gpullama3.format.GGUF;
 import org.beehive.gpullama3.inference.weights.Weights;
 import org.beehive.gpullama3.inference.weights.standard.Qwen35StandardWeights;
+import org.beehive.gpullama3.inference.weights.tornado.Qwen35TornadoWeights;
 import org.beehive.gpullama3.model.format.ChatFormat.ChatTokens;
 import org.beehive.gpullama3.model.format.Qwen35ChatFormat;
 import org.beehive.gpullama3.model.qwen35.Qwen35;
 import org.beehive.gpullama3.model.qwen35.Qwen35Configuration;
 import org.beehive.gpullama3.runtime.diagnostics.DiagnosticCode;
+import org.beehive.gpullama3.runtime.tensor.DataType;
+import org.beehive.gpullama3.runtime.tensor.ExecutionTarget;
 import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
 import org.beehive.gpullama3.tensor.standard.FloatTensor;
 import org.beehive.gpullama3.tokenizer.Qwen35Tokenizer;
@@ -377,13 +383,30 @@ public class Qwen35ModelLoader extends AbstractModelLoader<Qwen35, Qwen35Configu
         return entry == null ? null : ModelLoader.loadTensor(entry);
     }
 
+    // @formatter:off
     /**
-     * Refused, rather than producing device weights no plan consumes.
+     * Device weights, with the Q4_0 ones kept as they are.
      *
-     * <p>Nothing lowers this architecture, and its delta-net layers have no kernels. Materializing
-     * its Q4_0 weights as Q8_0 would also roughly double what the file occupies, which is the other
-     * half of why the accelerator path is not merely unimplemented but presently impractical.
+     * <p>Retaining matters more here than anywhere else. Qwen3.8-27B is 16 GB and almost entirely
+     * Q4_0; materializing it as Q8_0 costs roughly 28 GB, which does not fit on a 24 GB device,
+     * where retaining leaves about 17 GB, which does. The rest of the file — {@code ssm_out} in
+     * Q5_K, eight {@code ffn_down} in Q4_1, {@code output} in Q6_K — has no kernel here and is
+     * still materialized, so the model is mixed by construction and each weight is read by the
+     * kernel matching its own type.
+     *
+     * <p><b>All or nothing for the layers that share a kernel.</b> The delta-net and attention
+     * graphs dispatch per tensor, but the {@code q ‖ k ‖ v} projections of one layer are read by a
+     * single fused kernel, so they must agree. The check below is over the tensors a Q4_0 kernel
+     * would decode; anything else falls back to Q8_0 for the whole model rather than mixing two
+     * block layouts inside one kernel, which would read 18-byte blocks as 34-byte ones and produce
+     * fluent, wrong text.
+     *
+     * <p><b>This does not yet make the model runnable on a device.</b> No {@code
+     * TornadoPlanProvider} claims this architecture, so nothing consumes these weights; the layer
+     * graphs are the next piece. Building them is what makes it possible to find out whether they
+     * are right.
      */
+    // @formatter:on
     @Override
     protected Weights createTornadoVMWeights(
             Map<String, GGMLTensorEntry> tensorEntries,
@@ -391,8 +414,159 @@ public class Qwen35ModelLoader extends AbstractModelLoader<Qwen35, Qwen35Configu
             Pair<float[], float[]> ropeFreqs,
             GGMLTensorEntry tokenEmbeddings,
             GGMLTensorEntry outputWeight) {
-        throw new UnsupportedOperationException(
-                "qwen35 has no accelerator path: no TornadoPlanProvider claims it, and its"
-                        + " delta-net layers have no kernels. Load it for the CPU.");
+
+        final int blocks = config.numberOfBlocks();
+        final int trunk = config.numberOfLayers();
+        boolean retainQ4_0 = allQ4_0Projections(tensorEntries, config);
+
+        TornadoTensor[] attnNorm = perBlockDevice(blocks, l -> tensorEntries.get("blk." + l + ".attn_norm.weight"));
+        TornadoTensor[] ffnNorm = perBlockDevice(blocks, l -> tensorEntries.get("blk." + l + ".post_attention_norm.weight"));
+        TornadoTensor[] ffnGate = new TornadoTensor[blocks];
+        TornadoTensor[] ffnDown = new TornadoTensor[blocks];
+        TornadoTensor[] ffnUp = new TornadoTensor[blocks];
+
+        TornadoTensor[] wq = new TornadoTensor[blocks];
+        TornadoTensor[] wk = new TornadoTensor[blocks];
+        TornadoTensor[] wv = new TornadoTensor[blocks];
+        TornadoTensor[] wo = new TornadoTensor[blocks];
+        TornadoTensor[] attnQNorm = new TornadoTensor[blocks];
+        TornadoTensor[] attnKNorm = new TornadoTensor[blocks];
+
+        TornadoTensor[] ssmQkv = new TornadoTensor[trunk];
+        TornadoTensor[] ssmGate = new TornadoTensor[trunk];
+        TornadoTensor[] ssmConv1d = new TornadoTensor[trunk];
+        TornadoTensor[] ssmAlpha = new TornadoTensor[trunk];
+        TornadoTensor[] ssmBeta = new TornadoTensor[trunk];
+        TornadoTensor[] ssmDtBias = new TornadoTensor[trunk];
+        TornadoTensor[] ssmA = new TornadoTensor[trunk];
+        TornadoTensor[] ssmNorm = new TornadoTensor[trunk];
+        TornadoTensor[] ssmOut = new TornadoTensor[trunk];
+
+        for (int l = 0; l < blocks; l++) {
+            String blk = "blk." + l + ".";
+            ffnGate[l] = deviceTensor(tensorEntries, blk + "ffn_gate.weight", retainQ4_0);
+            ffnDown[l] = deviceTensor(tensorEntries, blk + "ffn_down.weight", retainQ4_0);
+            ffnUp[l] = deviceTensor(tensorEntries, blk + "ffn_up.weight", retainQ4_0);
+            if (config.isRecurrentLayer(l)) {
+                ssmQkv[l] = deviceTensor(tensorEntries, blk + "attn_qkv.weight", retainQ4_0);
+                ssmGate[l] = deviceTensor(tensorEntries, blk + "attn_gate.weight", retainQ4_0);
+                // The SSM parameters are F32 in every file that carries them, and are read by
+                // dtype-independent kernels; retention does not apply to them.
+                ssmConv1d[l] = deviceTensor(tensorEntries, blk + "ssm_conv1d.weight", false);
+                ssmAlpha[l] = deviceTensor(tensorEntries, blk + "ssm_alpha.weight", false);
+                ssmBeta[l] = deviceTensor(tensorEntries, blk + "ssm_beta.weight", false);
+                ssmDtBias[l] = deviceTensor(tensorEntries, blk + "ssm_dt.bias", false);
+                ssmA[l] = deviceTensor(tensorEntries, blk + "ssm_a", false);
+                ssmNorm[l] = deviceTensor(tensorEntries, blk + "ssm_norm.weight", false);
+                ssmOut[l] = deviceTensor(tensorEntries, blk + "ssm_out.weight", retainQ4_0);
+            } else {
+                wq[l] = deviceTensor(tensorEntries, blk + "attn_q.weight", retainQ4_0);
+                wk[l] = deviceTensor(tensorEntries, blk + "attn_k.weight", retainQ4_0);
+                wv[l] = deviceTensor(tensorEntries, blk + "attn_v.weight", retainQ4_0);
+                wo[l] = deviceTensor(tensorEntries, blk + "attn_output.weight", retainQ4_0);
+                attnQNorm[l] = deviceTensor(tensorEntries, blk + "attn_q_norm.weight", false);
+                attnKNorm[l] = deviceTensor(tensorEntries, blk + "attn_k_norm.weight", false);
+            }
+        }
+
+        DataType weightType =
+                retainQ4_0
+                        ? DataType.Q4_0
+                        : DataTypeMapping.materializedType(
+                                outputWeight.ggmlType(), ExecutionTarget.GPU);
+
+        return new Qwen35TornadoWeights(
+                blocks,
+                ModelLoader.loadTornadoTensorRetainingQ4_0(tokenEmbeddings),
+                attnNorm,
+                ffnNorm,
+                ffnGate,
+                ffnDown,
+                ffnUp,
+                ModelLoader.loadTornadoTensor(tensorEntries.get("output_norm.weight")),
+                ModelLoader.loadTornadoTensor(outputWeight),
+                TornadoTensorLoader.fromFloats(ropeFreqs.first()),
+                TornadoTensorLoader.fromFloats(ropeFreqs.second()),
+                wq,
+                wk,
+                wv,
+                wo,
+                attnQNorm,
+                attnKNorm,
+                ssmQkv,
+                ssmGate,
+                ssmConv1d,
+                ssmAlpha,
+                ssmBeta,
+                ssmDtBias,
+                ssmA,
+                ssmNorm,
+                ssmOut,
+                weightType);
+    }
+
+    /** A device tensor, keeping Q4_0 as it is when this model retains it. */
+    private static TornadoTensor deviceTensor(
+            Map<String, GGMLTensorEntry> entries, String name, boolean retainQ4_0) {
+        GGMLTensorEntry entry = entries.get(name);
+        if (entry == null) {
+            throw new ModelLoadException(
+                    DiagnosticCode.MODEL_MALFORMED.prefix()
+                            + "qwen35 expects "
+                            + name
+                            + ", which this file does not carry");
+        }
+        return retainQ4_0
+                ? ModelLoader.loadTornadoTensorRetainingQ4_0(entry)
+                : ModelLoader.loadTornadoTensor(entry);
+    }
+
+    private static TornadoTensor[] perBlockDevice(
+            int blocks, IntFunction<GGMLTensorEntry> entry) {
+        TornadoTensor[] tensors = new TornadoTensor[blocks];
+        for (int l = 0; l < blocks; l++) {
+            GGMLTensorEntry found = entry.apply(l);
+            if (found == null) {
+                throw new ModelLoadException(
+                        DiagnosticCode.MODEL_MALFORMED.prefix()
+                                + "qwen35 block "
+                                + l
+                                + " is missing a tensor every block must have");
+            }
+            tensors[l] = ModelLoader.loadTornadoTensor(found);
+        }
+        return tensors;
+    }
+
+    /**
+     * Whether every projection a Q4_0 kernel would decode is in fact Q4_0.
+     *
+     * <p>The graphs dispatch per tensor, but a layer's {@code q ‖ k ‖ v} projections are read by
+     * one fused kernel and must therefore agree. Rather than encode that per-kernel grouping here,
+     * the answer is all-or-nothing over the model: mixing two block layouts inside one kernel would
+     * read 18-byte blocks as 34-byte ones, and the output would be fluent rather than obviously
+     * broken.
+     *
+     * <p>The SSM parameters, the norms and {@code output} are not consulted. The first two are F32
+     * and are read by dtype-independent kernels; {@code output} has its own layer, which reads
+     * whatever it actually holds.
+     */
+    private static boolean allQ4_0Projections(
+            Map<String, GGMLTensorEntry> entries, Qwen35Configuration config) {
+        for (int l = 0; l < config.numberOfBlocks(); l++) {
+            String[] kinds =
+                    config.isRecurrentLayer(l)
+                            ? new String[] {"attn_qkv", "attn_gate", "ffn_gate", "ffn_up"}
+                            : new String[] {
+                                "attn_q", "attn_k", "attn_v", "attn_output", "ffn_gate", "ffn_up"
+                            };
+            for (String kind : kinds) {
+                GGMLTensorEntry entry = entries.get("blk." + l + "." + kind + ".weight");
+                if (entry == null || entry.ggmlType() != GGMLType.Q4_0) {
+                    return false;
+                }
+            }
+        }
+        return config.numberOfBlocks() > 0;
     }
 }

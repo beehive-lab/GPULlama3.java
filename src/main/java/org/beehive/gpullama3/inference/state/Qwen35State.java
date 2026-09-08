@@ -1,5 +1,6 @@
 package org.beehive.gpullama3.inference.state;
 
+import org.beehive.gpullama3.backend.tornado.workspace.TornadoWorkspaces;
 import org.beehive.gpullama3.model.Configuration;
 import org.beehive.gpullama3.model.qwen35.Qwen35Configuration;
 import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
@@ -151,6 +152,29 @@ public final class Qwen35State extends State {
     }
 
     /**
+     * Whether a device plan could be built for this session, and the device arrays are worth
+     * allocating.
+     *
+     * <p>Read from the same property the facade defaults its backend from. That is <b>not</b> the
+     * same question as which backend a session actually resolved: a caller may name {@code
+     * BackendId.CPU} explicitly with the property set, or the reverse. It is adequate only because
+     * no {@code TornadoPlanProvider} claims this architecture, so today no device plan exists to
+     * disagree with it — and inadequate the moment one does, when a session that answered "no" here
+     * would hand a plan null buffers.
+     *
+     * <p>What replaces it is a construction-scoped answer from the session that knows the backend,
+     * alongside {@code withStorageOptions} and {@code withPrefillBatchSize}. That belongs with the
+     * plan provider, not ahead of it.
+     *
+     * <p>Why gate at all, when every other family allocates its device arrays unconditionally: for
+     * them the waste is a few megabytes, and here it is over a gigabyte — 151 MB of recurrent state
+     * and the key/value store — on a host path that has already allocated its own.
+     */
+    private static boolean deviceInPlay() {
+        return Boolean.parseBoolean(System.getProperty("use.tornadovm", "false"));
+    }
+
+    /**
      * Zeroes the recurrent state so a reused session does not continue the previous sequence.
      *
      * <p>The key/value caches are deliberately left alone: attention reads only up to the current
@@ -165,6 +189,10 @@ public final class Qwen35State extends State {
                 deltaState[l].fillInPlace(0, deltaState[l].size(), 0f);
             }
         }
+        // The device arrays too, when there are any. They are the same state in the other
+        // representation, and clearing one and not the other would leave a reset session correct on
+        // whichever path this reset happened to be thinking about.
+        TornadoWorkspaces.zeroRecurrentState(workspace);
     }
 
     @Override
@@ -211,10 +239,98 @@ public final class Qwen35State extends State {
             }
         }
 
-        // No device workspace: no backend claims this architecture yet, and allocating buffers
-        // for a plan nobody builds would reserve memory this model has none to spare.
-        fields.kvBlockCfg = 0;
-        fields.kvBlockStride = 0;
+        allocateDeviceWorkspace(config, fields, kvDim);
         return fields;
+    }
+
+    // @formatter:off
+    /**
+     * The device arrays, when this session was built for an accelerator.
+     *
+     * <p>Skipped entirely on the host path. Nothing here is small — the recurrent state alone is
+     * 151 MB at the 27B's shape — and a CPU session that allocated it would reserve memory it never
+     * touches, on a model that has little to spare.
+     *
+     * <p>Three things about this family's device memory are unlike every other family's.
+     *
+     * <ul>
+     *   <li><b>Key/value storage covers a quarter of the blocks.</b> Only the attending layers
+     *       write to it, and they address it by a dense index. Sizing it by the layer count would
+     *       cost four times as much for nothing.
+     *   <li><b>The recurrent layers hold state that is neither cache nor scratch.</b> Convolution
+     *       windows and delta-net matrices persist across tokens and are updated in place. One
+     *       array per kind, addressed by a per-layer offset, because 48 buffers per kind would be
+     *       48 transfers to arrange and keep resident.
+     *   <li><b>That state must start at zero.</b> A key/value cache need not — attention reads no
+     *       further than the current position — but a recurrence has no such mask, and whatever
+     *       happened to be in the allocation would be read as the sequence's own history.
+     * </ul>
+     */
+    // @formatter:on
+    private void allocateDeviceWorkspace(
+            Qwen35Configuration config, StateFields fields, int kvDim) {
+        if (!deviceInPlay()) {
+            // Host-only session: the plan that would read these is never built.
+            fields.kvBlockCfg = 0;
+            fields.kvBlockStride = 0;
+            return;
+        }
+
+        switch (config.quantization()) {
+            case "FP16" -> TornadoWorkspaces.activationFP16(workspace, config.dim());
+            case "Q8_0" -> TornadoWorkspaces.activationQ8_0(workspace, config.dim());
+            default ->
+                    throw new UnsupportedOperationException(
+                            "Unsupported quantization format: " + config.quantization());
+        }
+
+        int queryDim = config.attentionOutputInputDim();
+        workspace.wrapX = TornadoWorkspaces.floats(config.dim());
+        // Wide enough for the attention branch's concatenated heads, which exceed dim here, and
+        // reused by the feed-forward branch and by the delta-net branch's normalized input.
+        workspace.wrapXb = TornadoWorkspaces.floats(Math.max(queryDim, config.dim()));
+        workspace.wrapXb2 = TornadoWorkspaces.floats(config.dim());
+        workspace.wrapHb = TornadoWorkspaces.floats(config.hiddenDim());
+        workspace.wrapHb2 = TornadoWorkspaces.floats(config.hiddenDim());
+        workspace.wrapLogits = TornadoWorkspaces.floats(config.vocabularySize());
+
+        // The fused query/gate projection, and the two halves it separates into.
+        workspace.wrapQ = TornadoWorkspaces.floats(config.queryGateDim());
+        workspace.wrapAttnQ = TornadoWorkspaces.floats(queryDim);
+        workspace.wrapAttnGate = TornadoWorkspaces.floats(queryDim);
+        workspace.wrapK = TornadoWorkspaces.floats(kvDim);
+        workspace.wrapV = TornadoWorkspaces.floats(kvDim);
+        workspace.wrapAtt =
+                TornadoWorkspaces.floats(config.numberOfHeads() * config.contextLength());
+
+        // The delta-net branch's scratch.
+        workspace.wrapSsmQkv = TornadoWorkspaces.floats(config.deltaNetConvDim());
+        workspace.wrapSsmConvOut = TornadoWorkspaces.floats(config.deltaNetConvDim());
+        workspace.wrapSsmZ = TornadoWorkspaces.floats(config.deltaNetValueDim());
+        workspace.wrapSsmAlpha = TornadoWorkspaces.floats(config.numberOfValueHeads());
+        workspace.wrapSsmBeta = TornadoWorkspaces.floats(config.numberOfValueHeads());
+        workspace.wrapSsmQ = TornadoWorkspaces.floats(config.deltaNetKeyDim());
+        workspace.wrapSsmK = TornadoWorkspaces.floats(config.deltaNetKeyDim());
+        workspace.wrapSsmV = TornadoWorkspaces.floats(config.deltaNetValueDim());
+        workspace.wrapSsmOut = TornadoWorkspaces.floats(config.deltaNetValueDim());
+
+        // The recurrent state, zeroed: see the note above on why this is not optional.
+        int recurrent = config.recurrentLayerCount();
+        workspace.wrapConvState =
+                TornadoWorkspaces.zeroedFloats(recurrent * config.convStateSize());
+        workspace.wrapDeltaState =
+                TornadoWorkspaces.zeroedFloats(recurrent * config.deltaNetStateSize());
+
+        // [0] = position, [1] = table-local KV slot.
+        workspace.positionHolder = TornadoWorkspaces.ints(2);
+        workspace.temp =
+                TornadoWorkspaces.floats(1 + ((config.dim() + localSize - 1) / localSize));
+        workspace.tempFFN =
+                TornadoWorkspaces.floats(1 + ((config.dim() + localSize - 1) / localSize));
+        workspace.tempLogits =
+                TornadoWorkspaces.floats(1 + ((config.dim() + localSize - 1) / localSize));
+
+        // Sized by the blocks that attend, not by the block count: see keyValueLayerIndex.
+        fillKvFields(fields, config, kvDim, config.keyValueLayerCount(), false);
     }
 }
