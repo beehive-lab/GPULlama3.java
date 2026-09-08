@@ -291,6 +291,28 @@ changes what the layer graph binds and how many buffers the memory plan predicts
 selection branches on `DeviceCapability`. A test on the backend's name is how a kernel that
 is correct on one device gets selected on another where it is not.
 
+**A batched kernel that re-reads the weights per row is not faster than running the rows one at a
+time.** Batched prefill's first measurement on a 27B was *exactly* single-token throughput: one
+workgroup per (row, output row) reads the weight matrix once per row, which is what the rows
+separately read. Quantized projections are memory-bound, so a chunk only pays once it reuses what
+it reads — decode a block once for a tile of rows. Tiling took prompt evaluation from 1.0x to
+2.17x, and the per-row arithmetic is unchanged, so parity is unaffected.
+
+**A worker grid keyed on a task name is wrong when one name maps to two representations.** {@code
+ffn_down} is Q4_1 on a model's first blocks and Q4_0 on the rest, so the same task is tiled in one
+layer and not in another. Key the grid on the layer's qualified task name, not the bare one.
+
+**A prefill loop's token budget belongs to the caller.** Two families' decode loops disagreed about
+what a prompt costs — the positions actually fed, or {@code promptTokens.size()} — and the prefill
+loop guessed. The symptom is a *row count* one larger than the reference, not wrong numbers, so a
+logits comparison reports it as a shape mismatch and every tolerance looks fine.
+
+**A recurrence makes prompt tokens dependent inside a layer.** A chunk cannot be treated as
+independent rows: the scan belongs inside the kernel, one lane per channel or per state column,
+walking the chunk in order. Then the arithmetic per token is identical to the single-token kernel's
+and the chunk width cannot change the answer — which is a property worth asserting directly, at
+several widths and against each other.
+
 **A shared kernel may have a fixed local-array size your model exceeds.** The split-KV attention
 kernel stages a query and a per-thread accumulator in local arrays fixed at 128 floats per head.
 A 256-wide head reads and writes past them; on CUDA that is an illegal address, and it surfaces as
