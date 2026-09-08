@@ -108,6 +108,94 @@ public class TornadoPlanRegistryTest {
                 TornadoPlanRegistry.registered().contains(ArchitectureId.of("qwen2-moe")));
     }
 
+    /**
+     * Admission and per-tensor native support are separate declarations.
+     *
+     * <p>For a family whose model is one representation throughout they agree, and the default
+     * says so. They stop agreeing the moment a model is mixed: it reports one representation and
+     * holds several, so a memory prediction built from the admission set counts every tensor that
+     * is not the model's representation at the wrong size. This pins that the preflight reads the
+     * per-tensor declaration and not the admission one.
+     */
+    @Test
+    public void perTensorNativeSupportIsDeclaredApartFromAdmission() {
+        for (TornadoPlanProvider provider : TornadoPlanRegistry.discover()) {
+            assertEquals(
+                    provider.architecture() + " retains what it declares per tensor",
+                    provider.nativeTensorTypes(),
+                    TornadoPlanRegistry.nativeDeviceTypes(provider.architecture()));
+        }
+
+        TornadoPlanProvider uniform =
+                new TornadoPlanProvider() {
+                    @Override
+                    public ArchitectureId architecture() {
+                        return ArchitectureId.of("uniform-test");
+                    }
+
+                    @Override
+                    public Set<DataType> supportedDataTypes() {
+                        return Set.of(DataType.Q8_0);
+                    }
+
+                    @Override
+                    public Set<ExecutionMode> supportedModes() {
+                        return Set.of(ExecutionMode.STANDARD);
+                    }
+
+                    @Override
+                    public org.beehive.gpullama3.backend.tornado.plan.components
+                                    .SingleTokenForwardPlanComponents
+                            components(
+                                    DataType weights,
+                                    org.beehive.gpullama3.inference.state.State state,
+                                    org.beehive.gpullama3.model.Model model) {
+                        throw new UnsupportedOperationException("declaration only");
+                    }
+                };
+        assertEquals(
+                "a uniform family answers both questions the same way, without restating it",
+                uniform.supportedDataTypes(),
+                uniform.nativeTensorTypes());
+
+        TornadoPlanProvider mixed =
+                new TornadoPlanProvider() {
+                    @Override
+                    public ArchitectureId architecture() {
+                        return ArchitectureId.of("mixed-test");
+                    }
+
+                    @Override
+                    public Set<DataType> supportedDataTypes() {
+                        return Set.of(DataType.Q4_0);
+                    }
+
+                    @Override
+                    public Set<DataType> nativeTensorTypes() {
+                        return Set.of(DataType.Q4_0, DataType.Q5_K, DataType.F32);
+                    }
+
+                    @Override
+                    public Set<ExecutionMode> supportedModes() {
+                        return Set.of(ExecutionMode.STANDARD);
+                    }
+
+                    @Override
+                    public org.beehive.gpullama3.backend.tornado.plan.components
+                                    .SingleTokenForwardPlanComponents
+                            components(
+                                    DataType weights,
+                                    org.beehive.gpullama3.inference.state.State state,
+                                    org.beehive.gpullama3.model.Model model) {
+                        throw new UnsupportedOperationException("declaration only");
+                    }
+                };
+        assertTrue(
+                "a mixed family reads representations it does not admit a plan for",
+                mixed.nativeTensorTypes().containsAll(mixed.supportedDataTypes())
+                        && mixed.nativeTensorTypes().size() > mixed.supportedDataTypes().size());
+    }
+
     private static TornadoPlanProvider provider(String architecture) {
         ArchitectureId id = ArchitectureId.of(architecture);
         return TornadoPlanRegistry.discover().stream()
