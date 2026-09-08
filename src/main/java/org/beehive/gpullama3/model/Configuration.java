@@ -58,6 +58,38 @@ public interface Configuration {
 
     // @formatter:off
     /**
+     * How many of a layout's graph families actually <b>bind</b> the per-layer weights.
+     *
+     * <p>The layout says how many families of per-layer graphs a mode builds; the Tornado runtime
+     * allocates a device buffer per graph that binds an array, so that count is the multiplier on
+     * per-layer weight memory — <i>unless</i> a family consumes the copy another uploaded. A
+     * family that consumes costs graphs, not gigabytes.
+     *
+     * <p>Defaults to the layout's own count, which is what a family whose graphs each upload their
+     * own weights should report. Over-predicting here is not the safe direction it usually is: this
+     * prediction can <b>refuse</b> a load, so a model claiming twice the weights it holds is
+     * refused on a device it fits.
+     */
+    // @formatter:on
+    default int weightBindingFamilies(int layerGraphFamilies) {
+        return layerGraphFamilies;
+    }
+
+    // @formatter:off
+    /**
+     * Bytes of chunk-wide scratch a family allocates beyond what the generic batch staging covers.
+     *
+     * <p>Zero unless a family's batched graphs need buffers the generic ones cannot describe — a
+     * projection twice a query's width, a convolved {@code q ‖ k ‖ v} of unequal parts. Sized from
+     * the batch width, and zero when there is no batch.
+     */
+    // @formatter:on
+    default long additionalBatchWorkspaceBytes(int batchSize) {
+        return 0L;
+    }
+
+    // @formatter:off
+    /**
      * Bytes of per-session state that is neither key/value cache nor scratch.
      *
      * <p>Zero for a stack that is attention throughout. A recurrent layer keeps its history in a
