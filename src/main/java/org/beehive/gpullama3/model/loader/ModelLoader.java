@@ -227,8 +227,38 @@ public abstract class ModelLoader {
      * Q8_0 and F32 materialize as themselves, so every tuple measured on CUDA is predicted
      * byte-for-byte as before.
      */
+    public static org.beehive.gpullama3.runtime.memory.WeightFootprint weightFootprint(Path ggufPath)
+            throws IOException {
+        return weightFootprint(ggufPath, java.util.Set.of());
+    }
+
+    // @formatter:off
+    /**
+     * The device footprint of a file's weights, given the representations the target family reads
+     * without materializing.
+     *
+     * <p>Descriptors only — no tensor data is touched, which is what makes this usable before a
+     * load rather than after one.
+     *
+     * <p><b>It can under-estimate a mixed file.</b> The decision is taken per tensor here, where a
+     * loader may take it for the whole model: Llama retains Q4_0 only when every per-layer
+     * projection is Q4_0, and materializes all of them otherwise, because a fused kernel reading
+     * two block layouts would read 18-byte blocks as 34-byte ones. A file mixing Q4_0 with another
+     * quantization in its layers would therefore be predicted smaller than it loads.
+     *
+     * <p>That is the tolerable direction. This prediction is used to <b>refuse</b> a load, and a
+     * refusal cannot be overruled by the caller — so an over-estimate blocks a configuration that
+     * would have run, where an under-estimate lets it proceed to the backend's own allocation
+     * error. No quantizer produces such a file today; a real one would be a reason to move the
+     * whole-model rule here rather than to reverse this.
+     *
+     * @param nativeDeviceTypes what the loading family reads as it lies; empty for none
+     */
+    // @formatter:on
     public static org.beehive.gpullama3.runtime.memory.WeightFootprint weightFootprint(
-            Path ggufPath) throws IOException {
+            Path ggufPath,
+            java.util.Set<org.beehive.gpullama3.runtime.tensor.DataType> nativeDeviceTypes)
+            throws IOException {
         GGUF gguf = GGUF.loadGGUFMetadata(ggufPath);
         long perLayer = 0;
         long global = 0;
@@ -242,10 +272,16 @@ public abstract class ModelLoader {
             for (int d : info.dimensions()) {
                 elements *= d;
             }
+            org.beehive.gpullama3.runtime.tensor.DataType source =
+                    org.beehive.gpullama3.format.DataTypeMapping.sourceType(info.ggmlType());
+            // A representation the family's plans read as it lies is not materialized, and costs
+            // its own size rather than Q8_0's.
             org.beehive.gpullama3.runtime.tensor.DataType materialized =
-                    org.beehive.gpullama3.format.DataTypeMapping.materializedType(
-                            info.ggmlType(),
-                            org.beehive.gpullama3.runtime.tensor.ExecutionTarget.GPU);
+                    nativeDeviceTypes.contains(source)
+                            ? source
+                            : org.beehive.gpullama3.format.DataTypeMapping.materializedType(
+                                    info.ggmlType(),
+                                    org.beehive.gpullama3.runtime.tensor.ExecutionTarget.GPU);
             long bytes =
                     org.beehive.gpullama3.format.TensorDescriptors.layoutOf(materialized)
                             .byteSize(elements);

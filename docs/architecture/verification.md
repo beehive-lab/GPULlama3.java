@@ -319,13 +319,40 @@ which is the facade's own default and **not** the same question as which backend
 resolved. It is adequate only because no plan provider claims this architecture, so nothing can
 disagree with it; a construction-scoped answer from the session has to replace it when one does.
 
+## Retained weights in the memory preflight
+
+| Check | Result |
+| --- | --- |
+| A Q4_0 file's per-layer weights predicted at the 34/18 block ratio, not at Q8_0's | pass (`RetainedWeightFootprintTest`) |
+| A representation nothing retains predicted the same either way | pass |
+| A representation this family does not retain changes nothing | pass |
+
+Measured on `Llama-3.2-1B-Instruct-Q4_0.gguf`: per-layer weights **547 MB retained against 1034 MB
+materialized**. Before this the preflight reported the second figure for both, which is the
+difference between refusing a 4-bit model and running it.
+
+This is the half of Q4_0 residency that is not about arithmetic. Correct kernels make a model
+right; a correct footprint makes it loadable, and a preflight that over-predicts refuses a
+configuration the caller has no way to overrule.
+
 ## Known limitations
 
-- **The memory preflight does not know about retained representations.** It refuses Qwen3.8-27B
-  on a 24 GB device at 27760 MiB, which is what the model costs *materialized as Q8_0*. With Q4_0
-  retained the figure is roughly 17 GB and the configuration fits, so a preflight that stays
-  materialization-only will refuse a run that would have worked. It is correct today, because
-  qwen35's loader does not retain, and it becomes wrong the moment that changes.
+- **The memory preflight predicts per tensor, where a loader may decide per model.** Llama
+  retains Q4_0 only when every per-layer projection is Q4_0 and materializes all of them
+  otherwise, because a fused kernel reading two block layouts would read 18-byte blocks as
+  34-byte ones. The preflight decides tensor by tensor, so a file mixing Q4_0 with another
+  quantization in its layers would be predicted smaller than it loads. No quantizer produces such
+  a file today. The direction is the tolerable one: this prediction is used to *refuse*, and a
+  refusal cannot be overruled, so an over-estimate blocks a configuration that would have run
+  where an under-estimate proceeds to the backend's own allocation error.
+- **The preflight's retention only helps a family with a plan provider.** It reads the provider's
+  declared representations, and `qwen35` has no provider, so Qwen3.8-27B is still predicted at
+  its materialized 27760 MiB. That is the right answer while nothing can build it a plan, and it
+  becomes the retained figure — roughly 17 GB — when Slice 5 registers one.
+- **Devstral's retention is under-declared.** It retains Q6_K as well as Q4_K, but declares only
+  Q4_K, so the preflight predicts its Q6_K tensors at the Q8_0 size. Conservative rather than
+  wrong, and correcting it means adding a representation to `supportedDataTypes` that no plan is
+  actually built for.
 - **`qwen35` has no accelerator path, and no CPU/GPU parity gate.** Nothing claims the
   architecture, so the gate that matters most for every other family does not apply here and
   the CPU is verified against llama.cpp instead. The delta-net layers have no kernels. The

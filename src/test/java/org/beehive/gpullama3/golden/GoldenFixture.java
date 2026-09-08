@@ -37,6 +37,20 @@ public final class GoldenFixture {
          * a fixture is not the same thing, and conflating them would have made this slice wait on a
          * decision it does not need.
          */
+        /**
+         * Quantized locally from {@link #LLAMA_3_2_1B_F16} with llama.cpp's {@code llama-quantize},
+         * because the corpus had no Q4_0 file that any family could run on a device — and Q4_0
+         * device residency could not be verified without one.
+         *
+         * <p>Its {@code blk.*} weights are all Q4_0; {@code token_embd}, which is also the output
+         * projection here, is Q6_K. That mix is the normal shape of a Q4_0 file and is why the
+         * layers read Q4_0 while the logits layer reads a Q8_0 materialization.
+         */
+        LLAMA_3_2_1B_Q4_0(
+                "Llama-3.2-1B-Instruct-Q4_0.gguf",
+                "Q4_0",
+                "4b90b1d7ae7324676194755a6dfce11cb6e457982c4c01a1db2857be1ed064ad"),
+
         QWEN2_5_0_5B_F16(
                 "Qwen2.5-0.5B-Instruct-f16.gguf",
                 "F16",

@@ -80,6 +80,23 @@ public final class TornadoPlanRegistry {
                         .collect(java.util.stream.Collectors.joining(", "));
     }
 
+    /**
+     * The representations this architecture's plans read <b>as they are</b>, without
+     * materialization.
+     *
+     * <p>Not a new declaration: it is the provider's own {@code supportedDataTypes}, which already
+     * answers exactly this. A family listing {@code Q4_0} has kernels that decode Q4_0 blocks, so
+     * a Q4_0 tensor stays 4.5 bits per weight on the device instead of becoming 8.5.
+     *
+     * <p>Read by the memory preflight, which would otherwise predict every quantized weight at its
+     * Q8_0 size and refuse a configuration that fits. An architecture with no provider retains
+     * nothing, which is the right answer for it: nothing will build it a plan either.
+     */
+    public static java.util.Set<DataType> nativeDeviceTypes(ArchitectureId architecture) {
+        TornadoPlanProvider provider = Index.BY_ID.get(architecture);
+        return provider == null ? java.util.Set.of() : provider.supportedDataTypes();
+    }
+
     /** Which architectures have migrated to a registered plan provider. */
     public static java.util.Set<ArchitectureId> registered() {
         return new java.util.LinkedHashSet<>(Index.BY_ID.keySet());
