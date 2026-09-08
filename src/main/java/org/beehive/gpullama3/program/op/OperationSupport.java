@@ -92,6 +92,7 @@ public final class OperationSupport {
                             DataType.BF16,
                             DataType.Q8_0,
                             DataType.Q4_0,
+                            DataType.Q4_1,
                             DataType.Q4_K,
                             DataType.Q5_K,
                             DataType.Q6_K);
@@ -131,6 +132,7 @@ public final class OperationSupport {
                             DataType.BF16,
                             DataType.Q8_0,
                             DataType.Q4_0,
+                            DataType.Q4_1,
                             DataType.Q4_K,
                             DataType.Q5_K,
                             DataType.Q6_K);

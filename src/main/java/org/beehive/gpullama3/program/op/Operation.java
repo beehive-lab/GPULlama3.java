@@ -31,7 +31,11 @@ public sealed interface Operation
                 ExpertFeedForward,
                 WeightedAccumulate,
                 ArgMax,
-                Sample {
+                Sample,
+                L2Norm,
+                CausalConv1d,
+                DeltaRuleUpdate,
+                GatedNorm {
 
     /** Which operation this is. Every implementation returns one fixed kind. */
     OperationKind kind();

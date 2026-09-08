@@ -56,6 +56,10 @@ public class OperationVocabularyTest {
                         DataType.F16),
                 new Softmax(A, B, 32, 512, DataType.F32),
                 new SwiGLU(A, B, C, DataType.F32),
+                new L2Norm(A, B, 16, 128, 1e-6f, DataType.F32),
+                new CausalConv1d(A, W, B, C, 10240, 4, DataType.F32),
+                new DeltaRuleUpdate(A, B, C, IDS, HU, EO, new OperandRef.Activation("out"), 48, 16, 128, DataType.F32),
+                new GatedNorm(A, B, W, C, 48, 128, 1e-6f, DataType.F32),
                 new GeGLU(A, B, C, DataType.F32),
                 new ResidualAdd(A, B, C, DataType.F32),
                 new BiasAdd(A, W, B, DataType.F32),
@@ -387,6 +391,46 @@ public class OperationVocabularyTest {
         return switch (op) {
             case RmsNorm o ->
                     new RmsNorm(o.input(), o.weight(), o.output(), o.epsilon(), o.dataType());
+            case L2Norm o ->
+                    new L2Norm(
+                            o.input(),
+                            o.output(),
+                            o.groups(),
+                            o.groupLength(),
+                            o.epsilon(),
+                            o.dataType());
+            case CausalConv1d o ->
+                    new CausalConv1d(
+                            o.input(),
+                            o.weight(),
+                            o.window(),
+                            o.output(),
+                            o.channels(),
+                            o.kernel(),
+                            o.dataType());
+            case DeltaRuleUpdate o ->
+                    new DeltaRuleUpdate(
+                            o.query(),
+                            o.key(),
+                            o.value(),
+                            o.decay(),
+                            o.beta(),
+                            o.state(),
+                            o.output(),
+                            o.valueHeads(),
+                            o.keyHeads(),
+                            o.stateDim(),
+                            o.dataType());
+            case GatedNorm o ->
+                    new GatedNorm(
+                            o.input(),
+                            o.gate(),
+                            o.weight(),
+                            o.output(),
+                            o.groups(),
+                            o.groupLength(),
+                            o.epsilon(),
+                            o.dataType());
             case RoPE o ->
                     new RoPE(
                             o.query(),
