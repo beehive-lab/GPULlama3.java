@@ -32,6 +32,14 @@ import org.beehive.gpullama3.tokenizer.Qwen35Tokenizer;
  * <p>The instructions below are the ones in this family's own chat template, kept close to its
  * wording — including the reminder that reasoning may precede a call but not follow it, which is
  * the one the model was trained against.
+ *
+ * <h2>One deviation, stated</h2>
+ *
+ * <p>The template puts <b>consecutive</b> tool results in a single user turn, one
+ * {@code <tool_response>} block after another. {@code ConversationEncoder} calls {@link
+ * #encodeToolResultTurn} once per result, so several results in a row become several user turns.
+ * Identical for one result, which is the common case; merging them would mean giving the shared
+ * encoder a batched entry point, and that changes every family rather than this one.
  */
 public class Qwen35ChatFormat extends Qwen3ChatFormat {
 

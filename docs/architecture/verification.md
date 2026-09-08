@@ -214,6 +214,9 @@ signal: ~80% for a head that is fed correctly, chance for one that is not.
   correct and its acceptance rate is high, but an accepted draft only saves work where several
   positions are verified in one forward pass, and the host path verifies them one at a time.
   Measured cost of enabling it: 0.90 → 0.70 tok/s. Default off.
+- **Consecutive `qwen35` tool results become separate user turns.** The template puts them in
+  one, `ConversationEncoder` encodes one turn per result. No difference for a single result;
+  merging needs a batched entry point on the shared encoder, which would change every family.
 - **`qwen35` does not describe itself as an `InferenceProgram`.** It has a provider and a host
   forward pass but no `ModelArchitecture`, exactly as Gemma-4 does. A description is consumed by
   the lowered path, nothing lowers this family, and writing one would mean adding roughly a dozen
