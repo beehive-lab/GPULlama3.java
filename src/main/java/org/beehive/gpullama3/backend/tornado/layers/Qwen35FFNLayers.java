@@ -150,6 +150,7 @@ public class Qwen35FFNLayers
             int n,
             int d,
             boolean residual) {
+        requireWholeBlocks(layer, task, role, w.dataType(), n);
         dispatches.add(new Dispatch(layer, task, role, w.dataType()));
         switch (w.dataType()) {
             case F32 -> {
@@ -344,6 +345,44 @@ public class Qwen35FFNLayers
                 }
             }
             default -> throw unsupported(layer, task, role, w.dataType(), "a");
+        }
+    }
+
+    // @formatter:off
+    /**
+     * A quantized row must be a whole number of blocks.
+     *
+     * <p>Every block-decoding kernel here addresses a row as {@code row * blocksPerRow} blocks, so
+     * it assumes each row starts on a block boundary. That holds for every projection in a real
+     * file — a quantizer will not split a block across rows — and when it does not hold the kernel
+     * reads a neighbouring row's blocks, producing weights of plausible magnitude and fluent,
+     * wrong output. Checked here because the alternative is discovering it as a numerical
+     * disagreement on a model that takes minutes to load.
+     */
+    // @formatter:on
+    private void requireWholeBlocks(int layer, String task, String role, DataType type, int n) {
+        int blockSize =
+                switch (type) {
+                    case Q4_0, Q4_1, Q8_0 -> 32;
+                    case Q4_K, Q5_K, Q6_K -> 256;
+                    default -> 1;
+                };
+        if (n % blockSize != 0) {
+            throw new UnsupportedOperationException(
+                    "qwen35 layer "
+                            + layer
+                            + " task '"
+                            + task
+                            + "' reads "
+                            + role
+                            + " as "
+                            + type
+                            + " with a row of "
+                            + n
+                            + " weights, which is not a whole number of "
+                            + blockSize
+                            + "-weight blocks. Every block-decoding kernel addresses a row by its"
+                            + " block offset, so a partial row would read the next row's blocks.");
         }
     }
 

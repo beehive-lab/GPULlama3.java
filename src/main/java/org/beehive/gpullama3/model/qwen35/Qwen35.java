@@ -20,8 +20,11 @@ import org.beehive.gpullama3.tokenizer.Tokenizer;
  * A loaded model of the {@code qwen35} architecture — the hybrid attention/delta-net stack behind
  * the Qwen3.5, 3.6 and 3.8 releases.
  *
- * <p>Host execution only. No {@code TornadoPlanProvider} claims this architecture, so a request for
- * an accelerator fails by name rather than silently running something that is not this model.
+ * <p>Runs on the host and, in single-token decode, on an accelerator. Its weights are retained in
+ * the representations the file holds them in — Q4_0 projections, Q4_1 down projections on the early
+ * blocks, Q5_K recurrent outputs, a Q6_K vocabulary projection, F32 norms and SSM parameters — and
+ * each device task decodes the representation of the tensor it reads. Prefill, batched decode and
+ * device-side drafting are not implemented, and a request for one fails by name.
  */
 public class Qwen35 extends AbstractModel {
 
@@ -110,14 +113,18 @@ public class Qwen35 extends AbstractModel {
                 onTokenGenerated);
     }
 
+    // @formatter:off
     /**
-     * Refused rather than approximated.
+     * Single-token decode on the accelerator, through the shared generation loop.
      *
-     * <p>Reached only if a device was resolved for this model, which no provider allows today. The
-     * message names the cause because the alternative — running the host path while the caller
-     * believes it asked for a GPU — is the failure mode that makes a wrong benchmark look like a
-     * fast one.
+     * <p>The loop is the one Qwen3 uses. Nothing in it is family-specific: it stages the token's
+     * embedding, runs the plan's graphs in order and samples, and everything that makes this model
+     * what it is lives in the graphs the plan holds.
+     *
+     * <p>The plan is single-token only. A caller who asked for sequential or batched prefill has
+     * already been refused by the provider, which declares neither.
      */
+    // @formatter:on
     @Override
     public List<Integer> generateTokensGPU(
             State state,
@@ -129,10 +136,17 @@ public class Qwen35 extends AbstractModel {
             boolean echo,
             IntConsumer onTokenGenerated,
             TornadoVMMasterPlan tornadoVMPlan) {
-        throw new UnsupportedOperationException(
-                "qwen35 has no accelerator path: its delta-net layers have no kernels, and its"
-                        + " weights would be materialized as Q8_0, which this architecture's sizes"
-                        + " do not fit in device memory. Run it on the CPU.");
+        return TokenGenerationLoop.generateTokensGPUQwen3(
+                this,
+                state,
+                startPosition,
+                promptTokens,
+                stopTokens,
+                maxTokens,
+                sampler,
+                echo,
+                onTokenGenerated,
+                tornadoVMPlan);
     }
 
     @Override

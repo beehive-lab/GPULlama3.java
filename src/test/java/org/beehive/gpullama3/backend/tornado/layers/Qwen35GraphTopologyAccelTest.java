@@ -43,21 +43,21 @@ import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 // @formatter:on
 public class Qwen35GraphTopologyAccelTest {
 
-    private static final int DIM = 64;
-    private static final int HIDDEN = 128;
+    private static final int DIM = 256;
+    private static final int HIDDEN = 512;
     private static final int TRUNK_LAYERS = 8;
     private static final int NEXTN_LAYERS = 1;
     private static final int BLOCKS = TRUNK_LAYERS + NEXTN_LAYERS;
     private static final int HEADS = 4;
     private static final int KV_HEADS = 2;
-    private static final int HEAD_DIM = 16;
+    private static final int HEAD_DIM = 32;
     private static final int ATTENTION_INTERVAL = 4;
 
     private static final int CONV_KERNEL = 4;
-    private static final int STATE_SIZE = 8;
-    private static final int GROUPS = 2;
+    private static final int STATE_SIZE = 64;
+    private static final int GROUPS = 4;
     private static final int VALUE_HEADS = 4;
-    private static final int INNER = 32;
+    private static final int INNER = 256;
 
     private static Qwen35Configuration config() {
         return new Qwen35Configuration(
@@ -76,10 +76,10 @@ public class Qwen35GraphTopologyAccelTest {
                 GROUPS,
                 VALUE_HEADS,
                 INNER,
-                8,
+                16,
+                512,
                 32,
-                16,
-                16,
+                32,
                 1e-6f,
                 1e7f);
     }
