@@ -160,7 +160,13 @@ public record Qwen35Configuration(String quantization,
         return 2 * deltaNetKeyDim() + deltaNetValueDim();
     }
 
-    /** How many value heads share one key head; each key head's q and k are read that many times. */
+    /**
+     * How many value heads there are per key head.
+     *
+     * <p>Only a divisibility fact: it is <b>not</b> how a value head finds its key head. The
+     * mapping is {@code h % numberOfKeyHeads()}, because the reference repeats the key heads by
+     * tiling.
+     */
     public int valueHeadsPerKeyHead() {
         return numberOfValueHeads() / numberOfKeyHeads();
     }

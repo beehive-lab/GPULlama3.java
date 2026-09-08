@@ -404,11 +404,13 @@ public final class CpuOperations {
      * @param values the buffer holding the slice
      * @param offset where the slice starts
      * @param size how many elements it spans
-     * @param eps added to the sum of squares, so an all-zero slice yields zeros rather than NaN
+     * @param eps a floor on the divisor, so an all-zero slice yields zeros rather than NaN. A
+     *     floor rather than a term added under the root: that is what {@code ggml_l2_norm} does,
+     *     and the two differ by more than rounding once the norm approaches {@code eps}.
      */
     public static void l2Norm(FloatTensor values, int offset, int size, float eps) {
         float ss = values.reduce(offset, size, 0f, (acc, xi) -> acc + xi * xi);
-        final float inv = (float) (1.0 / Math.sqrt(ss + eps));
+        final float inv = 1.0f / Math.max((float) Math.sqrt(ss), eps);
         values.mapWithIndexInPlace(offset, size, (value, index) -> inv * value);
     }
 
@@ -487,8 +489,11 @@ public final class CpuOperations {
      * saturating. {@code beta} is how much of that correction to apply.
      *
      * <p>Query and key heads may be fewer than value heads — this model has 16 of each against 48
-     * value heads — so {@code q} and {@code k} are indexed by {@code h / headsPerKeyHead}. The
-     * repetition is addressing, not copying.
+     * value heads — so value head {@code h} reads key head {@code h % keyHeads}. <b>Modulo, not
+     * division.</b> The reference repeats the key heads with a tiling repeat, which cycles
+     * {@code 0,1,…,15,0,1,…} rather than blocking {@code 0,0,0,1,1,1,…}; the fused kernel states
+     * the same mapping directly. Both orderings produce well-formed output, and the wrong one
+     * degrades slowly with sequence length rather than failing outright.
      *
      * <p>State layout is {@code (h * stateDim + i) * stateDim + j}: row {@code i} indexes the key
      * dimension and column {@code j} the value dimension.
@@ -501,7 +506,7 @@ public final class CpuOperations {
      * @param state the retained matrices, updated in place
      * @param out the readout, {@code valueHeads * stateDim}
      * @param valueHeads how many value heads
-     * @param headsPerKeyHead how many value heads share one key head
+     * @param keyHeads how many key heads there are to cycle through
      * @param stateDim the head width, equal for keys and values here
      */
     public static void deltaRuleUpdate(
@@ -513,12 +518,12 @@ public final class CpuOperations {
             FloatTensor state,
             FloatTensor out,
             int valueHeads,
-            int headsPerKeyHead,
+            int keyHeads,
             int stateDim) {
         final float[] correction = new float[stateDim];
         for (int h = 0; h < valueHeads; h++) {
             final int stateBase = h * stateDim * stateDim;
-            final int kvBase = (h / headsPerKeyHead) * stateDim;
+            final int kvBase = (h % keyHeads) * stateDim;
             final int vBase = h * stateDim;
             final float g = decay.getFloat(h);
             final float b = beta.getFloat(h);

@@ -283,7 +283,7 @@ public final class Qwen35Forward {
                 state.deltaState[l],
                 state.ssmOut,
                 valueHeads,
-                config.valueHeadsPerKeyHead(),
+                keyHeads,
                 headV);
 
         CpuOperations.gatedNorm(
