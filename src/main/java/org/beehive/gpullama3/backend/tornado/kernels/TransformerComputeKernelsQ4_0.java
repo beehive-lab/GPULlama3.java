@@ -94,6 +94,24 @@ public final class TransformerComputeKernelsQ4_0 {
     /** One row's dot product against {@code x}, reduced through shared memory. */
     private static float rowDotShared(
             KernelContext context, int localSize, FloatArray x, ByteArray w, int n, int rowId) {
+        return rowDotShared(context, localSize, x, 0, w, n, rowId);
+    }
+
+    /**
+     * The same reduction over a row of a <b>batch</b> of activations.
+     *
+     * <p>{@code xOffset} is where this row's activation starts. Everything else — the block
+     * addressing, the decode, the reduction — is the single-token path's, so a batched projection
+     * is the same arithmetic in the same order over a different input offset.
+     */
+    private static float rowDotShared(
+            KernelContext context,
+            int localSize,
+            FloatArray x,
+            int xOffset,
+            ByteArray w,
+            int n,
+            int rowId) {
         int localId = context.localIdx;
         float[] localSums = context.allocateFloatLocalArray(localSize);
 
@@ -105,7 +123,7 @@ public final class TransformerComputeKernelsQ4_0 {
             int blockIdx = j / QK;
             int withinBlock = j - blockIdx * QK;
             int blockByteOffset = (rowBlockOffset + blockIdx) * BLOCK_BYTES;
-            partialSum += decode(w, blockByteOffset, withinBlock) * x.get(j);
+            partialSum += decode(w, blockByteOffset, withinBlock) * x.get(xOffset + j);
         }
 
         localSums[localId] = partialSum;
@@ -291,5 +309,442 @@ public final class TransformerComputeKernelsQ4_0 {
             float silu = gateSum / (1.0f + TornadoMath.exp(-gateSum));
             hb.set(rowId, silu * localSums[localWorkGroupSize]);
         }
+    }
+
+    // @formatter:off
+    /**
+     * {@code out[b][row] = w[row]·x[b]} over a chunk of activations, one workgroup per (row, output
+     * row).
+     *
+     * <p>The kernel launches a fixed number of rows and is told how many are active: a padding row
+     * returns before reading anything, so a chunk shorter than the batch width costs launches and
+     * nothing else.
+     */
+    // @formatter:on
+    public static void matrixVectorBatchQ4_0(
+            KernelContext context,
+            FloatArray xBatch,
+            FloatArray outBatch,
+            ByteArray w,
+            int n,
+            int d,
+            int activeRows,
+            int localWorkGroupSize) {
+        int groupId = context.groupIdx;
+        int batchIdx = groupId / d;
+        int rowId = groupId - batchIdx * d;
+        if (batchIdx >= activeRows) {
+            return;
+        }
+        float sum = rowDotShared(context, localWorkGroupSize, xBatch, batchIdx * n, w, n, rowId);
+        if (context.localIdx == 0) {
+            outBatch.set(batchIdx * d + rowId, sum);
+        }
+    }
+
+    /** {@code out[b][row] += w[row]·x[b]}, the residual form. */
+    public static void matrixVectorBatchWithResidualQ4_0(
+            KernelContext context,
+            FloatArray xBatch,
+            FloatArray outBatch,
+            ByteArray w,
+            int n,
+            int d,
+            int activeRows,
+            int localWorkGroupSize) {
+        int groupId = context.groupIdx;
+        int batchIdx = groupId / d;
+        int rowId = groupId - batchIdx * d;
+        if (batchIdx >= activeRows) {
+            return;
+        }
+        float sum = rowDotShared(context, localWorkGroupSize, xBatch, batchIdx * n, w, n, rowId);
+        if (context.localIdx == 0) {
+            int index = batchIdx * d + rowId;
+            outBatch.set(index, outBatch.get(index) + sum);
+        }
+    }
+
+    // @formatter:off
+    /**
+     * The fused gate/up feed-forward with SwiGLU over a chunk of activations.
+     *
+     * <p>One workgroup per (row, hidden row), and the same single pass over one local array the
+     * single-token kernel makes: gate in the first half, up in the second, one reduction tree for
+     * both.
+     */
+    // @formatter:on
+    public static void fusedFFNGateUpSiLUBatchQ4_0(
+            KernelContext context,
+            FloatArray xBatch,
+            FloatArray hbBatch,
+            ByteArray w1,
+            ByteArray w3,
+            int n,
+            int d,
+            int activeRows,
+            int localWorkGroupSize) {
+        int groupId = context.groupIdx;
+        int localId = context.localIdx;
+        int batchIdx = groupId / d;
+        int rowId = groupId - batchIdx * d;
+        if (batchIdx >= activeRows) {
+            return;
+        }
+
+        float[] localSums = context.allocateFloatLocalArray(localWorkGroupSize * 2);
+        int blocksPerRow = (n + QK - 1) / QK;
+        int rowBlockOffset = rowId * blocksPerRow;
+        int inputOffset = batchIdx * n;
+
+        float gate = 0.0f;
+        float up = 0.0f;
+        for (int j = localId; j < n; j += localWorkGroupSize) {
+            int blockIdx = j / QK;
+            int withinBlock = j - blockIdx * QK;
+            int blockByteOffset = (rowBlockOffset + blockIdx) * BLOCK_BYTES;
+            float activation = xBatch.get(inputOffset + j);
+            gate += decode(w1, blockByteOffset, withinBlock) * activation;
+            up += decode(w3, blockByteOffset, withinBlock) * activation;
+        }
+        localSums[localId] = gate;
+        localSums[localWorkGroupSize + localId] = up;
+        context.localBarrier();
+
+        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSums[localId] += localSums[localId + stride];
+                localSums[localWorkGroupSize + localId] +=
+                        localSums[localWorkGroupSize + localId + stride];
+            }
+            context.localBarrier();
+        }
+
+        if (localId == 0) {
+            float gateSum = localSums[0];
+            float silu = gateSum / (1.0f + TornadoMath.exp(-gateSum));
+            hbBatch.set(batchIdx * d + rowId, silu * localSums[localWorkGroupSize]);
+        }
+    }
+
+    /** Rows a tiled batched projection decodes each weight for. */
+    private static final int ROW_TILE = 8;
+
+    // @formatter:off
+    /**
+     * {@code out[b][row] = w[row]·x[b]} for a <b>tile of rows at once</b>, decoding each weight
+     * once for the whole tile.
+     *
+     * <p>The untiled batched kernel is one workgroup per (row, output row), so a chunk of B tokens
+     * reads the weight matrix B times — exactly what B separate single-token invocations read, and
+     * measurably no faster than them. A quantized projection is memory-bound, so what a chunk is
+     * worth is weight reuse: this decodes a block once and applies it to eight activations.
+     *
+     * <p>Per row the arithmetic is unchanged — the same lane-strided order over the same values —
+     * so the tiled and untiled kernels agree element for element, and the chunk width stays
+     * unobservable in the result.
+     *
+     * <p>{@code groupIdx} is {@code tile * d + row}. A tile past the active rows returns; a tile
+     * that is partly active accumulates only its real rows.
+     */
+    // @formatter:on
+    public static void matrixVectorTiledBatchQ4_0(
+            KernelContext context,
+            FloatArray xBatch,
+            FloatArray outBatch,
+            ByteArray w,
+            int n,
+            int d,
+            int activeRows,
+            int localWorkGroupSize) {
+        int groupId = context.groupIdx;
+        int tile = groupId / d;
+        int rowId = groupId - tile * d;
+        int firstRow = tile * ROW_TILE;
+        if (firstRow >= activeRows) {
+            return;
+        }
+        int localId = context.localIdx;
+
+        float[] localSums = context.allocateFloatLocalArray(localWorkGroupSize * ROW_TILE);
+        int blocksPerRow = (n + QK - 1) / QK;
+        int rowBlockOffset = rowId * blocksPerRow;
+
+        float a0 = 0.0f;
+        float a1 = 0.0f;
+        float a2 = 0.0f;
+        float a3 = 0.0f;
+        float a4 = 0.0f;
+        float a5 = 0.0f;
+        float a6 = 0.0f;
+        float a7 = 0.0f;
+
+        for (int j = localId; j < n; j += localWorkGroupSize) {
+            int blockIdx = j / QK;
+            int withinBlock = j - blockIdx * QK;
+            int blockByteOffset = (rowBlockOffset + blockIdx) * BLOCK_BYTES;
+            float weight = decode(w, blockByteOffset, withinBlock);
+            a0 += weight * xBatch.get((firstRow) * n + j);
+            if (firstRow + 1 < activeRows) {
+                a1 += weight * xBatch.get((firstRow + 1) * n + j);
+            }
+            if (firstRow + 2 < activeRows) {
+                a2 += weight * xBatch.get((firstRow + 2) * n + j);
+            }
+            if (firstRow + 3 < activeRows) {
+                a3 += weight * xBatch.get((firstRow + 3) * n + j);
+            }
+            if (firstRow + 4 < activeRows) {
+                a4 += weight * xBatch.get((firstRow + 4) * n + j);
+            }
+            if (firstRow + 5 < activeRows) {
+                a5 += weight * xBatch.get((firstRow + 5) * n + j);
+            }
+            if (firstRow + 6 < activeRows) {
+                a6 += weight * xBatch.get((firstRow + 6) * n + j);
+            }
+            if (firstRow + 7 < activeRows) {
+                a7 += weight * xBatch.get((firstRow + 7) * n + j);
+            }
+        }
+
+        localSums[localId] = a0;
+        localSums[localWorkGroupSize + localId] = a1;
+        localSums[2 * localWorkGroupSize + localId] = a2;
+        localSums[3 * localWorkGroupSize + localId] = a3;
+        localSums[4 * localWorkGroupSize + localId] = a4;
+        localSums[5 * localWorkGroupSize + localId] = a5;
+        localSums[6 * localWorkGroupSize + localId] = a6;
+        localSums[7 * localWorkGroupSize + localId] = a7;
+        context.localBarrier();
+
+        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                for (int t = 0; t < ROW_TILE; t++) {
+                    localSums[t * localWorkGroupSize + localId] +=
+                            localSums[t * localWorkGroupSize + localId + stride];
+                }
+            }
+            context.localBarrier();
+        }
+
+        if (localId == 0) {
+            for (int t = 0; t < ROW_TILE; t++) {
+                int row = firstRow + t;
+                if (row < activeRows) {
+                    outBatch.set(row * d + rowId, localSums[t * localWorkGroupSize]);
+                }
+            }
+        }
+    }
+
+    /** {@code out[b][row] += w[row]·x[b]} for a tile of rows. See {@link #matrixVectorTiledBatchQ4_0}. */
+    public static void matrixVectorTiledBatchWithResidualQ4_0(
+            KernelContext context,
+            FloatArray xBatch,
+            FloatArray outBatch,
+            ByteArray w,
+            int n,
+            int d,
+            int activeRows,
+            int localWorkGroupSize) {
+        int groupId = context.groupIdx;
+        int tile = groupId / d;
+        int rowId = groupId - tile * d;
+        int firstRow = tile * ROW_TILE;
+        if (firstRow >= activeRows) {
+            return;
+        }
+        int localId = context.localIdx;
+
+        float[] localSums = context.allocateFloatLocalArray(localWorkGroupSize * ROW_TILE);
+        int blocksPerRow = (n + QK - 1) / QK;
+        int rowBlockOffset = rowId * blocksPerRow;
+
+        float a0 = 0.0f;
+        float a1 = 0.0f;
+        float a2 = 0.0f;
+        float a3 = 0.0f;
+        float a4 = 0.0f;
+        float a5 = 0.0f;
+        float a6 = 0.0f;
+        float a7 = 0.0f;
+
+        for (int j = localId; j < n; j += localWorkGroupSize) {
+            int blockIdx = j / QK;
+            int withinBlock = j - blockIdx * QK;
+            int blockByteOffset = (rowBlockOffset + blockIdx) * BLOCK_BYTES;
+            float weight = decode(w, blockByteOffset, withinBlock);
+            a0 += weight * xBatch.get((firstRow) * n + j);
+            if (firstRow + 1 < activeRows) {
+                a1 += weight * xBatch.get((firstRow + 1) * n + j);
+            }
+            if (firstRow + 2 < activeRows) {
+                a2 += weight * xBatch.get((firstRow + 2) * n + j);
+            }
+            if (firstRow + 3 < activeRows) {
+                a3 += weight * xBatch.get((firstRow + 3) * n + j);
+            }
+            if (firstRow + 4 < activeRows) {
+                a4 += weight * xBatch.get((firstRow + 4) * n + j);
+            }
+            if (firstRow + 5 < activeRows) {
+                a5 += weight * xBatch.get((firstRow + 5) * n + j);
+            }
+            if (firstRow + 6 < activeRows) {
+                a6 += weight * xBatch.get((firstRow + 6) * n + j);
+            }
+            if (firstRow + 7 < activeRows) {
+                a7 += weight * xBatch.get((firstRow + 7) * n + j);
+            }
+        }
+
+        localSums[localId] = a0;
+        localSums[localWorkGroupSize + localId] = a1;
+        localSums[2 * localWorkGroupSize + localId] = a2;
+        localSums[3 * localWorkGroupSize + localId] = a3;
+        localSums[4 * localWorkGroupSize + localId] = a4;
+        localSums[5 * localWorkGroupSize + localId] = a5;
+        localSums[6 * localWorkGroupSize + localId] = a6;
+        localSums[7 * localWorkGroupSize + localId] = a7;
+        context.localBarrier();
+
+        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                for (int t = 0; t < ROW_TILE; t++) {
+                    localSums[t * localWorkGroupSize + localId] +=
+                            localSums[t * localWorkGroupSize + localId + stride];
+                }
+            }
+            context.localBarrier();
+        }
+
+        if (localId == 0) {
+            for (int t = 0; t < ROW_TILE; t++) {
+                int row = firstRow + t;
+                if (row < activeRows) {
+                    int index = row * d + rowId;
+                    outBatch.set(index, outBatch.get(index) + localSums[t * localWorkGroupSize]);
+                }
+            }
+        }
+    }
+
+    /** How many rows a tiled batched projection covers per workgroup. */
+    public static int rowTile() {
+        return ROW_TILE;
+    }
+
+    /** Rows a tiled fused gate/up covers per workgroup. Four, because it holds two accumulators each. */
+    private static final int FFN_ROW_TILE = 4;
+
+    // @formatter:off
+    /**
+     * The fused gate/up feed-forward with SwiGLU over a <b>tile of rows</b>, decoding each weight
+     * once for the tile.
+     *
+     * <p>The largest kernel in a decode step and the largest in a prefill chunk, and the untiled
+     * batched form reads both weight matrices once per row — the same traffic as running the rows
+     * separately. Four rows rather than eight: each row carries a gate and an up accumulator, so
+     * the register and local-memory cost is the same as the eight-row projection tile.
+     */
+    // @formatter:on
+    public static void fusedFFNGateUpSiLUTiledBatchQ4_0(
+            KernelContext context,
+            FloatArray xBatch,
+            FloatArray hbBatch,
+            ByteArray w1,
+            ByteArray w3,
+            int n,
+            int d,
+            int activeRows,
+            int localWorkGroupSize) {
+        int groupId = context.groupIdx;
+        int tile = groupId / d;
+        int rowId = groupId - tile * d;
+        int firstRow = tile * FFN_ROW_TILE;
+        if (firstRow >= activeRows) {
+            return;
+        }
+        int localId = context.localIdx;
+
+        float[] localSums = context.allocateFloatLocalArray(localWorkGroupSize * FFN_ROW_TILE * 2);
+        int blocksPerRow = (n + QK - 1) / QK;
+        int rowBlockOffset = rowId * blocksPerRow;
+
+        float g0 = 0.0f;
+        float g1 = 0.0f;
+        float g2 = 0.0f;
+        float g3 = 0.0f;
+        float u0 = 0.0f;
+        float u1 = 0.0f;
+        float u2 = 0.0f;
+        float u3 = 0.0f;
+
+        for (int j = localId; j < n; j += localWorkGroupSize) {
+            int blockIdx = j / QK;
+            int withinBlock = j - blockIdx * QK;
+            int blockByteOffset = (rowBlockOffset + blockIdx) * BLOCK_BYTES;
+            float gateWeight = decode(w1, blockByteOffset, withinBlock);
+            float upWeight = decode(w3, blockByteOffset, withinBlock);
+
+            float x0 = xBatch.get(firstRow * n + j);
+            g0 += gateWeight * x0;
+            u0 += upWeight * x0;
+            if (firstRow + 1 < activeRows) {
+                float x1 = xBatch.get((firstRow + 1) * n + j);
+                g1 += gateWeight * x1;
+                u1 += upWeight * x1;
+            }
+            if (firstRow + 2 < activeRows) {
+                float x2 = xBatch.get((firstRow + 2) * n + j);
+                g2 += gateWeight * x2;
+                u2 += upWeight * x2;
+            }
+            if (firstRow + 3 < activeRows) {
+                float x3 = xBatch.get((firstRow + 3) * n + j);
+                g3 += gateWeight * x3;
+                u3 += upWeight * x3;
+            }
+        }
+
+        int gateBase = 0;
+        int upBase = FFN_ROW_TILE * localWorkGroupSize;
+        localSums[gateBase + localId] = g0;
+        localSums[gateBase + localWorkGroupSize + localId] = g1;
+        localSums[gateBase + 2 * localWorkGroupSize + localId] = g2;
+        localSums[gateBase + 3 * localWorkGroupSize + localId] = g3;
+        localSums[upBase + localId] = u0;
+        localSums[upBase + localWorkGroupSize + localId] = u1;
+        localSums[upBase + 2 * localWorkGroupSize + localId] = u2;
+        localSums[upBase + 3 * localWorkGroupSize + localId] = u3;
+        context.localBarrier();
+
+        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                for (int t = 0; t < FFN_ROW_TILE * 2; t++) {
+                    localSums[t * localWorkGroupSize + localId] +=
+                            localSums[t * localWorkGroupSize + localId + stride];
+                }
+            }
+            context.localBarrier();
+        }
+
+        if (localId == 0) {
+            for (int t = 0; t < FFN_ROW_TILE; t++) {
+                int row = firstRow + t;
+                if (row < activeRows) {
+                    float gateSum = localSums[gateBase + t * localWorkGroupSize];
+                    float upSum = localSums[upBase + t * localWorkGroupSize];
+                    float silu = gateSum / (1.0f + TornadoMath.exp(-gateSum));
+                    hbBatch.set(row * d + rowId, silu * upSum);
+                }
+            }
+        }
+    }
+
+    /** How many rows a tiled fused gate/up covers per workgroup. */
+    public static int ffnRowTile() {
+        return FFN_ROW_TILE;
     }
 }

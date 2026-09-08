@@ -84,7 +84,10 @@ public final class TornadoMemoryModel {
             Device device,
             long configuredBudgetBytes) {
         long header = device.nativeArrayHeaderBytes();
-        int families = layerGraphFamilies(policy, config.numberOfLayers());
+        int layoutFamilies = layerGraphFamilies(policy, config.numberOfLayers());
+        // How many of those families upload the weights, which is what costs memory. A family
+        // that consumes another's copy costs graphs and not gigabytes.
+        int families = config.weightBindingFamilies(layoutFamilies);
         List<MemoryComponent> components = new ArrayList<>();
 
         // ── weights, classified by whether a layer graph binds them ──────────
@@ -155,7 +158,9 @@ public final class TornadoMemoryModel {
                     new MemoryComponent(
                             "batch staging",
                             BufferClass.BATCH_STAGING,
-                            batchStagingBytes(config, policy.prefillBatchSize()),
+                            batchStagingBytes(config, policy.prefillBatchSize())
+                                    + config.additionalBatchWorkspaceBytes(
+                                            policy.prefillBatchSize()),
                             1,
                             11 * header));
         }

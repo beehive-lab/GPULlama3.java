@@ -39,7 +39,11 @@ public final class TornadoPrefillPass {
         final Configuration configuration = model.configuration();
         final TornadoWeights weights = (TornadoWeights) model.weights();
 
-        switch (weights.dataType()) {
+        // The *embedding tensor's own* representation, not the model-wide weight type: they
+        // agree for a uniform file and disagree for a mixed one, and staging 18-byte blocks as
+        // 34-byte ones produces a plausible activation and wrong output. This is the same
+        // dispatch TornadoForwardPass makes for the decode step.
+        switch (weights.getTokenEmbeddingTable().dataType()) {
             case F16 -> {
                 MemorySegment tokenEmbeddings =
                         weights.getTokenEmbeddingTable().asHalfFloatArray().getSegment();
@@ -63,9 +67,23 @@ public final class TornadoPrefillPass {
                         0,
                         bytesPerToken);
             }
+            case Q4_0 -> {
+                // Retained rather than materialized, so a row is 18 bytes per 32 weights.
+                MemorySegment tokenEmbeddings =
+                        weights.getTokenEmbeddingTable().asByteArray().getSegment();
+                int blocksPerToken = (configuration.dim() + 31) / 32;
+                long bytesPerToken = (long) blocksPerToken * 18;
+                MemorySegment.copy(
+                        tokenEmbeddings,
+                        (long) token * bytesPerToken,
+                        state.workspace.embeddingX.getSegment(),
+                        0,
+                        bytesPerToken);
+            }
             default ->
                     throw new IllegalArgumentException(
-                            "Unsupported weight type: " + weights.dataType());
+                            "Unsupported embedding weight type: "
+                                    + weights.getTokenEmbeddingTable().dataType());
         }
 
         prefillPlan.tornadoVMForwardPrefill(position);

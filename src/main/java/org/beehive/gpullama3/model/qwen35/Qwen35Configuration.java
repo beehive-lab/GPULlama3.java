@@ -238,4 +238,36 @@ public record Qwen35Configuration(String quantization,
                 * (convStateSize() + deltaNetStateSize())
                 * Float.BYTES;
     }
+    // @formatter:off
+    /**
+     * One, whatever the layout says.
+     *
+     * <p>This family's batched decode graphs consume the weights the batch-prefill graphs
+     * uploaded, so a plan holds the model once however many families it lays out. At 14.944 GiB of
+     * weights the difference is not a refinement: predicted twice, the 27B is refused on a device
+     * it runs on.
+     */
+    // @formatter:on
+    @Override
+    public int weightBindingFamilies(int layerGraphFamilies) {
+        return 1;
+    }
+
+    /** The chunk-wide scratch {@code Qwen35State} allocates for batched prefill. */
+    @Override
+    public long additionalBatchWorkspaceBytes(int batchSize) {
+        if (batchSize <= 1) {
+            return 0L;
+        }
+        long perRow =
+                (long) dim()                       // the normalized activation
+                        + queryGateDim()           // the fused query/gate projection
+                        + 2L * attentionOutputInputDim()  // its two halves
+                        + 2L * deltaNetConvDim()   // the fused qkv and its convolution
+                        + 2L * deltaNetValueDim()  // the z gate and the readout
+                        + 2L * numberOfValueHeads()// decay and beta
+                        + 2L * deltaNetKeyDim()    // the split queries and keys
+                        + deltaNetValueDim();      // the split values
+        return perRow * batchSize * Float.BYTES;
+    }
 }

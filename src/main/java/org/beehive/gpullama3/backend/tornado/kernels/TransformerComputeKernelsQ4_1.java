@@ -77,6 +77,24 @@ public final class TransformerComputeKernelsQ4_1 {
     /** One row's dot product against {@code x}, reduced through shared memory. */
     private static float rowDotShared(
             KernelContext context, int localSize, FloatArray x, ByteArray w, int n, int rowId) {
+        return rowDotShared(context, localSize, x, 0, w, n, rowId);
+    }
+
+    /**
+     * The same reduction over a row of a <b>batch</b> of activations.
+     *
+     * <p>{@code xOffset} is where this row's activation starts. Everything else — the block
+     * addressing, the decode, the reduction — is the single-token path's, so a batched projection
+     * is the same arithmetic in the same order over a different input offset.
+     */
+    private static float rowDotShared(
+            KernelContext context,
+            int localSize,
+            FloatArray x,
+            int xOffset,
+            ByteArray w,
+            int n,
+            int rowId) {
         int localId = context.localIdx;
         float[] localSums = context.allocateFloatLocalArray(localSize);
 
@@ -88,7 +106,7 @@ public final class TransformerComputeKernelsQ4_1 {
             int blockIdx = j / QK;
             int withinBlock = j - blockIdx * QK;
             int blockByteOffset = (rowBlockOffset + blockIdx) * BLOCK_BYTES;
-            partialSum += decode(w, blockByteOffset, withinBlock) * x.get(j);
+            partialSum += decode(w, blockByteOffset, withinBlock) * x.get(xOffset + j);
         }
 
         localSums[localId] = partialSum;
@@ -163,6 +181,60 @@ public final class TransformerComputeKernelsQ4_1 {
         float sum = rowDotSimd32(context, x, w, n, rowId);
         if (context.localIdx == 0) {
             hb.set(rowId, hb.get(rowId) + sum);
+        }
+    }
+
+    // @formatter:off
+    /**
+     * {@code out[b][row] = w[row]·x[b]} over a chunk of activations, one workgroup per (row, output
+     * row).
+     *
+     * <p>The kernel launches a fixed number of rows and is told how many are active: a padding row
+     * returns before reading anything, so a chunk shorter than the batch width costs launches and
+     * nothing else.
+     */
+    // @formatter:on
+    public static void matrixVectorBatchQ4_1(
+            KernelContext context,
+            FloatArray xBatch,
+            FloatArray outBatch,
+            ByteArray w,
+            int n,
+            int d,
+            int activeRows,
+            int localWorkGroupSize) {
+        int groupId = context.groupIdx;
+        int batchIdx = groupId / d;
+        int rowId = groupId - batchIdx * d;
+        if (batchIdx >= activeRows) {
+            return;
+        }
+        float sum = rowDotShared(context, localWorkGroupSize, xBatch, batchIdx * n, w, n, rowId);
+        if (context.localIdx == 0) {
+            outBatch.set(batchIdx * d + rowId, sum);
+        }
+    }
+
+    /** {@code out[b][row] += w[row]·x[b]}, the residual form. */
+    public static void matrixVectorBatchWithResidualQ4_1(
+            KernelContext context,
+            FloatArray xBatch,
+            FloatArray outBatch,
+            ByteArray w,
+            int n,
+            int d,
+            int activeRows,
+            int localWorkGroupSize) {
+        int groupId = context.groupIdx;
+        int batchIdx = groupId / d;
+        int rowId = groupId - batchIdx * d;
+        if (batchIdx >= activeRows) {
+            return;
+        }
+        float sum = rowDotShared(context, localWorkGroupSize, xBatch, batchIdx * n, w, n, rowId);
+        if (context.localIdx == 0) {
+            int index = batchIdx * d + rowId;
+            outBatch.set(index, outBatch.get(index) + sum);
         }
     }
 }

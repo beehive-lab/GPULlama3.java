@@ -362,12 +362,18 @@ configuration the caller has no way to overrule.
   the key/value cache was predicted over every layer where this family attends in one of four,
   and the recurrent state — 149.6 MiB, neither cache nor scratch — was not counted at all.
 
-- **`qwen35` on an accelerator is single-token decode, CUDA only.** Its provider declares
-  `STANDARD` and no other mode, and no lowering. Nothing is materialized: Q4_0 projections and
-  embeddings, Q4_1 down projections, Q5_K recurrent outputs, a Q6_K vocabulary projection and F32
-  norms and SSM parameters are each decoded by a kernel selected from that tensor's own
-  representation. OpenCL and Metal have not been run for this family, and no claim is made for
-  them.
+- **`qwen35` on an accelerator is CUDA only, in all three modes.** Its provider declares
+  `STANDARD`, `PREFILL_DECODE` and `BATCH_PREFILL_DECODE`, and no lowering. Nothing is
+  materialized: Q4_0 projections and embeddings, Q4_1 down projections, Q5_K recurrent outputs, a
+  Q6_K vocabulary projection and F32 norms and SSM parameters are each decoded by a kernel selected
+  from that tensor's own representation, batched and single-token alike. All three modes meet the
+  single-token bounds against the CPU reference on the real fixture, and the batched one meets them
+  at every chunk width tested with the same numbers to the last digit. OpenCL and Metal have not
+  been run for this family, and no claim is made for them.
+- **This family's batched prefill is not the shared Q8_0 tensor-core path.** Its batched
+  projections decode the file's own blocks and accumulate in FP32, exactly as its single-token ones
+  do, which is why it meets the same bounds where the shared Q8_0 batched GEMM — FP16 accumulation
+  through tensor cores — cannot.
 - **`qwen35` speculative decoding is not a speedup on the host path.** The draft head is
   correct and its acceptance rate is high, but an accepted draft only saves work where several
   positions are verified in one forward pass, and the host path verifies them one at a time.

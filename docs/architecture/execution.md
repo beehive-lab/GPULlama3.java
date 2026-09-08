@@ -148,6 +148,11 @@ compilation occurs.
 | `PREFILL_DECODE` | sequential prefill, then single-token decode | token-identical to `STANDARD` |
 | `BATCH_PREFILL_DECODE` | a chunk of prompt tokens per invocation, then decode | **default-off**; see below |
 
+A family whose layers carry state across tokens — `qwen35`'s recurrent three quarters — cannot
+treat a chunk's rows as independent. Its batched layer graphs scan the chunk in token order inside
+the kernel, which is what keeps the result independent of the chunk width. See
+[`qwen35-prefill-design.md`](qwen35-prefill-design.md).
+
 Policy is resolved **once per generation**, never per token, and reaches the plan as an
 `ExecutionPolicy` value rather than as process-global system properties. The properties
 remain as defaults for the CLI; they are not read from inside the execution path.
@@ -176,22 +181,26 @@ same bounds, at batch 128:
 | --- | --- | --- |
 | Llama-3.2-1B F16 | passes | passes |
 | Llama-3.2-1B Q8_0 | passes | **0.76% of elements violate** (budget 0.01%), worst 8.25x tolerance |
-| Qwen3-0.6B F16 | passes | **64 logits rows against the reference's 63** |
-| Qwen3-0.6B Q8_0 | passes | **64 logits rows against the reference's 63** |
+| Qwen3-0.6B F16 | passes | passes |
+| Qwen3-0.6B Q8_0 | passes | **0.29% of elements violate**, worst 11.6x tolerance |
+| Qwen3.8-27B Q4_0 | passes | passes, at widths 2, 7, 32 and 64 |
 
-Two independent problems.
+One problem, not two.
 
-**Q8_0 batched prefill computes something different.** The batched Q8_0 projections
-dequantize to FP16 and accumulate through tensor-core MMA; the single-token path
-accumulates in FP32. The extra error is arithmetic rather than a defect, but it is far
-outside the bounds the single-token path meets, so promoting the mode would change the
-numbers every Q8_0 model produces.
+**Q8_0 batched prefill computes something different.** The batched Q8_0 projections dequantize to
+FP16 and accumulate through tensor-core MMA; the single-token path accumulates in FP32. The extra
+error is arithmetic rather than a defect, but it is far outside the bounds the single-token path
+meets, so promoting the mode would change the numbers every Q8_0 model produces.
 
-**Qwen3 generates one more token in batched mode.** The two loops drifted before they were
-merged — the batched one carries a generated-token budget the sequential one does not — and
-that difference is now measurable as a row-count mismatch. A prompt should not produce a
-different number of tokens because of how its prefill was scheduled, whatever the default
-is.
+**The row count is fixed.** Qwen3 used to generate one token more in batched mode — 64 rows
+against the reference's 63 — because the two decode loops disagree about what a prompt costs:
+`generateInterleaved` charges the positions it feeds, and `generateTokensGPUQwen3` charges
+`promptTokens.size()`. The prefill loop guessed. It is told now, by the caller whose loop the
+budget has to match, and a prompt produces the same number of tokens however it was scheduled.
+Llama is unaffected: its decode loop is the one that charges positions, and it still does.
+
+`qwen35` meets the single-token bounds in all three modes, because its batched projections decode
+the file's own blocks and accumulate in FP32 rather than going through the shared Q8_0 GEMM.
 
 ### The options, and what each costs
 
@@ -209,18 +218,8 @@ For the Q8_0 accuracy gap:
    have to know.
 4. **Leave it default-off for both.** No new evidence needed, and no gain.
 
-For the Qwen3 row count, only one of these is a fix; the rest are ways of not fixing it:
-
-1. **Align the two loops on one budget.** The drift is documented in
-   `TokenGenerationLoop`; making the batched loop count what the sequential one counts
-   removes the discrepancy at the source.
-2. **Align the sequential loop to the batched one instead**, if the batched count is the
-   intended one — same work, opposite direction, and it changes existing behaviour.
-3. **Compare only the overlapping rows in the harness.** Makes the test pass and leaves the
-   inconsistency in the engine; recorded here so nobody reaches for it by accident.
-
-A default flip needs the Qwen3 drift fixed and a deliberate choice from the Q8_0 list, in
-that order — the row count is wrong independently of what the default is.
+A default flip still needs a deliberate choice from the Q8_0 list above. The row count no longer
+argues against it.
 
 ## The generation loop
 

@@ -84,14 +84,35 @@ public class Qwen35FFNLayers
     /** One weight-reading task: where it is, what it reads, and which kernel decodes it. */
     public record Dispatch(int layer, String task, String role, DataType representation) {}
 
+    /**
+     * The graph layer 0 consumes its activation from.
+     *
+     * <p>{@code activationUpdate} in the single-token plan and {@code decodeActivation} in the
+     * prefill/decode one. The layer computation is identical in both — sequential prefill is these
+     * graphs with the logits graph skipped — so the plan shape is the only thing that differs, and
+     * it differs by a name.
+     */
+    private final String activationGraphName;
+
     public Qwen35FFNLayers(
             String taskGraphName,
             Qwen35State state,
             Qwen35TornadoWeights weights,
             Qwen35Configuration config,
             SchedulerType schedulerType) {
+        this(taskGraphName, state, weights, config, schedulerType, "activationUpdate");
+    }
+
+    public Qwen35FFNLayers(
+            String taskGraphName,
+            Qwen35State state,
+            Qwen35TornadoWeights weights,
+            Qwen35Configuration config,
+            SchedulerType schedulerType,
+            String activationGraphName) {
         super(taskGraphName, state, weights, config, schedulerType);
         this.qwen35State = state;
+        this.activationGraphName = activationGraphName;
         setupFFNLayers();
     }
 
@@ -477,7 +498,8 @@ public class Qwen35FFNLayers
     protected TaskGraph createFFNLayerTaskGraph(int layerIndex) {
         TaskGraph layer = new TaskGraph("layer_" + layerIndex);
 
-        String predecessor = layerIndex == 0 ? "activationUpdate" : "layer_" + (layerIndex - 1);
+        String predecessor =
+                layerIndex == 0 ? activationGraphName : "layer_" + (layerIndex - 1);
         layer.consumeFromDevice(predecessor, qwen35State.workspace.wrapX);
         configureLayerDataTransfers(layer, layerIndex);
         transferLayerWeights(layer, layerIndex);
@@ -907,6 +929,20 @@ public class Qwen35FFNLayers
      * <p>A weight array bound with {@code transferToDevice} in two graphs of one execution plan
      * gets a device buffer in each, so a layer uploads only its own and never another's.
      */
+    // @formatter:off
+    /**
+     * The graph that has already uploaded this layer's weights, or {@code null} to upload them
+     * here.
+     *
+     * <p>A weight array bound with {@code transferToDevice} in two graphs of one execution plan
+     * gets a device buffer in each, so a plan holding both a batch-prefill and a decode family
+     * would hold the model twice. The decode family consumes what the batch family uploaded.
+     */
+    // @formatter:on
+    protected String weightSourceGraphName(int layerIndex) {
+        return null;
+    }
+
     private void transferLayerWeights(TaskGraph layer, int layerIndex) {
         List<Object> tensors = new ArrayList<>();
         tensors.add(weights.rms_att_weightLayered[layerIndex].asFloatArray());
@@ -932,7 +968,12 @@ public class Qwen35FFNLayers
             tensors.add(require(weights.attnQNorm, layerIndex, "attn_q_norm").asFloatArray());
             tensors.add(require(weights.attnKNorm, layerIndex, "attn_k_norm").asFloatArray());
         }
-        layer.transferToDevice(DataTransferMode.FIRST_EXECUTION, tensors.toArray());
+        String source = weightSourceGraphName(layerIndex);
+        if (source != null) {
+            layer.consumeFromDevice(source, tensors.toArray());
+        } else {
+            layer.transferToDevice(DataTransferMode.FIRST_EXECUTION, tensors.toArray());
+        }
     }
 
     /** A tensor's device array, in whatever representation it is retained in. */

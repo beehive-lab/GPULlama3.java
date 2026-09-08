@@ -359,7 +359,49 @@ public final class Qwen35State extends State {
         workspace.tempLogits =
                 TornadoWorkspaces.floats(1 + ((config.dim() + localSize - 1) / localSize));
 
+        allocateBatchWorkspace(config, kvDim);
+
         // Sized by the blocks that attend, not by the block count: see keyValueLayerIndex.
         fillKvFields(fields, config, kvDim, config.keyValueLayerCount(), false);
+    }
+
+    // @formatter:off
+    /**
+     * The chunk-wide scratch batched prefill needs, when a batch width was configured.
+     *
+     * <p>Allocated here rather than beside the generic batch buffers in {@code State} because they
+     * are this family's: a fused query/gate projection twice a query's width, a convolved
+     * {@code q ‖ k ‖ v} of unequal parts, and the delta-net's own inputs and readout. The generic
+     * ones are sized from {@code batchQDim}/{@code batchKvDim}, which cannot describe these.
+     *
+     * <p>The width comes from the same place {@code State}'s own batch buffers take it — how this
+     * state was built — and not from the execution policy, which is resolved per generation and
+     * would report a width this workspace was never sized for.
+     *
+     * <p>The recurrent <b>state</b> is not among them. It is one allocation for the whole session,
+     * updated in place by both the batched and the single-token graphs — allocating a second copy
+     * for prefill is what would break the continuity the mode exists to preserve.
+     */
+    // @formatter:on
+    private void allocateBatchWorkspace(Qwen35Configuration config, int kvDim) {
+        int batch = prefillBatchWidth;
+        if (batch <= 1) {
+            return;
+        }
+        workspace.wrapNormedBatch = TornadoWorkspaces.floats(batch * config.dim());
+        workspace.wrapQGateBatch = TornadoWorkspaces.floats(batch * config.queryGateDim());
+        workspace.wrapAttnQBatch =
+                TornadoWorkspaces.floats(batch * config.attentionOutputInputDim());
+        workspace.wrapAttnGateBatch =
+                TornadoWorkspaces.floats(batch * config.attentionOutputInputDim());
+        workspace.wrapSsmQkvBatch = TornadoWorkspaces.floats(batch * config.deltaNetConvDim());
+        workspace.wrapSsmConvOutBatch = TornadoWorkspaces.floats(batch * config.deltaNetConvDim());
+        workspace.wrapSsmZBatch = TornadoWorkspaces.floats(batch * config.deltaNetValueDim());
+        workspace.wrapSsmAlphaBatch = TornadoWorkspaces.floats(batch * config.numberOfValueHeads());
+        workspace.wrapSsmBetaBatch = TornadoWorkspaces.floats(batch * config.numberOfValueHeads());
+        workspace.wrapSsmQBatch = TornadoWorkspaces.floats(batch * config.deltaNetKeyDim());
+        workspace.wrapSsmKBatch = TornadoWorkspaces.floats(batch * config.deltaNetKeyDim());
+        workspace.wrapSsmVBatch = TornadoWorkspaces.floats(batch * config.deltaNetValueDim());
+        workspace.wrapSsmOutBatch = TornadoWorkspaces.floats(batch * config.deltaNetValueDim());
     }
 }

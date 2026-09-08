@@ -228,6 +228,17 @@ public final class TransformerComputeKernelsQ5_K {
      * once instead of thirty-two times. That is the shape a Q5_K kernel should have had anyway.
      */
     private static float laneSum(FloatArray x, ByteArray w, int n, int rowBlockOffset, int subBlockIndex) {
+        return laneSum(x, 0, w, n, rowBlockOffset, subBlockIndex);
+    }
+
+    /** The same sub-block, over a batch of activations starting at {@code xOffset}. */
+    private static float laneSum(
+            FloatArray x,
+            int xOffset,
+            ByteArray w,
+            int n,
+            int rowBlockOffset,
+            int subBlockIndex) {
         int block = subBlockIndex / 8;
         int subInBlock = subBlockIndex - block * 8;
         int blockByteOffset = (rowBlockOffset + block) * BLOCK_BYTES;
@@ -255,7 +266,7 @@ public final class TransformerComputeKernelsQ5_K {
             }
             int qhByte = w.get(qhBase + t) & 0xFF;
             int high = (qhByte >> bitShift) & 1;
-            sum += (scale * (low + high * 16) - minimum) * x.get(elementBase + t);
+            sum += (scale * (low + high * 16) - minimum) * x.get(xOffset + elementBase + t);
         }
         return sum;
     }
@@ -263,6 +274,18 @@ public final class TransformerComputeKernelsQ5_K {
     /** One row's dot product against {@code x}, reduced through shared memory. */
     private static float rowDotShared(
             KernelContext context, int localSize, FloatArray x, ByteArray w, int n, int rowId) {
+        return rowDotShared(context, localSize, x, 0, w, n, rowId);
+    }
+
+    /** The same reduction over one row of a batch of activations. */
+    private static float rowDotShared(
+            KernelContext context,
+            int localSize,
+            FloatArray x,
+            int xOffset,
+            ByteArray w,
+            int n,
+            int rowId) {
         int localId = context.localIdx;
         float[] localSums = context.allocateFloatLocalArray(localSize);
 
@@ -272,7 +295,7 @@ public final class TransformerComputeKernelsQ5_K {
 
         float partialSum = 0.0f;
         for (int sb = localId; sb < subBlocks; sb += localSize) {
-            partialSum += laneSum(x, w, n, rowBlockOffset, sb);
+            partialSum += laneSum(x, xOffset, w, n, rowBlockOffset, sb);
         }
 
         localSums[localId] = partialSum;
@@ -347,6 +370,56 @@ public final class TransformerComputeKernelsQ5_K {
         float sum = rowDotSimd32(context, x, w, n, rowId);
         if (context.localIdx == 0) {
             hb.set(rowId, hb.get(rowId) + sum);
+        }
+    }
+
+    // @formatter:off
+    /**
+     * {@code out[b][row] = w[row]·x[b]} over a chunk of activations, one workgroup per (row,
+     * output row). Padding rows return before reading anything.
+     */
+    // @formatter:on
+    public static void matrixVectorBatchQ5_K(
+            KernelContext context,
+            FloatArray xBatch,
+            FloatArray outBatch,
+            ByteArray w,
+            int n,
+            int d,
+            int activeRows,
+            int localWorkGroupSize) {
+        int groupId = context.groupIdx;
+        int batchIdx = groupId / d;
+        int rowId = groupId - batchIdx * d;
+        if (batchIdx >= activeRows) {
+            return;
+        }
+        float sum = rowDotShared(context, localWorkGroupSize, xBatch, batchIdx * n, w, n, rowId);
+        if (context.localIdx == 0) {
+            outBatch.set(batchIdx * d + rowId, sum);
+        }
+    }
+
+    /** {@code out[b][row] += w[row]·x[b]}, the residual form. */
+    public static void matrixVectorBatchWithResidualQ5_K(
+            KernelContext context,
+            FloatArray xBatch,
+            FloatArray outBatch,
+            ByteArray w,
+            int n,
+            int d,
+            int activeRows,
+            int localWorkGroupSize) {
+        int groupId = context.groupIdx;
+        int batchIdx = groupId / d;
+        int rowId = groupId - batchIdx * d;
+        if (batchIdx >= activeRows) {
+            return;
+        }
+        float sum = rowDotShared(context, localWorkGroupSize, xBatch, batchIdx * n, w, n, rowId);
+        if (context.localIdx == 0) {
+            int index = batchIdx * d + rowId;
+            outBatch.set(index, outBatch.get(index) + sum);
         }
     }
 }

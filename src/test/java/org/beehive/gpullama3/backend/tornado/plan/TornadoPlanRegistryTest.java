@@ -197,6 +197,37 @@ public class TornadoPlanRegistryTest {
                         && mixed.nativeTensorTypes().size() > mixed.supportedDataTypes().size());
     }
 
+    /**
+     * {@code qwen35} resolves in all three modes, and reads eight representations per tensor.
+     *
+     * <p>The mode set is a claim the selection layer acts on: a mode declared without graphs fails
+     * from inside TornadoVM, and a mode implemented but not declared is unreachable. Both are
+     * pinned here because this family gained the other two modes after its single-token path
+     * shipped.
+     */
+    @Test
+    public void qwen35ResolvesInEveryMode() {
+        var qwen35 = provider("qwen35");
+        assertEquals(
+                "single token, sequential prefill and batched prefill",
+                Set.of(ExecutionMode.values()),
+                qwen35.supportedModes());
+        assertEquals(
+                "admitted on the representation its trunk projections share",
+                Set.of(DataType.Q4_0),
+                qwen35.supportedDataTypes());
+        assertTrue(
+                "and reads five block layouts and F32 per tensor without materializing any",
+                qwen35.nativeTensorTypes()
+                        .containsAll(
+                                Set.of(
+                                        DataType.F32,
+                                        DataType.Q4_0,
+                                        DataType.Q4_1,
+                                        DataType.Q5_K,
+                                        DataType.Q6_K)));
+    }
+
     private static TornadoPlanProvider provider(String architecture) {
         ArchitectureId id = ArchitectureId.of(architecture);
         return TornadoPlanRegistry.discover().stream()
