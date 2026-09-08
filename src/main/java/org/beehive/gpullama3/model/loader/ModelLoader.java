@@ -320,6 +320,33 @@ public abstract class ModelLoader {
         return loadTornadoTensor(entry);
     }
 
+    /**
+     * Loads a tensor for the device <b>retaining Q4_0</b> rather than materializing it as Q8_0.
+     *
+     * <p>Separate from {@link #loadTornadoTensorRetainingQ4_K} rather than one helper that retains
+     * everything with a kernel: which representations a family can read is a property of that
+     * family's layer graph, and a tensor retained in a format the graph has no kernel for would be
+     * read as the format it is not — fluent output, wrong numbers. A loader opts into exactly what
+     * its own layers dispatch on.
+     */
+    public static TornadoTensor loadTornadoTensorRetainingQ4_0(GGMLTensorEntry entry) {
+        if (entry.ggmlType() == GGMLType.Q4_0) {
+            return org.beehive.gpullama3.backend.tornado.tensor.Q4_0TornadoTensor
+                    .fromTornadoMemorySegment(entry.memorySegment());
+        }
+        return loadTornadoTensor(entry);
+    }
+
+    /** {@link #loadArrayOfTornadoTensors} that retains Q4_0. */
+    public static TornadoTensor[] loadArrayOfTornadoTensorsRetainingQ4_0(
+            int size, IntFunction<GGMLTensorEntry> getTensorEntry) {
+        TornadoTensor[] array = new TornadoTensor[size];
+        for (int i = 0; i < size; i++) {
+            array[i] = loadTornadoTensorRetainingQ4_0(getTensorEntry.apply(i));
+        }
+        return array;
+    }
+
     public static TornadoTensor loadTornadoTensor(GGMLTensorEntry entry) {
         // Describe first: the descriptor states what this tensor becomes on the device — including
         // the Q8_0 materialization for representations with no kernel — and validates the element

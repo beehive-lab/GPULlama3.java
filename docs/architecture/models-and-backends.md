@@ -55,6 +55,25 @@ executes. Where a K-quant is decoded is therefore the backend's decision: the CP
 may keep a decoded representation, and the TornadoVM backend keeps Q4_K and Q6_K resident
 on the device rather than expanding them on the host.
 
+**Retaining a representation is a per-family capability, not a global one.** `Q4_K`/`Q6_K` are
+retained for Devstral and `Q4_0` for Llama, because those families' layer graphs have kernels
+that decode them in place; the same file loaded for a family without them is still materialized
+as `Q8_0`. The loader opts in explicitly rather than retaining everything with a kernel
+somewhere, because a tensor retained in a format its graph cannot read would be decoded as the
+format it is not — 18-byte blocks addressed as 34-byte ones, which yields weights of plausible
+magnitude and fluent, wrong text.
+
+Retaining is worth roughly half a model's device footprint. Measured on one file,
+`Llama-3.2-1B-Instruct-Q4_0.gguf`, switching only `-Dllama.q4_0.retain`:
+
+| | device peak | decode |
+| --- | --- | --- |
+| retained as `Q4_0` | 1570 MiB | 172.4 tok/s |
+| materialized as `Q8_0` | 2060 MiB | 136.0 tok/s |
+
+Faster as well as smaller, because single-token decode is bandwidth-bound: fewer bytes per
+weight is fewer bytes read per token.
+
 A backend declares which representations it accepts. A combination it does not accept is
 refused, not silently converted — a silent conversion changes the arithmetic and shows up
 as a numerical result nobody can attribute.
@@ -114,6 +133,7 @@ assuming the CUDA result carries over.
 | Batched prefill/decode | yes | yes (F16; Q8_0 blocked, see below) | yes | **blocked** |
 | F16 and Q8_0 weights | yes | yes | yes | yes |
 | Q4_K / Q6_K device residency | n/a | yes | yes | yes |
+| Q4_0 device residency (Llama) | n/a | yes | yes | yes |
 | CPU-resident sampling | yes | yes | yes | yes |
 | Device-resident sampling | n/a | yes | yes | yes |
 | Shared KV pool and leases | yes | yes | yes | yes |

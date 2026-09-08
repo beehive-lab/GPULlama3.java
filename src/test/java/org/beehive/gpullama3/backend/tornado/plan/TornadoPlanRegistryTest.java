@@ -19,9 +19,11 @@ public class TornadoPlanRegistryTest {
     public void theMigratedProvidersDeclareTheInventoriedMatrix() {
         var llama = provider("llama");
         assertEquals(
-                "both representations",
-                Set.of(DataType.F16, DataType.Q8_0),
+                "both representations, plus the Q4_0 it retains rather than materializes",
+                Set.of(DataType.F16, DataType.Q8_0, DataType.Q4_0),
                 llama.supportedDataTypes());
+        // Declared for the family, not per representation: Q4_0 has single-token kernels only, and
+        // the registry refuses the other two modes for it by name rather than on a cast.
         assertEquals(
                 "all three plan shapes", Set.of(ExecutionMode.values()), llama.supportedModes());
 

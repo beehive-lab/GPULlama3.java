@@ -151,6 +151,7 @@ public final class Allowlists {
                     "org.beehive.gpullama3.backend.tornado.tensor.TornadoTensor",
                     "org.beehive.gpullama3.backend.tornado.tensor.FP16TornadoTensor",
                     "org.beehive.gpullama3.backend.tornado.tensor.FP32TornadoTensor",
+                    "org.beehive.gpullama3.backend.tornado.tensor.Q4_0TornadoTensor",
                     "org.beehive.gpullama3.backend.tornado.tensor.Q8_0TornadoTensor",
                     "org.beehive.gpullama3.backend.tornado.tensor.Q4_KTornadoTensor",
                     "org.beehive.gpullama3.backend.tornado.tensor.Q6_KTornadoTensor");

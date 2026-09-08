@@ -210,13 +210,35 @@ emitted whether or not the draft head is fed correctly, so a head reading the wr
 produces output indistinguishable from a correct one. Agreement with the trunk is the only visible
 signal: ~80% for a head that is fed correctly, chance for one that is not.
 
+## Q4_0 device residency
+
+Verified on `Llama-3.2-1B-Instruct-Q4_0.gguf`, quantized locally from the F16 fixture with
+`llama-quantize`, on CUDA.
+
+| Check | Result |
+| --- | --- |
+| Device decode against the host tensor, random bytes | pass (`Q4_0DecodeTest`) |
+| Device decode against the specification, hand-built bytes | pass (`Q4_0DecodeTest`) |
+| Real run, correct output, `execution_combination llama/Q4_0/STANDARD` | pass |
+| Device peak and decode rate, same file, retention switched | 1570 MiB / 172.4 tok/s retained; 2060 MiB / 136.0 tok/s materialized |
+| Q8_0 and F16 paths unchanged | pass |
+
+The A/B is on **one file**, switched with `-Dllama.q4_0.retain`. Comparing a Q4_0 model against
+a separately quantized Q8_0 one — which is the easier measurement to take — would have measured
+the quantization as well as the residency, and the two answers differ.
+
+Agreement between the device and host decoders is necessary but not sufficient, which is why the
+specification check is there too: two implementations can agree and both be a different format.
+
 ## Known limitations
 
 - **`qwen35` has no accelerator path, and no CPU/GPU parity gate.** Nothing claims the
   architecture, so the gate that matters most for every other family does not apply here and
-  the CPU is verified against llama.cpp instead. Two things block a GPU path: the delta-net
-  layers have no kernels, and materializing this file's Q4_0 weights as Q8_0 — what the loader
-  does for every representation the device cannot execute — turns 16 GB into roughly 28 GB.
+  the CPU is verified against llama.cpp instead. The delta-net layers have no kernels. The
+  memory objection is now weaker than it was: Q4_0 device residency exists, and this file is
+  mostly Q4_0, so retaining it would leave roughly 17 GB rather than 28 GB against 24 GB of
+  VRAM — plausible at a modest context. Retention would still have to be wired into this
+  family's loader, and the kernels are the real work.
 - **`qwen35` speculative decoding is not a speedup on the host path.** The draft head is
   correct and its acceptance rate is high, but an accepted draft only saves work where several
   positions are verified in one forward pass, and the host path verifies them one at a time.
