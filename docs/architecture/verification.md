@@ -178,6 +178,12 @@ Verified on `Qwen3.8-27B-Q4_0.gguf`
 | MTP draft agreement with the trunk, real model | 63 of 79 (80%) |
 | CPU/accelerator parity | n/a — no backend claims the architecture |
 
+**No CI rows, deliberately.** `standalone-inference.yml` is an accelerator matrix: every row
+asserts a resolved backend and a real `execution_path`, and this family has neither. The
+smallest `qwen35` release is also far larger than the fixtures that matrix carries — the one
+verified here is 16 GB. The unit gates above run in CI as ordinary tests; the fixture-backed
+checks are local, and `GoldenFixture` skips them by name when the file is absent.
+
 **Two things this port got wrong first, both of which produced fluent output.**
 
 The delta rule pairs 48 value heads with 16 key heads, and the reference repeats the key heads
