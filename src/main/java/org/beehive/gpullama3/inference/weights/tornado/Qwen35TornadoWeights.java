@@ -7,57 +7,45 @@ import org.beehive.gpullama3.runtime.tensor.DataType;
 /**
  * Device weights for the {@code qwen35} architecture.
  *
- * <p>Implements {@link Weights} directly rather than extending {@link TornadoWeights}, for the
- * reason {@code Qwen35StandardWeights} does not extend {@code StandardWeights}: that base class
- * assumes every layer has a query, key and value projection, and here three layers in four have
- * none. Extending it would mean 48 nulls per array and a base class whose fields lie about the
- * model.
+ * <p>Extends {@link TornadoWeights} rather than implementing {@link Weights} directly, which is the
+ * opposite of what the host {@code Qwen35StandardWeights} does. The reason is reach rather than
+ * symmetry: {@code Activation}, {@code AbstractLogitsTaskGraph} and {@code TornadoForwardPass} are
+ * written against {@code TornadoWeights}, and a family outside that type would need each of them
+ * changed to accommodate it. Fitting the existing shape costs a documented convention; not fitting
+ * it costs edits to shared classes for one family's benefit.
  *
- * <p>Every per-layer array is indexed by <b>absolute block index</b>, with {@code null} where the
- * block is of the other kind — the same convention the host weights use, and for the same reason:
- * a second, compacted numbering is the kind of off-by-one that produces fluent, wrong text. The
- * dense indices that do exist ({@code keyValueLayerIndex}, {@code recurrentLayerIndex}) address
- * <i>state</i>, not weights, and are the configuration's business rather than this class's.
+ * <p>The base class's per-layer arrays are indexed by <b>absolute block index</b>, and are {@code
+ * null} where the block is of the other kind:
+ *
+ * <ul>
+ *   <li>{@code wqLayered}, {@code wkLayered}, {@code wvLayered}, {@code woLayered} — the attending
+ *       blocks only, {@code null} at the 48 recurrent layers, whose mixer has no query, key or
+ *       value projection at all. {@code wqLayered} is twice a query projection's width here,
+ *       carrying an interleaved output gate.
+ *   <li>{@code rms_att_weightLayered}, {@code rms_ffn_weightLayered}, {@code w1/w2/w3Layered} —
+ *       every block, of either kind, because both mixers are followed by the same dense
+ *       feed-forward. {@code rms_ffn_weightLayered} is the file's {@code post_attention_norm}.
+ * </ul>
+ *
+ * <p>The recurrent layers' own weights are the fields below, indexed the same way and {@code null}
+ * at the attending blocks. A second, compacted numbering would be the kind of off-by-one that
+ * produces fluent, wrong text; the dense indices that do exist ({@code keyValueLayerIndex} and
+ * {@code recurrentLayerIndex}) address <i>state</i>, not weights.
+ *
+ * <p>{@code weightType} is the representation the <b>projections</b> are retained in. It is not a
+ * claim that every tensor here is that type — this model is mixed by construction, with Q5_K
+ * recurrent outputs and a Q6_K vocabulary projection — and a layer graph dispatches per tensor.
  */
-public final class Qwen35TornadoWeights implements Weights {
+public final class Qwen35TornadoWeights extends TornadoWeights {
 
     /** Trunk layers plus MTP blocks; the length of every per-layer array here. */
     public final int blockCount;
 
-    // ---- shared by both layer kinds ---------------------------------------
-
-    public final TornadoTensor tokenEmbeddingTable;
-
-    /** Input norm of the mixer branch, every block. */
-    public final TornadoTensor[] attnNorm;
-
-    /** Input norm of the feed-forward branch. Named {@code post_attention_norm} in the file. */
-    public final TornadoTensor[] ffnNorm;
-
-    public final TornadoTensor[] ffnGate;
-    public final TornadoTensor[] ffnDown;
-    public final TornadoTensor[] ffnUp;
-
-    public final TornadoTensor outputNorm;
-    public final TornadoTensor output;
-
-    /** RoPE tables, precomputed over {@code rope.dimension_count} rather than the head width. */
-    public final TornadoTensor freqCisReal;
-
-    public final TornadoTensor freqCisImag;
-
-    // ---- attention blocks --------------------------------------------------
-
-    /** The fused query/gate projection: per head a query slice then a gate slice. */
-    public final TornadoTensor[] wq;
-
-    public final TornadoTensor[] wk;
-    public final TornadoTensor[] wv;
-    public final TornadoTensor[] wo;
+    /** Per-head query norm, attending blocks only. */
     public final TornadoTensor[] attnQNorm;
-    public final TornadoTensor[] attnKNorm;
 
-    // ---- recurrent blocks --------------------------------------------------
+    /** Per-head key norm, attending blocks only. */
+    public final TornadoTensor[] attnKNorm;
 
     /** Fused {@code q ‖ k ‖ v} projection feeding the depthwise convolution. */
     public final TornadoTensor[] ssmQkv;
@@ -68,7 +56,7 @@ public final class Qwen35TornadoWeights implements Weights {
     /** Depthwise causal convolution kernel, {@code conv_kernel} taps per channel. */
     public final TornadoTensor[] ssmConv1d;
 
-    /** Per-value-head decay projection, before the bias, softplus and {@code ssmA}. */
+    /** Per-value-head decay projection, before the bias, softplus and {@link #ssmA}. */
     public final TornadoTensor[] ssmAlpha;
 
     /** Per-value-head write-strength projection, before the logistic. */
@@ -83,10 +71,8 @@ public final class Qwen35TornadoWeights implements Weights {
     /** Gated RMS norm scale over one value head's width. */
     public final TornadoTensor[] ssmNorm;
 
-    /** Output projection of the recurrent branch. */
+    /** Output projection of the recurrent branch. Q5_K in the 27B. */
     public final TornadoTensor[] ssmOut;
-
-    private final DataType weightType;
 
     // @formatter:off
     public Qwen35TornadoWeights(
@@ -117,21 +103,23 @@ public final class Qwen35TornadoWeights implements Weights {
             TornadoTensor[] ssmNorm,
             TornadoTensor[] ssmOut,
             DataType weightType) {
+        super(
+                tokenEmbeddingTable,
+                attnNorm,
+                wq,
+                wk,
+                wv,
+                wo,
+                ffnNorm,
+                ffnGate,
+                ffnDown,
+                ffnUp,
+                outputNorm,
+                freqCisReal,
+                freqCisImag,
+                output,
+                weightType);
         this.blockCount = blockCount;
-        this.tokenEmbeddingTable = tokenEmbeddingTable;
-        this.attnNorm = attnNorm;
-        this.ffnNorm = ffnNorm;
-        this.ffnGate = ffnGate;
-        this.ffnDown = ffnDown;
-        this.ffnUp = ffnUp;
-        this.outputNorm = outputNorm;
-        this.output = output;
-        this.freqCisReal = freqCisReal;
-        this.freqCisImag = freqCisImag;
-        this.wq = wq;
-        this.wk = wk;
-        this.wv = wv;
-        this.wo = wo;
         this.attnQNorm = attnQNorm;
         this.attnKNorm = attnKNorm;
         this.ssmQkv = ssmQkv;
@@ -143,12 +131,6 @@ public final class Qwen35TornadoWeights implements Weights {
         this.ssmA = ssmA;
         this.ssmNorm = ssmNorm;
         this.ssmOut = ssmOut;
-        this.weightType = weightType;
     }
     // @formatter:on
-
-    @Override
-    public DataType dataType() {
-        return weightType;
-    }
 }

@@ -140,7 +140,7 @@ assuming the CUDA result carries over.
 | Prefix caching | yes | yes | yes | yes |
 | Compiled-program caching | n/a | yes | yes | yes |
 | Lowered execution path under `auto` | n/a | Llama/F16/`STANDARD` | selects legacy | selects legacy |
-| `qwen35` (Qwen3.5 / 3.8) | yes | **unclaimed** | **unclaimed** | **unclaimed** |
+| `qwen35` (Qwen3.5 / 3.8) | yes | `STANDARD`, Q4_0 | untested | untested |
 | Conversations, tools, thinking control, streaming | yes | yes | yes | yes |
 | Memory preflight confidence | n/a | `EXACT` | `EXACT` | capped at `CONSERVATIVE` |
 | Reset / close / multi-session | yes | yes | yes | yes |
@@ -160,13 +160,16 @@ Recorded external limitations, each with its named cause:
 - **Kernel capture on Metal** — `withPrintKernel()` produces no kernel source, so
   `CompiledProgramIdentityAccelTest` cannot observe there. A capture-path gap, not a
   numerical one.
-- **`qwen35` has no accelerator path.** No `TornadoPlanProvider` claims it, so a device
-  request is refused by name from both the loader and the model rather than falling back to
-  the host — a fallback would report GPU throughput for CPU work. Two things block it, and
-  the second is the harder one: its delta-net layers have no kernels, and materializing
-  Qwen3.8-27B's Q4_0 weights as `Q8_0` (what the loader does for every representation the
-  device cannot execute) turns a 16 GB file into roughly 28 GB of device memory. A GPU path
-  needs native low-bit device tensors first.
+- **`qwen35` runs single-token decode only.** Its provider declares `STANDARD` and nothing
+  else: there are no prefill or batched layer graphs for this family, and the MTP draft head
+  is not built into the generation plan. Verified on CUDA against the CPU reference on
+  Qwen3.8-27B; OpenCL and Metal have not been run.
+- **`qwen35` attention does not use the split-KV kernel.** Its head is 256 wide and
+  `processHeadsFlashAttentionSplitKVPaged` fixes its query staging and per-thread accumulator
+  at 128 floats per head, so a 256-wide head reads and writes past them — on CUDA an illegal
+  address, which surfaces as a poisoned context and an allocation failure in an unrelated
+  call. This family uses the single-workgroup online-softmax kernel, which sizes its shared
+  memory from the head width it is given, at the cost of the splits' parallelism.
 - **Memory preflight on Metal** is capped at `CONSERVATIVE`. The multiplicity/header model
   `EXACT` depends on was bisected against measurement on CUDA only, and admission acts on
   the confidence level.

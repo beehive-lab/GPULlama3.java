@@ -18,6 +18,81 @@ public class TransformerComputeKernels {
      * copy + host scan removed). Launch with one workgroup: {@code global == local ==
      * localMemSize}.
      */
+    // @formatter:off
+    /**
+     * {@code x[i] *= scale}, in place, one lane per element.
+     *
+     * <p>Format-neutral and family-neutral: Gemma scales an embedding by {@code sqrt(dim)}, and a
+     * delta-net layer scales its queries by {@code 1/sqrt(headKeyDim)} before the recurrence. Same
+     * arithmetic, so one kernel — a copy named after either family would be the second one.
+     *
+     * <p>Each lane reads and writes only its own element, so the in-place write destroys nothing
+     * another lane still needs.
+     */
+    // @formatter:on
+    static void scaleInPlaceLane(FloatArray x, float scale, int lane) {
+        x.set(lane, x.get(lane) * scale);
+    }
+
+    /** One lane per element. */
+    public static void scaleInPlace(KernelContext context, FloatArray x, float scale, int size) {
+        int lane = context.globalIdx;
+        if (lane >= size) {
+            return;
+        }
+        scaleInPlaceLane(x, scale, lane);
+    }
+
+    // @formatter:off
+    /**
+     * One element of a fused three-way projection, copied into the slice it belongs to.
+     *
+     * <p>The widths are stated separately rather than as {@code (q, kv, kv)}. {@code splitQKV} in
+     * {@code TransformerComputeKernelsLayered} assumes a key and a value of equal width, which is
+     * true of attention and false of a delta-net mixer: its fused projection is {@code 2048 |
+     * 2048 | 6144}, and splitting it on equal halves would take the value slice from inside the
+     * keys.
+     *
+     * <p>Source and destinations are distinct buffers, so no lane overwrites an element another
+     * lane has yet to read.
+     *
+     * @param lane an element of the fused buffer, {@code 0 .. dimA + dimB + dimC - 1}
+     */
+    // @formatter:on
+    static void splitThreeWayLane(
+            FloatArray fused,
+            FloatArray a,
+            FloatArray b,
+            FloatArray c,
+            int dimA,
+            int dimB,
+            int lane) {
+        if (lane < dimA) {
+            a.set(lane, fused.get(lane));
+        } else if (lane < dimA + dimB) {
+            b.set(lane - dimA, fused.get(lane));
+        } else {
+            c.set(lane - dimA - dimB, fused.get(lane));
+        }
+    }
+
+    /** One lane per element of the fused buffer. */
+    public static void splitThreeWay(
+            KernelContext context,
+            FloatArray fused,
+            FloatArray a,
+            FloatArray b,
+            FloatArray c,
+            int dimA,
+            int dimB,
+            int dimC) {
+        int lane = context.globalIdx;
+        if (lane >= dimA + dimB + dimC) {
+            return;
+        }
+        splitThreeWayLane(fused, a, b, c, dimA, dimB, lane);
+    }
+
     public static void argmaxLogits(
             KernelContext context, FloatArray logits, IntArray out, int vocab, int localMemSize) {
         int tid = context.localIdx;
@@ -91,6 +166,64 @@ public class TransformerComputeKernels {
             return;
         }
         wrapX.set(i, x.get(i).getFloat32());
+    }
+
+    /**
+     * The embedding row, decoded from Q4_0 blocks into FP32.
+     *
+     * <p>The Q4_0 twin of {@link #convertQ8_0toFP32}. A model whose token embeddings are retained
+     * as Q4_0 stages 18-byte blocks rather than 34-byte ones, and this is what turns them into the
+     * activation the first layer reads. Without it a Q4_0 embedding would have to be materialized
+     * as Q8_0 purely to be looked up, which is the conversion the rest of this backend no longer
+     * does.
+     */
+    public static void convertQ4_0toFP32(KernelContext context, ByteArray x, FloatArray wrapX) {
+        int globalId = context.globalIdx;
+        if (globalId >= wrapX.getSize()) {
+            return;
+        }
+
+        int blockSize = 32;
+        int Q4_0_BLOCK_BYTES = 18; // 2 bytes scale + 16 bytes of packed nibbles
+
+        int blockIdx = globalId / blockSize;
+        int withinBlockIdx = globalId - blockIdx * blockSize;
+        int blockByteOffset = blockIdx * Q4_0_BLOCK_BYTES;
+
+        // Assembled from two byte loads rather than through getHalfFloat: that call inlined into a
+        // kernel is one TornadoVM's sketcher rejects, as TransformerComputeKernelsQ6_K records.
+        int lo = x.get(blockByteOffset) & 0xFF;
+        int hi = x.get(blockByteOffset + 1) & 0xFF;
+        int h = (hi << 8) | lo;
+        int mantissa = h & 0x3FF;
+        int exponent = (h >>> 10) & 0x1F;
+        float magnitude;
+        if (exponent == 0) {
+            magnitude = mantissa * 5.9604645E-8f;
+        } else {
+            float scaled = 1.0f + mantissa * 9.765625E-4f;
+            int shift = exponent - 15;
+            float power = 1.0f;
+            if (shift > 0) {
+                power = (float) (1 << shift);
+            } else if (shift < 0) {
+                power = 1.0f / (float) (1 << (-shift));
+            }
+            magnitude = scaled * power;
+        }
+        float scale = magnitude;
+        if ((h & 0x8000) != 0) {
+            scale = -magnitude;
+        }
+
+        int half = withinBlockIdx / 16;
+        int byteIndex = withinBlockIdx - half * 16;
+        int packed = x.get(blockByteOffset + 2 + byteIndex) & 0xFF;
+        int q = packed & 0xF;
+        if (half == 1) {
+            q = (packed >> 4) & 0xF;
+        }
+        wrapX.set(globalId, scale * (q - 8));
     }
 
     public static void convertQ8_0toFP32(KernelContext context, ByteArray x, FloatArray wrapX) {

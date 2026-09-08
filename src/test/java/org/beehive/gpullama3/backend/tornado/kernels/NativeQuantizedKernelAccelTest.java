@@ -268,4 +268,85 @@ public class NativeQuantizedKernelAccelTest {
                                 D,
                                 LOCAL));
     }
+    // @formatter:off
+    /**
+     * The fused gate/up projection with SwiGLU, which is the feed-forward every {@code qwen35}
+     * block runs and the only Q4_0 kernel that decodes two weight matrices in one pass.
+     *
+     * <p>Held against the host's own {@code SwiGLU} over two separate dot products, so a defect in
+     * the shared local array — gate and up occupy one allocation and one reduction tree — shows up
+     * as a wrong row rather than as a plausible activation.
+     */
+    // @formatter:on
+    @Test
+    public void theFusedQ4_0GateUpSwiGluRunsOnTheDevice() throws Exception {
+        byte[] rawGate = randomBlocks(GGMLType.Q4_0, 991L);
+        byte[] rawUp = randomBlocks(GGMLType.Q4_0, 4242L);
+
+        FloatArray x = new FloatArray(N);
+        for (int i = 0; i < N; i++) {
+            x.set(i, ((i % 5) - 2) * 0.5f);
+        }
+        FloatArray out = new FloatArray(D);
+        out.init(POISON);
+
+        float[] expected = new float[D];
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment gateSegment = arena.allocate(rawGate.length);
+            MemorySegment.copy(rawGate, 0, gateSegment, ValueLayout.JAVA_BYTE, 0, rawGate.length);
+            MemorySegment upSegment = arena.allocate(rawUp.length);
+            MemorySegment.copy(rawUp, 0, upSegment, ValueLayout.JAVA_BYTE, 0, rawUp.length);
+            FloatTensor gate = new Q4_0FloatTensor(D * N, gateSegment);
+            FloatTensor up = new Q4_0FloatTensor(D * N, upSegment);
+            for (int row = 0; row < D; row++) {
+                float gateSum = 0f;
+                float upSum = 0f;
+                for (int col = 0; col < N; col++) {
+                    gateSum += gate.getFloat(row * N + col) * x.get(col);
+                    upSum += up.getFloat(row * N + col) * x.get(col);
+                }
+                FloatTensor g = new ArrayFloatTensor(new float[] {gateSum});
+                FloatTensor u = new ArrayFloatTensor(new float[] {upSum});
+                org.beehive.gpullama3.inference.op.CpuOperations.swiGLU(g, u);
+                expected[row] = g.getFloat(0);
+            }
+        }
+
+        ByteArray gateWeights = toDevice(rawGate);
+        ByteArray upWeights = toDevice(rawUp);
+        KernelContext context = new KernelContext();
+        TaskGraph graph =
+                new TaskGraph("ffnProbe")
+                        .transferToDevice(
+                                DataTransferMode.FIRST_EXECUTION, x, gateWeights, upWeights, out)
+                        .task(
+                                "ffn",
+                                TransformerComputeKernelsQ4_0::fusedFFNGateUpSiLUQ4_0,
+                                context,
+                                x,
+                                out,
+                                gateWeights,
+                                upWeights,
+                                N,
+                                D,
+                                LOCAL)
+                        .transferToHost(DataTransferMode.EVERY_EXECUTION, out);
+
+        WorkerGrid worker = new WorkerGrid1D(D * LOCAL);
+        worker.setLocalWork(LOCAL, 1, 1);
+        GridScheduler scheduler = new GridScheduler();
+        scheduler.addWorkerGrid("ffnProbe.ffn", worker);
+        try (TornadoExecutionPlan plan = new TornadoExecutionPlan(graph.snapshot())) {
+            plan.withGridScheduler(scheduler).execute();
+        }
+
+        for (int row = 0; row < D; row++) {
+            assertTrue("row " + row + " was never written", out.get(row) != POISON);
+            assertEquals(
+                    "row " + row,
+                    expected[row],
+                    out.get(row),
+                    Math.max(1e-3f, Math.abs(expected[row]) * 1e-4f));
+        }
+    }
 }

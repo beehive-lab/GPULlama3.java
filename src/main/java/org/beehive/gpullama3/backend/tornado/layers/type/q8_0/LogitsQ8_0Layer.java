@@ -79,20 +79,107 @@ public class LogitsQ8_0Layer extends AbstractLogitsTaskGraph {
                 state.workspace.tempLogits);
 
         // === Vocabulary Projection ===
-        logits.task(
-                "vocab_proj",
-                TransformerComputeKernelsLayered::matrixVectorGenericQ8Byte,
-                context,
-                state.workspace.wrapX,
-                state.workspace.wrapLogits,
-                weights.wclsByteArray.asByteArray(),
-                config.dim(),
-                config.vocabularySize(),
-                LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS);
+        // By the projection's own representation, not the plan's. A mixed file keeps its output
+        // projection in whatever the quantizer chose -- Qwen3.5's is Q6_K where its layers are
+        // Q4_0 -- and reading one block layout as another produces plausible logits and wrong
+        // tokens. A representation with no kernel is refused here rather than converted.
+        addVocabularyProjection(logits, weights, config);
 
         logits.transferToHost(DataTransferMode.EVERY_EXECUTION, state.workspace.wrapLogits);
         configureAdditionalPersists(logits);
         return logits;
+    }
+
+    /** The vocabulary projection task, chosen by what the output projection actually holds. */
+    private void addVocabularyProjection(
+            TaskGraph logits, TornadoWeights weights, Configuration config) {
+        int localSize = LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS;
+        var w = weights.wclsByteArray;
+        switch (w.dataType()) {
+            case Q8_0 ->
+                    logits.task(
+                            "vocab_proj",
+                            TransformerComputeKernelsLayered::matrixVectorGenericQ8Byte,
+                            context,
+                            state.workspace.wrapX,
+                            state.workspace.wrapLogits,
+                            w.asByteArray(),
+                            config.dim(),
+                            config.vocabularySize(),
+                            localSize);
+            case Q4_0 ->
+                    logits.task(
+                            "vocab_proj",
+                            org.beehive.gpullama3.backend.tornado.kernels
+                                            .TransformerComputeKernelsQ4_0
+                                    ::matrixVectorGenericQ4_0,
+                            context,
+                            state.workspace.wrapX,
+                            state.workspace.wrapLogits,
+                            w.asByteArray(),
+                            config.dim(),
+                            config.vocabularySize(),
+                            localSize);
+            case Q4_1 ->
+                    logits.task(
+                            "vocab_proj",
+                            org.beehive.gpullama3.backend.tornado.kernels
+                                            .TransformerComputeKernelsQ4_1
+                                    ::matrixVectorGenericQ4_1,
+                            context,
+                            state.workspace.wrapX,
+                            state.workspace.wrapLogits,
+                            w.asByteArray(),
+                            config.dim(),
+                            config.vocabularySize(),
+                            localSize);
+            case Q4_K ->
+                    logits.task(
+                            "vocab_proj",
+                            org.beehive.gpullama3.backend.tornado.kernels
+                                            .TransformerComputeKernelsQ4_K
+                                    ::matrixVectorGenericQ4_K,
+                            context,
+                            state.workspace.wrapX,
+                            state.workspace.wrapLogits,
+                            w.asByteArray(),
+                            config.dim(),
+                            config.vocabularySize(),
+                            localSize);
+            case Q5_K ->
+                    logits.task(
+                            "vocab_proj",
+                            org.beehive.gpullama3.backend.tornado.kernels
+                                            .TransformerComputeKernelsQ5_K
+                                    ::matrixVectorGenericQ5_K,
+                            context,
+                            state.workspace.wrapX,
+                            state.workspace.wrapLogits,
+                            w.asByteArray(),
+                            config.dim(),
+                            config.vocabularySize(),
+                            localSize);
+            case Q6_K ->
+                    logits.task(
+                            "vocab_proj",
+                            org.beehive.gpullama3.backend.tornado.kernels
+                                            .TransformerComputeKernelsQ6_K
+                                    ::matrixVectorGenericQ6_K,
+                            context,
+                            state.workspace.wrapX,
+                            state.workspace.wrapLogits,
+                            w.asByteArray(),
+                            config.dim(),
+                            config.vocabularySize(),
+                            localSize);
+            default ->
+                    throw new UnsupportedOperationException(
+                            "the vocabulary projection is "
+                                    + w.dataType()
+                                    + ", for which there is no device kernel. It is not converted"
+                                    + " to Q8_0 to get one: that would double what it occupies and"
+                                    + " hide a missing kernel behind a memory cost.");
+        }
     }
 
     // @formatter:on

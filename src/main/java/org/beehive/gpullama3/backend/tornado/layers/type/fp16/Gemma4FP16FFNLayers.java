@@ -1,6 +1,7 @@
 package org.beehive.gpullama3.backend.tornado.layers.type.fp16;
 
 import org.beehive.gpullama3.backend.tornado.kernels.Gemma4Kernels;
+import org.beehive.gpullama3.backend.tornado.kernels.TransformerComputeKernels;
 import org.beehive.gpullama3.backend.tornado.kernels.TransformerComputeKernelsLayered;
 import org.beehive.gpullama3.backend.tornado.layers.AbstractTransformerLayerTaskGraphs;
 import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerType;
@@ -463,7 +464,7 @@ public class Gemma4FP16FFNLayers
     private void appendPLESetupTasks(TaskGraph unifiedLayer) {
         unifiedLayer.task(
                 "scale_embedding",
-                Gemma4Kernels::scaleInPlace,
+                TransformerComputeKernels::scaleInPlace,
                 context,
                 gemma4State.workspace.wrapX,
                 embedScale,

@@ -42,16 +42,9 @@ public class Gemma4Kernels {
         }
     }
 
-    /** {@code x[i] *= scale} (used for embedding scaling). */
-    public static void scaleInPlace(KernelContext context, FloatArray x, float scale, int size) {
-        int gid = context.globalIdx;
-        if (gid < size) {
-            x.set(gid, x.get(gid) * scale);
-        }
-    }
-
     /**
-     * {@code x[i] *= scaleTensor[0]} -- like {@link #scaleInPlace}, but the (learned, per-layer)
+     * {@code x[i] *= scaleTensor[0]} -- like {@link TransformerComputeKernels#scaleInPlace}, but
+     * the (learned, per-layer)
      * scale is read from a 1-element tensor at kernel time.
      */
     public static void scaleInPlaceFromTensor(

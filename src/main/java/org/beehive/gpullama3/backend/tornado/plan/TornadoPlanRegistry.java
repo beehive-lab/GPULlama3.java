@@ -84,9 +84,10 @@ public final class TornadoPlanRegistry {
      * The representations this architecture's plans read <b>as they are</b>, without
      * materialization.
      *
-     * <p>Not a new declaration: it is the provider's own {@code supportedDataTypes}, which already
-     * answers exactly this. A family listing {@code Q4_0} has kernels that decode Q4_0 blocks, so
-     * a Q4_0 tensor stays 4.5 bits per weight on the device instead of becoming 8.5.
+     * <p>The provider's own {@code nativeTensorTypes}, which is the declaration that answers this
+     * per tensor. It is separate from {@code supportedDataTypes} because that one admits a plan
+     * for a model-wide representation, and a mixed model holds several: reading admission as
+     * retention under-predicts every tensor whose representation is not the model's.
      *
      * <p>Read by the memory preflight, which would otherwise predict every quantized weight at its
      * Q8_0 size and refuse a configuration that fits. An architecture with no provider retains
@@ -94,7 +95,7 @@ public final class TornadoPlanRegistry {
      */
     public static java.util.Set<DataType> nativeDeviceTypes(ArchitectureId architecture) {
         TornadoPlanProvider provider = Index.BY_ID.get(architecture);
-        return provider == null ? java.util.Set.of() : provider.supportedDataTypes();
+        return provider == null ? java.util.Set.of() : provider.nativeTensorTypes();
     }
 
     /** Which architectures have migrated to a registered plan provider. */

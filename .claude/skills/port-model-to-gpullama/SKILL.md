@@ -291,5 +291,26 @@ changes what the layer graph binds and how many buffers the memory plan predicts
 selection branches on `DeviceCapability`. A test on the backend's name is how a kernel that
 is correct on one device gets selected on another where it is not.
 
+**A shared kernel may have a fixed local-array size your model exceeds.** The split-KV attention
+kernel stages a query and a per-thread accumulator in local arrays fixed at 128 floats per head.
+A 256-wide head reads and writes past them; on CUDA that is an illegal address, and it surfaces as
+a poisoned context and an allocation failure in an unrelated call several steps later, not as a
+fault in the kernel that caused it. Read the constants in a kernel before reusing it at a new
+geometry.
+
+**A quantized row must be a whole number of blocks.** Every block-decoding kernel addresses a row
+as `row * blocksPerRow` blocks. That holds for every projection a real quantizer produces, and
+where it does not the kernel reads the next row's blocks and produces weights of plausible
+magnitude. Check it at plan construction; the alternative is finding it as a numerical
+disagreement.
+
+**Declaring what a family reads per tensor is a different question from what a plan is selected
+on.** A mixed model reports one representation and holds several. One set cannot answer both
+without lying to the memory preflight, which then predicts every tensor at the model's dtype.
+
+**A state that decides what to allocate from a system property will be wrong the moment a provider
+exists.** Whether a session is on a device is known by the model, from its weights. A property is
+set by one caller and not by the harness, and the failure is a null buffer inside the backend.
+
 **Prove the path, every time.** An accelerator test that does not assert the resolved
 backend and a real `execution_path` cannot tell a GPU run from a silent CPU fallback.

@@ -10,7 +10,6 @@ import org.beehive.gpullama3.backend.tornado.tensor.TornadoTensor;
 import org.beehive.gpullama3.backend.tornado.tensor.TornadoTensorLoader;
 import org.beehive.gpullama3.format.DataTypeMapping;
 import org.beehive.gpullama3.format.GGMLTensorEntry;
-import org.beehive.gpullama3.format.GGMLType;
 import org.beehive.gpullama3.format.GGUF;
 import org.beehive.gpullama3.inference.weights.Weights;
 import org.beehive.gpullama3.inference.weights.standard.Qwen35StandardWeights;
@@ -21,7 +20,6 @@ import org.beehive.gpullama3.model.qwen35.Qwen35;
 import org.beehive.gpullama3.model.qwen35.Qwen35Configuration;
 import org.beehive.gpullama3.runtime.diagnostics.DiagnosticCode;
 import org.beehive.gpullama3.runtime.tensor.DataType;
-import org.beehive.gpullama3.runtime.tensor.ExecutionTarget;
 import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
 import org.beehive.gpullama3.tensor.standard.FloatTensor;
 import org.beehive.gpullama3.tokenizer.Qwen35Tokenizer;
@@ -385,26 +383,18 @@ public class Qwen35ModelLoader extends AbstractModelLoader<Qwen35, Qwen35Configu
 
     // @formatter:off
     /**
-     * Device weights, with the Q4_0 ones kept as they are.
+     * Device weights, every tensor in the representation the file gave it.
      *
-     * <p>Retaining matters more here than anywhere else. Qwen3.8-27B is 16 GB and almost entirely
-     * Q4_0; materializing it as Q8_0 costs roughly 28 GB, which does not fit on a 24 GB device,
-     * where retaining leaves about 17 GB, which does. The rest of the file — {@code ssm_out} in
-     * Q5_K, eight {@code ffn_down} in Q4_1, {@code output} in Q6_K — has no kernel here and is
-     * still materialized, so the model is mixed by construction and each weight is read by the
-     * kernel matching its own type.
+     * <p>Nothing here is materialized. Qwen3.8-27B is 16 GB and mixed by construction — Q4_0
+     * projections and token embeddings, eight Q4_1 {@code ffn_down}, forty-eight Q5_K {@code
+     * ssm_out}, a Q6_K vocabulary projection, a Q8_0 MTP projection, and F32 norms, SSM parameters
+     * and convolution kernels. Materializing the quantized ones as Q8_0 costs roughly 27 GiB
+     * against a device that has 24; retained, they are the file's own 14.944 GiB of weight bytes.
      *
-     * <p><b>All or nothing for the layers that share a kernel.</b> The delta-net and attention
-     * graphs dispatch per tensor, but the {@code q ‖ k ‖ v} projections of one layer are read by a
-     * single fused kernel, so they must agree. The check below is over the tensors a Q4_0 kernel
-     * would decode; anything else falls back to Q8_0 for the whole model rather than mixing two
-     * block layouts inside one kernel, which would read 18-byte blocks as 34-byte ones and produce
-     * fluent, wrong text.
-     *
-     * <p><b>This does not yet make the model runnable on a device.</b> No {@code
-     * TornadoPlanProvider} claims this architecture, so nothing consumes these weights; the layer
-     * graphs are the next piece. Building them is what makes it possible to find out whether they
-     * are right.
+     * <p>Every task in this family's layer graphs is selected by the representation of the tensor
+     * it reads, so a tensor's own layout is what a kernel decodes. Where several operands are
+     * fused into one task, the graph validates their combination and refuses a mixture it was not
+     * written for; it never reads one block layout as another and never converts the odd operand.
      */
     // @formatter:on
     @Override
@@ -417,7 +407,6 @@ public class Qwen35ModelLoader extends AbstractModelLoader<Qwen35, Qwen35Configu
 
         final int blocks = config.numberOfBlocks();
         final int trunk = config.numberOfLayers();
-        boolean retainQ4_0 = allQ4_0Projections(tensorEntries, config);
 
         TornadoTensor[] attnNorm = perBlockDevice(blocks, l -> tensorEntries.get("blk." + l + ".attn_norm.weight"));
         TornadoTensor[] ffnNorm = perBlockDevice(blocks, l -> tensorEntries.get("blk." + l + ".post_attention_norm.weight"));
@@ -444,47 +433,43 @@ public class Qwen35ModelLoader extends AbstractModelLoader<Qwen35, Qwen35Configu
 
         for (int l = 0; l < blocks; l++) {
             String blk = "blk." + l + ".";
-            ffnGate[l] = deviceTensor(tensorEntries, blk + "ffn_gate.weight", retainQ4_0);
-            ffnDown[l] = deviceTensor(tensorEntries, blk + "ffn_down.weight", retainQ4_0);
-            ffnUp[l] = deviceTensor(tensorEntries, blk + "ffn_up.weight", retainQ4_0);
+            ffnGate[l] = deviceTensor(tensorEntries, blk + "ffn_gate.weight");
+            ffnDown[l] = deviceTensor(tensorEntries, blk + "ffn_down.weight");
+            ffnUp[l] = deviceTensor(tensorEntries, blk + "ffn_up.weight");
             if (config.isRecurrentLayer(l)) {
-                ssmQkv[l] = deviceTensor(tensorEntries, blk + "attn_qkv.weight", retainQ4_0);
-                ssmGate[l] = deviceTensor(tensorEntries, blk + "attn_gate.weight", retainQ4_0);
+                ssmQkv[l] = deviceTensor(tensorEntries, blk + "attn_qkv.weight");
+                ssmGate[l] = deviceTensor(tensorEntries, blk + "attn_gate.weight");
                 // The SSM parameters are F32 in every file that carries them, and are read by
                 // dtype-independent kernels; retention does not apply to them.
-                ssmConv1d[l] = deviceTensor(tensorEntries, blk + "ssm_conv1d.weight", false);
-                ssmAlpha[l] = deviceTensor(tensorEntries, blk + "ssm_alpha.weight", false);
-                ssmBeta[l] = deviceTensor(tensorEntries, blk + "ssm_beta.weight", false);
-                ssmDtBias[l] = deviceTensor(tensorEntries, blk + "ssm_dt.bias", false);
-                ssmA[l] = deviceTensor(tensorEntries, blk + "ssm_a", false);
-                ssmNorm[l] = deviceTensor(tensorEntries, blk + "ssm_norm.weight", false);
-                ssmOut[l] = deviceTensor(tensorEntries, blk + "ssm_out.weight", retainQ4_0);
+                ssmConv1d[l] = deviceTensor(tensorEntries, blk + "ssm_conv1d.weight");
+                ssmAlpha[l] = deviceTensor(tensorEntries, blk + "ssm_alpha.weight");
+                ssmBeta[l] = deviceTensor(tensorEntries, blk + "ssm_beta.weight");
+                ssmDtBias[l] = deviceTensor(tensorEntries, blk + "ssm_dt.bias");
+                ssmA[l] = deviceTensor(tensorEntries, blk + "ssm_a");
+                ssmNorm[l] = deviceTensor(tensorEntries, blk + "ssm_norm.weight");
+                ssmOut[l] = deviceTensor(tensorEntries, blk + "ssm_out.weight");
             } else {
-                wq[l] = deviceTensor(tensorEntries, blk + "attn_q.weight", retainQ4_0);
-                wk[l] = deviceTensor(tensorEntries, blk + "attn_k.weight", retainQ4_0);
-                wv[l] = deviceTensor(tensorEntries, blk + "attn_v.weight", retainQ4_0);
-                wo[l] = deviceTensor(tensorEntries, blk + "attn_output.weight", retainQ4_0);
-                attnQNorm[l] = deviceTensor(tensorEntries, blk + "attn_q_norm.weight", false);
-                attnKNorm[l] = deviceTensor(tensorEntries, blk + "attn_k_norm.weight", false);
+                wq[l] = deviceTensor(tensorEntries, blk + "attn_q.weight");
+                wk[l] = deviceTensor(tensorEntries, blk + "attn_k.weight");
+                wv[l] = deviceTensor(tensorEntries, blk + "attn_v.weight");
+                wo[l] = deviceTensor(tensorEntries, blk + "attn_output.weight");
+                attnQNorm[l] = deviceTensor(tensorEntries, blk + "attn_q_norm.weight");
+                attnKNorm[l] = deviceTensor(tensorEntries, blk + "attn_k_norm.weight");
             }
         }
 
-        DataType weightType =
-                retainQ4_0
-                        ? DataType.Q4_0
-                        : DataTypeMapping.materializedType(
-                                outputWeight.ggmlType(), ExecutionTarget.GPU);
+        DataType weightType = projectionType(tensorEntries, config);
 
         return new Qwen35TornadoWeights(
                 blocks,
-                ModelLoader.loadTornadoTensorRetainingQ4_0(tokenEmbeddings),
+                ModelLoader.loadTornadoTensorNative(tokenEmbeddings),
                 attnNorm,
                 ffnNorm,
                 ffnGate,
                 ffnDown,
                 ffnUp,
-                ModelLoader.loadTornadoTensor(tensorEntries.get("output_norm.weight")),
-                ModelLoader.loadTornadoTensor(outputWeight),
+                ModelLoader.loadTornadoTensorNative(tensorEntries.get("output_norm.weight")),
+                ModelLoader.loadTornadoTensorNative(outputWeight),
                 TornadoTensorLoader.fromFloats(ropeFreqs.first()),
                 TornadoTensorLoader.fromFloats(ropeFreqs.second()),
                 wq,
@@ -505,9 +490,8 @@ public class Qwen35ModelLoader extends AbstractModelLoader<Qwen35, Qwen35Configu
                 weightType);
     }
 
-    /** A device tensor, keeping Q4_0 as it is when this model retains it. */
-    private static TornadoTensor deviceTensor(
-            Map<String, GGMLTensorEntry> entries, String name, boolean retainQ4_0) {
+    /** A device tensor, in the representation the file gave it. */
+    private static TornadoTensor deviceTensor(Map<String, GGMLTensorEntry> entries, String name) {
         GGMLTensorEntry entry = entries.get(name);
         if (entry == null) {
             throw new ModelLoadException(
@@ -516,9 +500,7 @@ public class Qwen35ModelLoader extends AbstractModelLoader<Qwen35, Qwen35Configu
                             + name
                             + ", which this file does not carry");
         }
-        return retainQ4_0
-                ? ModelLoader.loadTornadoTensorRetainingQ4_0(entry)
-                : ModelLoader.loadTornadoTensor(entry);
+        return ModelLoader.loadTornadoTensorNative(entry);
     }
 
     private static TornadoTensor[] perBlockDevice(
@@ -533,26 +515,36 @@ public class Qwen35ModelLoader extends AbstractModelLoader<Qwen35, Qwen35Configu
                                 + l
                                 + " is missing a tensor every block must have");
             }
-            tensors[l] = ModelLoader.loadTornadoTensor(found);
+            tensors[l] = ModelLoader.loadTornadoTensorNative(found);
         }
         return tensors;
     }
 
+    // @formatter:off
     /**
-     * Whether every projection a Q4_0 kernel would decode is in fact Q4_0.
+     * The representation this file's trunk projections are in, which is what the model reports.
      *
-     * <p>The graphs dispatch per tensor, but a layer's {@code q ‖ k ‖ v} projections are read by
-     * one fused kernel and must therefore agree. Rather than encode that per-kernel grouping here,
-     * the answer is all-or-nothing over the model: mixing two block layouts inside one kernel would
-     * read 18-byte blocks as 34-byte ones, and the output would be fluent rather than obviously
-     * broken.
+     * <p>A model-wide {@code DataType} still has one job here: it is what a plan provider is
+     * admitted on. So it must be a property of the model rather than of whichever tensor was asked,
+     * and the tensors that make it one are the trunk's projections — every layer's mixer and
+     * feed-forward inputs, of either layer kind. They share one representation in every file this
+     * quantizer produces, and this insists on it rather than assuming it.
      *
-     * <p>The SSM parameters, the norms and {@code output} are not consulted. The first two are F32
-     * and are read by dtype-independent kernels; {@code output} has its own layer, which reads
-     * whatever it actually holds.
+     * <p>What is deliberately excluded: {@code ffn_down}, which the 27B holds as Q4_1 for its
+     * first eight blocks and Q4_0 thereafter; {@code ssm_out}, Q5_K; {@code output}, Q6_K; the MTP
+     * projection, Q8_0; and every F32 norm and SSM parameter. Each of those is read by a task
+     * chosen from its own representation, so none of them needs to agree with anything.
+     *
+     * @throws ModelLoadException naming the tensor and both representations when the projections
+     *     disagree — there is no model-wide answer for such a file, and inventing one by picking a
+     *     representative tensor is how a plan gets admitted for a representation half the model is
+     *     not in
      */
-    private static boolean allQ4_0Projections(
+    // @formatter:on
+    private static DataType projectionType(
             Map<String, GGMLTensorEntry> entries, Qwen35Configuration config) {
+        DataType agreed = null;
+        String agreedName = null;
         for (int l = 0; l < config.numberOfBlocks(); l++) {
             String[] kinds =
                     config.isRecurrentLayer(l)
@@ -561,12 +553,40 @@ public class Qwen35ModelLoader extends AbstractModelLoader<Qwen35, Qwen35Configu
                                 "attn_q", "attn_k", "attn_v", "attn_output", "ffn_gate", "ffn_up"
                             };
             for (String kind : kinds) {
-                GGMLTensorEntry entry = entries.get("blk." + l + "." + kind + ".weight");
-                if (entry == null || entry.ggmlType() != GGMLType.Q4_0) {
-                    return false;
+                String name = "blk." + l + "." + kind + ".weight";
+                GGMLTensorEntry entry = entries.get(name);
+                if (entry == null) {
+                    throw new ModelLoadException(
+                            DiagnosticCode.MODEL_MALFORMED.prefix()
+                                    + "qwen35 expects "
+                                    + name
+                                    + ", which this file does not carry");
+                }
+                DataType type = DataTypeMapping.sourceType(entry.ggmlType());
+                if (agreed == null) {
+                    agreed = type;
+                    agreedName = name;
+                } else if (agreed != type) {
+                    throw new ModelLoadException(
+                            DiagnosticCode.MODEL_MALFORMED.prefix()
+                                    + "qwen35 projections disagree about their representation: "
+                                    + agreedName
+                                    + " is "
+                                    + agreed
+                                    + " and "
+                                    + name
+                                    + " is "
+                                    + type
+                                    + ". The two are read by tasks with different block layouts,"
+                                    + " and there is no model-wide representation to admit a plan"
+                                    + " on. Neither is converted to the other.");
                 }
             }
         }
-        return config.numberOfBlocks() > 0;
+        if (agreed == null) {
+            throw new ModelLoadException(
+                    DiagnosticCode.MODEL_MALFORMED.prefix() + "qwen35 file carries no blocks");
+        }
+        return agreed;
     }
 }
