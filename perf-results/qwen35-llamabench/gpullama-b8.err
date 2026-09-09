@@ -1,0 +1,7 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+[bench] selection: qwen35 / Q4_0 / BATCH_PREFILL_DECODE
+[bench] Qwen3.8-27B-Q4_0             pp64 b8           24.01 ± 0.07 t/s (median 24.01)
+[bench] Qwen3.8-27B-Q4_0             pp381 b8          21.39 ± 0.18 t/s (median 21.35)
+[bench] Qwen3.8-27B-Q4_0             pp512 b8          20.68 ± 0.13 t/s (median 20.73)
+[bench] Qwen3.8-27B-Q4_0             pp1024 b8         18.03 ± 0.16 t/s (median 18.02)
+[bench] Qwen3.8-27B-Q4_0             tg128 b8          13.14 ± 0.06 t/s (median 13.16)

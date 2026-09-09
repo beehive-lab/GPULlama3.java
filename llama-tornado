@@ -689,15 +689,21 @@ def main():
     else:
         args.backend = runner.select_primary_backend(installed_backends)
 
+    # stderr, not stdout: --bench writes a machine-readable document there, and a trailing
+    # human-readable line makes the JSON unparseable.
     if len(installed_backends) > 1:
         names = ", ".join(b.value for b in installed_backends)
         reason = f"requested via --{args.backend.value}" if overridden else "auto-selected"
         print(
             f"Detected TornadoVM backends: {names} (from {runner.tornado_sdk}/etc/tornado.backend) "
-            f"- using {args.backend.value} ({reason})"
+            f"- using {args.backend.value} ({reason})",
+            file=sys.stderr,
         )
     else:
-        print(f"Detected TornadoVM backend: {args.backend.value} (from {runner.tornado_sdk}/etc/tornado.backend)")
+        print(
+            f"Detected TornadoVM backend: {args.backend.value} (from {runner.tornado_sdk}/etc/tornado.backend)",
+            file=sys.stderr,
+        )
 
     return runner.run(args)
 

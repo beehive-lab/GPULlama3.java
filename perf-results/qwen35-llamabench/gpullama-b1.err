@@ -1,0 +1,7 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+[bench] selection: qwen35 / Q4_0 / STANDARD
+[bench] Qwen3.8-27B-Q4_0             pp64              14.14 ± 0.28 t/s (median 14.21)
+[bench] Qwen3.8-27B-Q4_0             pp381             12.25 ± 0.03 t/s (median 12.26)
+[bench] Qwen3.8-27B-Q4_0             pp512             11.57 ± 0.04 t/s (median 11.56)
+[bench] Qwen3.8-27B-Q4_0             pp1024             9.31 ± 0.03 t/s (median 9.31)
+[bench] Qwen3.8-27B-Q4_0             tg128             13.08 ± 0.11 t/s (median 13.05)
