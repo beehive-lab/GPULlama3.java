@@ -2,7 +2,9 @@ package org.beehive.gpullama3.backend.tornado.kernels;
 
 import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
+import uk.ac.manchester.tornado.api.types.HalfFloat;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
 
 // @formatter:off
@@ -18,9 +20,8 @@ import uk.ac.manchester.tornado.api.types.arrays.IntArray;
  * delta-net keeps a matrix per value head, and token {@code t} reads what token {@code t-1} wrote.
  * Those two kernels <b>scan</b>: a lane walks the chunk in order, in one loop, updating the state
  * it alone owns. That is exact rather than approximate — a convolution channel's window is private
- * to that channel and a delta-net value column's state is private to that column, so the
- * sequential dependency lives entirely inside one lane and needs no barrier and no ordering
- * between lanes.
+ * to that channel and a delta-net value column's state is private to that column, so the sequential
+ * dependency lives entirely inside one lane and needs no barrier and no ordering between lanes.
  *
  * <p>It is also why the result cannot depend on the chunk size: the arithmetic per token is the
  * same expression in the same order as the single-token kernel performs, and the batch width only
@@ -32,9 +33,9 @@ import uk.ac.manchester.tornado.api.types.arrays.IntArray;
  * computes nothing, writes no key/value entry, and — in the scans — is never reached, because the
  * loop bound is the active count rather than the launch width.
  *
- * <p>Bodies are lifted into lane methods wherever the arithmetic is worth checking on the host,
- * for the reason {@code Qwen35DeltaNetKernels} gives: a method taking a {@link KernelContext} can
- * only be exercised by running it on a device.
+ * <p>Bodies are lifted into lane methods wherever the arithmetic is worth checking on the host, for
+ * the reason {@code Qwen35DeltaNetKernels} gives: a method taking a {@link KernelContext} can only
+ * be exercised by running it on a device.
  */
 // @formatter:on
 public final class Qwen35BatchKernels {
@@ -631,10 +632,222 @@ public final class Qwen35BatchKernels {
                 for (int p = tileStart; p <= tileEnd; p++) {
                     int base =
                             KvBlockAddress.offset(
-                                            blockTable, slot, p, layerOff, kvDim, blockCfg,
+                                            blockTable,
+                                            slot,
+                                            p,
+                                            layerOff,
+                                            kvDim,
+                                            blockCfg,
                                             blockStride)
                                     + kvHead * headSize;
                     partial += weights[p - tileStart] * valueCache.get(base + d);
+                }
+                accumulated[slotIndex] = partial;
+                slotIndex++;
+            }
+            context.localBarrier();
+        }
+
+        int slotIndex = 0;
+        for (int d = tid; d < headSize; d += localSize) {
+            outBatch.set(outBase + d, accumulated[slotIndex] / denominator);
+            slotIndex++;
+        }
+    }
+
+    /** {@link #appendKeyValueBatchPaged} into a half-precision store. */
+    public static void appendKeyValueBatchFP16Paged(
+            KernelContext context,
+            IntArray batchInfo,
+            FloatArray keyBatch,
+            FloatArray valueBatch,
+            HalfFloatArray keyCache,
+            HalfFloatArray valueCache,
+            IntArray blockTable,
+            int kvDim,
+            int layer,
+            int blockCfg,
+            int blockStride) {
+        int lane = context.globalIdx;
+        if (lane >= kvDim * batchInfo.get(1)) {
+            return;
+        }
+        int row = lane / kvDim;
+        int element = lane - row * kvDim;
+        int position = batchInfo.get(0) + row;
+        int slot = batchInfo.get(2);
+
+        int cacheOffset =
+                KvBlockAddress.offset(
+                        blockTable,
+                        slot,
+                        position,
+                        KvBlockAddress.layerOffset(layer, kvDim, blockCfg),
+                        kvDim,
+                        blockCfg,
+                        blockStride);
+        keyCache.set(cacheOffset + element, new HalfFloat(keyBatch.get(lane)));
+        valueCache.set(cacheOffset + element, new HalfFloat(valueBatch.get(lane)));
+    }
+
+    /**
+     * {@link #attentionBatchPaged} over a half-precision store.
+     *
+     * <p>Entries are widened as they are read and every accumulation stays FP32, so the half
+     * precision is in the store and nowhere else.
+     */
+    public static void attentionBatchFP16Paged(
+            KernelContext context,
+            IntArray batchInfo,
+            FloatArray queryBatch,
+            HalfFloatArray keyCache,
+            HalfFloatArray valueCache,
+            FloatArray outBatch,
+            int heads,
+            int headSize,
+            int kvDim,
+            int kvMul,
+            int layer,
+            IntArray blockTable,
+            int blockCfg,
+            int blockStride,
+            int localWorkGroupSize) {
+        int tid = context.localIdx;
+        // The workgroup width as a parameter, not as context.localGroupSizeX: a local array's
+        // extent has to be a compile-time constant on CUDA, and a value read from the context is
+        // not one ("expression must have a constant value" from nvrtc, on the __shared__ decl).
+        int localSize = localWorkGroupSize;
+        int group = context.groupIdx;
+        int row = group / heads;
+        int head = group - row * heads;
+        if (row >= batchInfo.get(1)) {
+            return;
+        }
+
+        int position = batchInfo.get(0) + row;
+        int slot = batchInfo.get(2);
+        int layerOff = KvBlockAddress.layerOffset(layer, kvDim, blockCfg);
+        int kvHead = head / kvMul;
+        float invSqrt = 1.0f / TornadoMath.sqrt(headSize);
+
+        float[] qShared = context.allocateFloatLocalArray(headSize);
+        float[] partialMax = context.allocateFloatLocalArray(localWorkGroupSize);
+        float[] partialSum = context.allocateFloatLocalArray(localWorkGroupSize);
+        float[] reduced = context.allocateFloatLocalArray(2);
+
+        int queryBase = row * heads * headSize + head * headSize;
+        for (int i = tid; i < headSize; i += localSize) {
+            qShared[i] = queryBatch.get(queryBase + i);
+        }
+        context.localBarrier();
+
+        // Pass 1: this lane's slice of the causal range, tracking a running maximum and sum.
+        float maxScore = Float.NEGATIVE_INFINITY;
+        for (int p = tid; p <= position; p += localSize) {
+            int base =
+                    KvBlockAddress.offset(
+                                    blockTable, slot, p, layerOff, kvDim, blockCfg, blockStride)
+                            + kvHead * headSize;
+            float score = 0.0f;
+            for (int d = 0; d < headSize; d++) {
+                score += qShared[d] * keyCache.get(base + d).getFloat32();
+            }
+            score *= invSqrt;
+            maxScore = TornadoMath.max(maxScore, score);
+        }
+        partialMax[tid] = maxScore;
+        context.localBarrier();
+        for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+            if (tid < stride) {
+                partialMax[tid] = TornadoMath.max(partialMax[tid], partialMax[tid + stride]);
+            }
+            context.localBarrier();
+        }
+        if (tid == 0) {
+            reduced[0] = partialMax[0];
+        }
+        context.localBarrier();
+        float globalMax = reduced[0];
+
+        // Pass 2: the denominator, against the settled maximum.
+        float sum = 0.0f;
+        for (int p = tid; p <= position; p += localSize) {
+            int base =
+                    KvBlockAddress.offset(
+                                    blockTable, slot, p, layerOff, kvDim, blockCfg, blockStride)
+                            + kvHead * headSize;
+            float score = 0.0f;
+            for (int d = 0; d < headSize; d++) {
+                score += qShared[d] * keyCache.get(base + d).getFloat32();
+            }
+            sum += TornadoMath.exp(score * invSqrt - globalMax);
+        }
+        partialSum[tid] = sum;
+        context.localBarrier();
+        for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+            if (tid < stride) {
+                partialSum[tid] += partialSum[tid + stride];
+            }
+            context.localBarrier();
+        }
+        if (tid == 0) {
+            reduced[1] = partialSum[0];
+        }
+        context.localBarrier();
+        float denominator = reduced[1];
+
+        // Pass 3: the weighted value sum, over the same range.
+        //
+        // A position's score does not depend on the output element, so it is computed once per
+        // position and shared, rather than once per (position, output element). Writing the loops
+        // the other way round — an output element outside, a position inside, a dot product
+        // innermost — costs `headSize` times the arithmetic of pass 1 for the same answer, which
+        // is what this kernel used to do and what made attention the second-largest item in the
+        // prefill profile.
+        //
+        // Positions are taken a tile at a time: the workgroup computes the tile's weights
+        // cooperatively, then every lane sweeps its own output elements over that tile.
+        int outBase = row * heads * headSize + head * headSize;
+        float[] weights = context.allocateFloatLocalArray(ATTENTION_TILE);
+        float[] accumulated = new float[ATTENTION_SLOTS];
+        for (int t = 0; t < ATTENTION_SLOTS; t++) {
+            accumulated[t] = 0.0f;
+        }
+
+        for (int tileStart = 0; tileStart <= position; tileStart += ATTENTION_TILE) {
+            int tileEnd = tileStart + ATTENTION_TILE - 1;
+            if (tileEnd > position) {
+                tileEnd = position;
+            }
+
+            for (int p = tileStart + tid; p <= tileEnd; p += localSize) {
+                int base =
+                        KvBlockAddress.offset(
+                                        blockTable, slot, p, layerOff, kvDim, blockCfg, blockStride)
+                                + kvHead * headSize;
+                float score = 0.0f;
+                for (int i = 0; i < headSize; i++) {
+                    score += qShared[i] * keyCache.get(base + i).getFloat32();
+                }
+                weights[p - tileStart] = TornadoMath.exp(score * invSqrt - globalMax);
+            }
+            context.localBarrier();
+
+            int slotIndex = 0;
+            for (int d = tid; d < headSize; d += localSize) {
+                float partial = accumulated[slotIndex];
+                for (int p = tileStart; p <= tileEnd; p++) {
+                    int base =
+                            KvBlockAddress.offset(
+                                            blockTable,
+                                            slot,
+                                            p,
+                                            layerOff,
+                                            kvDim,
+                                            blockCfg,
+                                            blockStride)
+                                    + kvHead * headSize;
+                    partial += weights[p - tileStart] * valueCache.get(base + d).getFloat32();
                 }
                 accumulated[slotIndex] = partial;
                 slotIndex++;
@@ -693,7 +906,8 @@ public final class Qwen35BatchKernels {
         int head = lane - row * perRow;
 
         if (head < heads) {
-            normalizeHead(queryBatch, queryWeights, row * heads * headDim + head * headDim, headDim, eps);
+            normalizeHead(
+                    queryBatch, queryWeights, row * heads * headDim + head * headDim, headDim, eps);
         } else {
             int keyHead = head - heads;
             normalizeHead(

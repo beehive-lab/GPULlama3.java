@@ -14,8 +14,8 @@ import uk.ac.manchester.tornado.api.enums.DataTransferMode;
  * <p>The same graphs the single-token plan builds, with one difference at layer 0: the key/value
  * store, the block table and the recurrent state were allocated and filled by the batch-prefill
  * graphs, so this layer <b>consumes</b> them from the decode activation rather than uploading its
- * own. Uploading would give decode a second, empty copy of the sequence's history — the model
- * would answer as though the prompt had never been read.
+ * own. Uploading would give decode a second, empty copy of the sequence's history — the model would
+ * answer as though the prompt had never been read.
  *
  * <p>The weights come the same way, from the batch-prefill graph for the same block: bound with a
  * transfer in both families, a plan would hold the whole model twice.
@@ -72,10 +72,7 @@ public class Qwen35FFNLayersBatchDecode extends Qwen35FFNLayers {
                 state.workspace.wrapSsmV,
                 state.workspace.wrapSsmOut);
         // What prefill left behind: the caches, the table that addresses them, and the recurrence.
-        layer.consumeFromDevice(
-                "decodeActivation",
-                state.workspace.wrapKeyCache,
-                state.workspace.wrapValueCache);
+        layer.consumeFromDevice("decodeActivation", keyStore(), valueStore());
         layer.consumeFromDevice("decodeActivation", state.workspace.wrapBlockTable);
         layer.consumeFromDevice(
                 "decodeActivation", state.workspace.wrapConvState, state.workspace.wrapDeltaState);

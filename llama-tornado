@@ -161,6 +161,9 @@ class LlamaRunner:
         if args.cuda_graphs:
             cmd.append("-Dllama.cudaGraphs=true")
 
+        if args.fp16_kv_cache:
+            cmd.append("-Dllama.kvcache.fp16=true")
+
         # Debug options
         debug_config = []
 
@@ -486,6 +489,11 @@ def create_parser() -> argparse.ArgumentParser:
     server_group.add_argument("--port", type=int, default=8080, help="Server port (default 8080)")
 
     # Benchmark (llama-bench style)
+    parser.add_argument(
+        "--fp16-kv-cache",
+        action="store_true",
+        help="Hold the key/value cache in half precision (halves its bandwidth and footprint; accumulation stays FP32)",
+    )
     bench_group = parser.add_argument_group("Benchmark (llama-bench style)")
     bench_group.add_argument(
         "--bench",

@@ -27,9 +27,9 @@ import org.beehive.gpullama3.tensor.standard.FloatTensor;
  * they are session state and not KV storage — nothing about them can be paged, evicted, shared or
  * leased, and the engine's cache manager would have nothing to manage.
  *
- * <p>It is also why {@link #resetSequenceState()} matters here and is a no-op elsewhere. A key/value
- * cache does not need clearing between sequences because attention only reads up to the current
- * position; a recurrent state has no such mask, and a stale one silently conditions the new
+ * <p>It is also why {@link #resetSequenceState()} matters here and is a no-op elsewhere. A
+ * key/value cache does not need clearing between sequences because attention only reads up to the
+ * current position; a recurrent state has no such mask, and a stale one silently conditions the new
  * sequence on the old one.
  */
 public final class Qwen35State extends State {
@@ -61,7 +61,9 @@ public final class Qwen35State extends State {
     /** The {@code z} gate the delta-net output is normalized against. */
     public final FloatTensor ssmZ;
 
-    /** Per-value-head decay, from {@code ssm_alpha} through its bias, softplus and {@code ssm_a}. */
+    /**
+     * Per-value-head decay, from {@code ssm_alpha} through its bias, softplus and {@code ssm_a}.
+     */
     public final FloatTensor ssmAlpha;
 
     /** Per-value-head write strength, from {@code ssm_beta} through the logistic. */
@@ -163,8 +165,8 @@ public final class Qwen35State extends State {
     /**
      * Builds a state that allocates its device arrays, or does not.
      *
-     * @param device whether a device plan will be built for this session — in practice, whether
-     *     the model's weights are device weights
+     * @param device whether a device plan will be built for this session — in practice, whether the
+     *     model's weights are device weights
      */
     public static <T> T withDeviceArrays(boolean device, java.util.function.Supplier<T> build) {
         Boolean previous = DEVICE_FOR_CONSTRUCTION.get();
@@ -184,16 +186,16 @@ public final class Qwen35State extends State {
     /**
      * Whether the device arrays are worth allocating for this session.
      *
-     * <p>Answered by the caller that knows — the model, from whether its weights are device
-     * weights — and only otherwise from the property the facade defaults its backend from. The
-     * property alone was wrong as soon as a plan provider existed: a caller that loads device
-     * weights without setting it got a session whose device arrays were all null, and the failure
-     * arrived from inside TornadoVM as {@code null object passed into streamIn()} in the
-     * activation graph rather than anywhere that named the cause.
+     * <p>Answered by the caller that knows — the model, from whether its weights are device weights
+     * — and only otherwise from the property the facade defaults its backend from. The property
+     * alone was wrong as soon as a plan provider existed: a caller that loads device weights
+     * without setting it got a session whose device arrays were all null, and the failure arrived
+     * from inside TornadoVM as {@code null object passed into streamIn()} in the activation graph
+     * rather than anywhere that named the cause.
      *
      * <p>Why gate at all, when every other family allocates unconditionally: for them the waste is
-     * a few megabytes, and here it is over a gigabyte — 151 MB of recurrent state and the
-     * key/value store — on a host path that has already allocated its own.
+     * a few megabytes, and here it is over a gigabyte — 151 MB of recurrent state and the key/value
+     * store — on a host path that has already allocated its own.
      */
     // @formatter:on
     private static boolean deviceInPlay() {
@@ -244,7 +246,8 @@ public final class Qwen35State extends State {
         fields.x = ArrayFloatTensor.allocate(config.dim());
         // Wide enough for the attention branch's concatenated heads, which exceed dim here
         // (24 heads of 256 against a 5120 embedding), and reused by the feed-forward branch.
-        fields.xb = ArrayFloatTensor.allocate(Math.max(config.attentionOutputInputDim(), config.dim()));
+        fields.xb =
+                ArrayFloatTensor.allocate(Math.max(config.attentionOutputInputDim(), config.dim()));
         fields.xb2 = ArrayFloatTensor.allocate(config.dim());
         fields.hb = ArrayFloatTensor.allocate(config.hiddenDim());
         fields.hb2 = ArrayFloatTensor.allocate(config.hiddenDim());
@@ -261,10 +264,8 @@ public final class Qwen35State extends State {
         fields.valueCache = new FloatTensor[blocks];
         for (int l = 0; l < blocks; l++) {
             if (!config.isRecurrentLayer(l)) {
-                fields.keyCache[l] =
-                        ArrayFloatTensor.allocate(config.contextLength(), kvDim);
-                fields.valueCache[l] =
-                        ArrayFloatTensor.allocate(config.contextLength(), kvDim);
+                fields.keyCache[l] = ArrayFloatTensor.allocate(config.contextLength(), kvDim);
+                fields.valueCache[l] = ArrayFloatTensor.allocate(config.contextLength(), kvDim);
             }
         }
 
@@ -352,8 +353,7 @@ public final class Qwen35State extends State {
 
         // [0] = position, [1] = table-local KV slot.
         workspace.positionHolder = TornadoWorkspaces.ints(2);
-        workspace.temp =
-                TornadoWorkspaces.floats(1 + ((config.dim() + localSize - 1) / localSize));
+        workspace.temp = TornadoWorkspaces.floats(1 + ((config.dim() + localSize - 1) / localSize));
         workspace.tempFFN =
                 TornadoWorkspaces.floats(1 + ((config.dim() + localSize - 1) / localSize));
         workspace.tempLogits =
@@ -362,7 +362,9 @@ public final class Qwen35State extends State {
         allocateBatchWorkspace(config, kvDim);
 
         // Sized by the blocks that attend, not by the block count: see keyValueLayerIndex.
-        fillKvFields(fields, config, kvDim, config.keyValueLayerCount(), false);
+        // This family has FP16 key/value kernels in all three execution modes, so it says yes and
+        // lets the storage options decide.
+        fillKvFields(fields, config, kvDim, config.keyValueLayerCount(), true);
     }
 
     // @formatter:off
@@ -370,9 +372,9 @@ public final class Qwen35State extends State {
      * The chunk-wide scratch batched prefill needs, when a batch width was configured.
      *
      * <p>Allocated here rather than beside the generic batch buffers in {@code State} because they
-     * are this family's: a fused query/gate projection twice a query's width, a convolved
-     * {@code q ‖ k ‖ v} of unequal parts, and the delta-net's own inputs and readout. The generic
-     * ones are sized from {@code batchQDim}/{@code batchKvDim}, which cannot describe these.
+     * are this family's: a fused query/gate projection twice a query's width, a convolved {@code q
+     * ‖ k ‖ v} of unequal parts, and the delta-net's own inputs and readout. The generic ones are
+     * sized from {@code batchQDim}/{@code batchKvDim}, which cannot describe these.
      *
      * <p>The width comes from the same place {@code State}'s own batch buffers take it — how this
      * state was built — and not from the execution policy, which is resolved per generation and

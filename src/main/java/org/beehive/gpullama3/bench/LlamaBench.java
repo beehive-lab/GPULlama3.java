@@ -283,7 +283,11 @@ public class LlamaBench {
                         : System.getProperty("tornado.backend.name", "TornadoVM " + backendName());
 
         String selection = arch + " / " + quant + " / " + mode;
-        System.err.printf(Locale.ROOT, "[bench] selection: %s%n", selection);
+        System.err.printf(
+                Locale.ROOT,
+                "[bench] selection: %s (kv %s)%n",
+                selection,
+                state.usesFp16KeyValueCache() ? "FP16" : "FP32");
         if (expect != null
                 && !expect.replace('/', ' ')
                         .trim()
