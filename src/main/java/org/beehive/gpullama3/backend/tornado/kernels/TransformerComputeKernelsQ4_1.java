@@ -35,6 +35,14 @@ public final class TransformerComputeKernelsQ4_1 {
     /** Prompt rows a tiled batch workgroup covers, as in {@code TransformerComputeKernelsQ4_0}. */
     private static final int ROW_TILE = 8;
 
+    /** Output rows a tiled batch workgroup covers, as in {@code TransformerComputeKernelsQ4_0}. */
+    private static final int COL_TILE = 2;
+
+    /** Output rows a tiled batch workgroup covers. */
+    public static int colTile() {
+        return COL_TILE;
+    }
+
     private TransformerComputeKernelsQ4_1() {}
 
     /**
@@ -211,23 +219,77 @@ public final class TransformerComputeKernelsQ4_1 {
             int d,
             int activeRows,
             int localWorkGroupSize) {
+        int colGroups = (d + COL_TILE - 1) / COL_TILE;
         int groupId = context.groupIdx;
-        int tile = groupId / d;
-        int rowId = groupId - tile * d;
+        int tile = groupId / colGroups;
+        int colGroup = groupId - tile * colGroups;
         int firstRow = tile * ROW_TILE;
+        int firstCol = colGroup * COL_TILE;
         if (firstRow >= activeRows) {
             return;
         }
         int localId = context.localIdx;
 
-        float[] localSums = context.allocateFloatLocalArray(localWorkGroupSize * ROW_TILE);
-        tileDot(context, xBatch, w, n, activeRows, localWorkGroupSize, rowId, firstRow, localSums);
+        float[] localSums =
+                context.allocateFloatLocalArray(localWorkGroupSize * ROW_TILE * COL_TILE);
+        int blocksPerRow = (n + QK - 1) / QK;
+
+        // Zeroed explicitly: a private array in generated device code is uninitialized stack.
+        float[] acc = new float[ROW_TILE * COL_TILE];
+        for (int t = 0; t < ROW_TILE * COL_TILE; t++) {
+            acc[t] = 0.0f;
+        }
+        float[] xs = new float[ROW_TILE];
+
+        for (int j = localId; j < n; j += localWorkGroupSize) {
+            int blockIdx = j / QK;
+            int withinBlock = j - blockIdx * QK;
+
+            for (int r = 0; r < ROW_TILE; r++) {
+                int row = firstRow + r;
+                float value = 0.0f;
+                if (row < activeRows) {
+                    value = xBatch.get(row * n + j);
+                }
+                xs[r] = value;
+            }
+
+            for (int c = 0; c < COL_TILE; c++) {
+                int outRow = firstCol + c;
+                if (outRow < d) {
+                    int blockByteOffset = (outRow * blocksPerRow + blockIdx) * BLOCK_BYTES;
+                    float weight = decode(w, blockByteOffset, withinBlock);
+                    for (int r = 0; r < ROW_TILE; r++) {
+                        acc[c * ROW_TILE + r] += weight * xs[r];
+                    }
+                }
+            }
+        }
+
+        for (int t = 0; t < ROW_TILE * COL_TILE; t++) {
+            localSums[t * localWorkGroupSize + localId] = acc[t];
+        }
+        context.localBarrier();
+
+        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                for (int t = 0; t < ROW_TILE * COL_TILE; t++) {
+                    localSums[t * localWorkGroupSize + localId] +=
+                            localSums[t * localWorkGroupSize + localId + stride];
+                }
+            }
+            context.localBarrier();
+        }
 
         if (localId == 0) {
-            for (int t = 0; t < ROW_TILE; t++) {
-                int row = firstRow + t;
-                if (row < activeRows) {
-                    outBatch.set(row * d + rowId, localSums[t * localWorkGroupSize]);
+            for (int c = 0; c < COL_TILE; c++) {
+                int outRow = firstCol + c;
+                for (int r = 0; r < ROW_TILE; r++) {
+                    int row = firstRow + r;
+                    int slot = c * ROW_TILE + r;
+                    if (outRow < d && row < activeRows) {
+                        outBatch.set(row * d + outRow, localSums[slot * localWorkGroupSize]);
+                    }
                 }
             }
         }
@@ -246,100 +308,81 @@ public final class TransformerComputeKernelsQ4_1 {
             int d,
             int activeRows,
             int localWorkGroupSize) {
+        int colGroups = (d + COL_TILE - 1) / COL_TILE;
         int groupId = context.groupIdx;
-        int tile = groupId / d;
-        int rowId = groupId - tile * d;
+        int tile = groupId / colGroups;
+        int colGroup = groupId - tile * colGroups;
         int firstRow = tile * ROW_TILE;
+        int firstCol = colGroup * COL_TILE;
         if (firstRow >= activeRows) {
             return;
         }
         int localId = context.localIdx;
 
-        float[] localSums = context.allocateFloatLocalArray(localWorkGroupSize * ROW_TILE);
-        tileDot(context, xBatch, w, n, activeRows, localWorkGroupSize, rowId, firstRow, localSums);
+        float[] localSums =
+                context.allocateFloatLocalArray(localWorkGroupSize * ROW_TILE * COL_TILE);
+        int blocksPerRow = (n + QK - 1) / QK;
 
-        if (localId == 0) {
-            for (int t = 0; t < ROW_TILE; t++) {
-                int row = firstRow + t;
+        // Zeroed explicitly: a private array in generated device code is uninitialized stack.
+        float[] acc = new float[ROW_TILE * COL_TILE];
+        for (int t = 0; t < ROW_TILE * COL_TILE; t++) {
+            acc[t] = 0.0f;
+        }
+        float[] xs = new float[ROW_TILE];
+
+        for (int j = localId; j < n; j += localWorkGroupSize) {
+            int blockIdx = j / QK;
+            int withinBlock = j - blockIdx * QK;
+
+            for (int r = 0; r < ROW_TILE; r++) {
+                int row = firstRow + r;
+                float value = 0.0f;
                 if (row < activeRows) {
-                    int index = row * d + rowId;
-                    outBatch.set(index, outBatch.get(index) + localSums[t * localWorkGroupSize]);
+                    value = xBatch.get(row * n + j);
+                }
+                xs[r] = value;
+            }
+
+            for (int c = 0; c < COL_TILE; c++) {
+                int outRow = firstCol + c;
+                if (outRow < d) {
+                    int blockByteOffset = (outRow * blocksPerRow + blockIdx) * BLOCK_BYTES;
+                    float weight = decode(w, blockByteOffset, withinBlock);
+                    for (int r = 0; r < ROW_TILE; r++) {
+                        acc[c * ROW_TILE + r] += weight * xs[r];
+                    }
                 }
             }
         }
-    }
 
-    /** The tile's eight dot products, reduced into {@code localSums[t * localSize]}. */
-    private static void tileDot(
-            KernelContext context,
-            FloatArray xBatch,
-            ByteArray w,
-            int n,
-            int activeRows,
-            int localSize,
-            int rowId,
-            int firstRow,
-            float[] localSums) {
-        int localId = context.localIdx;
-        int blocksPerRow = (n + QK - 1) / QK;
-        int rowBlockOffset = rowId * blocksPerRow;
-
-        float a0 = 0.0f;
-        float a1 = 0.0f;
-        float a2 = 0.0f;
-        float a3 = 0.0f;
-        float a4 = 0.0f;
-        float a5 = 0.0f;
-        float a6 = 0.0f;
-        float a7 = 0.0f;
-
-        for (int j = localId; j < n; j += localSize) {
-            int blockIdx = j / QK;
-            int withinBlock = j - blockIdx * QK;
-            int blockByteOffset = (rowBlockOffset + blockIdx) * BLOCK_BYTES;
-            float weight = decode(w, blockByteOffset, withinBlock);
-            a0 += weight * xBatch.get(firstRow * n + j);
-            if (firstRow + 1 < activeRows) {
-                a1 += weight * xBatch.get((firstRow + 1) * n + j);
-            }
-            if (firstRow + 2 < activeRows) {
-                a2 += weight * xBatch.get((firstRow + 2) * n + j);
-            }
-            if (firstRow + 3 < activeRows) {
-                a3 += weight * xBatch.get((firstRow + 3) * n + j);
-            }
-            if (firstRow + 4 < activeRows) {
-                a4 += weight * xBatch.get((firstRow + 4) * n + j);
-            }
-            if (firstRow + 5 < activeRows) {
-                a5 += weight * xBatch.get((firstRow + 5) * n + j);
-            }
-            if (firstRow + 6 < activeRows) {
-                a6 += weight * xBatch.get((firstRow + 6) * n + j);
-            }
-            if (firstRow + 7 < activeRows) {
-                a7 += weight * xBatch.get((firstRow + 7) * n + j);
-            }
+        for (int t = 0; t < ROW_TILE * COL_TILE; t++) {
+            localSums[t * localWorkGroupSize + localId] = acc[t];
         }
-
-        localSums[localId] = a0;
-        localSums[localSize + localId] = a1;
-        localSums[2 * localSize + localId] = a2;
-        localSums[3 * localSize + localId] = a3;
-        localSums[4 * localSize + localId] = a4;
-        localSums[5 * localSize + localId] = a5;
-        localSums[6 * localSize + localId] = a6;
-        localSums[7 * localSize + localId] = a7;
         context.localBarrier();
 
-        for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
             if (localId < stride) {
-                for (int t = 0; t < ROW_TILE; t++) {
-                    localSums[t * localSize + localId] +=
-                            localSums[t * localSize + localId + stride];
+                for (int t = 0; t < ROW_TILE * COL_TILE; t++) {
+                    localSums[t * localWorkGroupSize + localId] +=
+                            localSums[t * localWorkGroupSize + localId + stride];
                 }
             }
             context.localBarrier();
+        }
+
+        if (localId == 0) {
+            for (int c = 0; c < COL_TILE; c++) {
+                int outRow = firstCol + c;
+                for (int r = 0; r < ROW_TILE; r++) {
+                    int row = firstRow + r;
+                    int slot = c * ROW_TILE + r;
+                    if (outRow < d && row < activeRows) {
+                        int index = row * d + outRow;
+                        outBatch.set(
+                                index, outBatch.get(index) + localSums[slot * localWorkGroupSize]);
+                    }
+                }
+            }
         }
     }
 }

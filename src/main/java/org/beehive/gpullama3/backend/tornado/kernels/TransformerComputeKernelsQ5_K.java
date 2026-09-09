@@ -58,6 +58,17 @@ public final class TransformerComputeKernelsQ5_K {
      */
     private static final int ROW_TILE = 8;
 
+    /**
+     * Output rows a tiled batch workgroup covers, as in {@code TransformerComputeKernelsQ4_0}: the
+     * activation tile is read once and reused across them.
+     */
+    private static final int COL_TILE = 2;
+
+    /** Output rows a tiled batch workgroup covers. */
+    public static int colTile() {
+        return COL_TILE;
+    }
+
     private TransformerComputeKernelsQ5_K() {}
 
     /**
@@ -407,35 +418,35 @@ public final class TransformerComputeKernelsQ5_K {
             int d,
             int activeRows,
             int localWorkGroupSize) {
+        int colGroups = (d + COL_TILE - 1) / COL_TILE;
         int groupId = context.groupIdx;
-        int tile = groupId / d;
-        int rowId = groupId - tile * d;
+        int tile = groupId / colGroups;
+        int colGroup = groupId - tile * colGroups;
         int firstRow = tile * ROW_TILE;
+        int firstCol = colGroup * COL_TILE;
         if (firstRow >= activeRows) {
             return;
         }
         int localId = context.localIdx;
 
-        float[] localSums = context.allocateFloatLocalArray(localWorkGroupSize * ROW_TILE);
+        float[] localSums =
+                context.allocateFloatLocalArray(localWorkGroupSize * ROW_TILE * COL_TILE);
         int blocksPerRow = (n + QK_K - 1) / QK_K;
-        int rowBlockOffset = rowId * blocksPerRow;
         int subBlocks = n / 32;
 
-        float a0 = 0.0f;
-        float a1 = 0.0f;
-        float a2 = 0.0f;
-        float a3 = 0.0f;
-        float a4 = 0.0f;
-        float a5 = 0.0f;
-        float a6 = 0.0f;
-        float a7 = 0.0f;
+        // Zeroed explicitly: a private array in generated device code is uninitialized stack.
+        float[] acc = new float[ROW_TILE * COL_TILE];
+        for (int t = 0; t < ROW_TILE * COL_TILE; t++) {
+            acc[t] = 0.0f;
+        }
+        float[] xs = new float[ROW_TILE];
 
-        // A lane owns one *element* of a sub-block, not a whole sub-block. The untiled kernel
-        // walks whole sub-blocks per lane, which makes each lane read 32 contiguous activations
-        // that no other lane in the warp reads — fine at one activation row, and eight times as
-        // much uncoalesced traffic once a tile has eight. Here the warp takes a sub-block
-        // together, so the tile's activation reads are contiguous across the warp. The sub-block
-        // header is recomputed by all 32 lanes; it is three byte loads against the coalescing.
+        // A lane owns one *element* of a sub-block, not a whole sub-block. Giving a lane the whole
+        // sub-block makes it read 32 contiguous activations no other lane in the warp reads —
+        // affordable at one activation row, eight times the uncoalesced traffic at a tile of
+        // eight, and measurably slower than not tiling at all. With the warp on one sub-block the
+        // tile's activation reads are contiguous across it, at the cost of all 32 lanes
+        // recomputing a three-byte sub-block header.
         int lane = localId & 31;
         int warp = localId >> 5;
         int warps = localWorkGroupSize >> 5;
@@ -443,67 +454,52 @@ public final class TransformerComputeKernelsQ5_K {
         for (int sb = warp; sb < subBlocks; sb += warps) {
             int block = sb / 8;
             int subInBlock = sb - block * 8;
-            int blockByteOffset = (rowBlockOffset + block) * BLOCK_BYTES;
-            float dScale = halfFromBytes(w, blockByteOffset);
-            float dMin = halfFromBytes(w, blockByteOffset + 2);
-            int packed = scaleAndMin(w, blockByteOffset + SCALES_OFFSET, subInBlock);
-            float scale = dScale * (packed >> 8);
-            float minimum = dMin * (packed & 0xFF);
             int pairIndex = subInBlock >> 1;
             int highNibble = subInBlock & 1;
-            int qsBase = blockByteOffset + QS_OFFSET + pairIndex * 32;
-            int qhBase = blockByteOffset + QH_OFFSET;
             int bitShift = pairIndex * 2 + highNibble;
-            int elementBase = sb * 32;
-            {
-                int t = lane;
-                int qsByte = w.get(qsBase + t) & 0xFF;
-                int low = qsByte & 0xF;
-                if (highNibble == 1) {
-                    low = (qsByte >> 4) & 0xF;
+            int j = sb * 32 + lane;
+
+            for (int r = 0; r < ROW_TILE; r++) {
+                int row = firstRow + r;
+                float value = 0.0f;
+                if (row < activeRows) {
+                    value = xBatch.get(row * n + j);
                 }
-                int qhByte = w.get(qhBase + t) & 0xFF;
-                int high = (qhByte >> bitShift) & 1;
-                float weight = scale * (low + high * 16) - minimum;
-                int j = elementBase + t;
-                a0 += weight * xBatch.get(firstRow * n + j);
-                if (firstRow + 1 < activeRows) {
-                    a1 += weight * xBatch.get((firstRow + 1) * n + j);
-                }
-                if (firstRow + 2 < activeRows) {
-                    a2 += weight * xBatch.get((firstRow + 2) * n + j);
-                }
-                if (firstRow + 3 < activeRows) {
-                    a3 += weight * xBatch.get((firstRow + 3) * n + j);
-                }
-                if (firstRow + 4 < activeRows) {
-                    a4 += weight * xBatch.get((firstRow + 4) * n + j);
-                }
-                if (firstRow + 5 < activeRows) {
-                    a5 += weight * xBatch.get((firstRow + 5) * n + j);
-                }
-                if (firstRow + 6 < activeRows) {
-                    a6 += weight * xBatch.get((firstRow + 6) * n + j);
-                }
-                if (firstRow + 7 < activeRows) {
-                    a7 += weight * xBatch.get((firstRow + 7) * n + j);
+                xs[r] = value;
+            }
+
+            for (int c = 0; c < COL_TILE; c++) {
+                int outRow = firstCol + c;
+                if (outRow < d) {
+                    int blockByteOffset = (outRow * blocksPerRow + block) * BLOCK_BYTES;
+                    float dScale = halfFromBytes(w, blockByteOffset);
+                    float dMin = halfFromBytes(w, blockByteOffset + 2);
+                    int packed = scaleAndMin(w, blockByteOffset + SCALES_OFFSET, subInBlock);
+                    float scale = dScale * (packed >> 8);
+                    float minimum = dMin * (packed & 0xFF);
+                    int qsByte = w.get(blockByteOffset + QS_OFFSET + pairIndex * 32 + lane) & 0xFF;
+                    int low = qsByte & 0xF;
+                    if (highNibble == 1) {
+                        low = (qsByte >> 4) & 0xF;
+                    }
+                    int qhByte = w.get(blockByteOffset + QH_OFFSET + lane) & 0xFF;
+                    int high = (qhByte >> bitShift) & 1;
+                    float weight = scale * (low + high * 16) - minimum;
+                    for (int r = 0; r < ROW_TILE; r++) {
+                        acc[c * ROW_TILE + r] += weight * xs[r];
+                    }
                 }
             }
         }
 
-        localSums[localId] = a0;
-        localSums[localWorkGroupSize + localId] = a1;
-        localSums[2 * localWorkGroupSize + localId] = a2;
-        localSums[3 * localWorkGroupSize + localId] = a3;
-        localSums[4 * localWorkGroupSize + localId] = a4;
-        localSums[5 * localWorkGroupSize + localId] = a5;
-        localSums[6 * localWorkGroupSize + localId] = a6;
-        localSums[7 * localWorkGroupSize + localId] = a7;
+        for (int t = 0; t < ROW_TILE * COL_TILE; t++) {
+            localSums[t * localWorkGroupSize + localId] = acc[t];
+        }
         context.localBarrier();
 
         for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
             if (localId < stride) {
-                for (int t = 0; t < ROW_TILE; t++) {
+                for (int t = 0; t < ROW_TILE * COL_TILE; t++) {
                     localSums[t * localWorkGroupSize + localId] +=
                             localSums[t * localWorkGroupSize + localId + stride];
                 }
@@ -512,10 +508,14 @@ public final class TransformerComputeKernelsQ5_K {
         }
 
         if (localId == 0) {
-            for (int t = 0; t < ROW_TILE; t++) {
-                int row = firstRow + t;
-                if (row < activeRows) {
-                    outBatch.set(row * d + rowId, localSums[t * localWorkGroupSize]);
+            for (int c = 0; c < COL_TILE; c++) {
+                int outRow = firstCol + c;
+                for (int r = 0; r < ROW_TILE; r++) {
+                    int row = firstRow + r;
+                    int slot = c * ROW_TILE + r;
+                    if (outRow < d && row < activeRows) {
+                        outBatch.set(row * d + outRow, localSums[slot * localWorkGroupSize]);
+                    }
                 }
             }
         }
@@ -534,35 +534,35 @@ public final class TransformerComputeKernelsQ5_K {
             int d,
             int activeRows,
             int localWorkGroupSize) {
+        int colGroups = (d + COL_TILE - 1) / COL_TILE;
         int groupId = context.groupIdx;
-        int tile = groupId / d;
-        int rowId = groupId - tile * d;
+        int tile = groupId / colGroups;
+        int colGroup = groupId - tile * colGroups;
         int firstRow = tile * ROW_TILE;
+        int firstCol = colGroup * COL_TILE;
         if (firstRow >= activeRows) {
             return;
         }
         int localId = context.localIdx;
 
-        float[] localSums = context.allocateFloatLocalArray(localWorkGroupSize * ROW_TILE);
+        float[] localSums =
+                context.allocateFloatLocalArray(localWorkGroupSize * ROW_TILE * COL_TILE);
         int blocksPerRow = (n + QK_K - 1) / QK_K;
-        int rowBlockOffset = rowId * blocksPerRow;
         int subBlocks = n / 32;
 
-        float a0 = 0.0f;
-        float a1 = 0.0f;
-        float a2 = 0.0f;
-        float a3 = 0.0f;
-        float a4 = 0.0f;
-        float a5 = 0.0f;
-        float a6 = 0.0f;
-        float a7 = 0.0f;
+        // Zeroed explicitly: a private array in generated device code is uninitialized stack.
+        float[] acc = new float[ROW_TILE * COL_TILE];
+        for (int t = 0; t < ROW_TILE * COL_TILE; t++) {
+            acc[t] = 0.0f;
+        }
+        float[] xs = new float[ROW_TILE];
 
-        // A lane owns one *element* of a sub-block, not a whole sub-block. The untiled kernel
-        // walks whole sub-blocks per lane, which makes each lane read 32 contiguous activations
-        // that no other lane in the warp reads — fine at one activation row, and eight times as
-        // much uncoalesced traffic once a tile has eight. Here the warp takes a sub-block
-        // together, so the tile's activation reads are contiguous across the warp. The sub-block
-        // header is recomputed by all 32 lanes; it is three byte loads against the coalescing.
+        // A lane owns one *element* of a sub-block, not a whole sub-block. Giving a lane the whole
+        // sub-block makes it read 32 contiguous activations no other lane in the warp reads —
+        // affordable at one activation row, eight times the uncoalesced traffic at a tile of
+        // eight, and measurably slower than not tiling at all. With the warp on one sub-block the
+        // tile's activation reads are contiguous across it, at the cost of all 32 lanes
+        // recomputing a three-byte sub-block header.
         int lane = localId & 31;
         int warp = localId >> 5;
         int warps = localWorkGroupSize >> 5;
@@ -570,67 +570,52 @@ public final class TransformerComputeKernelsQ5_K {
         for (int sb = warp; sb < subBlocks; sb += warps) {
             int block = sb / 8;
             int subInBlock = sb - block * 8;
-            int blockByteOffset = (rowBlockOffset + block) * BLOCK_BYTES;
-            float dScale = halfFromBytes(w, blockByteOffset);
-            float dMin = halfFromBytes(w, blockByteOffset + 2);
-            int packed = scaleAndMin(w, blockByteOffset + SCALES_OFFSET, subInBlock);
-            float scale = dScale * (packed >> 8);
-            float minimum = dMin * (packed & 0xFF);
             int pairIndex = subInBlock >> 1;
             int highNibble = subInBlock & 1;
-            int qsBase = blockByteOffset + QS_OFFSET + pairIndex * 32;
-            int qhBase = blockByteOffset + QH_OFFSET;
             int bitShift = pairIndex * 2 + highNibble;
-            int elementBase = sb * 32;
-            {
-                int t = lane;
-                int qsByte = w.get(qsBase + t) & 0xFF;
-                int low = qsByte & 0xF;
-                if (highNibble == 1) {
-                    low = (qsByte >> 4) & 0xF;
+            int j = sb * 32 + lane;
+
+            for (int r = 0; r < ROW_TILE; r++) {
+                int row = firstRow + r;
+                float value = 0.0f;
+                if (row < activeRows) {
+                    value = xBatch.get(row * n + j);
                 }
-                int qhByte = w.get(qhBase + t) & 0xFF;
-                int high = (qhByte >> bitShift) & 1;
-                float weight = scale * (low + high * 16) - minimum;
-                int j = elementBase + t;
-                a0 += weight * xBatch.get(firstRow * n + j);
-                if (firstRow + 1 < activeRows) {
-                    a1 += weight * xBatch.get((firstRow + 1) * n + j);
-                }
-                if (firstRow + 2 < activeRows) {
-                    a2 += weight * xBatch.get((firstRow + 2) * n + j);
-                }
-                if (firstRow + 3 < activeRows) {
-                    a3 += weight * xBatch.get((firstRow + 3) * n + j);
-                }
-                if (firstRow + 4 < activeRows) {
-                    a4 += weight * xBatch.get((firstRow + 4) * n + j);
-                }
-                if (firstRow + 5 < activeRows) {
-                    a5 += weight * xBatch.get((firstRow + 5) * n + j);
-                }
-                if (firstRow + 6 < activeRows) {
-                    a6 += weight * xBatch.get((firstRow + 6) * n + j);
-                }
-                if (firstRow + 7 < activeRows) {
-                    a7 += weight * xBatch.get((firstRow + 7) * n + j);
+                xs[r] = value;
+            }
+
+            for (int c = 0; c < COL_TILE; c++) {
+                int outRow = firstCol + c;
+                if (outRow < d) {
+                    int blockByteOffset = (outRow * blocksPerRow + block) * BLOCK_BYTES;
+                    float dScale = halfFromBytes(w, blockByteOffset);
+                    float dMin = halfFromBytes(w, blockByteOffset + 2);
+                    int packed = scaleAndMin(w, blockByteOffset + SCALES_OFFSET, subInBlock);
+                    float scale = dScale * (packed >> 8);
+                    float minimum = dMin * (packed & 0xFF);
+                    int qsByte = w.get(blockByteOffset + QS_OFFSET + pairIndex * 32 + lane) & 0xFF;
+                    int low = qsByte & 0xF;
+                    if (highNibble == 1) {
+                        low = (qsByte >> 4) & 0xF;
+                    }
+                    int qhByte = w.get(blockByteOffset + QH_OFFSET + lane) & 0xFF;
+                    int high = (qhByte >> bitShift) & 1;
+                    float weight = scale * (low + high * 16) - minimum;
+                    for (int r = 0; r < ROW_TILE; r++) {
+                        acc[c * ROW_TILE + r] += weight * xs[r];
+                    }
                 }
             }
         }
 
-        localSums[localId] = a0;
-        localSums[localWorkGroupSize + localId] = a1;
-        localSums[2 * localWorkGroupSize + localId] = a2;
-        localSums[3 * localWorkGroupSize + localId] = a3;
-        localSums[4 * localWorkGroupSize + localId] = a4;
-        localSums[5 * localWorkGroupSize + localId] = a5;
-        localSums[6 * localWorkGroupSize + localId] = a6;
-        localSums[7 * localWorkGroupSize + localId] = a7;
+        for (int t = 0; t < ROW_TILE * COL_TILE; t++) {
+            localSums[t * localWorkGroupSize + localId] = acc[t];
+        }
         context.localBarrier();
 
         for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
             if (localId < stride) {
-                for (int t = 0; t < ROW_TILE; t++) {
+                for (int t = 0; t < ROW_TILE * COL_TILE; t++) {
                     localSums[t * localWorkGroupSize + localId] +=
                             localSums[t * localWorkGroupSize + localId + stride];
                 }
@@ -639,11 +624,16 @@ public final class TransformerComputeKernelsQ5_K {
         }
 
         if (localId == 0) {
-            for (int t = 0; t < ROW_TILE; t++) {
-                int row = firstRow + t;
-                if (row < activeRows) {
-                    int index = row * d + rowId;
-                    outBatch.set(index, outBatch.get(index) + localSums[t * localWorkGroupSize]);
+            for (int c = 0; c < COL_TILE; c++) {
+                int outRow = firstCol + c;
+                for (int r = 0; r < ROW_TILE; r++) {
+                    int row = firstRow + r;
+                    int slot = c * ROW_TILE + r;
+                    if (outRow < d && row < activeRows) {
+                        int index = row * d + outRow;
+                        outBatch.set(
+                                index, outBatch.get(index) + localSums[slot * localWorkGroupSize]);
+                    }
                 }
             }
         }

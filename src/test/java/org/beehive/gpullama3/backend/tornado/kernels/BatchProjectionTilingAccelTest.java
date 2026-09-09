@@ -9,6 +9,7 @@ import java.util.Random;
 import java.util.function.BiFunction;
 import org.beehive.gpullama3.format.GGMLType;
 import org.beehive.gpullama3.tensor.standard.FloatTensor;
+import org.beehive.gpullama3.tensor.standard.Q4_0FloatTensor;
 import org.beehive.gpullama3.tensor.standard.Q4_1FloatTensor;
 import org.beehive.gpullama3.tensor.standard.Q5_KFloatTensor;
 import org.junit.Test;
@@ -97,7 +98,13 @@ public class BatchProjectionTilingAccelTest {
     }
 
     private static FloatArray execute(
-            String name, BatchKernel kernel, byte[] raw, int width, int activeRows, int tileRows)
+            String name,
+            BatchKernel kernel,
+            byte[] raw,
+            int width,
+            int activeRows,
+            int tileRows,
+            int tileCols)
             throws Exception {
         FloatArray x = new FloatArray(width * N);
         for (int r = 0; r < width; r++) {
@@ -114,8 +121,9 @@ public class BatchProjectionTilingAccelTest {
         kernel.run(graph, new KernelContext(), x, out, toDevice(raw), activeRows);
         graph.transferToHost(DataTransferMode.EVERY_EXECUTION, out);
 
-        int groups = (width + tileRows - 1) / tileRows;
-        WorkerGrid worker = new WorkerGrid1D(groups * D * LOCAL);
+        int rowGroups = (width + tileRows - 1) / tileRows;
+        int colGroups = (D + tileCols - 1) / tileCols;
+        WorkerGrid worker = new WorkerGrid1D(rowGroups * colGroups * LOCAL);
         worker.setLocalWork(LOCAL, 1, 1);
         GridScheduler scheduler = new GridScheduler();
         scheduler.addWorkerGrid(name + ".projection", worker);
@@ -151,6 +159,7 @@ public class BatchProjectionTilingAccelTest {
             GGMLType type,
             BiFunction<Integer, MemorySegment, FloatTensor> tensor,
             int tileRows,
+            int tileCols,
             BatchKernel plain,
             BatchKernel residual)
             throws Exception {
@@ -159,9 +168,17 @@ public class BatchProjectionTilingAccelTest {
             for (int activeRows : width == 1 ? new int[] {1} : new int[] {1, width}) {
                 float[] expected = hostReference(raw, tensor, activeRows);
 
-                FloatArray got = execute(what + "Plain", plain, raw, width, activeRows, tileRows);
+                FloatArray got =
+                        execute(what + "Plain", plain, raw, width, activeRows, tileRows, tileCols);
                 FloatArray accumulated =
-                        execute(what + "Residual", residual, raw, width, activeRows, tileRows);
+                        execute(
+                                what + "Residual",
+                                residual,
+                                raw,
+                                width,
+                                activeRows,
+                                tileRows,
+                                tileCols);
 
                 for (int row = 0; row < width; row++) {
                     for (int col = 0; col < D; col++) {
@@ -204,6 +221,7 @@ public class BatchProjectionTilingAccelTest {
                 GGMLType.Q5_K,
                 (n, seg) -> new Q5_KFloatTensor(n, seg),
                 TransformerComputeKernelsQ5_K.rowTile(),
+                TransformerComputeKernelsQ5_K.colTile(),
                 (g, c, x, out, w, active) ->
                         g.task(
                                 "projection",
@@ -231,6 +249,50 @@ public class BatchProjectionTilingAccelTest {
                                 LOCAL));
     }
 
+    // @formatter:off
+    /**
+     * Q4_0 carries the most of this family's weight and is where the output tile was tuned, so a
+     * wrong output-row offset or a group id decomposed against the wrong divisor shows up here
+     * first. The fused gate/up kernel tiles both axes the same way and is not held here: it has a
+     * different signature and its own SwiGLU, and the batched prefill parity tests cover it end to
+     * end against the CPU.
+     */
+    // @formatter:on
+    @Test
+    public void theTiledQ4_0ProjectionMatchesTheHost() throws Exception {
+        assertTiledMatchesHost(
+                "q40",
+                GGMLType.Q4_0,
+                (n, seg) -> new Q4_0FloatTensor(n, seg),
+                TransformerComputeKernelsQ4_0.rowTile(),
+                TransformerComputeKernelsQ4_0.colTile(),
+                (g, c, x, out, w, active) ->
+                        g.task(
+                                "projection",
+                                TransformerComputeKernelsQ4_0::matrixVectorTiledBatchQ4_0,
+                                c,
+                                x,
+                                out,
+                                w,
+                                N,
+                                D,
+                                active,
+                                LOCAL),
+                (g, c, x, out, w, active) ->
+                        g.task(
+                                "projection",
+                                TransformerComputeKernelsQ4_0
+                                        ::matrixVectorTiledBatchWithResidualQ4_0,
+                                c,
+                                x,
+                                out,
+                                w,
+                                N,
+                                D,
+                                active,
+                                LOCAL));
+    }
+
     @Test
     public void theTiledQ4_1ProjectionMatchesTheHost() throws Exception {
         assertTiledMatchesHost(
@@ -238,6 +300,7 @@ public class BatchProjectionTilingAccelTest {
                 GGMLType.Q4_1,
                 (n, seg) -> new Q4_1FloatTensor(n, seg),
                 TransformerComputeKernelsQ4_1.rowTile(),
+                TransformerComputeKernelsQ4_1.colTile(),
                 (g, c, x, out, w, active) ->
                         g.task(
                                 "projection",

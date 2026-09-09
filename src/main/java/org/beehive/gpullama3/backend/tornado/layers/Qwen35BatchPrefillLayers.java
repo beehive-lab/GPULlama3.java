@@ -196,6 +196,9 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 rowTiles.put(
                         "batchLayer_" + layer + "." + task,
                         TransformerComputeKernelsQ4_1.rowTile());
+                colTiles.put(
+                        "batchLayer_" + layer + "." + task,
+                        TransformerComputeKernelsQ4_1.colTile());
                 if (residual) {
                     graph.task(
                             task,
@@ -226,6 +229,9 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 rowTiles.put(
                         "batchLayer_" + layer + "." + task,
                         TransformerComputeKernelsQ5_K.rowTile());
+                colTiles.put(
+                        "batchLayer_" + layer + "." + task,
+                        TransformerComputeKernelsQ5_K.colTile());
                 if (residual) {
                     graph.task(
                             task,
