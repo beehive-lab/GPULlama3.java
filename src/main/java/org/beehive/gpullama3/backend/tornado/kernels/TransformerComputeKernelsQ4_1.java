@@ -18,8 +18,8 @@ import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
  *
  * <p>That is the whole difference from Q4_0, which is {@code d * (q - 8)} — one recentring and one
  * extra half of header. Applying Q4_0's arithmetic to a Q4_1 block, or Q4_1's offsets to a Q4_0
- * one, gives weights of entirely plausible magnitude, so neither mistake announces itself.
- * {@code Q4_1DecodeTest} holds this against {@code Q4_1FloatTensor} on the same bytes.
+ * one, gives weights of entirely plausible magnitude, so neither mistake announces itself. {@code
+ * Q4_1DecodeTest} holds this against {@code Q4_1FloatTensor} on the same bytes.
  */
 public final class TransformerComputeKernelsQ4_1 {
 
@@ -31,6 +31,17 @@ public final class TransformerComputeKernelsQ4_1 {
 
     /** Byte offset of the packed nibbles within a block. */
     private static final int QS_OFFSET = 4;
+
+    /** Prompt rows a tiled batch workgroup covers, as in {@code TransformerComputeKernelsQ4_0}. */
+    private static final int ROW_TILE = 8;
+
+    /** Output rows a tiled batch workgroup covers, as in {@code TransformerComputeKernelsQ4_0}. */
+    private static final int COL_TILE = 2;
+
+    /** Output rows a tiled batch workgroup covers. */
+    public static int colTile() {
+        return COL_TILE;
+    }
 
     private TransformerComputeKernelsQ4_1() {}
 
@@ -184,17 +195,22 @@ public final class TransformerComputeKernelsQ4_1 {
         }
     }
 
+    /** Prompt rows a tiled batch workgroup covers. */
+    public static int rowTile() {
+        return ROW_TILE;
+    }
+
     // @formatter:off
     /**
-     * {@code out[b][row] = w[row]·x[b]} over a chunk of activations, one workgroup per (row, output
-     * row).
+     * {@code out[b][row] = w[row]·x[b]} for a tile of up to {@link #ROW_TILE} prompt rows, one
+     * workgroup per (row tile, output row).
      *
-     * <p>The kernel launches a fixed number of rows and is told how many are active: a padding row
-     * returns before reading anything, so a chunk shorter than the batch width costs launches and
-     * nothing else.
+     * <p>Q4_0's tiled kernel with Q4_1's decode. The untiled batch kernel beside this one reads the
+     * weight row once per prompt row, which is what running the rows separately reads; this one
+     * reads and decodes each weight once for the whole tile.
      */
     // @formatter:on
-    public static void matrixVectorBatchQ4_1(
+    public static void matrixVectorTiledBatchQ4_1(
             KernelContext context,
             FloatArray xBatch,
             FloatArray outBatch,
@@ -203,20 +219,87 @@ public final class TransformerComputeKernelsQ4_1 {
             int d,
             int activeRows,
             int localWorkGroupSize) {
+        int colGroups = (d + COL_TILE - 1) / COL_TILE;
         int groupId = context.groupIdx;
-        int batchIdx = groupId / d;
-        int rowId = groupId - batchIdx * d;
-        if (batchIdx >= activeRows) {
+        int tile = groupId / colGroups;
+        int colGroup = groupId - tile * colGroups;
+        int firstRow = tile * ROW_TILE;
+        int firstCol = colGroup * COL_TILE;
+        if (firstRow >= activeRows) {
             return;
         }
-        float sum = rowDotShared(context, localWorkGroupSize, xBatch, batchIdx * n, w, n, rowId);
-        if (context.localIdx == 0) {
-            outBatch.set(batchIdx * d + rowId, sum);
+        int localId = context.localIdx;
+
+        float[] localSums =
+                context.allocateFloatLocalArray(localWorkGroupSize * ROW_TILE * COL_TILE);
+        int blocksPerRow = (n + QK - 1) / QK;
+
+        // Zeroed explicitly: a private array in generated device code is uninitialized stack.
+        float[] acc = new float[ROW_TILE * COL_TILE];
+        for (int t = 0; t < ROW_TILE * COL_TILE; t++) {
+            acc[t] = 0.0f;
+        }
+        float[] xs = new float[ROW_TILE];
+
+        for (int j = localId; j < n; j += localWorkGroupSize) {
+            int blockIdx = j / QK;
+            int withinBlock = j - blockIdx * QK;
+
+            for (int r = 0; r < ROW_TILE; r++) {
+                int row = firstRow + r;
+                float value = 0.0f;
+                if (row < activeRows) {
+                    value = xBatch.get(row * n + j);
+                }
+                xs[r] = value;
+            }
+
+            for (int c = 0; c < COL_TILE; c++) {
+                int outRow = firstCol + c;
+                if (outRow < d) {
+                    int blockByteOffset = (outRow * blocksPerRow + blockIdx) * BLOCK_BYTES;
+                    float weight = decode(w, blockByteOffset, withinBlock);
+                    for (int r = 0; r < ROW_TILE; r++) {
+                        acc[c * ROW_TILE + r] += weight * xs[r];
+                    }
+                }
+            }
+        }
+
+        for (int t = 0; t < ROW_TILE * COL_TILE; t++) {
+            localSums[t * localWorkGroupSize + localId] = acc[t];
+        }
+        context.localBarrier();
+
+        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                for (int t = 0; t < ROW_TILE * COL_TILE; t++) {
+                    localSums[t * localWorkGroupSize + localId] +=
+                            localSums[t * localWorkGroupSize + localId + stride];
+                }
+            }
+            context.localBarrier();
+        }
+
+        if (localId == 0) {
+            for (int c = 0; c < COL_TILE; c++) {
+                int outRow = firstCol + c;
+                for (int r = 0; r < ROW_TILE; r++) {
+                    int row = firstRow + r;
+                    int slot = c * ROW_TILE + r;
+                    if (outRow < d && row < activeRows) {
+                        outBatch.set(row * d + outRow, localSums[slot * localWorkGroupSize]);
+                    }
+                }
+            }
         }
     }
 
-    /** {@code out[b][row] += w[row]·x[b]}, the residual form. */
-    public static void matrixVectorBatchWithResidualQ4_1(
+    /**
+     * {@code out[b][row] += w[row]·x[b]} for a tile of rows. See {@link
+     * #matrixVectorTiledBatchQ4_1}.
+     */
+    public static void matrixVectorTiledBatchWithResidualQ4_1(
             KernelContext context,
             FloatArray xBatch,
             FloatArray outBatch,
@@ -225,16 +308,81 @@ public final class TransformerComputeKernelsQ4_1 {
             int d,
             int activeRows,
             int localWorkGroupSize) {
+        int colGroups = (d + COL_TILE - 1) / COL_TILE;
         int groupId = context.groupIdx;
-        int batchIdx = groupId / d;
-        int rowId = groupId - batchIdx * d;
-        if (batchIdx >= activeRows) {
+        int tile = groupId / colGroups;
+        int colGroup = groupId - tile * colGroups;
+        int firstRow = tile * ROW_TILE;
+        int firstCol = colGroup * COL_TILE;
+        if (firstRow >= activeRows) {
             return;
         }
-        float sum = rowDotShared(context, localWorkGroupSize, xBatch, batchIdx * n, w, n, rowId);
-        if (context.localIdx == 0) {
-            int index = batchIdx * d + rowId;
-            outBatch.set(index, outBatch.get(index) + sum);
+        int localId = context.localIdx;
+
+        float[] localSums =
+                context.allocateFloatLocalArray(localWorkGroupSize * ROW_TILE * COL_TILE);
+        int blocksPerRow = (n + QK - 1) / QK;
+
+        // Zeroed explicitly: a private array in generated device code is uninitialized stack.
+        float[] acc = new float[ROW_TILE * COL_TILE];
+        for (int t = 0; t < ROW_TILE * COL_TILE; t++) {
+            acc[t] = 0.0f;
+        }
+        float[] xs = new float[ROW_TILE];
+
+        for (int j = localId; j < n; j += localWorkGroupSize) {
+            int blockIdx = j / QK;
+            int withinBlock = j - blockIdx * QK;
+
+            for (int r = 0; r < ROW_TILE; r++) {
+                int row = firstRow + r;
+                float value = 0.0f;
+                if (row < activeRows) {
+                    value = xBatch.get(row * n + j);
+                }
+                xs[r] = value;
+            }
+
+            for (int c = 0; c < COL_TILE; c++) {
+                int outRow = firstCol + c;
+                if (outRow < d) {
+                    int blockByteOffset = (outRow * blocksPerRow + blockIdx) * BLOCK_BYTES;
+                    float weight = decode(w, blockByteOffset, withinBlock);
+                    for (int r = 0; r < ROW_TILE; r++) {
+                        acc[c * ROW_TILE + r] += weight * xs[r];
+                    }
+                }
+            }
+        }
+
+        for (int t = 0; t < ROW_TILE * COL_TILE; t++) {
+            localSums[t * localWorkGroupSize + localId] = acc[t];
+        }
+        context.localBarrier();
+
+        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                for (int t = 0; t < ROW_TILE * COL_TILE; t++) {
+                    localSums[t * localWorkGroupSize + localId] +=
+                            localSums[t * localWorkGroupSize + localId + stride];
+                }
+            }
+            context.localBarrier();
+        }
+
+        if (localId == 0) {
+            for (int c = 0; c < COL_TILE; c++) {
+                int outRow = firstCol + c;
+                for (int r = 0; r < ROW_TILE; r++) {
+                    int row = firstRow + r;
+                    int slot = c * ROW_TILE + r;
+                    if (outRow < d && row < activeRows) {
+                        int index = row * d + outRow;
+                        outBatch.set(
+                                index, outBatch.get(index) + localSums[slot * localWorkGroupSize]);
+                    }
+                }
+            }
         }
     }
 }

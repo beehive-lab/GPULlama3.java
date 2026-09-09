@@ -39,6 +39,17 @@ import uk.ac.manchester.tornado.api.types.arrays.IntArray;
 // @formatter:on
 public final class Qwen35BatchKernels {
 
+    /** Positions whose weights the workgroup computes together in the value pass. */
+    private static final int ATTENTION_TILE = 16;
+
+    /**
+     * Output elements one lane carries in the value pass.
+     *
+     * <p>{@code headSize / localSize}, rounded up, for this family's 256-wide head against a
+     * 128-lane workgroup. A constant because a private array's extent has to be one.
+     */
+    private static final int ATTENTION_SLOTS = 4;
+
     private Qwen35BatchKernels() {}
 
     // ---- the recurrent scans -------------------------------------------------
@@ -577,11 +588,31 @@ public final class Qwen35BatchKernels {
         context.localBarrier();
         float denominator = reduced[1];
 
-        // Pass 3: one output element per lane, weighted over the same range.
+        // Pass 3: the weighted value sum, over the same range.
+        //
+        // A position's score does not depend on the output element, so it is computed once per
+        // position and shared, rather than once per (position, output element). Writing the loops
+        // the other way round — an output element outside, a position inside, a dot product
+        // innermost — costs `headSize` times the arithmetic of pass 1 for the same answer, which
+        // is what this kernel used to do and what made attention the second-largest item in the
+        // prefill profile.
+        //
+        // Positions are taken a tile at a time: the workgroup computes the tile's weights
+        // cooperatively, then every lane sweeps its own output elements over that tile.
         int outBase = row * heads * headSize + head * headSize;
-        for (int d = tid; d < headSize; d += localSize) {
-            float accumulated = 0.0f;
-            for (int p = 0; p <= position; p++) {
+        float[] weights = context.allocateFloatLocalArray(ATTENTION_TILE);
+        float[] accumulated = new float[ATTENTION_SLOTS];
+        for (int t = 0; t < ATTENTION_SLOTS; t++) {
+            accumulated[t] = 0.0f;
+        }
+
+        for (int tileStart = 0; tileStart <= position; tileStart += ATTENTION_TILE) {
+            int tileEnd = tileStart + ATTENTION_TILE - 1;
+            if (tileEnd > position) {
+                tileEnd = position;
+            }
+
+            for (int p = tileStart + tid; p <= tileEnd; p += localSize) {
                 int base =
                         KvBlockAddress.offset(
                                         blockTable, slot, p, layerOff, kvDim, blockCfg, blockStride)
@@ -590,10 +621,31 @@ public final class Qwen35BatchKernels {
                 for (int i = 0; i < headSize; i++) {
                     score += qShared[i] * keyCache.get(base + i);
                 }
-                float weight = TornadoMath.exp(score * invSqrt - globalMax);
-                accumulated += weight * valueCache.get(base + d);
+                weights[p - tileStart] = TornadoMath.exp(score * invSqrt - globalMax);
             }
-            outBatch.set(outBase + d, accumulated / denominator);
+            context.localBarrier();
+
+            int slotIndex = 0;
+            for (int d = tid; d < headSize; d += localSize) {
+                float partial = accumulated[slotIndex];
+                for (int p = tileStart; p <= tileEnd; p++) {
+                    int base =
+                            KvBlockAddress.offset(
+                                            blockTable, slot, p, layerOff, kvDim, blockCfg,
+                                            blockStride)
+                                    + kvHead * headSize;
+                    partial += weights[p - tileStart] * valueCache.get(base + d);
+                }
+                accumulated[slotIndex] = partial;
+                slotIndex++;
+            }
+            context.localBarrier();
+        }
+
+        int slotIndex = 0;
+        for (int d = tid; d < headSize; d += localSize) {
+            outBatch.set(outBase + d, accumulated[slotIndex] / denominator);
+            slotIndex++;
         }
     }
 
