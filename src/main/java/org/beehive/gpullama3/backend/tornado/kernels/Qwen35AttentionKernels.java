@@ -2,7 +2,9 @@ package org.beehive.gpullama3.backend.tornado.kernels;
 
 import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
+import uk.ac.manchester.tornado.api.types.HalfFloat;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
 
 /**
@@ -215,6 +217,41 @@ public final class Qwen35AttentionKernels {
                 blockCfg,
                 blockStride,
                 lane);
+    }
+
+    /**
+     * {@link #appendKeyValuePaged} into a half-precision store.
+     *
+     * <p>The entry is narrowed on the way in and widened on the way out; everything that consumes
+     * it accumulates in FP32, so the only thing held in half precision is the store itself.
+     */
+    public static void appendKeyValueFP16Paged(
+            KernelContext context,
+            IntArray positionHolder,
+            FloatArray key,
+            FloatArray value,
+            HalfFloatArray keyCache,
+            HalfFloatArray valueCache,
+            IntArray blockTable,
+            int kvDim,
+            int layer,
+            int blockCfg,
+            int blockStride) {
+        int lane = context.globalIdx;
+        if (lane >= kvDim) {
+            return;
+        }
+        int cacheOffset =
+                KvBlockAddress.offset(
+                        blockTable,
+                        positionHolder.get(1),
+                        positionHolder.get(0),
+                        KvBlockAddress.layerOffset(layer, kvDim, blockCfg),
+                        kvDim,
+                        blockCfg,
+                        blockStride);
+        keyCache.set(cacheOffset + lane, new HalfFloat(key.get(lane)));
+        valueCache.set(cacheOffset + lane, new HalfFloat(value.get(lane)));
     }
 
     // ---- the output gate -----------------------------------------------------

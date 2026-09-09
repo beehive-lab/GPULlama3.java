@@ -43,12 +43,12 @@ import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
  *
  * <h2>Every task is selected by the representation of the tensor it reads</h2>
  *
- * <p>This is the first family whose model is genuinely mixed: Q4_0 projections and embeddings,
- * Q4_1 {@code ffn_down} on the first eight blocks, Q5_K {@code ssm_out}, a Q6_K vocabulary
- * projection, F32 norms and SSM parameters. Nothing is materialized to a common representation, so
- * a task is bound to a format-specific kernel chosen <b>here</b>, before compilation — never to a
- * kernel that switches on a dtype inside its inner loop, which would cost the compiler the fixed
- * addressing that makes the loop worth writing.
+ * <p>This is the first family whose model is genuinely mixed: Q4_0 projections and embeddings, Q4_1
+ * {@code ffn_down} on the first eight blocks, Q5_K {@code ssm_out}, a Q6_K vocabulary projection,
+ * F32 norms and SSM parameters. Nothing is materialized to a common representation, so a task is
+ * bound to a format-specific kernel chosen <b>here</b>, before compilation — never to a kernel that
+ * switches on a dtype inside its inner loop, which would cost the compiler the fixed addressing
+ * that makes the loop worth writing.
  *
  * <p>The one task that reads two weights at once is the fused gate/up feed-forward. It states that
  * its operands must share a representation and refuses a mixture by name; it does not convert one
@@ -152,8 +152,8 @@ public class Qwen35FFNLayers
      * {@code out = w · x}, or {@code out += w · x}, by the representation {@code w} is in.
      *
      * <p>The selection happens here, at plan construction, so each task is compiled against one
-     * block layout with fixed addressing. A representation with no kernel for this shape is
-     * refused by name: converting it would double what it occupies and hide the gap.
+     * block layout with fixed addressing. A representation with no kernel for this shape is refused
+     * by name: converting it would double what it occupies and hide the gap.
      */
     private void matVec(
             TaskGraph graph,
@@ -371,9 +371,9 @@ public class Qwen35FFNLayers
      * <p>Every block-decoding kernel here addresses a row as {@code row * blocksPerRow} blocks, so
      * it assumes each row starts on a block boundary. That holds for every projection in a real
      * file — a quantizer will not split a block across rows — and when it does not hold the kernel
-     * reads a neighbouring row's blocks, producing weights of plausible magnitude and fluent,
-     * wrong output. Checked here because the alternative is discovering it as a numerical
-     * disagreement on a model that takes minutes to load.
+     * reads a neighbouring row's blocks, producing weights of plausible magnitude and fluent, wrong
+     * output. Checked here because the alternative is discovering it as a numerical disagreement on
+     * a model that takes minutes to load.
      */
     // @formatter:on
     private void requireWholeBlocks(int layer, String task, String role, DataType type, int n) {
@@ -488,7 +488,8 @@ public class Qwen35FFNLayers
                             config.hiddenDim(),
                             MATVEC_LOCAL);
             default ->
-                    throw unsupported(layer, "ffn_gate_up", "ffn_gate|ffn_up", gate.dataType(), "a");
+                    throw unsupported(
+                            layer, "ffn_gate_up", "ffn_gate|ffn_up", gate.dataType(), "a");
         }
     }
 
@@ -498,8 +499,7 @@ public class Qwen35FFNLayers
     protected TaskGraph createFFNLayerTaskGraph(int layerIndex) {
         TaskGraph layer = new TaskGraph("layer_" + layerIndex);
 
-        String predecessor =
-                layerIndex == 0 ? activationGraphName : "layer_" + (layerIndex - 1);
+        String predecessor = layerIndex == 0 ? activationGraphName : "layer_" + (layerIndex - 1);
         layer.consumeFromDevice(predecessor, qwen35State.workspace.wrapX);
         configureLayerDataTransfers(layer, layerIndex);
         transferLayerWeights(layer, layerIndex);
@@ -548,11 +548,25 @@ public class Qwen35FFNLayers
 
         layer.persistOnDevice(
                 qwen35State.workspace.wrapX,
-                qwen35State.workspace.wrapKeyCache,
-                qwen35State.workspace.wrapValueCache,
+                keyStore(),
+                valueStore(),
                 qwen35State.workspace.wrapConvState,
                 qwen35State.workspace.wrapDeltaState);
         return layer;
+    }
+
+    /** Whether this state's key/value store is half precision. */
+    protected boolean fp16Kv() {
+        return state.usesFp16KeyValueCache();
+    }
+
+    /** The key store the graphs bind, whichever precision it is in. */
+    protected Object keyStore() {
+        return fp16Kv() ? state.workspace.wrapKeyCacheFP16 : state.workspace.wrapKeyCache;
+    }
+
+    protected Object valueStore() {
+        return fp16Kv() ? state.workspace.wrapValueCacheFP16 : state.workspace.wrapValueCache;
     }
 
     /** {@code xb = weight ⊙ rms(x)} — the reduction, its finalize where needed, and the apply. */
@@ -681,20 +695,37 @@ public class Qwen35FFNLayers
         // The key/value store is sized by the blocks that attend, so this layer addresses it by
         // its dense index. Its own index would run four times past the end of the store.
         int kvLayer = config.keyValueLayerIndex(layerIndex);
-        layer.task(
-                "attn_kv_append",
-                Qwen35AttentionKernels::appendKeyValuePaged,
-                context,
-                qwen35State.workspace.positionHolder,
-                qwen35State.workspace.wrapK,
-                qwen35State.workspace.wrapV,
-                qwen35State.workspace.wrapKeyCache,
-                qwen35State.workspace.wrapValueCache,
-                qwen35State.workspace.wrapBlockTable,
-                kvDim,
-                kvLayer,
-                qwen35State.kvBlockCfg,
-                qwen35State.kvBlockStride);
+        if (fp16Kv()) {
+            layer.task(
+                    "attn_kv_append",
+                    Qwen35AttentionKernels::appendKeyValueFP16Paged,
+                    context,
+                    qwen35State.workspace.positionHolder,
+                    qwen35State.workspace.wrapK,
+                    qwen35State.workspace.wrapV,
+                    qwen35State.workspace.wrapKeyCacheFP16,
+                    qwen35State.workspace.wrapValueCacheFP16,
+                    qwen35State.workspace.wrapBlockTable,
+                    kvDim,
+                    kvLayer,
+                    qwen35State.kvBlockCfg,
+                    qwen35State.kvBlockStride);
+        } else {
+            layer.task(
+                    "attn_kv_append",
+                    Qwen35AttentionKernels::appendKeyValuePaged,
+                    context,
+                    qwen35State.workspace.positionHolder,
+                    qwen35State.workspace.wrapK,
+                    qwen35State.workspace.wrapV,
+                    qwen35State.workspace.wrapKeyCache,
+                    qwen35State.workspace.wrapValueCache,
+                    qwen35State.workspace.wrapBlockTable,
+                    kvDim,
+                    kvLayer,
+                    qwen35State.kvBlockCfg,
+                    qwen35State.kvBlockStride);
+        }
 
         // @formatter:off
         // The single-workgroup online-softmax kernel, on every backend.
@@ -710,23 +741,43 @@ public class Qwen35FFNLayers
         // than eight per head. A split-KV variant whose local arrays are sized from parameters
         // would recover it, and belongs with a measurement rather than ahead of one.
         // @formatter:on
-        layer.task(
-                "attention",
-                TransformerPagedKvKernels::processHeadsFlashAttentionPaged,
-                context,
-                qwen35State.workspace.wrapAttnQ,
-                qwen35State.workspace.wrapKeyCache,
-                qwen35State.workspace.wrapValueCache,
-                qwen35State.workspace.wrapXb,
-                config.numberOfHeads(),
-                headDim,
-                kvDim,
-                config.kvMul(),
-                qwen35State.workspace.positionHolder,
-                kvLayer,
-                qwen35State.workspace.wrapBlockTable,
-                qwen35State.kvBlockCfg,
-                qwen35State.kvBlockStride);
+        if (fp16Kv()) {
+            layer.task(
+                    "attention",
+                    TransformerPagedKvKernels::processHeadsFlashAttentionFP16Paged,
+                    context,
+                    qwen35State.workspace.wrapAttnQ,
+                    qwen35State.workspace.wrapKeyCacheFP16,
+                    qwen35State.workspace.wrapValueCacheFP16,
+                    qwen35State.workspace.wrapXb,
+                    config.numberOfHeads(),
+                    headDim,
+                    kvDim,
+                    config.kvMul(),
+                    qwen35State.workspace.positionHolder,
+                    kvLayer,
+                    qwen35State.workspace.wrapBlockTable,
+                    qwen35State.kvBlockCfg,
+                    qwen35State.kvBlockStride);
+        } else {
+            layer.task(
+                    "attention",
+                    TransformerPagedKvKernels::processHeadsFlashAttentionPaged,
+                    context,
+                    qwen35State.workspace.wrapAttnQ,
+                    qwen35State.workspace.wrapKeyCache,
+                    qwen35State.workspace.wrapValueCache,
+                    qwen35State.workspace.wrapXb,
+                    config.numberOfHeads(),
+                    headDim,
+                    kvDim,
+                    config.kvMul(),
+                    qwen35State.workspace.positionHolder,
+                    kvLayer,
+                    qwen35State.workspace.wrapBlockTable,
+                    qwen35State.kvBlockCfg,
+                    qwen35State.kvBlockStride);
+        }
 
         // A logistic, not a SiLU: reusing the SwiGLU kernel would multiply by the gate twice.
         layer.task(
@@ -1003,8 +1054,8 @@ public class Qwen35FFNLayers
                     qwen35State.workspace.wrapAttnGate,
                     qwen35State.workspace.wrapK,
                     qwen35State.workspace.wrapV,
-                    qwen35State.workspace.wrapKeyCache,
-                    qwen35State.workspace.wrapValueCache,
+                    keyStore(),
+                    valueStore(),
                     qwen35State.workspace.wrapAtt,
                     qwen35State.workspace.wrapHb);
             // The recurrent state persists across tokens and is updated in place, so it is
@@ -1034,8 +1085,8 @@ public class Qwen35FFNLayers
                     qwen35State.workspace.wrapAttnGate,
                     qwen35State.workspace.wrapK,
                     qwen35State.workspace.wrapV,
-                    qwen35State.workspace.wrapKeyCache,
-                    qwen35State.workspace.wrapValueCache,
+                    keyStore(),
+                    valueStore(),
                     qwen35State.workspace.wrapAtt,
                     qwen35State.workspace.wrapHb,
                     qwen35State.workspace.positionHolder);
@@ -1064,7 +1115,8 @@ public class Qwen35FFNLayers
     @Override
     public GridScheduler updateGridScheduler(GridScheduler scheduler) {
         WorkerGrid rmsReduce =
-                rmsReduceWorker(WorkerGridFactory.createRmsNormWorker(config.dim(), state.localSize));
+                rmsReduceWorker(
+                        WorkerGridFactory.createRmsNormWorker(config.dim(), state.localSize));
         WorkerGrid rmsApply = WorkerGridFactory.createRmsNormWorker(config.dim(), state.localSize);
         WorkerGrid rmsFinalize =
                 WorkerGridFactory.createRmsNormWorker(config.dim(), state.localSize);

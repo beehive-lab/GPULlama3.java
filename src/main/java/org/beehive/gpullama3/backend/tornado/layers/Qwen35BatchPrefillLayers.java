@@ -106,6 +106,20 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
 
     // ── validation and dispatch ───────────────────────────────────────────────
 
+    /** Whether this state's key/value store is half precision. */
+    private boolean fp16Kv() {
+        return state.usesFp16KeyValueCache();
+    }
+
+    /** The key store the graphs bind, whichever precision it is in. */
+    private Object keyStore() {
+        return fp16Kv() ? state.workspace.wrapKeyCacheFP16 : state.workspace.wrapKeyCache;
+    }
+
+    private Object valueStore() {
+        return fp16Kv() ? state.workspace.wrapValueCacheFP16 : state.workspace.wrapValueCache;
+    }
+
     private TornadoTensor require(TornadoTensor[] tensors, int layer, String role) {
         TornadoTensor tensor = tensors == null || layer >= tensors.length ? null : tensors[layer];
         if (tensor == null) {
@@ -382,8 +396,8 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
 
         layer.persistOnDevice(
                 state.workspace.wrapXBatch,
-                state.workspace.wrapKeyCache,
-                state.workspace.wrapValueCache,
+                keyStore(),
+                valueStore(),
                 state.workspace.wrapBlockTable,
                 state.workspace.wrapConvState,
                 state.workspace.wrapDeltaState);
@@ -497,39 +511,77 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
 
         // Every row's key and value written before any row attends: a row may read an earlier
         // row's entry, and the append is what puts it there.
-        layer.task(
-                "attn_kv_append",
-                Qwen35BatchKernels::appendKeyValueBatchPaged,
-                context,
-                state.workspace.batchStartPosHolder,
-                state.workspace.wrapKBatch,
-                state.workspace.wrapVBatch,
-                state.workspace.wrapKeyCache,
-                state.workspace.wrapValueCache,
-                state.workspace.wrapBlockTable,
-                kvDim,
-                kvLayer,
-                state.kvBlockCfg,
-                state.kvBlockStride);
+        if (fp16Kv()) {
+            layer.task(
+                    "attn_kv_append",
+                    Qwen35BatchKernels::appendKeyValueBatchFP16Paged,
+                    context,
+                    state.workspace.batchStartPosHolder,
+                    state.workspace.wrapKBatch,
+                    state.workspace.wrapVBatch,
+                    state.workspace.wrapKeyCacheFP16,
+                    state.workspace.wrapValueCacheFP16,
+                    state.workspace.wrapBlockTable,
+                    kvDim,
+                    kvLayer,
+                    state.kvBlockCfg,
+                    state.kvBlockStride);
+        } else {
+            layer.task(
+                    "attn_kv_append",
+                    Qwen35BatchKernels::appendKeyValueBatchPaged,
+                    context,
+                    state.workspace.batchStartPosHolder,
+                    state.workspace.wrapKBatch,
+                    state.workspace.wrapVBatch,
+                    state.workspace.wrapKeyCache,
+                    state.workspace.wrapValueCache,
+                    state.workspace.wrapBlockTable,
+                    kvDim,
+                    kvLayer,
+                    state.kvBlockCfg,
+                    state.kvBlockStride);
+        }
 
-        layer.task(
-                "attention",
-                Qwen35BatchKernels::attentionBatchPaged,
-                context,
-                state.workspace.batchStartPosHolder,
-                state.workspace.wrapAttnQBatch,
-                state.workspace.wrapKeyCache,
-                state.workspace.wrapValueCache,
-                state.workspace.wrapXbBatch,
-                config.numberOfHeads(),
-                headDim,
-                kvDim,
-                config.kvMul(),
-                kvLayer,
-                state.workspace.wrapBlockTable,
-                state.kvBlockCfg,
-                state.kvBlockStride,
-                ATTENTION_LOCAL);
+        if (fp16Kv()) {
+            layer.task(
+                    "attention",
+                    Qwen35BatchKernels::attentionBatchFP16Paged,
+                    context,
+                    state.workspace.batchStartPosHolder,
+                    state.workspace.wrapAttnQBatch,
+                    state.workspace.wrapKeyCacheFP16,
+                    state.workspace.wrapValueCacheFP16,
+                    state.workspace.wrapXbBatch,
+                    config.numberOfHeads(),
+                    headDim,
+                    kvDim,
+                    config.kvMul(),
+                    kvLayer,
+                    state.workspace.wrapBlockTable,
+                    state.kvBlockCfg,
+                    state.kvBlockStride,
+                    ATTENTION_LOCAL);
+        } else {
+            layer.task(
+                    "attention",
+                    Qwen35BatchKernels::attentionBatchPaged,
+                    context,
+                    state.workspace.batchStartPosHolder,
+                    state.workspace.wrapAttnQBatch,
+                    state.workspace.wrapKeyCache,
+                    state.workspace.wrapValueCache,
+                    state.workspace.wrapXbBatch,
+                    config.numberOfHeads(),
+                    headDim,
+                    kvDim,
+                    config.kvMul(),
+                    kvLayer,
+                    state.workspace.wrapBlockTable,
+                    state.kvBlockCfg,
+                    state.kvBlockStride,
+                    ATTENTION_LOCAL);
+        }
 
         layer.task(
                 "attn_output_gate",
@@ -789,8 +841,8 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     state.workspace.wrapVBatch,
                     state.workspace.wrapXbBatch,
                     state.workspace.wrapHbBatch,
-                    state.workspace.wrapKeyCache,
-                    state.workspace.wrapValueCache);
+                    keyStore(),
+                    valueStore());
             layer.transferToDevice(
                     DataTransferMode.FIRST_EXECUTION,
                     state.workspace.wrapSsmQkvBatch,
@@ -818,8 +870,8 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     state.workspace.wrapVBatch,
                     state.workspace.wrapXbBatch,
                     state.workspace.wrapHbBatch,
-                    state.workspace.wrapKeyCache,
-                    state.workspace.wrapValueCache,
+                    keyStore(),
+                    valueStore(),
                     state.workspace.batchStartPosHolder);
             layer.consumeFromDevice(predecessor, state.workspace.wrapBlockTable);
             layer.consumeFromDevice(
