@@ -71,6 +71,12 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
      */
     private final java.util.Map<String, Integer> rowTiles = new java.util.LinkedHashMap<>();
 
+    /**
+     * How many <b>output</b> rows each task's grid covers per workgroup — one, unless the kernel
+     * also tiles that axis. Recorded the same way and for the same reason as {@link #rowTiles}.
+     */
+    private final java.util.Map<String, Integer> colTiles = new java.util.LinkedHashMap<>();
+
     public Qwen35BatchPrefillLayers(
             Qwen35State state,
             Qwen35TornadoWeights weights,
@@ -157,6 +163,9 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 rowTiles.put(
                         "batchLayer_" + layer + "." + task,
                         TransformerComputeKernelsQ4_0.rowTile());
+                colTiles.put(
+                        "batchLayer_" + layer + "." + task,
+                        TransformerComputeKernelsQ4_0.colTile());
                 if (residual) {
                     graph.task(
                             task,
@@ -932,7 +941,9 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
     /** One workgroup per (row, output row), or per (row tile, output row) where tiled. */
     private WorkerGrid matVecWorker(String qualifiedTask, int rows) {
         int tileRows = rowTiles.getOrDefault(qualifiedTask, 1);
+        int tileCols = colTiles.getOrDefault(qualifiedTask, 1);
         int rowGroups = (batchSize + tileRows - 1) / tileRows;
-        return WorkerGridFactory.genericWorker(rowGroups * rows * MATVEC_LOCAL, MATVEC_LOCAL);
+        int colGroups = (rows + tileCols - 1) / tileCols;
+        return WorkerGridFactory.genericWorker(rowGroups * colGroups * MATVEC_LOCAL, MATVEC_LOCAL);
     }
 }
