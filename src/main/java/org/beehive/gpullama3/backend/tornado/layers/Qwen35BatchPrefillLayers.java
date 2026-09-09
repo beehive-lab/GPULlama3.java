@@ -29,13 +29,13 @@ import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
  *
  * <p>The same computation the single-token graphs perform, with a row index — except in the two
  * places where a row depends on the row before it. There the kernel scans the chunk itself, in
- * token order, one lane per convolution channel or per delta-net value column. See
- * {@code Qwen35BatchKernels} for why that is exact and why it makes the result independent of the
- * chunk size.
+ * token order, one lane per convolution channel or per delta-net value column. See {@code
+ * Qwen35BatchKernels} for why that is exact and why it makes the result independent of the chunk
+ * size.
  *
- * <p>Every weight-reading task is still selected by that tensor's own representation, and the
- * fused gate/up task still requires its two operands to agree. Nothing is materialized for the
- * batched path that is not materialized for the single-token one, which is to say nothing at all.
+ * <p>Every weight-reading task is still selected by that tensor's own representation, and the fused
+ * gate/up task still requires its two operands to agree. Nothing is materialized for the batched
+ * path that is not materialized for the single-token one, which is to say nothing at all.
  *
  * <p>Graph names are {@code batchLayer_i}, distinct from the decode graphs' {@code layer_i}: the
  * batched plan holds both families at once, and the decode ones consume what these produced.
@@ -59,18 +59,17 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
     private String lastLayerTaskGraphID;
 
     /**
-     * Tasks whose grid covers a tile of rows rather than one row.
+     * How many prompt rows each task's grid covers per workgroup — one, unless it is tiled.
      *
-     * <p>Collected while the graphs are built, because the worker grid has to match the kernel the
-     * dispatch chose — and the choice is per tensor, not per task name. {@code ffn_down} is Q4_1 on
-     * this model's first eight blocks and Q4_0 on the rest, so the same name is tiled in one layer
-     * and not in another; keying on the name alone gave the untiled kernel a tiled grid, and every
-     * row past the first read the wrong activation.
+     * <p>Recorded while the graphs are built, from the kernel's own tile constant, because the
+     * worker grid has to match the kernel the dispatch chose — and the choice is per tensor, not
+     * per task name. {@code ffn_down} is Q4_1 on this model's first eight blocks and Q4_0 on the
+     * rest, so the same name can be tiled differently in different layers; keying on the name alone
+     * gave the untiled kernel a tiled grid, and every row past the first read the wrong activation.
+     * Taking the number from the kernel that was selected means a tile constant can only ever be
+     * changed in one place.
      */
-    private final java.util.Set<String> tiledTasks = new java.util.LinkedHashSet<>();
-
-    /** The fused gate/up tasks, whose tile is four rows rather than eight. */
-    private final java.util.Set<String> ffnTiled = new java.util.LinkedHashSet<>();
+    private final java.util.Map<String, Integer> rowTiles = new java.util.LinkedHashMap<>();
 
     public Qwen35BatchPrefillLayers(
             Qwen35State state,
@@ -155,7 +154,9 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 // Tiled: one workgroup per (tile of rows, output row), decoding each weight once
                 // for the tile. A quantized projection is memory-bound, and a chunk is only worth
                 // scheduling if it reuses the weights it reads.
-                tiledTasks.add("batchLayer_" + layer + "." + task);
+                rowTiles.put(
+                        "batchLayer_" + layer + "." + task,
+                        TransformerComputeKernelsQ4_0.rowTile());
                 if (residual) {
                     graph.task(
                             task,
@@ -183,10 +184,13 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 }
             }
             case Q4_1 -> {
+                rowTiles.put(
+                        "batchLayer_" + layer + "." + task,
+                        TransformerComputeKernelsQ4_1.rowTile());
                 if (residual) {
                     graph.task(
                             task,
-                            TransformerComputeKernelsQ4_1::matrixVectorBatchWithResidualQ4_1,
+                            TransformerComputeKernelsQ4_1::matrixVectorTiledBatchWithResidualQ4_1,
                             context,
                             xBatch,
                             outBatch,
@@ -198,7 +202,7 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 } else {
                     graph.task(
                             task,
-                            TransformerComputeKernelsQ4_1::matrixVectorBatchQ4_1,
+                            TransformerComputeKernelsQ4_1::matrixVectorTiledBatchQ4_1,
                             context,
                             xBatch,
                             outBatch,
@@ -210,10 +214,13 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 }
             }
             case Q5_K -> {
+                rowTiles.put(
+                        "batchLayer_" + layer + "." + task,
+                        TransformerComputeKernelsQ5_K.rowTile());
                 if (residual) {
                     graph.task(
                             task,
-                            TransformerComputeKernelsQ5_K::matrixVectorBatchWithResidualQ5_K,
+                            TransformerComputeKernelsQ5_K::matrixVectorTiledBatchWithResidualQ5_K,
                             context,
                             xBatch,
                             outBatch,
@@ -225,7 +232,7 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 } else {
                     graph.task(
                             task,
-                            TransformerComputeKernelsQ5_K::matrixVectorBatchQ5_K,
+                            TransformerComputeKernelsQ5_K::matrixVectorTiledBatchQ5_K,
                             context,
                             xBatch,
                             outBatch,
@@ -290,9 +297,11 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 gate,
                 up);
         if (gate.dataType() != DataType.Q4_0) {
-            throw unsupported(layer, "ffn_gate_up", "ffn_gate|ffn_up", gate.dataType(), "a batched");
+            throw unsupported(
+                    layer, "ffn_gate_up", "ffn_gate|ffn_up", gate.dataType(), "a batched");
         }
-        ffnTiled.add("batchLayer_" + layer + ".ffn_gate_up");
+        rowTiles.put(
+                "batchLayer_" + layer + ".ffn_gate_up", TransformerComputeKernelsQ4_0.ffnRowTile());
         graph.task(
                 "ffn_gate_up",
                 TransformerComputeKernelsQ4_0::fusedFFNGateUpSiLUTiledBatchQ4_0,
@@ -866,18 +875,25 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
             scheduler.addWorkerGrid(prefix + "ffn_rms_reduce", rmsReduce);
             scheduler.addWorkerGrid(prefix + "attn_rms_apply", rmsApply);
             scheduler.addWorkerGrid(prefix + "ffn_rms_apply", rmsApply);
-            scheduler.addWorkerGrid(prefix + "ffn_gate_up", matVecWorker(prefix + "ffn_gate_up", config.hiddenDim()));
-            scheduler.addWorkerGrid(prefix + "ffn_down_proj", matVecWorker(prefix + "ffn_down_proj", config.dim()));
+            scheduler.addWorkerGrid(
+                    prefix + "ffn_gate_up",
+                    matVecWorker(prefix + "ffn_gate_up", config.hiddenDim()));
+            scheduler.addWorkerGrid(
+                    prefix + "ffn_down_proj", matVecWorker(prefix + "ffn_down_proj", config.dim()));
 
             if (config.isRecurrentLayer(layer)) {
                 scheduler.addWorkerGrid(
-                        prefix + "ssm_qkv_proj", matVecWorker(prefix + "ssm_qkv_proj", config.deltaNetConvDim()));
+                        prefix + "ssm_qkv_proj",
+                        matVecWorker(prefix + "ssm_qkv_proj", config.deltaNetConvDim()));
                 scheduler.addWorkerGrid(
-                        prefix + "ssm_gate_proj", matVecWorker(prefix + "ssm_gate_proj", config.deltaNetValueDim()));
+                        prefix + "ssm_gate_proj",
+                        matVecWorker(prefix + "ssm_gate_proj", config.deltaNetValueDim()));
                 scheduler.addWorkerGrid(
-                        prefix + "ssm_beta_proj", matVecWorker(prefix + "ssm_beta_proj", config.numberOfValueHeads()));
+                        prefix + "ssm_beta_proj",
+                        matVecWorker(prefix + "ssm_beta_proj", config.numberOfValueHeads()));
                 scheduler.addWorkerGrid(
-                        prefix + "ssm_alpha_proj", matVecWorker(prefix + "ssm_alpha_proj", config.numberOfValueHeads()));
+                        prefix + "ssm_alpha_proj",
+                        matVecWorker(prefix + "ssm_alpha_proj", config.numberOfValueHeads()));
                 scheduler.addWorkerGrid(prefix + "ssm_decay_beta", valueHeads);
                 scheduler.addWorkerGrid(prefix + "ssm_conv", convChannels);
                 scheduler.addWorkerGrid(prefix + "ssm_conv_silu", convDim);
@@ -887,31 +903,35 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 scheduler.addWorkerGrid(prefix + "ssm_scale_q", keyDim);
                 scheduler.addWorkerGrid(prefix + "ssm_delta_rule", deltaColumns);
                 scheduler.addWorkerGrid(prefix + "ssm_gated_norm", valueHeads);
-                scheduler.addWorkerGrid(prefix + "ssm_out_proj", matVecWorker(prefix + "ssm_out_proj", config.dim()));
+                scheduler.addWorkerGrid(
+                        prefix + "ssm_out_proj",
+                        matVecWorker(prefix + "ssm_out_proj", config.dim()));
             } else {
                 scheduler.addWorkerGrid(
-                        prefix + "attn_q_proj", matVecWorker(prefix + "attn_q_proj", config.queryGateDim()));
-                scheduler.addWorkerGrid(prefix + "attn_k_proj", matVecWorker(prefix + "attn_k_proj", config.kvDim()));
-                scheduler.addWorkerGrid(prefix + "attn_v_proj", matVecWorker(prefix + "attn_v_proj", config.kvDim()));
+                        prefix + "attn_q_proj",
+                        matVecWorker(prefix + "attn_q_proj", config.queryGateDim()));
+                scheduler.addWorkerGrid(
+                        prefix + "attn_k_proj",
+                        matVecWorker(prefix + "attn_k_proj", config.kvDim()));
+                scheduler.addWorkerGrid(
+                        prefix + "attn_v_proj",
+                        matVecWorker(prefix + "attn_v_proj", config.kvDim()));
                 scheduler.addWorkerGrid(prefix + "attn_split_query_gate", queryGate);
                 scheduler.addWorkerGrid(prefix + "attn_qk_norm", qkNorm);
                 scheduler.addWorkerGrid(prefix + "attn_rope", rope);
                 scheduler.addWorkerGrid(prefix + "attn_kv_append", kvAppend);
                 scheduler.addWorkerGrid(prefix + "attention", attention);
                 scheduler.addWorkerGrid(prefix + "attn_output_gate", outputGate);
-                scheduler.addWorkerGrid(prefix + "attn_output_proj", matVecWorker(prefix + "attn_output_proj", config.dim()));
+                scheduler.addWorkerGrid(
+                        prefix + "attn_output_proj",
+                        matVecWorker(prefix + "attn_output_proj", config.dim()));
             }
         }
     }
 
     /** One workgroup per (row, output row), or per (row tile, output row) where tiled. */
     private WorkerGrid matVecWorker(String qualifiedTask, int rows) {
-        int tileRows =
-                ffnTiled.contains(qualifiedTask)
-                        ? TransformerComputeKernelsQ4_0.ffnRowTile()
-                        : tiledTasks.contains(qualifiedTask)
-                                ? TransformerComputeKernelsQ4_0.rowTile()
-                                : 1;
+        int tileRows = rowTiles.getOrDefault(qualifiedTask, 1);
         int rowGroups = (batchSize + tileRows - 1) / tileRows;
         return WorkerGridFactory.genericWorker(rowGroups * rows * MATVEC_LOCAL, MATVEC_LOCAL);
     }
