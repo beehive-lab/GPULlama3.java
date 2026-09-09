@@ -85,7 +85,35 @@ output row's workgroup. That is the shape llama.cpp's MMQ has for a different re
 5. Delta-net cooperative execution — 1.6% of prefill; judge it on decode instead.
 6. Launch overhead and elementwise fusion — 0.3% and <1%. Not worth doing.
 
-## 6. Not obtained
+## 6. Rejected: quantized activations, both ways
+
+llama.cpp does not dequantize inside its matmul. Above `MMVQ_MAX_BATCH_SIZE` it quantizes the
+*activations* to `Q8_1` and runs an integer dot product, applying the two block scales once per
+block, with Q4_0's `-8` recentring folded into the activation block's stored sum. Since the profile
+says activation traffic is what limits our tiled kernels, and `Q8_1` is 1.125 bytes an element
+against four, this looked like the right thing to copy. It was measured twice and kept neither
+time.
+
+**Per-block `Q8_1`, warp-per-block integer dot — 52.28 -> 41.46 t/s, a 21% regression.** A lane that
+owns a 32-element block reads 32 contiguous bytes no other lane in its warp reads, which is a
+32-byte transaction where the float kernel gets a 128-byte one; and every lane of the warp re-reads
+the block's scales for all eight tiled rows, 64 bytes of duplicated parameter traffic against one
+byte of quant. Charging the recentring to lane zero only, so the other 31 lanes stop reading the
+block sums, recovered part of it — 42.81 — and no more. The compression is undone by the access
+pattern it forces.
+
+**Per-row byte activations, float kernel shape — 52.11 -> 53.06 t/s, +1.8%.** One scale per row
+instead of one per block keeps the lane striding, and therefore the coalescing, exactly as it was:
+the only change is that the activation read is a byte. That is a genuine 4x cut in the dominant
+read and it bought under two percent, which says the activation tile was already being served from
+cache rather than from DRAM.
+
+Under two percent does not pay for what it costs: a second kernel pair, a per-row scale buffer, a
+quantization pass after every norm, and a real accuracy change — eight-bit activations, per row,
+through 64 layers. Neither variant is in the tree. What both measurements establish is that the
+remaining limit is not activation *bytes*, so the next thing to try is not a smaller activation.
+
+## 7. Not obtained
 
 Nsight Compute counters are unavailable on this host: `ERR_NVGPUCTRPERM`. Every bandwidth figure
 above is bytes-moved over measured kernel time from the Nsight Systems trace and the tensor
