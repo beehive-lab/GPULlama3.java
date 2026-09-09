@@ -83,6 +83,7 @@ __pycache__/
 # (git add -f) and reviewed, never picked up automatically.
 /perf-results/*
 !/perf-results/baseline-rtx5090-tvm520-20260803/
+!/perf-results/qwen35-llamabench/
 /profiler-log.json
 /out.txt
 

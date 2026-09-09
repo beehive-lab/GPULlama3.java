@@ -44,6 +44,8 @@ import org.beehive.gpullama3.model.Model;
  *   -oe fmt                        also print results to stderr in this format
  *   --delay N                      sleep N s between tests (GPU thermals)
  *   --no-warmup                    skip the untimed warmup rep
+ *   --expect arch/quant/mode       fail unless the engine selects exactly this
+ *                                  (e.g. qwen35/Q4_0/BATCH_PREFILL_DECODE)
  *   --synthetic                    model-free kernel benchmarks: batched vs single-token
  *                                  decode attention and projection, showing why batching wins
  *                                  (-b sets B, default 32; --synthetic-seq sets the attended
@@ -74,10 +76,19 @@ public class LlamaBench {
             double sizeGiB,
             double paramsB,
             String backend,
+            String arch,
+            String mode,
             String test,
             double avg,
             double stddev,
-            double[] samples) {}
+            double median,
+            double[] samples) {
+
+        /** {@code arch / quant / mode} — what the engine actually selected for these numbers. */
+        String selection() {
+            return arch + " / " + quant + " / " + mode;
+        }
+    }
 
     public static void main(String[] args) throws Exception {
         // --cpu is pre-scanned with -b: llama.enableTornadoVM is read once at class init, and
@@ -121,6 +132,7 @@ public class LlamaBench {
         boolean warmup = true;
         boolean synthetic = false;
         int syntheticSeq = 256;
+        String expect = null;
 
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -148,6 +160,7 @@ public class LlamaBench {
                 case "--cpu" -> {} // consumed in pre-scan
                 case "--no-warmup" -> warmup = false;
                 case "--synthetic" -> synthetic = true;
+                case "--expect" -> expect = args[++i];
                 case "--synthetic-seq" -> syntheticSeq = Integer.parseInt(args[++i]);
                 default -> {
                     // Ignore the launcher's trailing single-run options (prompt etc.).
@@ -190,10 +203,14 @@ public class LlamaBench {
         }
 
         List<Result> results = new ArrayList<>();
+        boolean failed = false;
         for (String modelPath : models) {
             try {
-                results.addAll(benchModel(modelPath, tests, reps, warmup, delay, batchSize, onCpu));
+                results.addAll(
+                        benchModel(
+                                modelPath, tests, reps, warmup, delay, batchSize, onCpu, expect));
             } catch (Throwable e) {
+                failed = true;
                 System.err.printf(
                         Locale.ROOT,
                         "[bench] %s FAILED (batch=%d unsupported for this model?): %s%n",
@@ -207,8 +224,10 @@ public class LlamaBench {
         if (outErr != null) {
             print(outErr, results, System.err);
         }
-        // TornadoVM daemon threads keep the JVM alive after plan teardown.
-        System.exit(0);
+        // TornadoVM daemon threads keep the JVM alive after plan teardown. A failed model — an
+        // unsupported batch width, or a --expect that the engine did not satisfy — has to leave a
+        // non-zero status, or a sweep script records a missing row as a passing one.
+        System.exit(failed ? 1 : 0);
     }
 
     static void print(String format, List<Result> results, java.io.PrintStream ps) {
@@ -228,7 +247,8 @@ public class LlamaBench {
             boolean warmup,
             int delay,
             int batch,
-            boolean cpu)
+            boolean cpu,
+            String expect)
             throws Exception {
         Path path = Paths.get(modelPath);
         int maxCtx = tests.stream().mapToInt(t -> t.depth() + t.tokens()).max().orElse(1024) + 8;
@@ -247,13 +267,32 @@ public class LlamaBench {
 
         int vocab = model.configuration().vocabularySize();
         String name = path.getFileName().toString().replaceAll("\\.gguf$", "");
-        String quant = model.configuration().quantization();
+        // The file's own type and parameter count, both read from the GGUF rather than inferred:
+        // Configuration.quantization() names the *activation* class (a Q4_0 file reports "Q8_0"),
+        // and a size/bytes-per-param estimate cannot describe a mixed-quantization model. Both
+        // columns exist to be compared against llama-bench's, which reports the file.
+        ModelFacts facts = ModelFacts.read(path);
+        String quant = facts.quant();
         double sizeGiB = Files.size(path) / (1024.0 * 1024.0 * 1024.0);
-        double paramsB = estimateParamsB(Files.size(path), quant);
+        double paramsB = facts.paramsB();
+        String arch = facts.arch();
+        String mode = modeOf(plan, cpu);
         String backend =
                 cpu
                         ? "CPU"
                         : System.getProperty("tornado.backend.name", "TornadoVM " + backendName());
+
+        String selection = arch + " / " + quant + " / " + mode;
+        System.err.printf(Locale.ROOT, "[bench] selection: %s%n", selection);
+        if (expect != null
+                && !expect.replace('/', ' ')
+                        .trim()
+                        .replaceAll("\\s+", " ")
+                        .equalsIgnoreCase(
+                                selection.replace('/', ' ').trim().replaceAll("\\s+", " "))) {
+            throw new IllegalStateException(
+                    "engine selected '" + selection + "' but --expect asked for '" + expect + "'");
+        }
 
         // Deterministic synthetic token stream (llama-bench uses random ids too).
         Random rng = new Random(42);
@@ -286,17 +325,19 @@ public class LlamaBench {
             }
             double stddev = samples.length > 1 ? Math.sqrt(var / (samples.length - 1)) : 0.0;
             String testName = batch > 1 ? t.name() + " b" + batch : t.name();
+            double median = median(samples);
             results.add(
                     new Result(
-                            name, quant, sizeGiB, paramsB, backend, testName, avg, stddev,
-                            samples));
+                            name, quant, sizeGiB, paramsB, backend, arch, mode, testName, avg,
+                            stddev, median, samples));
             System.err.printf(
                     Locale.ROOT,
-                    "[bench] %-28s %-14s %8.2f ± %.2f t/s%n",
+                    "[bench] %-28s %-14s %8.2f ± %.2f t/s (median %.2f)%n",
                     name,
                     testName,
                     avg,
-                    stddev);
+                    stddev,
+                    median);
         }
         if (plan != null) {
             plan.freeTornadoExecutionPlan();
@@ -380,17 +421,66 @@ public class LlamaBench {
         }
     }
 
-    /**
-     * Rough parameter count from file size + quantization (F16 = 2 B/param, Q8_0 = 34/32 B/param).
-     */
-    static double estimateParamsB(long bytes, String quant) {
-        double bytesPerParam =
-                switch (quant) {
-                    case "FP16" -> 2.0;
-                    case "Q8_0" -> 34.0 / 32.0;
-                    default -> 2.0;
-                };
-        return bytes / bytesPerParam / 1e9;
+    /** Architecture, file quantization and exact parameter count, straight from the GGUF header. */
+    record ModelFacts(String arch, String quant, double paramsB) {
+
+        static ModelFacts read(Path path) throws java.io.IOException {
+            var gguf = org.beehive.gpullama3.format.GGUF.loadGGUFMetadata(path);
+            Object arch = gguf.getMetadata().get("general.architecture");
+            Object fileType = gguf.getMetadata().get("general.file_type");
+            long params = 0;
+            for (var info : gguf.getTensorInfos().values()) {
+                long n = 1;
+                for (int d : info.dimensions()) {
+                    n *= d;
+                }
+                params += n;
+            }
+            return new ModelFacts(
+                    arch == null ? "unknown" : arch.toString(),
+                    fileTypeName(fileType instanceof Integer i ? i : -1),
+                    params / 1e9);
+        }
+    }
+
+    /** GGUF {@code general.file_type} as llama-bench names it. */
+    static String fileTypeName(int fileType) {
+        return switch (fileType) {
+            case 0 -> "F32";
+            case 1 -> "F16";
+            case 2 -> "Q4_0";
+            case 3 -> "Q4_1";
+            case 7 -> "Q8_0";
+            case 14 -> "Q4_K_S";
+            case 15 -> "Q4_K_M";
+            case 16 -> "Q5_K_S";
+            case 17 -> "Q5_K_M";
+            case 18 -> "Q6_K";
+            case 32 -> "BF16";
+            default -> "type_" + fileType;
+        };
+    }
+
+    /** The execution mode actually built, read off the plan rather than off the request. */
+    static String modeOf(TornadoVMMasterPlan plan, boolean cpu) {
+        if (cpu) {
+            return "CPU";
+        }
+        if (plan instanceof TornadoVMMasterPlanBatchPrefillDecode) {
+            return "BATCH_PREFILL_DECODE";
+        }
+        if (plan
+                instanceof org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlanPrefillDecode) {
+            return "PREFILL_DECODE";
+        }
+        return "STANDARD";
+    }
+
+    static double median(double[] xs) {
+        double[] sorted = xs.clone();
+        Arrays.sort(sorted);
+        int n = sorted.length;
+        return n % 2 == 1 ? sorted[n / 2] : (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0;
     }
 
     /** The backend name for the report heading and the metrics sidecar. */
@@ -467,25 +557,28 @@ public class LlamaBench {
 
     static void printMarkdown(List<Result> rs, java.io.PrintStream ps) {
         ps.println();
-        ps.println("| model | quant | size | params | backend | test | t/s |");
-        ps.println("| ----- | ----- | ---: | -----: | ------- | ---- | --: |");
+        ps.println("| model | quant | size | params | backend | mode | test | t/s | median t/s |");
+        ps.println("| ----- | ----- | ---: | -----: | ------- | ---- | ---- | --: | ---------: |");
         for (Result r : rs) {
             ps.printf(
                     Locale.ROOT,
-                    "| %s | %s | %.2f GiB | %.2f B | %s | %s | %.2f ± %.2f |%n",
+                    "| %s | %s | %.2f GiB | %.2f B | %s | %s | %s | %.2f ± %.2f | %.2f |%n",
                     r.model(),
                     r.quant(),
                     r.sizeGiB(),
                     r.paramsB(),
                     r.backend(),
+                    r.mode(),
                     r.test(),
                     r.avg(),
-                    r.stddev());
+                    r.stddev(),
+                    r.median());
         }
     }
 
     static void printCsv(List<Result> rs, java.io.PrintStream ps) {
-        ps.println("model,quant,size_gib,params_b,backend,test,avg_ts,stddev_ts,samples");
+        ps.println(
+                "model,quant,size_gib,params_b,backend,arch,mode,test,avg_ts,stddev_ts,median_ts,samples");
         for (Result r : rs) {
             StringBuilder samples = new StringBuilder();
             for (double s : r.samples()) {
@@ -496,15 +589,18 @@ public class LlamaBench {
             }
             ps.printf(
                     Locale.ROOT,
-                    "%s,%s,%.3f,%.3f,%s,%s,%.2f,%.2f,%s%n",
+                    "%s,%s,%.3f,%.3f,%s,%s,%s,%s,%.2f,%.2f,%.2f,%s%n",
                     r.model(),
                     r.quant(),
                     r.sizeGiB(),
                     r.paramsB(),
                     r.backend(),
+                    r.arch(),
+                    r.mode(),
                     r.test(),
                     r.avg(),
                     r.stddev(),
+                    r.median(),
                     samples);
         }
     }
@@ -514,15 +610,19 @@ public class LlamaBench {
                 new StringBuilder(
                         String.format(
                                 Locale.ROOT,
-                                "{\"model\": \"%s\", \"quant\": \"%s\", \"size_gib\": %.3f, \"params_b\": %.3f, \"backend\": \"%s\", \"test\": \"%s\", \"avg_ts\": %.2f, \"stddev_ts\": %.2f, \"samples_ts\": [",
+                                "{\"model\": \"%s\", \"quant\": \"%s\", \"size_gib\": %.3f, \"params_b\": %.3f, \"backend\": \"%s\", \"arch\": \"%s\", \"mode\": \"%s\", \"selection\": \"%s\", \"test\": \"%s\", \"avg_ts\": %.2f, \"stddev_ts\": %.2f, \"median_ts\": %.2f, \"samples_ts\": [",
                                 r.model(),
                                 r.quant(),
                                 r.sizeGiB(),
                                 r.paramsB(),
                                 r.backend(),
+                                r.arch(),
+                                r.mode(),
+                                r.selection(),
                                 r.test(),
                                 r.avg(),
-                                r.stddev()));
+                                r.stddev(),
+                                r.median()));
         for (int j = 0; j < r.samples().length; j++) {
             if (j > 0) {
                 sb.append(", ");
@@ -553,19 +653,22 @@ public class LlamaBench {
 
     static void printSql(List<Result> rs, java.io.PrintStream ps) {
         ps.println(
-                "CREATE TABLE IF NOT EXISTS llama_bench (model TEXT, quant TEXT, size_gib REAL, params_b REAL, backend TEXT, test TEXT, avg_ts REAL, stddev_ts REAL);");
+                "CREATE TABLE IF NOT EXISTS llama_bench (model TEXT, quant TEXT, size_gib REAL, params_b REAL, backend TEXT, arch TEXT, mode TEXT, test TEXT, avg_ts REAL, stddev_ts REAL, median_ts REAL);");
         for (Result r : rs) {
             ps.printf(
                     Locale.ROOT,
-                    "INSERT INTO llama_bench VALUES ('%s', '%s', %.3f, %.3f, '%s', '%s', %.2f, %.2f);%n",
+                    "INSERT INTO llama_bench VALUES ('%s', '%s', %.3f, %.3f, '%s', '%s', '%s', '%s', %.2f, %.2f, %.2f);%n",
                     r.model(),
                     r.quant(),
                     r.sizeGiB(),
                     r.paramsB(),
                     r.backend(),
+                    r.arch(),
+                    r.mode(),
                     r.test(),
                     r.avg(),
-                    r.stddev());
+                    r.stddev(),
+                    r.median());
         }
     }
 }
