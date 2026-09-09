@@ -58,7 +58,7 @@
                  legs. 6.0.0 also carries the sketch-phase fix for the LambdaForm hidden-class
                  reader, which took out every F16 family on OpenCL.
                  See docs/architecture/metal/SESSION-2026-09-04.md §1. -->
-        <tornadovm.base.version>6.0.0</tornadovm.base.version>
+        <tornadovm.base.version>6.0.1</tornadovm.base.version>
         <archunit.version>1.4.2</archunit.version>
         <jdk.version.suffix>-jdk21</jdk.version.suffix>
         <!-- TornadoVM's own JDK suffix, deliberately a SEPARATE property from
@@ -67,7 +67,7 @@
                  TornadoVM 6.0.0 collapsed its jdk25/jdk26/jdk27 lines into a single jdk22plus
                  profile and publishes only 6.0.0-jdk21 and 6.0.0-jdk22plus to Maven Central.
                  Tying the two together would silently rename gpu-llama3's own coordinates. -->
-        <tornadovm.version.suffix>-jdk21</tornadovm.version.suffix>
+        <tornadovm.version.suffix>-jdk21-dev</tornadovm.version.suffix>
         <!-- CUDA backend is only available after 5.0.0 TornadoVM version -->
         <tornadovm.version>${tornadovm.base.version}${tornadovm.version.suffix}</tornadovm.version>
         <!-- Compiler defaults (overridden by JDK profiles below) -->
@@ -327,7 +327,7 @@
                 <maven.compiler.source>21</maven.compiler.source>
                 <maven.compiler.target>21</maven.compiler.target>
                 <jdk.version.suffix>-jdk21</jdk.version.suffix>
-                <tornadovm.version.suffix>-jdk21</tornadovm.version.suffix>
+                <tornadovm.version.suffix>-jdk21-dev</tornadovm.version.suffix>
                 <tornadovm.version>${tornadovm.base.version}${tornadovm.version.suffix}</tornadovm.version>
             </properties>
             <build>
