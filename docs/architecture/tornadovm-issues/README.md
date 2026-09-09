@@ -1,5 +1,10 @@
 # TornadoVM findings, with reproducers
 
+> **Correction.** An earlier draft of the gap analysis listed "no `dp4a`/integer-MMA intrinsic" as
+> a third finding to file. That was wrong: TornadoVM exposes `mmaInt8` at `MMAShape.M16N8K32`,
+> along with `mmaLoadAInt8`, `mmaLoadBInt8`, `mmaFragmentInt`, `mmaStoreInt` and `swizzleLoadInt8`,
+> and FP16 `mma`/`mmaBF16` besides. Nothing needs requesting. The two findings below stand.
+
 Behaviour hit while optimizing the `qwen35` batched-prefill kernels, isolated far enough to hand
 upstream. These files are **not** part of the build — the first is a test that fails on purpose,
 and putting it under `src/test` would break the accelerator gate.

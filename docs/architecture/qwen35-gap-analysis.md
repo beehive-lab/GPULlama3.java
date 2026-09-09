@@ -65,10 +65,26 @@ What to do, cheapest first:
 - **Stage decoded weight tiles in shared memory**, the analogue of llama.cpp's `mmq-load-tiles`:
   decode a tile once per workgroup and reuse it across the row tile, turning a per-element decode
   into a per-tile one.
-- **A packed-integer path needs a `dp4a`-style intrinsic, which TornadoVM does not expose.**
-  Scalar Java `int` arithmetic will not beat an FP32 FMA — the win in MMQ is that one instruction
-  does four or more MACs. This is an upstream feature request, not a local change, and it is the
-  one that would move the structural term.
+- **Use the tensor cores. TornadoVM already exposes them and this repository already uses them —
+  just not for this family.** `KernelContext` carries `mma`/`mmaBF16` for FP16, and
+  `mmaInt8(byte[], byte[], int[], MMAShape)` with `MMAShape.M16N8K32` for int8, alongside
+  `mmaLoadAInt8`/`mmaLoadBInt8`, `mmaFragmentInt`, `mmaStoreInt` and `swizzleLoadInt8` for the
+  shared-memory staging. `TransformerBatchPrefillKernels.gemmMMA`, `gemmMMAQKV` and
+  `gemmMMAGateUp` are working FP16 tensor-core GEMMs in this tree, gated by
+  `TensorCoreSupport.isTensorCoreCapableBackend()` and used by the FP16 batch-prefill paths for
+  Llama and Qwen3. **`mmaInt8` is used nowhere.**
+
+  So there are two routes for `qwen35`, and neither is an upstream request:
+
+  1. *Reuse what exists.* Dequantize a Q4_0 weight tile into an FP16 shared-memory tile once per
+     workgroup and hand it to the existing `gemmMMA`. The decode is then per tile rather than per
+     element, and the multiply runs on tensor cores. This is the shorter path and it reuses a
+     proven kernel.
+  2. *Match MMQ.* Quantize the activations to int8 (the quantizer written for the rejected
+     experiment does exactly this), unpack Q4_0 nibbles into int8 fragments, accumulate in int32
+     through `mmaInt8` at `M16N8K32`, and apply the two block scales at store. This is what
+     llama.cpp does above `MMVQ_MAX_BATCH_SIZE`, and it is why its curve keeps climbing to a
+     microbatch of 512.
 
 ## 4. Decode — the three that matter
 
@@ -96,7 +112,10 @@ Shares from the `tg256 b32` profile. 627,077 launches over 513 tokens is about 1
 Decode items 1 and 2 are ordinary shape defects, plausibly 15-20% together, and item 3 is a known
 transplant from the prefill work. None of them is structural.
 
-Prefill item 1 is. Tuning will not close a gap whose largest term is that one engine issues 512
-MACs per instruction and the other issues one. Either TornadoVM grows an integer-MMA or dp4a
-capability, or this family stays in the region of ten to twenty times slower than llama.cpp on
-prompt processing, however well the kernels around it are written.
+Prefill item 1 is the large one, and it is **not** a TornadoVM limitation. The runtime exposes both
+FP16 and int8 tensor-core MMA, this repository already ships FP16 MMA GEMMs and uses them for the
+FP16 families, and `qwen35` — the family whose whole point is native quantized storage — reaches
+none of it. Closing that is a kernel to write here, not a feature to request upstream.
+
+An earlier revision of this document claimed the opposite, on an assumption rather than on a look
+at the API. The claim was wrong and the correction is the most actionable line in the file.
