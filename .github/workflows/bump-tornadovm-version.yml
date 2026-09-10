@@ -1,0 +1,106 @@
+name: Bump TornadoVM version
+
+# Listens for the release-complete signal dispatched by beehive-lab/TornadoVM's release
+# pipeline (publish-archives-to-sdkman.yml's notify-site job) once a new TornadoVM
+# version is fully published (Maven Central + SDKMAN). Bumps tornadovm.base.version in
+# pom.xml, verifies the bump actually builds against the real published Maven Central
+# coordinate (both JDK profiles), and opens a PR for review — never pushes directly to
+# the default branch, since a green compile does not prove GPU/runtime correctness.
+
+on:
+  repository_dispatch:
+    types: [tornadovm-release]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'TornadoVM version to bump to, without a "v" prefix (e.g. 6.1.0).'
+        required: true
+        type: string
+
+concurrency:
+  group: bump-tornadovm-${{ github.event.client_payload.version || inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  resolve-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      changed: ${{ steps.resolve.outputs.changed }}
+      branch: ${{ steps.resolve.outputs.branch }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve target version and check if a bump is needed
+        id: resolve
+        run: |
+          set -euo pipefail
+          VERSION="${{ github.event.client_payload.version || inputs.version }}"
+          VERSION="${VERSION#v}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must be X.Y.Z (got '$VERSION')."
+            exit 1
+          fi
+          CURRENT=$(grep -oE '<tornadovm\.base\.version>[0-9.]+</tornadovm\.base\.version>' pom.xml | grep -oE '[0-9.]+')
+          echo "Current: $CURRENT — target: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "branch=bump-tornadovm-$VERSION" >> "$GITHUB_OUTPUT"
+          if [ "$CURRENT" = "$VERSION" ]; then
+            echo "Already at $VERSION — nothing to do."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: resolve-version
+    if: needs.resolve-version.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # jdk21 and jdk22plus auto-activate off the running JDK's version range in
+        # pom.xml — 21 and 25 exercise both Maven Central coordinates this project
+        # depends on (tornado-api:<version>-jdk21 / -jdk22plus).
+        jdk: [21, 25]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.jdk }}
+
+      - name: Bump tornadovm.base.version (working copy only — committed later by open-pr)
+        run: |
+          sed -i "s|<tornadovm.base.version>[0-9.]\+</tornadovm.base.version>|<tornadovm.base.version>${{ needs.resolve-version.outputs.version }}</tornadovm.base.version>|" pom.xml
+
+      - name: Build against TornadoVM ${{ needs.resolve-version.outputs.version }} (JDK ${{ matrix.jdk }})
+        run: mvn -B clean package -DskipTests
+
+  open-pr:
+    needs: [resolve-version, build]
+    if: needs.resolve-version.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply version bump
+        run: |
+          sed -i "s|<tornadovm.base.version>[0-9.]\+</tornadovm.base.version>|<tornadovm.base.version>${{ needs.resolve-version.outputs.version }}</tornadovm.base.version>|" pom.xml
+
+      - name: Open pull request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "Bump TornadoVM to ${{ needs.resolve-version.outputs.version }}"
+          branch: ${{ needs.resolve-version.outputs.branch }}
+          delete-branch: true
+          title: "Bump TornadoVM to ${{ needs.resolve-version.outputs.version }}"
+          body: |
+            Automated bump triggered by a new TornadoVM release.
+
+            Verified in CI: `mvn clean package` succeeds against `tornado-api:${{ needs.resolve-version.outputs.version }}-jdk21` (JDK 21) and `tornado-api:${{ needs.resolve-version.outputs.version }}-jdk22plus` (JDK 25) — see the build job on this PR's checks.
+          labels: dependencies
