@@ -226,6 +226,19 @@ public final class Qwen35State extends State {
         TornadoWorkspaces.zeroRecurrentState(workspace);
     }
 
+    /**
+     * The convolution windows and the delta-net matrices, which the graphs keep on the device.
+     *
+     * <p>Empty on a host-only session, which allocates neither.
+     */
+    @Override
+    public Object[] recurrentDeviceBuffers() {
+        if (workspace.wrapConvState == null || workspace.wrapDeltaState == null) {
+            return new Object[0];
+        }
+        return new Object[] {workspace.wrapConvState, workspace.wrapDeltaState};
+    }
+
     @Override
     protected int batchQDim(Configuration config) {
         return ((Qwen35Configuration) config).attentionOutputInputDim();

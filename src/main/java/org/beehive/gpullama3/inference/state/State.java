@@ -552,6 +552,19 @@ public abstract class State {
      */
     public void resetSequenceState() {}
 
+    /**
+     * The device buffers that hold this family's recurrent state, if it keeps any.
+     *
+     * <p>{@link #resetSequenceState()} zeroes the host side, and for these buffers that is not
+     * enough: they are declared {@code FIRST_EXECUTION} and then {@code persistOnDevice}, so the
+     * device copy is written by the kernels and never re-read from the host. A reset that only
+     * clears the host arrays leaves the accelerator continuing the previous sequence. The plan
+     * uploads these after a reset; a family with no recurrent state returns nothing.
+     */
+    public Object[] recurrentDeviceBuffers() {
+        return new Object[0];
+    }
+
     // Abstract method - subclasses implement their specific allocation logic and sizes
     protected abstract StateFields createStateFields(Configuration config);
 

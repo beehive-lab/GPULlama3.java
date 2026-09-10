@@ -366,6 +366,17 @@ public class LlamaBench {
             int[] toks,
             TestSpec t,
             int batch) {
+        // A repetition is an independent sequence: it restarts at position zero, so whatever the
+        // last one left behind has to go first. Rewinding the position covers the key/value cache,
+        // and covers nothing else — a family with recurrent state (qwen35's convolution windows and
+        // delta-net matrices) has summed the previous repetition into fixed-size buffers with no
+        // notion of position. Untimed, and on the device as well as on the host.
+        if (plan != null) {
+            plan.resetSequenceState();
+        } else {
+            state.resetSequenceState();
+        }
+
         // Untimed depth prefill.
         prefill(model, state, plan, hostForward, toks, 0, t.depth(), batch);
 

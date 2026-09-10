@@ -98,6 +98,12 @@ public class TornadoVMMasterPlanBatchPrefillDecode implements TornadoVMMasterPla
 
     // ── Initialisation ────────────────────────────────────────────────────────
 
+    @Override
+    public void resetSequenceState() {
+        TornadoVMMasterPlan.resetSequenceState(
+                executionPlan, state, taskGraphLayout.batchLayerIdx(0));
+    }
+
     // @formatter:off
     @Override
     public void forceCopyInReadOnlyData() {

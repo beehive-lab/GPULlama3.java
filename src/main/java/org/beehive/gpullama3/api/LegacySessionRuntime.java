@@ -137,7 +137,14 @@ final class LegacySessionRuntime implements SessionRuntime {
     public void reset() {
         state.latestToken = initialToken;
         // Families with recurrent state clear it here; for everyone else this does nothing.
-        state.resetSequenceState();
+        // Through the plan when there is one: the device copy of that state persists between
+        // executions and is never re-read from the host, so a host-only clear would leave the
+        // accelerator continuing the previous sequence.
+        if (plan != null) {
+            plan.resetSequenceState();
+        } else {
+            state.resetSequenceState();
+        }
     }
 
     /** This session built its plan, so this session frees it. */
