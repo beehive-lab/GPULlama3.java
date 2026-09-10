@@ -463,7 +463,15 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 require(weights.w3Layered, layerIndex, "ffn_up"),
                 state.workspace.wrapNormedBatch);
         TornadoTensor down = require(weights.w2Layered, layerIndex, "ffn_down");
-        if (down.dataType() == DataType.Q4_0 && mmaEligible(config.hiddenDim(), config.dim())) {
+        // Both representations this family's ffn_down comes in. The Q4_1 kernel below was written
+        // and tested with the Q4_0 one, and then never reached: this condition asked for Q4_0 and
+        // the choice of kernel underneath it asked whether the tensor was Q4_1, so the first eight
+        // blocks -- the Q4_1 ones -- fell through to the scalar path, which is what the profile
+        // showed still running.
+        boolean downOnTensorCores =
+                (down.dataType() == DataType.Q4_0 || down.dataType() == DataType.Q4_1)
+                        && mmaEligible(config.hiddenDim(), config.dim());
+        if (downOnTensorCores) {
             // The tensor-core store overwrites, so the residual is a pass of its own. Its input is
             // SwiGLU's output rather than a normed chunk, so that is converted here too.
             mmaTasks.put("batchLayer_" + layerIndex + ".ffn_down_proj", config.dim());

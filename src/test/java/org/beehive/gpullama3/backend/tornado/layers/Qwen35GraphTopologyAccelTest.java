@@ -4,6 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+import static org.junit.Assume.assumeTrue;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -17,6 +18,7 @@ import org.beehive.gpullama3.backend.tornado.tensor.Q5_KTornadoTensor;
 import org.beehive.gpullama3.backend.tornado.tensor.Q6_KTornadoTensor;
 import org.beehive.gpullama3.backend.tornado.tensor.TornadoTensor;
 import org.beehive.gpullama3.inference.state.Qwen35State;
+import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.inference.weights.tornado.Qwen35TornadoWeights;
 import org.beehive.gpullama3.model.qwen35.Qwen35Configuration;
 import org.beehive.gpullama3.runtime.tensor.DataType;
@@ -231,6 +233,92 @@ public class Qwen35GraphTopologyAccelTest {
         return names;
     }
 
+    // ---- batched prefill: which projections reach the tensor cores ----------
+
+    /** The batch width the batched-prefill plan is built for here; a whole number of MMA rows. */
+    private static final int PREFILL_BATCH = 32;
+
+    private static Qwen35BatchPrefillLayers buildBatched(Qwen35Configuration config) {
+        String previousDevice = System.getProperty("use.tornadovm");
+        String previousCores = System.getProperty("llama.qwen35.tensorCores");
+        System.setProperty("use.tornadovm", "true");
+        // Read into a static final when Qwen35BatchPrefillLayers first loads, which is here: no
+        // test above this one touches that class.
+        System.setProperty("llama.qwen35.tensorCores", "true");
+        try {
+            Qwen35State state =
+                    (Qwen35State)
+                            State.withPrefillBatchSize(
+                                    PREFILL_BATCH, () -> new Qwen35State(config, -1));
+            return new Qwen35BatchPrefillLayers(state, weights(config), config, PREFILL_BATCH);
+        } finally {
+            restore("use.tornadovm", previousDevice);
+            restore("llama.qwen35.tensorCores", previousCores);
+        }
+    }
+
+    private static void restore(String key, String previous) {
+        if (previous == null) {
+            System.clearProperty(key);
+        } else {
+            System.setProperty(key, previous);
+        }
+    }
+
+    /** The tasks only the tensor-core branch of a batched layer adds. */
+    private static List<String> batchTaskNames(GridScheduler scheduler, int layer) {
+        List<String> names = new ArrayList<>();
+        for (String key : scheduler.keySet()) {
+            if (key.startsWith("batchLayer_" + layer + ".")) {
+                names.add(key.substring(key.indexOf('.') + 1));
+            }
+        }
+        return names;
+    }
+
+    // @formatter:off
+    /**
+     * The {@code ffn_down} of <b>every</b> block reaches the tensor cores, in both of the
+     * representations this family holds it in.
+     *
+     * <p>It did not. The condition that opened the branch asked for {@code Q4_0} while the choice
+     * of kernel inside it asked whether the tensor was {@code Q4_1}, so the Q4_1 blocks — the first
+     * eight of the 27B — took the scalar path and the Q4_1 tensor-core kernel was unreachable. A
+     * kernel test could not see it: the kernel was correct, and nothing dispatched to it. This
+     * asserts the production dispatch instead, on the same mixed model the rest of this class uses.
+     *
+     * <p>{@code ffn_down_fp16} is the marker. The scalar path reads the SwiGLU output directly;
+     * only the tensor-core branch converts it first, so the task exists exactly when the projection
+     * is on the tensor cores.
+     */
+    // @formatter:on
+    @Test
+    public void everyFfnDownReachesTheTensorCoresWhateverItsRepresentation() {
+        assumeTrue(
+                "no tensor-core-capable device",
+                org.beehive.gpullama3.backend.tornado.TensorCoreSupport
+                        .isTensorCoreCapableBackend());
+        Qwen35Configuration config = config();
+        GridScheduler scheduler = new GridScheduler();
+        buildBatched(config).updateGridScheduler(scheduler);
+
+        for (int layer = 0; layer < TRUNK_LAYERS; layer++) {
+            DataType representation = layer < 2 ? DataType.Q4_1 : DataType.Q4_0;
+            List<String> tasks = batchTaskNames(scheduler, layer);
+            assertTrue(
+                    "layer "
+                            + layer
+                            + " holds its ffn_down as "
+                            + representation
+                            + " and did not take the tensor-core path; its tasks are "
+                            + tasks,
+                    tasks.contains("ffn_down_fp16"));
+            assertTrue(
+                    "layer " + layer + " has a tensor-core ffn_down without its residual pass",
+                    tasks.contains("ffn_down_residual"));
+        }
+    }
+
     // ---- the assertions -----------------------------------------------------
 
     /**
@@ -249,7 +337,10 @@ public class Qwen35GraphTopologyAccelTest {
                 "one graph per trunk layer",
                 TRUNK_LAYERS,
                 layers.getFFNLayerImmutableTaskGraphs().size());
-        assertEquals("the last graph is the last trunk layer", "layer_7", layers.getLastFFNLayerTaskGraphID());
+        assertEquals(
+                "the last graph is the last trunk layer",
+                "layer_7",
+                layers.getLastFFNLayerTaskGraphID());
 
         GridScheduler scheduler = layers.updateGridScheduler(new GridScheduler());
         assertTrue(
@@ -267,20 +358,15 @@ public class Qwen35GraphTopologyAccelTest {
             List<String> tasks = taskNames(scheduler, layer);
             boolean recurrent = config.isRecurrentLayer(layer);
             assertEquals(
-                    "layer " + layer + " kind",
-                    (layer + 1) % ATTENTION_INTERVAL != 0,
-                    recurrent);
+                    "layer " + layer + " kind", (layer + 1) % ATTENTION_INTERVAL != 0, recurrent);
 
             assertEquals(
                     "layer " + layer + " delta-net tasks",
                     recurrent,
                     tasks.contains("ssm_delta_rule"));
-            assertEquals(
-                    "layer " + layer + " convolution", recurrent, tasks.contains("ssm_conv"));
-            assertEquals(
-                    "layer " + layer + " attention", !recurrent, tasks.contains("attention"));
-            assertEquals(
-                    "layer " + layer + " rotation", !recurrent, tasks.contains("attn_rope"));
+            assertEquals("layer " + layer + " convolution", recurrent, tasks.contains("ssm_conv"));
+            assertEquals("layer " + layer + " attention", !recurrent, tasks.contains("attention"));
+            assertEquals("layer " + layer + " rotation", !recurrent, tasks.contains("attn_rope"));
             assertEquals(
                     "layer " + layer + " key/value append",
                     !recurrent,
@@ -321,10 +407,7 @@ public class Qwen35GraphTopologyAccelTest {
 
         assertEquals("a recurrent layer's tasks", 20, recurrentTasks);
         assertEquals("an attention layer's tasks", 16, attentionTasks);
-        assertEquals(
-                "the plan's layer tasks",
-                6 * recurrentTasks + 2 * attentionTasks,
-                total);
+        assertEquals("the plan's layer tasks", 6 * recurrentTasks + 2 * attentionTasks, total);
     }
 
     /** Every task name is unique within its graph, which is what the scheduler keys on. */
@@ -334,7 +417,8 @@ public class Qwen35GraphTopologyAccelTest {
         for (int layer = 0; layer < TRUNK_LAYERS; layer++) {
             List<String> tasks = taskNames(scheduler, layer);
             Set<String> unique = new LinkedHashSet<>(tasks);
-            assertEquals("layer " + layer + " has a duplicate task name", tasks.size(), unique.size());
+            assertEquals(
+                    "layer " + layer + " has a duplicate task name", tasks.size(), unique.size());
         }
     }
 
@@ -375,7 +459,8 @@ public class Qwen35GraphTopologyAccelTest {
         Set<DataType> bound = new LinkedHashSet<>();
         layers.dispatchInventory().forEach(d -> bound.add(d.representation()));
         assertTrue("the Q4_1 down projections must be read as Q4_1", bound.contains(DataType.Q4_1));
-        assertTrue("the Q5_K recurrent outputs must be read as Q5_K", bound.contains(DataType.Q5_K));
+        assertTrue(
+                "the Q5_K recurrent outputs must be read as Q5_K", bound.contains(DataType.Q5_K));
         assertTrue("the F32 SSM projections must be read as F32", bound.contains(DataType.F32));
         assertFalse(
                 "nothing here is materialized as Q8_0 to find a kernel",
@@ -422,10 +507,7 @@ public class Qwen35GraphTopologyAccelTest {
                 assertEquals(DataType.Q5_K, before.get(i).representation());
                 assertEquals(DataType.Q4_0, after.get(i).representation());
             } else {
-                assertEquals(
-                        "only the changed tensor's task changed",
-                        before.get(i),
-                        after.get(i));
+                assertEquals("only the changed tensor's task changed", before.get(i), after.get(i));
             }
         }
     }
