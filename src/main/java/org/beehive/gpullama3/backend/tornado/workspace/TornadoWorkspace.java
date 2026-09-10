@@ -150,6 +150,11 @@ public final class TornadoWorkspace {
 
     public FloatArray wrapUpBatch;
 
+    /** The SwiGLU output as FP16, and the tensor-core ffn_down result before it is added back. */
+    public HalfFloatArray wrapHbFP16BatchMMA;
+
+    public FloatArray wrapFFNDownBatch;
+
     public FloatArray wrapQGateBatch;
     public FloatArray wrapAttnQBatch;
     public FloatArray wrapAttnGateBatch;

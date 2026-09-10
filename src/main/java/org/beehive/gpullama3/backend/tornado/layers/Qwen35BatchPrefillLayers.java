@@ -462,17 +462,46 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 require(weights.w1Layered, layerIndex, "ffn_gate"),
                 require(weights.w3Layered, layerIndex, "ffn_up"),
                 state.workspace.wrapNormedBatch);
-        matVecBatch(
-                layer,
-                layerIndex,
-                "ffn_down_proj",
-                "ffn_down",
-                require(weights.w2Layered, layerIndex, "ffn_down"),
-                state.workspace.wrapHbBatch,
-                state.workspace.wrapXBatch,
-                config.hiddenDim(),
-                config.dim(),
-                true);
+        TornadoTensor down = require(weights.w2Layered, layerIndex, "ffn_down");
+        if (down.dataType() == DataType.Q4_0 && mmaEligible(config.hiddenDim(), config.dim())) {
+            // The tensor-core store overwrites, so the residual is a pass of its own. Its input is
+            // SwiGLU's output rather than a normed chunk, so that is converted here too.
+            mmaTasks.put("batchLayer_" + layerIndex + ".ffn_down_proj", config.dim());
+            layer.task(
+                    "ffn_down_fp16",
+                    Qwen35MMAKernels::convertToFP16,
+                    context,
+                    state.workspace.wrapHbBatch,
+                    state.workspace.wrapHbFP16BatchMMA);
+            layer.task(
+                    "ffn_down_proj",
+                    Qwen35MMAKernels::projectionMMAQ4_0,
+                    context,
+                    state.workspace.wrapHbFP16BatchMMA,
+                    down.asByteArray(),
+                    state.workspace.wrapFFNDownBatch,
+                    batchSize,
+                    config.dim(),
+                    config.hiddenDim());
+            layer.task(
+                    "ffn_down_residual",
+                    Qwen35MMAKernels::residualAdd,
+                    context,
+                    state.workspace.wrapXBatch,
+                    state.workspace.wrapFFNDownBatch);
+        } else {
+            matVecBatch(
+                    layer,
+                    layerIndex,
+                    "ffn_down_proj",
+                    "ffn_down",
+                    down,
+                    state.workspace.wrapHbBatch,
+                    state.workspace.wrapXBatch,
+                    config.hiddenDim(),
+                    config.dim(),
+                    true);
+        }
 
         layer.persistOnDevice(
                 state.workspace.wrapXBatch,
@@ -925,6 +954,8 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     state.workspace.wrapNormedFP16Batch,
                     state.workspace.wrapGateBatch,
                     state.workspace.wrapUpBatch,
+                    state.workspace.wrapHbFP16BatchMMA,
+                    state.workspace.wrapFFNDownBatch,
                     state.workspace.attnScaleBatch,
                     state.workspace.ffnScaleBatch,
                     state.workspace.wrapQGateBatch,
@@ -957,6 +988,8 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     state.workspace.wrapNormedFP16Batch,
                     state.workspace.wrapGateBatch,
                     state.workspace.wrapUpBatch,
+                    state.workspace.wrapHbFP16BatchMMA,
+                    state.workspace.wrapFFNDownBatch,
                     state.workspace.attnScaleBatch,
                     state.workspace.ffnScaleBatch,
                     state.workspace.wrapQGateBatch,
@@ -1002,6 +1035,14 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                                 * Qwen35MMAKernels.BM
                                 * config.dim(),
                         ELEMENTWISE_LOCAL);
+        WorkerGrid hbFP16Convert =
+                WorkerGridFactory.genericWorker(
+                        ((batchSize + Qwen35MMAKernels.BM - 1) / Qwen35MMAKernels.BM)
+                                * Qwen35MMAKernels.BM
+                                * config.hiddenDim(),
+                        ELEMENTWISE_LOCAL);
+        WorkerGrid residualAdd =
+                WorkerGridFactory.genericWorker(batchSize * config.dim(), ELEMENTWISE_LOCAL);
         WorkerGrid swiglu =
                 WorkerGridFactory.genericWorker(batchSize * config.hiddenDim(), ELEMENTWISE_LOCAL);
         WorkerGrid queryGate =
@@ -1059,6 +1100,10 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
             }
             scheduler.addWorkerGrid(
                     prefix + "ffn_down_proj", matVecWorker(prefix + "ffn_down_proj", config.dim()));
+            if (mmaTasks.containsKey(prefix + "ffn_down_proj")) {
+                scheduler.addWorkerGrid(prefix + "ffn_down_fp16", hbFP16Convert);
+                scheduler.addWorkerGrid(prefix + "ffn_down_residual", residualAdd);
+            }
 
             if (config.isRecurrentLayer(layer)) {
                 scheduler.addWorkerGrid(

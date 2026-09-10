@@ -407,4 +407,18 @@ public final class Qwen35MMAKernels {
         float g = gate.get(index);
         hb.set(index, (g / (1.0f + TornadoMath.exp(-g))) * up.get(index));
     }
+
+    /** {@code fp16[i] = fp32[i]} over a chunk that already fills whole MMA row tiles. */
+    public static void convertToFP16(KernelContext ctx, FloatArray in, HalfFloatArray out) {
+        int index = ctx.globalIdx;
+        out.set(index, new HalfFloat(in.get(index)));
+    }
+
+    /**
+     * {@code x[i] += delta[i]} — the residual a tensor-core projection cannot fold into its store.
+     */
+    public static void residualAdd(KernelContext ctx, FloatArray x, FloatArray delta) {
+        int index = ctx.globalIdx;
+        x.set(index, x.get(index) + delta.get(index));
+    }
 }

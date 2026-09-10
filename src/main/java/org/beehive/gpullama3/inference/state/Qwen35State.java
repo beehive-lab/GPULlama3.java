@@ -399,6 +399,9 @@ public final class Qwen35State extends State {
         // combine, because that would mean reading fragment elements.
         workspace.wrapGateBatch = TornadoWorkspaces.floats(batch * config.hiddenDim());
         workspace.wrapUpBatch = TornadoWorkspaces.floats(batch * config.hiddenDim());
+        workspace.wrapHbFP16BatchMMA =
+                TornadoWorkspaces.halfFloats(((batch + 15) / 16) * 16 * config.hiddenDim());
+        workspace.wrapFFNDownBatch = TornadoWorkspaces.floats(batch * config.dim());
         workspace.wrapQGateBatch = TornadoWorkspaces.floats(batch * config.queryGateDim());
         workspace.wrapAttnQBatch =
                 TornadoWorkspaces.floats(batch * config.attentionOutputInputDim());
