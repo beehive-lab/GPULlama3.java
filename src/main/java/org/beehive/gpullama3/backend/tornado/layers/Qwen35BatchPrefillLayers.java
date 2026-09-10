@@ -3,7 +3,9 @@ package org.beehive.gpullama3.backend.tornado.layers;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.IntStream;
+import org.beehive.gpullama3.backend.tornado.TensorCoreSupport;
 import org.beehive.gpullama3.backend.tornado.kernels.Qwen35BatchKernels;
+import org.beehive.gpullama3.backend.tornado.kernels.Qwen35MMAKernels;
 import org.beehive.gpullama3.backend.tornado.kernels.TransformerBatchPrefillKernels;
 import org.beehive.gpullama3.backend.tornado.kernels.TransformerComputeKernelsQ4_0;
 import org.beehive.gpullama3.backend.tornado.kernels.TransformerComputeKernelsQ4_1;
@@ -43,6 +45,23 @@ import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 // @formatter:on
 public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTaskGraphs {
 
+    // @formatter:off
+    /**
+     * Whether the Q4_0 projections that read the normed chunk run on the tensor cores.
+     *
+     * <p>Off by default, and the reason is a trade rather than a defect. The kernel is correct — it
+     * is held against the host tensor in {@code Qwen35MMAProjectionAccelTest} — and it is worth
+     * about 2.8% of prompt processing. But FP16 multiplicands move the logits enough to break three
+     * of this family's parity bounds, including the absolute ceiling by a factor of five, and 2.8%
+     * does not buy a change to the numerical contract.
+     *
+     * <p>What would: the same treatment for the fused gate/up and {@code ffn_down}, which are
+     * another 57% of the profile between them. Then the contract moves once, for a number worth
+     * moving it for.
+     */
+    // @formatter:on
+    private static final boolean TENSOR_CORES = Boolean.getBoolean("llama.qwen35.tensorCores");
+
     private static final int MATVEC_LOCAL = 128;
     private static final int ELEMENTWISE_LOCAL = 128;
 
@@ -76,6 +95,24 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
      * also tiles that axis. Recorded the same way and for the same reason as {@link #rowTiles}.
      */
     private final java.util.Map<String, Integer> colTiles = new java.util.LinkedHashMap<>();
+
+    /** Tasks that run on the tensor cores, whose grid is a warp per (16 x 8) output tile. */
+    private final java.util.Map<String, Integer> mmaTasks = new java.util.LinkedHashMap<>();
+
+    /**
+     * Whether a Q4_0 projection over this shape can run on the tensor cores.
+     *
+     * <p>The chunk has to fill whole 16-row MMA tiles, because the store writes a whole tile and
+     * the output buffer is not padded; the reduction dimension has to be a whole number of Q4_0
+     * blocks; and the output has to be a whole number of the 8-column tile.
+     */
+    private boolean mmaEligible(int n, int d) {
+        return TENSOR_CORES
+                && TensorCoreSupport.isTensorCoreCapableBackend()
+                && batchSize % Qwen35MMAKernels.BM == 0
+                && n % 32 == 0
+                && d % Qwen35MMAKernels.BN == 0;
+    }
 
     public Qwen35BatchPrefillLayers(
             Qwen35State state,
@@ -171,6 +208,24 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                         MATVEC_LOCAL);
             }
             case Q4_0 -> {
+                // The normed chunk is also staged as FP16 right after the norm, so a projection
+                // reading it can run on the tensor cores rather than as a scalar matrix-vector.
+                // Anything else — a residual form, another input, a shape the MMA tiles do not
+                // divide — takes the tiled scalar kernel below.
+                if (!residual && xBatch == state.workspace.wrapNormedBatch && mmaEligible(n, d)) {
+                    mmaTasks.put("batchLayer_" + layer + "." + task, d);
+                    graph.task(
+                            task,
+                            Qwen35MMAKernels::projectionMMAQ4_0,
+                            context,
+                            state.workspace.wrapNormedFP16Batch,
+                            w.asByteArray(),
+                            outBatch,
+                            batchSize,
+                            d,
+                            n);
+                    return;
+                }
                 // Tiled: one workgroup per (tile of rows, output row), decoding each weight once
                 // for the tile. A quantized projection is memory-bound, and a chunk is only worth
                 // scheduling if it reuses the weights it reads.
@@ -428,6 +483,16 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 weight.asFloatArray(),
                 scaleBatch,
                 config.dim());
+        if (TENSOR_CORES && TensorCoreSupport.isTensorCoreCapableBackend()) {
+            layer.task(
+                    apply + "_fp16",
+                    Qwen35MMAKernels::convertNormedToFP16,
+                    context,
+                    state.workspace.wrapNormedBatch,
+                    state.workspace.wrapNormedFP16Batch,
+                    config.dim(),
+                    state.workspace.batchStartPosHolder);
+        }
     }
 
     private void attentionBranch(TaskGraph layer, int layerIndex) {
@@ -832,6 +897,7 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     DataTransferMode.FIRST_EXECUTION,
                     context,
                     state.workspace.wrapNormedBatch,
+                    state.workspace.wrapNormedFP16Batch,
                     state.workspace.attnScaleBatch,
                     state.workspace.ffnScaleBatch,
                     state.workspace.wrapQGateBatch,
@@ -861,6 +927,7 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     predecessor,
                     context,
                     state.workspace.wrapNormedBatch,
+                    state.workspace.wrapNormedFP16Batch,
                     state.workspace.attnScaleBatch,
                     state.workspace.ffnScaleBatch,
                     state.workspace.wrapQGateBatch,
@@ -899,6 +966,13 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
         WorkerGrid rmsReduce = WorkerGridFactory.genericWorker(batchSize, 1);
         WorkerGrid rmsApply =
                 WorkerGridFactory.genericWorker(batchSize * config.dim(), ELEMENTWISE_LOCAL);
+        // One lane per element of the padded chunk.
+        WorkerGrid fp16Convert =
+                WorkerGridFactory.genericWorker(
+                        ((batchSize + Qwen35MMAKernels.BM - 1) / Qwen35MMAKernels.BM)
+                                * Qwen35MMAKernels.BM
+                                * config.dim(),
+                        ELEMENTWISE_LOCAL);
         WorkerGrid queryGate =
                 WorkerGridFactory.genericWorker(
                         batchSize * config.attentionOutputInputDim(), ELEMENTWISE_LOCAL);
@@ -942,6 +1016,10 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
             scheduler.addWorkerGrid(prefix + "ffn_rms_reduce", rmsReduce);
             scheduler.addWorkerGrid(prefix + "attn_rms_apply", rmsApply);
             scheduler.addWorkerGrid(prefix + "ffn_rms_apply", rmsApply);
+            if (TENSOR_CORES && TensorCoreSupport.isTensorCoreCapableBackend()) {
+                scheduler.addWorkerGrid(prefix + "attn_rms_apply_fp16", fp16Convert);
+                scheduler.addWorkerGrid(prefix + "ffn_rms_apply_fp16", fp16Convert);
+            }
             scheduler.addWorkerGrid(
                     prefix + "ffn_gate_up",
                     matVecWorker(prefix + "ffn_gate_up", config.hiddenDim()));
@@ -998,6 +1076,13 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
 
     /** One workgroup per (row, output row), or per (row tile, output row) where tiled. */
     private WorkerGrid matVecWorker(String qualifiedTask, int rows) {
+        Integer mmaCols = mmaTasks.get(qualifiedTask);
+        if (mmaCols != null) {
+            int rowTilesMma = batchSize / Qwen35MMAKernels.BM;
+            int colTilesMma = mmaCols / Qwen35MMAKernels.BN;
+            return WorkerGridFactory.genericWorker(
+                    rowTilesMma * colTilesMma * Qwen35MMAKernels.LOCAL, Qwen35MMAKernels.LOCAL);
+        }
         int tileRows = rowTiles.getOrDefault(qualifiedTask, 1);
         int tileCols = colTiles.getOrDefault(qualifiedTask, 1);
         int rowGroups = (batchSize + tileRows - 1) / tileRows;

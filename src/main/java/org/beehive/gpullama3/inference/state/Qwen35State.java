@@ -391,6 +391,10 @@ public final class Qwen35State extends State {
             return;
         }
         workspace.wrapNormedBatch = TornadoWorkspaces.floats(batch * config.dim());
+        // The same chunk in FP16, for the tensor-core projections. The MMA row tile is sixteen, so
+        // the buffer carries whole tiles even when the chunk does not fill the last one.
+        workspace.wrapNormedFP16Batch =
+                TornadoWorkspaces.halfFloats(((batch + 15) / 16) * 16 * config.dim());
         workspace.wrapQGateBatch = TornadoWorkspaces.floats(batch * config.queryGateDim());
         workspace.wrapAttnQBatch =
                 TornadoWorkspaces.floats(batch * config.attentionOutputInputDim());
