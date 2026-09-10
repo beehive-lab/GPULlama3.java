@@ -94,3 +94,59 @@ Either fragment elements should be addressable at a constant index, or a scaling
 
 Environment: TornadoVM 6.0.1-jdk21-dev built locally from develop tip `ae7152e20`, CUDA backend,
 JDK 21, RTX 5090 Laptop (compute 12.0).
+
+## 4. An unsigned nibble minus a constant wraps
+
+**Severity: silent infinities in quantized decode.** Every Q4_0 decode recentres an unsigned
+nibble by eight. Written straight-line, TornadoVM stamps the nibble unsigned and emits the
+subtraction into an unsigned variable, so the seven values below eight wrap to about 4.29e9:
+
+```java
+int q = (packed.get(i) & 0xFF) >> 4 & 0xF;
+out.set(i, q - 8);
+```
+
+```
+java.lang.AssertionError: nibble 0 expected:<-8.0> but was:<4.2949673E9>
+```
+
+which is exactly 2^32 - 8. [`UnsignedNibbleRecentringAccelTest.java`](UnsignedNibbleRecentringAccelTest.java)
+is the whole case. The emitted CUDA:
+
+```c
+ui_285 = ch_272 & 255U;
+ui_286 = ui_285 >> 4;
+ui_287 = ui_286 + -8;      // ui_287 is declared unsigned int
+f_288  = (float) ui_287;
+```
+
+against the signed form the neighbouring low-nibble path gets:
+
+```c
+i_280 = (int) ch_274;
+i_281 = i_280 & 15;
+i_282 = i_281 + -8;        // i_282 is declared int
+f_283 = (float) i_282;
+```
+
+How it was found: a tensor-core Q4_0 projection returned NaN for **every** output. 4.29e9 times a
+block scale overflows fp16 to infinity as the weight is staged, and the first MMA turns the tile
+into NaN. Only the high half was wrong, and only for nibbles under eight.
+
+Every decode in this repository escapes it by accident: they all pick the nibble with a branch or
+a ternary, and the phi merging the two arms is stamped signed. A kernel that computes the shift
+arithmetically — `(packed >> nibbleShift) & 0xF`, which is what a loop over both halves wants —
+does not. `Qwen35MMAProjectionAccelTest.everyNibbleDecodesWithTheSignItsScaleGivesIt` covers all
+sixteen values in both halves against both signs of scale, so a future rewrite to the branchless
+form fails there rather than in a model.
+
+The workaround is to recentre after the conversion, and it survives the compiler:
+`scale * ((float) q - 8.0f)` emits `f_215 = f_214 - 8.0F`. An `(int)` cast on the Java side does
+not, because the stamp is already int-kinded; it is the *signedness* of the stamp that is wrong.
+
+Either the stamp for `x & 0xF` should be a signed int — it is, in Java, where `&` on two ints
+yields an int — or the subtraction should be emitted in the type Java gives it rather than in one
+inferred from the operand's value range.
+
+Environment: TornadoVM 6.0.1-jdk21-dev built locally from develop tip `ae7152e20`, CUDA backend,
+JDK 21, RTX 5090 Laptop (compute 12.0).
