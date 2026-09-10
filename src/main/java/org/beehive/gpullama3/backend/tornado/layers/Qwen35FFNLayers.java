@@ -2,6 +2,7 @@ package org.beehive.gpullama3.backend.tornado.layers;
 
 import java.util.ArrayList;
 import java.util.List;
+import org.beehive.gpullama3.backend.tornado.device.TornadoDevices;
 import org.beehive.gpullama3.backend.tornado.kernels.Qwen35AttentionKernels;
 import org.beehive.gpullama3.backend.tornado.kernels.Qwen35DeltaNetKernels;
 import org.beehive.gpullama3.backend.tornado.kernels.Qwen3Kernels;
@@ -236,7 +237,22 @@ public class Qwen35FFNLayers
                 }
             }
             case Q4_0 -> {
-                if (residual) {
+                if (!residual && x == state.workspace.wrapXb && DP4A) {
+                    // The packed-integer path, for a projection whose input the branch already
+                    // quantized. Weights stay Q4_0; the activation is what changed representation.
+                    graph.task(
+                            task,
+                            TransformerComputeKernelsQ4_0::matrixVectorGenericQ4_0DP4A,
+                            context,
+                            state.workspace.wrapXbQuants,
+                            state.workspace.wrapXbScales,
+                            state.workspace.wrapXbSums,
+                            out,
+                            w.asByteArray(),
+                            n,
+                            d,
+                            MATVEC_LOCAL);
+                } else if (residual) {
                     graph.task(
                             task,
                             TransformerComputeKernelsQ4_0::matrixVectorGenericWithResidualQ4_0,
@@ -513,6 +529,18 @@ public class Qwen35FFNLayers
                 qwen35State.workspace.temp,
                 require(weights.rms_att_weightLayered, layerIndex, "attn_norm"));
 
+        if (DP4A) {
+            // Once per branch, for every Q4_0 projection below that reads the normed activation.
+            layer.task(
+                    "xb_quantize",
+                    TransformerComputeKernelsQ4_0::quantizeActivationQ8Blocks,
+                    context,
+                    qwen35State.workspace.wrapXb,
+                    qwen35State.workspace.wrapXbQuants,
+                    qwen35State.workspace.wrapXbScales,
+                    qwen35State.workspace.wrapXbSums);
+        }
+
         if (config.isRecurrentLayer(layerIndex)) {
             deltaNetBranch(layer, layerIndex);
         } else {
@@ -615,6 +643,37 @@ public class Qwen35FFNLayers
      * output projection.
      */
     // @formatter:on
+    // @formatter:off
+    /**
+     * Whether this device's Q4_0 projections read a quantized activation and a packed integer dot
+     * product rather than a floating-point one.
+     *
+     * <p>A device fact, not a user choice: the packed path needs {@code dp4a} to be lowered, and it
+     * is worth taking only where that has been measured. Everything else about the decision is a
+     * property of the projection — Q4_0 weights, no residual, and an input the branch has already
+     * quantized — and is decided where the task is built.
+     *
+     * <p>Measured on the 27B at chunk 32, interleaved: {@code tg128} 14.73 and 14.72 t/s against
+     * 13.70 and 13.61, and {@code tg128@d381} 11.23 against 10.67 and 10.50. Prefill is untouched
+     * and unchanged. What it costs is in the parity record: the activation is quantized to eight
+     * bits, so the logits move by far more than the floating-point path's bounds allow — relative
+     * L2 2.45e-2 against a 1e-4 bound, cosine 0.99970 — while the decisions did not, at 0/63 argmax
+     * disagreements and token-identical greedy output over 120 tokens.
+     */
+    // @formatter:on
+    private static final boolean DP4A =
+            TornadoDevices.current()
+                            .capabilities()
+                            .supports(
+                                    org.beehive.gpullama3.runtime.backend.DeviceCapability
+                                            .PACKED_INTEGER_DOT)
+                    // The escape hatch is for the tests whose subject is addressing rather than
+                    // arithmetic: they compare the device against the host exactly, which a
+                    // quantized activation cannot do. Not a user option, and not a CLI flag.
+                    && !"false"
+                            .equalsIgnoreCase(
+                                    System.getProperty("llama.qwen35.packedIntegerDot", "true"));
+
     private void attentionBranch(TaskGraph layer, int layerIndex) {
         final int headDim = config.numberOfHeadsKey();
         final int kvDim = config.kvDim();
@@ -1058,6 +1117,13 @@ public class Qwen35FFNLayers
                     valueStore(),
                     qwen35State.workspace.wrapAtt,
                     qwen35State.workspace.wrapHb);
+            if (DP4A) {
+                layer.transferToDevice(
+                        DataTransferMode.FIRST_EXECUTION,
+                        qwen35State.workspace.wrapXbQuants,
+                        qwen35State.workspace.wrapXbScales,
+                        qwen35State.workspace.wrapXbSums);
+            }
             // The recurrent state persists across tokens and is updated in place, so it is
             // uploaded once — zeroed — and never read back. Uploading it every execution would
             // overwrite the device's own history with the host's stale copy.
@@ -1091,6 +1157,13 @@ public class Qwen35FFNLayers
                     qwen35State.workspace.wrapHb,
                     qwen35State.workspace.positionHolder);
             layer.consumeFromDevice(predecessor, qwen35State.workspace.wrapBlockTable);
+            if (DP4A) {
+                layer.consumeFromDevice(
+                        predecessor,
+                        qwen35State.workspace.wrapXbQuants,
+                        qwen35State.workspace.wrapXbScales,
+                        qwen35State.workspace.wrapXbSums);
+            }
             layer.consumeFromDevice(
                     predecessor,
                     qwen35State.workspace.temp,
@@ -1161,6 +1234,10 @@ public class Qwen35FFNLayers
                 scheduler.addWorkerGrid(prefix + "ffn_rms_finalize", rmsFinalize);
             }
             scheduler.addWorkerGrid(prefix + "attn_rms_apply", rmsApply);
+            if (DP4A) {
+                WorkerGrid quantize = WorkerGridFactory.genericWorker(config.dim(), 32);
+                scheduler.addWorkerGrid(prefix + "xb_quantize", quantize);
+            }
             scheduler.addWorkerGrid(prefix + "ffn_rms_apply", rmsApply);
             scheduler.addWorkerGrid(prefix + "ffn_gate_up", matVecWorker(config.hiddenDim()));
             scheduler.addWorkerGrid(prefix + "ffn_down_proj", matVecWorker(config.dim()));

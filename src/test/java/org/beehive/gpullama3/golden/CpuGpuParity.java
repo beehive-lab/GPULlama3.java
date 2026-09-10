@@ -81,6 +81,40 @@ abstract class CpuGpuParity {
     static final Bounds FP16 = new Bounds(5e-3, 1e-2, 8e-3, 2e-3, 0.99999, 1e-4, 0.5);
     static final Bounds Q8_0 = new Bounds(1.7e-4, 1e-2, 3.4e-4, 1e-4, 0.999999, 1e-4, 0.5);
 
+    // @formatter:off
+    /**
+     * For a family whose Q4_0 projections read an <b>eight-bit activation</b>.
+     *
+     * <p>These bounds are much wider than {@link #Q8_0}'s and they are meant to be: the device is
+     * no longer computing the same thing as the host reference to within rounding. It quantizes the
+     * normalized activation to eight bits per block of 32 and does the dot product in packed
+     * integers, which is what llama.cpp's decode does and what makes {@code dp4a} available at all.
+     *
+     * <p><b>Sized from measurement, on the 27B, teacher-forced over 63 rows.</b> What it costs:
+     * elementwise violations 22.81%, largest absolute difference 0.5227 against a reference RMS of
+     * 0.111, relative L2 2.45e-2, cosine 0.99970. What it did not cost, measured at the same time:
+     * <b>zero</b> argmax disagreements across those 63 rows, top-5 4.984/5 and top-10 9.968/10, and
+     * greedy generation that was token-identical over 120 tokens against the floating-point path.
+     *
+     * <p>So the bounds below carry roughly a factor of two over the measured magnitudes: the
+     * absolute ceiling goes from 3.4e-4 of the reference RMS to 0.32 of it, the relative L2 from
+     * 1e-4 to 5e-2, and the elementwise budget from 0.01% of logits to half of them. Those three
+     * are weak by construction now, and saying so is the point — they no longer distinguish a
+     * defect from the arithmetic, and {@code atol} and {@code rtol} are left where they were so the
+     * printed violation count stays a comparable number rather than a redefined one.
+     *
+     * <p>What still has teeth is the pair that speaks to decisions: {@code minCosine} moves from
+     * 0.999999 to 0.9994 — a real weakening, not a formality, and the number to watch — while
+     * {@code decisionGap} does not move at all, because an argmax reversal where the reference was
+     * not close would still be a defect.
+     *
+     * <p>The top-k figures say plainly that this path can reorder near-ties. Greedy decoding did
+     * not notice; sampling with top-k or top-p can.
+     */
+    // @formatter:on
+    static final Bounds Q8_0_PACKED_ACTIVATION =
+            new Bounds(1.7e-4, 1e-2, 0.32, 5e-2, 0.9994, 0.5, 0.5);
+
     /** The CPU reference against the accelerator running its default single-token path. */
     void assertParity(Fixture fixture, Bounds bounds) throws Exception {
         assertParity(fixture, bounds, 1);

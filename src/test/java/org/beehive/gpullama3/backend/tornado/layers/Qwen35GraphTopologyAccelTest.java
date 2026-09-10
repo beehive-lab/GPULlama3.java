@@ -405,8 +405,18 @@ public class Qwen35GraphTopologyAccelTest {
             }
         }
 
-        assertEquals("a recurrent layer's tasks", 20, recurrentTasks);
-        assertEquals("an attention layer's tasks", 16, attentionTasks);
+        // One more per layer where the device takes the packed-integer path: the branch quantizes
+        // the normed activation once, for the Q4_0 projections that read it.
+        int quantize =
+                org.beehive.gpullama3.backend.tornado.device.TornadoDevices.current()
+                                .capabilities()
+                                .supports(
+                                        org.beehive.gpullama3.runtime.backend.DeviceCapability
+                                                .PACKED_INTEGER_DOT)
+                        ? 1
+                        : 0;
+        assertEquals("a recurrent layer's tasks", 20 + quantize, recurrentTasks);
+        assertEquals("an attention layer's tasks", 16 + quantize, attentionTasks);
         assertEquals("the plan's layer tasks", 6 * recurrentTasks + 2 * attentionTasks, total);
     }
 

@@ -17,9 +17,9 @@ import org.junit.Test;
  * Sequential prefill on the device against the host running the same sequence one token at a time.
  *
  * <p>Prefill is the decode graphs with the logits graph skipped, so what this can catch is not
- * arithmetic — the parity test beside it already settles that — but the two things prompt
- * ingestion adds: whether the recurrence carries across the prefill/decode boundary, and whether
- * the boundary lands on the right position.
+ * arithmetic — the parity test beside it already settles that — but the two things prompt ingestion
+ * adds: whether the recurrence carries across the prefill/decode boundary, and whether the boundary
+ * lands on the right position.
  *
  * <p><b>The state after ingestion is checked through the decode rows it produces.</b> The
  * convolution window and the delta-net matrices are device buffers no graph reads back, so
@@ -40,6 +40,12 @@ public class Qwen35SyntheticPrefillParityAccelTest {
     public void sequentialPrefillLeavesTheStateDecodeExpects() throws Exception {
         String previousDevice = System.getProperty("use.tornadovm");
         System.setProperty("use.tornadovm", "true");
+        // These cases compare the device against the host exactly: their subject is addressing
+        // and chunk invariance, not arithmetic. A quantized activation cannot be exact, so the
+        // Q4_0 projections stay on the floating-point path here. Their precision is covered on the
+        // real model by the parity tests, against bounds written for it. This class gets its own
+        // JVM (reuseForks=false), so the property is read before the layer builder loads.
+        System.setProperty("llama.qwen35.packedIntegerDot", "false");
         try (Arena owned = Arena.ofShared()) {
             Qwen35Configuration config = Qwen35SyntheticModel.config();
             Qwen35SyntheticModel.Weights both = new Qwen35SyntheticModel(owned).weights(config);
@@ -167,7 +173,8 @@ public class Qwen35SyntheticPrefillParityAccelTest {
         }
         for (int i = 0; i < Qwen35SyntheticModel.VOCAB; i++) {
             float device = actual.get(i);
-            assertTrue("logit " + i + " at position " + position + " is " + device,
+            assertTrue(
+                    "logit " + i + " at position " + position + " is " + device,
                     Float.isFinite(device));
             assertEquals(
                     "logit " + i + " at position " + position,
