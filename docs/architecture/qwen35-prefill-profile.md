@@ -118,3 +118,28 @@ remaining limit is not activation *bytes*, so the next thing to try is not a sma
 Nsight Compute counters are unavailable on this host: `ERR_NVGPUCTRPERM`. Every bandwidth figure
 above is bytes-moved over measured kernel time from the Nsight Systems trace and the tensor
 shapes, not a hardware counter. Occupancy, stall reasons and L1/L2 hit rates were not measured.
+
+## 6. The wide-tile experiment, and what it did and did not settle
+
+Tried after the profile above put `projectionMMAQ4_0GateUp` at 44.9% of prefill: one workgroup
+staging the activation tile once for a 32x128 output tile — four warps, `warpM` picking the 16-row
+band and `warpN` the 64-column half, eight accumulators per projection — against the shipped
+kernel's one warp per 16x8 tile, which re-stages its 16-row activation tile for every one of the
+2176 column tiles of a 17408-wide projection.
+
+It lost. Interleaved at matched temperature (70 C, 1710 MHz), `pp381 b32` was 70.95 t/s against
+75.72 and 75.48 for the shipped kernel, and the kernel itself cost 3.26 ms per call against 2.76.
+Registers were not the limit: `ptxas` reports 128 registers, 0 bytes spilled, 18432 bytes of shared
+memory for the 18 KiB variant.
+
+**What that settles is this implementation, not the principle.** Three things changed together and
+the experiment cannot separate them: the tile geometry, the grid — 136 workgroups over ~82 SMs,
+where the shipped kernel launches 4352 — and the staging cadence, one MMA step per round rather
+than a whole Q4_0 block. Activation reuse may still be worth having at a wider chunk, where the
+grid argument reverses. The patch is kept locally rather than committed; it is correct, and it is
+slower here.
+
+Getting it correct first cost a long bisection, and the cause was not geometry at all: see finding
+4 in `tornadovm-issues`, an unsigned nibble recentring that wrapped to 2^32 - 8 and overflowed
+fp16 to infinity. Every simplified probe passed because the wrap only affects the high nibble
+below eight.
