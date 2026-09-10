@@ -402,6 +402,8 @@ public final class Qwen35State extends State {
         workspace.wrapHbFP16BatchMMA =
                 TornadoWorkspaces.halfFloats(((batch + 15) / 16) * 16 * config.hiddenDim());
         workspace.wrapFFNDownBatch = TornadoWorkspaces.floats(batch * config.dim());
+        workspace.wrapSsmOutFP16Batch =
+                TornadoWorkspaces.halfFloats(((batch + 15) / 16) * 16 * config.deltaNetValueDim());
         workspace.wrapQGateBatch = TornadoWorkspaces.floats(batch * config.queryGateDim());
         workspace.wrapAttnQBatch =
                 TornadoWorkspaces.floats(batch * config.attentionOutputInputDim());

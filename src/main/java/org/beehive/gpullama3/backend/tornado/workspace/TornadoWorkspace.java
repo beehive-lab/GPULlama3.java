@@ -155,6 +155,9 @@ public final class TornadoWorkspace {
 
     public FloatArray wrapFFNDownBatch;
 
+    /** The delta-net readout as FP16, for the tensor-core ssm_out projection. */
+    public HalfFloatArray wrapSsmOutFP16Batch;
+
     public FloatArray wrapQGateBatch;
     public FloatArray wrapAttnQBatch;
     public FloatArray wrapAttnGateBatch;

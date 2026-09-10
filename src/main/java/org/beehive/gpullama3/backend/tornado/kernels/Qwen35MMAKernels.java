@@ -421,4 +421,252 @@ public final class Qwen35MMAKernels {
         int index = ctx.globalIdx;
         x.set(index, x.get(index) + delta.get(index));
     }
+
+    // ---- Q5_K ---------------------------------------------------------------
+
+    /** Weights per Q5_K super-block. */
+    private static final int QK_K = 256;
+
+    /** Bytes per Q5_K super-block. */
+    private static final int K_BLOCK_BYTES = 176;
+
+    private static final int K_SCALES_OFFSET = 4;
+
+    private static final int K_QH_OFFSET = 16;
+
+    private static final int K_QS_OFFSET = 48;
+
+    /**
+     * A sub-block's 6-bit scale and minimum, packed as {@code (scale << 8) | min}.
+     *
+     * <p>Its own method for the reason {@code TransformerComputeKernelsQ5_K} gives: inlined, the
+     * decode grew large enough that TornadoVM's CUDA backend emitted a kernel referring to an
+     * undeclared {@code context}.
+     */
+    private static int scaleAndMin(ByteArray w, int scalesBase, int subBlock) {
+        if (subBlock < 4) {
+            return ((w.get(scalesBase + subBlock) & 63) << 8)
+                    | (w.get(scalesBase + subBlock + 4) & 63);
+        }
+        int lowScale = w.get(scalesBase + subBlock + 4) & 0xFF;
+        int highScale = w.get(scalesBase + subBlock - 4) & 0xFF;
+        int sc = (lowScale & 0xF) | ((highScale >> 6) << 4);
+        int m = ((lowScale >> 4) & 0xF) | (((w.get(scalesBase + subBlock) & 0xFF) >> 6) << 4);
+        return (sc << 8) | m;
+    }
+
+    // @formatter:off
+    /**
+     * {@code out[M,N] = A[M,K] x W[N,K]} for {@code Q5_K} weights.
+     *
+     * <p>The same staging shape as the {@code Q4_0} form: a round is 32 elements, which for Q5_K is
+     * one sub-block of a 256-weight super-block, so the sub-block's scale and minimum are computed
+     * once per round and a lane owns eight consecutive elements of one column.
+     */
+    // @formatter:on
+    public static void projectionMMAQ5_K(
+            KernelContext ctx,
+            HalfFloatArray aFP16,
+            ByteArray w,
+            FloatArray out,
+            int m,
+            int n,
+            int k) {
+        int lane = ctx.localIdx;
+        int colTiles = n / BN;
+        int group = ctx.groupIdx;
+        int rowTile = group / colTiles;
+        int colTile = group - rowTile * colTiles;
+        int blockRow = rowTile * BM;
+        int blockCol = colTile * BN;
+        int superBlocksPerRow = k / QK_K;
+
+        int[] aTileLo = ctx.allocateIntLocalArray(BM * BK / 2);
+        int[] aTileHi = ctx.allocateIntLocalArray(BM * BK / 2);
+        HalfFloat[] bTileLo = ctx.allocateHalfFloatLocalArray(PANEL * BK);
+        HalfFloat[] bTileHi = ctx.allocateHalfFloatLocalArray(PANEL * BK);
+
+        float[] acc = ctx.mmaFragment(0.0f);
+
+        int stageCol = lane >> 2;
+        int stageFirst = (lane & 3) * 8;
+        boolean stageHighHalf = stageFirst >= 16;
+        int stageK = stageFirst & 15;
+
+        int numRounds = k / QK;
+        for (int round = 0; round < numRounds; round++) {
+            int kBase = round * QK;
+
+            for (int slot = 0; slot < 8; slot++) {
+                int i = lane + slot * WARP_SIZE;
+                int half = i >>> 7;
+                int j = i & 127;
+                int row = j >>> 3;
+                int kk = (j & 7) << 1;
+                int base = (blockRow + row) * k + kBase + half * BK + kk;
+                int value =
+                        (aFP16.get(base).getHalfFloatValue() & 0xFFFF)
+                                | ((aFP16.get(base + 1).getHalfFloatValue() & 0xFFFF) << 16);
+                if (half == 0) {
+                    aTileLo[j] = value;
+                } else {
+                    aTileHi[j] = value;
+                }
+            }
+
+            int superBlock = round >> 3;
+            int subBlock = round & 7;
+            int base = ((blockCol + stageCol) * superBlocksPerRow + superBlock) * K_BLOCK_BYTES;
+            float d = halfFromBytes(w, base);
+            float dmin = halfFromBytes(w, base + 2);
+            int packedScale = scaleAndMin(w, base + K_SCALES_OFFSET, subBlock);
+            float scale = d * (packedScale >> 8);
+            float minimum = dmin * (packedScale & 0xFF);
+
+            int pairIndex = subBlock >> 1;
+            int highNibble = subBlock & 1;
+            int qsBase = base + K_QS_OFFSET + pairIndex * 32;
+            int qhBase = base + K_QH_OFFSET;
+            int bitShift = pairIndex * 2 + highNibble;
+
+            for (int t = 0; t < 8; t++) {
+                // Q5_K indexes its packed byte by the element's position in the whole sub-block,
+                // 0..31 — the nibble half is a property of the sub-block, not of the element, which
+                // is what makes this different from Q4_0's byte-and-nibble split.
+                int posInSub = stageFirst + t;
+                int qsByte = w.get(qsBase + posInSub) & 0xFF;
+                int low = qsByte & 0xF;
+                if (highNibble == 1) {
+                    low = (qsByte >> 4) & 0xF;
+                }
+                int qhByte = w.get(qhBase + posInSub) & 0xFF;
+                int high = (qhByte >> bitShift) & 1;
+                HalfFloat value = new HalfFloat(scale * (low + high * 16) - minimum);
+                if (stageHighHalf) {
+                    ctx.swizzleStoreFp16Stride32(bTileHi, stageK + t, stageCol, PANEL, value);
+                } else {
+                    ctx.swizzleStoreFp16Stride32(bTileLo, stageK + t, stageCol, PANEL, value);
+                }
+            }
+            ctx.localBarrier();
+
+            acc =
+                    ctx.mma(
+                            ctx.mmaLoadA(aTileLo, BK),
+                            ctx.mmaLoadBSwizzled(bTileLo, BK),
+                            acc,
+                            MMAShape.M16N8K16);
+            acc =
+                    ctx.mma(
+                            ctx.mmaLoadA(aTileHi, BK),
+                            ctx.mmaLoadBSwizzled(bTileHi, BK),
+                            acc,
+                            MMAShape.M16N8K16);
+            ctx.localBarrier();
+        }
+
+        ctx.mmaStore(acc, out, blockRow, blockCol, n);
+    }
+
+    // ---- Q4_1 ---------------------------------------------------------------
+
+    /** Bytes per Q4_1 block: 2 (d) + 2 (m) + 16 packed nibbles. */
+    private static final int BLOCK_BYTES_Q4_1 = 20;
+
+    // @formatter:off
+    /**
+     * {@code out[M,N] = A[M,K] x W[N,K]} for {@code Q4_1} weights — this model's {@code ffn_down}
+     * on the first eight blocks.
+     *
+     * <p>{@link #projectionMMAQ4_0}'s staging with Q4_1's decode: two fp16 headers rather than one,
+     * an unsigned nibble, and {@code d * q + m} rather than {@code d * (q - 8)}.
+     */
+    // @formatter:on
+    public static void projectionMMAQ4_1(
+            KernelContext ctx,
+            HalfFloatArray aFP16,
+            ByteArray w,
+            FloatArray out,
+            int m,
+            int n,
+            int k) {
+        int lane = ctx.localIdx;
+        int colTiles = n / BN;
+        int group = ctx.groupIdx;
+        int rowTile = group / colTiles;
+        int colTile = group - rowTile * colTiles;
+        int blockRow = rowTile * BM;
+        int blockCol = colTile * BN;
+        int blocksPerRow = k / QK;
+
+        int[] aTileLo = ctx.allocateIntLocalArray(BM * BK / 2);
+        int[] aTileHi = ctx.allocateIntLocalArray(BM * BK / 2);
+        HalfFloat[] bTileLo = ctx.allocateHalfFloatLocalArray(PANEL * BK);
+        HalfFloat[] bTileHi = ctx.allocateHalfFloatLocalArray(PANEL * BK);
+
+        float[] acc = ctx.mmaFragment(0.0f);
+
+        int stageCol = lane >> 2;
+        int stageFirst = (lane & 3) * 8;
+        int stageByte = stageFirst & 15;
+        boolean stageHighNibble = stageFirst >= 16;
+        boolean stageHighHalf = stageFirst >= 16;
+        int stageK = stageFirst & 15;
+
+        int numBlocks = k / QK;
+        for (int blockIndex = 0; blockIndex < numBlocks; blockIndex++) {
+            int kBase = blockIndex * QK;
+
+            for (int slot = 0; slot < 8; slot++) {
+                int i = lane + slot * WARP_SIZE;
+                int half = i >>> 7;
+                int j = i & 127;
+                int row = j >>> 3;
+                int kk = (j & 7) << 1;
+                int base = (blockRow + row) * k + kBase + half * BK + kk;
+                int value =
+                        (aFP16.get(base).getHalfFloatValue() & 0xFFFF)
+                                | ((aFP16.get(base + 1).getHalfFloatValue() & 0xFFFF) << 16);
+                if (half == 0) {
+                    aTileLo[j] = value;
+                } else {
+                    aTileHi[j] = value;
+                }
+            }
+
+            int base = ((blockCol + stageCol) * blocksPerRow + blockIndex) * BLOCK_BYTES_Q4_1;
+            float scale = halfFromBytes(w, base);
+            float minimum = halfFromBytes(w, base + 2);
+            for (int t = 0; t < 8; t++) {
+                int packed = w.get(base + 4 + stageByte + t) & 0xFF;
+                int q = packed & 0xF;
+                if (stageHighNibble) {
+                    q = (packed >> 4) & 0xF;
+                }
+                HalfFloat value = new HalfFloat(scale * q + minimum);
+                if (stageHighHalf) {
+                    ctx.swizzleStoreFp16Stride32(bTileHi, stageK + t, stageCol, PANEL, value);
+                } else {
+                    ctx.swizzleStoreFp16Stride32(bTileLo, stageK + t, stageCol, PANEL, value);
+                }
+            }
+            ctx.localBarrier();
+
+            acc =
+                    ctx.mma(
+                            ctx.mmaLoadA(aTileLo, BK),
+                            ctx.mmaLoadBSwizzled(bTileLo, BK),
+                            acc,
+                            MMAShape.M16N8K16);
+            acc =
+                    ctx.mma(
+                            ctx.mmaLoadA(aTileHi, BK),
+                            ctx.mmaLoadBSwizzled(bTileHi, BK),
+                            acc,
+                            MMAShape.M16N8K16);
+            ctx.localBarrier();
+        }
+
+        ctx.mmaStore(acc, out, blockRow, blockCol, n);
+    }
 }

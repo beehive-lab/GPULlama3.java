@@ -475,7 +475,9 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     state.workspace.wrapHbFP16BatchMMA);
             layer.task(
                     "ffn_down_proj",
-                    Qwen35MMAKernels::projectionMMAQ4_0,
+                    down.dataType() == DataType.Q4_1
+                            ? Qwen35MMAKernels::projectionMMAQ4_1
+                            : Qwen35MMAKernels::projectionMMAQ4_0,
                     context,
                     state.workspace.wrapHbFP16BatchMMA,
                     down.asByteArray(),
@@ -880,17 +882,46 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 config.rmsNormEps(),
                 state.workspace.batchStartPosHolder);
 
-        matVecBatch(
-                layer,
-                layerIndex,
-                "ssm_out_proj",
-                "ssm_out",
-                require(weights.ssmOut, layerIndex, "ssm_out"),
-                state.workspace.wrapSsmOutBatch,
-                state.workspace.wrapXBatch,
-                valueDim,
-                config.dim(),
-                true);
+        TornadoTensor ssmOut = require(weights.ssmOut, layerIndex, "ssm_out");
+        if (ssmOut.dataType() == DataType.Q5_K && mmaEligible(valueDim, config.dim())) {
+            // Same shape as ffn_down: convert the readout, project, then add the residual back,
+            // because a tensor-core store overwrites.
+            mmaTasks.put("batchLayer_" + layerIndex + ".ssm_out_proj", config.dim());
+            layer.task(
+                    "ssm_out_fp16",
+                    Qwen35MMAKernels::convertToFP16,
+                    context,
+                    state.workspace.wrapSsmOutBatch,
+                    state.workspace.wrapSsmOutFP16Batch);
+            layer.task(
+                    "ssm_out_proj",
+                    Qwen35MMAKernels::projectionMMAQ5_K,
+                    context,
+                    state.workspace.wrapSsmOutFP16Batch,
+                    ssmOut.asByteArray(),
+                    state.workspace.wrapFFNDownBatch,
+                    batchSize,
+                    config.dim(),
+                    valueDim);
+            layer.task(
+                    "ssm_out_residual",
+                    Qwen35MMAKernels::residualAdd,
+                    context,
+                    state.workspace.wrapXBatch,
+                    state.workspace.wrapFFNDownBatch);
+        } else {
+            matVecBatch(
+                    layer,
+                    layerIndex,
+                    "ssm_out_proj",
+                    "ssm_out",
+                    ssmOut,
+                    state.workspace.wrapSsmOutBatch,
+                    state.workspace.wrapXBatch,
+                    valueDim,
+                    config.dim(),
+                    true);
+        }
     }
 
     // ── transfers ─────────────────────────────────────────────────────────────
@@ -956,6 +987,7 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     state.workspace.wrapUpBatch,
                     state.workspace.wrapHbFP16BatchMMA,
                     state.workspace.wrapFFNDownBatch,
+                    state.workspace.wrapSsmOutFP16Batch,
                     state.workspace.attnScaleBatch,
                     state.workspace.ffnScaleBatch,
                     state.workspace.wrapQGateBatch,
@@ -990,6 +1022,7 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     state.workspace.wrapUpBatch,
                     state.workspace.wrapHbFP16BatchMMA,
                     state.workspace.wrapFFNDownBatch,
+                    state.workspace.wrapSsmOutFP16Batch,
                     state.workspace.attnScaleBatch,
                     state.workspace.ffnScaleBatch,
                     state.workspace.wrapQGateBatch,
@@ -1034,6 +1067,12 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                         ((batchSize + Qwen35MMAKernels.BM - 1) / Qwen35MMAKernels.BM)
                                 * Qwen35MMAKernels.BM
                                 * config.dim(),
+                        ELEMENTWISE_LOCAL);
+        WorkerGrid ssmOutFP16Convert =
+                WorkerGridFactory.genericWorker(
+                        ((batchSize + Qwen35MMAKernels.BM - 1) / Qwen35MMAKernels.BM)
+                                * Qwen35MMAKernels.BM
+                                * config.deltaNetValueDim(),
                         ELEMENTWISE_LOCAL);
         WorkerGrid hbFP16Convert =
                 WorkerGridFactory.genericWorker(
@@ -1130,6 +1169,10 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 scheduler.addWorkerGrid(
                         prefix + "ssm_out_proj",
                         matVecWorker(prefix + "ssm_out_proj", config.dim()));
+                if (mmaTasks.containsKey(prefix + "ssm_out_proj")) {
+                    scheduler.addWorkerGrid(prefix + "ssm_out_fp16", ssmOutFP16Convert);
+                    scheduler.addWorkerGrid(prefix + "ssm_out_residual", residualAdd);
+                }
             } else {
                 scheduler.addWorkerGrid(
                         prefix + "attn_q_proj",

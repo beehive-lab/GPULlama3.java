@@ -9,6 +9,8 @@ import java.util.Random;
 import org.beehive.gpullama3.format.GGMLType;
 import org.beehive.gpullama3.tensor.standard.FloatTensor;
 import org.beehive.gpullama3.tensor.standard.Q4_0FloatTensor;
+import org.beehive.gpullama3.tensor.standard.Q4_1FloatTensor;
+import org.beehive.gpullama3.tensor.standard.Q5_KFloatTensor;
 import org.junit.Test;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.KernelContext;
@@ -149,5 +151,201 @@ public class Qwen35MMAProjectionAccelTest {
                             + largest,
                     worst < 0.01 * largest);
         }
+    }
+
+    /** The fused gate/up form: two weight matrices against one staged activation tile. */
+    @Test
+    public void theTensorCoreGateUpMatchesTheHost() throws Exception {
+        byte[] rawGate = randomWeights(20260910L);
+        byte[] rawUp = randomWeights(777L);
+        int m = 32;
+
+        HalfFloatArray a = activations(m);
+        ByteArray w1 = toDevice(rawGate);
+        ByteArray w3 = toDevice(rawUp);
+        FloatArray gateOut = new FloatArray(m * N);
+        FloatArray upOut = new FloatArray(m * N);
+        gateOut.init(0.0f);
+        upOut.init(0.0f);
+
+        TaskGraph graph = new TaskGraph("mmaGateUp");
+        graph.transferToDevice(DataTransferMode.EVERY_EXECUTION, a, w1, w3, gateOut, upOut);
+        graph.task(
+                "gateUp",
+                Qwen35MMAKernels::projectionMMAQ4_0GateUp,
+                new KernelContext(),
+                a,
+                w1,
+                w3,
+                gateOut,
+                upOut,
+                m,
+                N,
+                K);
+        graph.transferToHost(DataTransferMode.EVERY_EXECUTION, gateOut, upOut);
+        execute(graph, "mmaGateUp.gateUp", m);
+
+        assertMatches("gate", GGMLType.Q4_0, rawGate, gateOut, m);
+        assertMatches("up", GGMLType.Q4_0, rawUp, upOut, m);
+    }
+
+    /** The Q4_1 form — this model's ffn_down on the first eight blocks. */
+    @Test
+    public void theTensorCoreQ4_1ProjectionMatchesTheHost() throws Exception {
+        int blocks = N * (K / GGMLType.Q4_1.getBlockSize());
+        byte[] raw = new byte[blocks * GGMLType.Q4_1.getTypeSize()];
+        new Random(99L).nextBytes(raw);
+        for (int b = 0; b < blocks; b++) {
+            int base = b * GGMLType.Q4_1.getTypeSize();
+            for (int offset : new int[] {0, 2}) {
+                raw[base + offset] = (byte) (b & 0xFF);
+                raw[base + offset + 1] = 0x2C;
+            }
+        }
+        int m = 32;
+
+        HalfFloatArray a = activations(m);
+        ByteArray w = toDevice(raw);
+        FloatArray out = new FloatArray(m * N);
+        out.init(0.0f);
+
+        TaskGraph graph = new TaskGraph("mmaQ41");
+        graph.transferToDevice(DataTransferMode.EVERY_EXECUTION, a, w, out);
+        graph.task(
+                "projection",
+                Qwen35MMAKernels::projectionMMAQ4_1,
+                new KernelContext(),
+                a,
+                w,
+                out,
+                m,
+                N,
+                K);
+        graph.transferToHost(DataTransferMode.EVERY_EXECUTION, out);
+        execute(graph, "mmaQ41.projection", m);
+
+        assertMatches("q41", GGMLType.Q4_1, raw, out, m);
+    }
+
+    /** The Q5_K form, against the host tensor over the same bytes. */
+    @Test
+    public void theTensorCoreQ5_KProjectionMatchesTheHost() throws Exception {
+        int blocks = N * (K / GGMLType.Q5_K.getBlockSize());
+        byte[] raw = new byte[blocks * GGMLType.Q5_K.getTypeSize()];
+        new Random(4242L).nextBytes(raw);
+        for (int b = 0; b < blocks; b++) {
+            int base = b * GGMLType.Q5_K.getTypeSize();
+            for (int offset : new int[] {0, 2}) {
+                raw[base + offset] = (byte) (b & 0xFF);
+                raw[base + offset + 1] = 0x2C;
+            }
+        }
+        int m = 32;
+
+        HalfFloatArray a = activations(m);
+        ByteArray w = toDevice(raw);
+        FloatArray out = new FloatArray(m * N);
+        out.init(0.0f);
+
+        TaskGraph graph = new TaskGraph("mmaQ5K");
+        graph.transferToDevice(DataTransferMode.EVERY_EXECUTION, a, w, out);
+        graph.task(
+                "projection",
+                Qwen35MMAKernels::projectionMMAQ5_K,
+                new KernelContext(),
+                a,
+                w,
+                out,
+                m,
+                N,
+                K);
+        graph.transferToHost(DataTransferMode.EVERY_EXECUTION, out);
+        execute(graph, "mmaQ5K.projection", m);
+
+        assertMatches("q5k", GGMLType.Q5_K, raw, out, m);
+    }
+
+    private static HalfFloatArray activations(int m) {
+        HalfFloatArray a = new HalfFloatArray(m * K);
+        for (int r = 0; r < m; r++) {
+            for (int i = 0; i < K; i++) {
+                a.set(r * K + i, new HalfFloat(activation(r, i)));
+            }
+        }
+        return a;
+    }
+
+    private static ByteArray toDevice(byte[] raw) {
+        ByteArray w = new ByteArray(raw.length);
+        for (int i = 0; i < raw.length; i++) {
+            w.set(i, raw[i]);
+        }
+        return w;
+    }
+
+    private static void execute(TaskGraph graph, String qualifiedTask, int m) throws Exception {
+        WorkerGrid worker =
+                new WorkerGrid1D(
+                        (m / Qwen35MMAKernels.BM)
+                                * (N / Qwen35MMAKernels.BN)
+                                * Qwen35MMAKernels.LOCAL);
+        worker.setLocalWork(Qwen35MMAKernels.LOCAL, 1, 1);
+        GridScheduler scheduler = new GridScheduler();
+        scheduler.addWorkerGrid(qualifiedTask, worker);
+        try (TornadoExecutionPlan plan = new TornadoExecutionPlan(graph.snapshot())) {
+            plan.withGridScheduler(scheduler).execute();
+        }
+    }
+
+    private static void assertMatches(
+            String what, GGMLType type, byte[] raw, FloatArray got, int m) {
+        float[] expected = new float[m * N];
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment segment = arena.allocate(raw.length);
+            MemorySegment.copy(raw, 0, segment, ValueLayout.JAVA_BYTE, 0, raw.length);
+            FloatTensor host =
+                    switch (type) {
+                        case Q5_K -> new Q5_KFloatTensor(N * K, segment);
+                        case Q4_1 -> new Q4_1FloatTensor(N * K, segment);
+                        default -> new Q4_0FloatTensor(N * K, segment);
+                    };
+            for (int r = 0; r < m; r++) {
+                for (int col = 0; col < N; col++) {
+                    float sum = 0f;
+                    for (int i = 0; i < K; i++) {
+                        sum += host.getFloat(col * K + i) * activation(r, i);
+                    }
+                    expected[r * N + col] = sum;
+                }
+            }
+        }
+        double largest = 0;
+        double worst = 0;
+        int worstAt = -1;
+        for (int i = 0; i < m * N; i++) {
+            largest = Math.max(largest, Math.abs(expected[i]));
+        }
+        for (int i = 0; i < m * N; i++) {
+            double err = Math.abs(expected[i] - got.get(i));
+            if (err > worst) {
+                worst = err;
+                worstAt = i;
+            }
+        }
+        assertTrue(
+                what
+                        + ": worst absolute error "
+                        + worst
+                        + " at row "
+                        + (worstAt / N)
+                        + " col "
+                        + (worstAt % N)
+                        + " (expected "
+                        + expected[worstAt]
+                        + ", got "
+                        + got.get(worstAt)
+                        + "), largest "
+                        + largest,
+                worst < 0.01 * largest);
     }
 }
