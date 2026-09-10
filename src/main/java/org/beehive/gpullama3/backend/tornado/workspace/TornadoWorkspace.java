@@ -129,8 +129,10 @@ public final class TornadoWorkspace {
     public FloatArray wrapSsmK;
     public FloatArray wrapSsmV;
     public FloatArray wrapSsmOut;
+
     /** The query half of an attention layer's fused query/gate projection, de-interleaved. */
     public FloatArray wrapAttnQ;
+
     /** Its gate half, applied through a logistic to the attention result. */
     public FloatArray wrapAttnGate;
 
@@ -139,6 +141,23 @@ public final class TornadoWorkspace {
     // single-token buffers are not reused with a stride parameter because a projection's input
     // width and its output width differ, and a shared buffer would make one of the two a lie.
     public FloatArray wrapNormedBatch;
+
+    /** The normed chunk as FP16, for the tensor-core projections. */
+    public HalfFloatArray wrapNormedFP16Batch;
+
+    /** Gate and up, before SwiGLU combines them, when the tensor-core path computes them. */
+    public FloatArray wrapGateBatch;
+
+    public FloatArray wrapUpBatch;
+
+    /** The SwiGLU output as FP16, and the tensor-core ffn_down result before it is added back. */
+    public HalfFloatArray wrapHbFP16BatchMMA;
+
+    public FloatArray wrapFFNDownBatch;
+
+    /** The delta-net readout as FP16, for the tensor-core ssm_out projection. */
+    public HalfFloatArray wrapSsmOutFP16Batch;
+
     public FloatArray wrapQGateBatch;
     public FloatArray wrapAttnQBatch;
     public FloatArray wrapAttnGateBatch;

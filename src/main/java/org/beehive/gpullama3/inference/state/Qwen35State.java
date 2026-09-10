@@ -391,6 +391,19 @@ public final class Qwen35State extends State {
             return;
         }
         workspace.wrapNormedBatch = TornadoWorkspaces.floats(batch * config.dim());
+        // The same chunk in FP16, for the tensor-core projections. The MMA row tile is sixteen, so
+        // the buffer carries whole tiles even when the chunk does not fill the last one.
+        workspace.wrapNormedFP16Batch =
+                TornadoWorkspaces.halfFloats(((batch + 15) / 16) * 16 * config.dim());
+        // Gate and up land here before SwiGLU combines them: the tensor-core path cannot fuse the
+        // combine, because that would mean reading fragment elements.
+        workspace.wrapGateBatch = TornadoWorkspaces.floats(batch * config.hiddenDim());
+        workspace.wrapUpBatch = TornadoWorkspaces.floats(batch * config.hiddenDim());
+        workspace.wrapHbFP16BatchMMA =
+                TornadoWorkspaces.halfFloats(((batch + 15) / 16) * 16 * config.hiddenDim());
+        workspace.wrapFFNDownBatch = TornadoWorkspaces.floats(batch * config.dim());
+        workspace.wrapSsmOutFP16Batch =
+                TornadoWorkspaces.halfFloats(((batch + 15) / 16) * 16 * config.deltaNetValueDim());
         workspace.wrapQGateBatch = TornadoWorkspaces.floats(batch * config.queryGateDim());
         workspace.wrapAttnQBatch =
                 TornadoWorkspaces.floats(batch * config.attentionOutputInputDim());
