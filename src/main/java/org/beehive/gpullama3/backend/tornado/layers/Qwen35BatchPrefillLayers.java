@@ -384,8 +384,33 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
             throw unsupported(
                     layer, "ffn_gate_up", "ffn_gate|ffn_up", gate.dataType(), "a batched");
         }
+        if (mmaEligible(config.dim(), config.hiddenDim())) {
+            mmaTasks.put("batchLayer_" + layer + ".ffn_gate_up", config.hiddenDim());
+            graph.task(
+                    "ffn_gate_up",
+                    Qwen35MMAKernels::projectionMMAQ4_0GateUp,
+                    context,
+                    state.workspace.wrapNormedFP16Batch,
+                    gate.asByteArray(),
+                    up.asByteArray(),
+                    state.workspace.wrapGateBatch,
+                    state.workspace.wrapUpBatch,
+                    batchSize,
+                    config.hiddenDim(),
+                    config.dim());
+            graph.task(
+                    "ffn_swiglu",
+                    Qwen35MMAKernels::swiGLUBatch,
+                    context,
+                    state.workspace.wrapGateBatch,
+                    state.workspace.wrapUpBatch,
+                    state.workspace.wrapHbBatch);
+            return;
+        }
         rowTiles.put(
                 "batchLayer_" + layer + ".ffn_gate_up", TransformerComputeKernelsQ4_0.ffnRowTile());
+        colTiles.put(
+                "batchLayer_" + layer + ".ffn_gate_up", TransformerComputeKernelsQ4_0.ffnColTile());
         graph.task(
                 "ffn_gate_up",
                 TransformerComputeKernelsQ4_0::fusedFFNGateUpSiLUTiledBatchQ4_0,
@@ -898,6 +923,8 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     context,
                     state.workspace.wrapNormedBatch,
                     state.workspace.wrapNormedFP16Batch,
+                    state.workspace.wrapGateBatch,
+                    state.workspace.wrapUpBatch,
                     state.workspace.attnScaleBatch,
                     state.workspace.ffnScaleBatch,
                     state.workspace.wrapQGateBatch,
@@ -928,6 +955,8 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     context,
                     state.workspace.wrapNormedBatch,
                     state.workspace.wrapNormedFP16Batch,
+                    state.workspace.wrapGateBatch,
+                    state.workspace.wrapUpBatch,
                     state.workspace.attnScaleBatch,
                     state.workspace.ffnScaleBatch,
                     state.workspace.wrapQGateBatch,
@@ -973,6 +1002,8 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                                 * Qwen35MMAKernels.BM
                                 * config.dim(),
                         ELEMENTWISE_LOCAL);
+        WorkerGrid swiglu =
+                WorkerGridFactory.genericWorker(batchSize * config.hiddenDim(), ELEMENTWISE_LOCAL);
         WorkerGrid queryGate =
                 WorkerGridFactory.genericWorker(
                         batchSize * config.attentionOutputInputDim(), ELEMENTWISE_LOCAL);
@@ -1023,6 +1054,9 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
             scheduler.addWorkerGrid(
                     prefix + "ffn_gate_up",
                     matVecWorker(prefix + "ffn_gate_up", config.hiddenDim()));
+            if (mmaTasks.containsKey(prefix + "ffn_gate_up")) {
+                scheduler.addWorkerGrid(prefix + "ffn_swiglu", swiglu);
+            }
             scheduler.addWorkerGrid(
                     prefix + "ffn_down_proj", matVecWorker(prefix + "ffn_down_proj", config.dim()));
 

@@ -145,6 +145,11 @@ public final class TornadoWorkspace {
     /** The normed chunk as FP16, for the tensor-core projections. */
     public HalfFloatArray wrapNormedFP16Batch;
 
+    /** Gate and up, before SwiGLU combines them, when the tensor-core path computes them. */
+    public FloatArray wrapGateBatch;
+
+    public FloatArray wrapUpBatch;
+
     public FloatArray wrapQGateBatch;
     public FloatArray wrapAttnQBatch;
     public FloatArray wrapAttnGateBatch;

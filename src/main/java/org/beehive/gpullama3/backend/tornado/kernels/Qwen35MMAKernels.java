@@ -2,6 +2,7 @@ package org.beehive.gpullama3.backend.tornado.kernels;
 
 import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.enums.MMAShape;
+import uk.ac.manchester.tornado.api.math.TornadoMath;
 import uk.ac.manchester.tornado.api.types.HalfFloat;
 import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
@@ -208,54 +209,202 @@ public final class Qwen35MMAKernels {
         int blockCol = colTile * BN;
         int blocksPerRow = k / QK;
 
-        int[] aTile = ctx.allocateIntLocalArray(BM * BK / 2);
-        HalfFloat[] bTile = ctx.allocateHalfFloatLocalArray(PANEL * BK);
+        int[] aTileLo = ctx.allocateIntLocalArray(BM * BK / 2);
+        int[] aTileHi = ctx.allocateIntLocalArray(BM * BK / 2);
+        HalfFloat[] bTileLo = ctx.allocateHalfFloatLocalArray(PANEL * BK);
+        HalfFloat[] bTileHi = ctx.allocateHalfFloatLocalArray(PANEL * BK);
 
         float[] acc = ctx.mmaFragment(0.0f);
 
-        int numKSteps = k / BK;
-        for (int kStep = 0; kStep < numKSteps; kStep++) {
-            int kBase = kStep * BK;
+        // One staging round per Q4_0 block, not per MMA step. A block is 32 elements and the MMA
+        // step is 16, so a round stages two tiles and issues two MMAs: the block scale is read
+        // once for all 32 of its weights instead of once per weight, both nibble halves of each
+        // packed byte are used, and the two barriers are paid per 32 elements rather than per 16.
+        //
+        // A lane owns eight consecutive elements of one column. Which half of the block those
+        // eight fall in is fixed by the lane, so the choice of destination tile is loop-invariant
+        // rather than a branch per element.
+        int stageCol = lane >> 2;
+        int stageQuarter = lane & 3;
+        int stageFirst = stageQuarter * 8;
+        int stageByte = stageFirst & 15;
+        boolean stageHighNibble = stageFirst >= 16;
+        boolean stageHighHalf = stageFirst >= 16;
+        int stageK = stageFirst & 15;
 
-            // A: 128 ints over 32 lanes, four each. Lane's int i holds row i/8 at element pair
-            // (i%8)*2 — gemmMMA's decomposition.
-            for (int slot = 0; slot < 4; slot++) {
+        int numBlocks = k / QK;
+        for (int blockIndex = 0; blockIndex < numBlocks; blockIndex++) {
+            int kBase = blockIndex * QK;
+
+            // A: 256 ints over 32 lanes, eight each — two MMA steps' worth. Int i holds row i/8 at
+            // element pair (i%8)*2 for the first step, and the same for the second.
+            for (int slot = 0; slot < 8; slot++) {
                 int i = lane + slot * WARP_SIZE;
-                int row = i >>> 3;
-                int kk = (i & 7) << 1;
-                int base = (blockRow + row) * k + kBase + kk;
-                aTile[i] =
+                int half = i >>> 7;
+                int j = i & 127;
+                int row = j >>> 3;
+                int kk = (j & 7) << 1;
+                int base = (blockRow + row) * k + kBase + half * BK + kk;
+                int value =
                         (aFP16.get(base).getHalfFloatValue() & 0xFFFF)
                                 | ((aFP16.get(base + 1).getHalfFloatValue() & 0xFFFF) << 16);
+                if (half == 0) {
+                    aTileLo[j] = value;
+                } else {
+                    aTileHi[j] = value;
+                }
             }
 
-            // B: the tile's columns by BK elements, decoded from Q4_0. A lane stays within one
-            // column for its four elements, so it reads that column's block scale once.
-            for (int slot = 0; slot < PANELS * PANEL * BK / WARP_SIZE; slot++) {
-                int i = lane + slot * WARP_SIZE;
-                int col = i >> 4;
-                int kk = i & 15;
-                int element = kBase + kk;
-                int block = element >> 5;
-                int within = element & 31;
-                int base = ((blockCol + col) * blocksPerRow + block) * BLOCK_BYTES;
-                float scale = halfFromBytes(w, base);
-                int packed = w.get(base + 2 + (within & 15)) & 0xFF;
+            // B: this lane's column, one scale, eight contiguous packed bytes.
+            int base = ((blockCol + stageCol) * blocksPerRow + blockIndex) * BLOCK_BYTES;
+            float scale = halfFromBytes(w, base);
+            for (int t = 0; t < 8; t++) {
+                int packed = w.get(base + 2 + stageByte + t) & 0xFF;
                 int q = packed & 0xF;
-                if (within >= 16) {
+                if (stageHighNibble) {
                     q = (packed >> 4) & 0xF;
                 }
+                HalfFloat value = new HalfFloat(scale * (q - 8));
                 // (k index, column, columns per row) — the order the swizzled load expects.
-                ctx.swizzleStoreFp16Stride32(bTile, kk, col, PANEL, new HalfFloat(scale * (q - 8)));
+                if (stageHighHalf) {
+                    ctx.swizzleStoreFp16Stride32(bTileHi, stageK + t, stageCol, PANEL, value);
+                } else {
+                    ctx.swizzleStoreFp16Stride32(bTileLo, stageK + t, stageCol, PANEL, value);
+                }
             }
             ctx.localBarrier();
 
-            HalfFloat[] fragA = ctx.mmaLoadA(aTile, BK);
-            HalfFloat[] fragB = ctx.mmaLoadBSwizzled(bTile, BK);
-            acc = ctx.mma(fragA, fragB, acc, MMAShape.M16N8K16);
+            acc =
+                    ctx.mma(
+                            ctx.mmaLoadA(aTileLo, BK),
+                            ctx.mmaLoadBSwizzled(bTileLo, BK),
+                            acc,
+                            MMAShape.M16N8K16);
+            acc =
+                    ctx.mma(
+                            ctx.mmaLoadA(aTileHi, BK),
+                            ctx.mmaLoadBSwizzled(bTileHi, BK),
+                            acc,
+                            MMAShape.M16N8K16);
             ctx.localBarrier();
         }
 
         ctx.mmaStore(acc, out, blockRow, blockCol, n);
+    }
+
+    // @formatter:off
+    /**
+     * The fused gate/up projection on the tensor cores: {@code gate = A x W1}, {@code up = A x W3},
+     * both {@code Q4_0}, sharing one staged activation tile.
+     *
+     * <p>Two weight matrices against the same activations, so staging A once and keeping two
+     * accumulators pays for itself directly. SwiGLU is not applied here — combining the two
+     * accumulators elementwise would mean reading fragment elements, which the API does not offer —
+     * so the two results are written out and {@link #swiGLUBatch} combines them, which is the same
+     * split the FP16 families use between {@code gemmMMAGateUp} and {@code batchedFFNSwiGLU}.
+     */
+    // @formatter:on
+    public static void projectionMMAQ4_0GateUp(
+            KernelContext ctx,
+            HalfFloatArray aFP16,
+            ByteArray w1,
+            ByteArray w3,
+            FloatArray gateOut,
+            FloatArray upOut,
+            int m,
+            int n,
+            int k) {
+        int lane = ctx.localIdx;
+        int colTiles = n / BN;
+        int group = ctx.groupIdx;
+        int rowTile = group / colTiles;
+        int colTile = group - rowTile * colTiles;
+        int blockRow = rowTile * BM;
+        int blockCol = colTile * BN;
+        int blocksPerRow = k / QK;
+
+        int[] aTileLo = ctx.allocateIntLocalArray(BM * BK / 2);
+        int[] aTileHi = ctx.allocateIntLocalArray(BM * BK / 2);
+        HalfFloat[] gateLo = ctx.allocateHalfFloatLocalArray(PANEL * BK);
+        HalfFloat[] gateHi = ctx.allocateHalfFloatLocalArray(PANEL * BK);
+        HalfFloat[] upLo = ctx.allocateHalfFloatLocalArray(PANEL * BK);
+        HalfFloat[] upHi = ctx.allocateHalfFloatLocalArray(PANEL * BK);
+
+        float[] accGate = ctx.mmaFragment(0.0f);
+        float[] accUp = ctx.mmaFragment(0.0f);
+
+        int stageCol = lane >> 2;
+        int stageFirst = (lane & 3) * 8;
+        int stageByte = stageFirst & 15;
+        boolean stageHighNibble = stageFirst >= 16;
+        boolean stageHighHalf = stageFirst >= 16;
+        int stageK = stageFirst & 15;
+
+        int numBlocks = k / QK;
+        for (int blockIndex = 0; blockIndex < numBlocks; blockIndex++) {
+            int kBase = blockIndex * QK;
+
+            for (int slot = 0; slot < 8; slot++) {
+                int i = lane + slot * WARP_SIZE;
+                int half = i >>> 7;
+                int j = i & 127;
+                int row = j >>> 3;
+                int kk = (j & 7) << 1;
+                int base = (blockRow + row) * k + kBase + half * BK + kk;
+                int value =
+                        (aFP16.get(base).getHalfFloatValue() & 0xFFFF)
+                                | ((aFP16.get(base + 1).getHalfFloatValue() & 0xFFFF) << 16);
+                if (half == 0) {
+                    aTileLo[j] = value;
+                } else {
+                    aTileHi[j] = value;
+                }
+            }
+
+            int base = ((blockCol + stageCol) * blocksPerRow + blockIndex) * BLOCK_BYTES;
+            float gateScale = halfFromBytes(w1, base);
+            float upScale = halfFromBytes(w3, base);
+            for (int t = 0; t < 8; t++) {
+                int gatePacked = w1.get(base + 2 + stageByte + t) & 0xFF;
+                int upPacked = w3.get(base + 2 + stageByte + t) & 0xFF;
+                int gateQ = gatePacked & 0xF;
+                int upQ = upPacked & 0xF;
+                if (stageHighNibble) {
+                    gateQ = (gatePacked >> 4) & 0xF;
+                    upQ = (upPacked >> 4) & 0xF;
+                }
+                HalfFloat gateValue = new HalfFloat(gateScale * (gateQ - 8));
+                HalfFloat upValue = new HalfFloat(upScale * (upQ - 8));
+                if (stageHighHalf) {
+                    ctx.swizzleStoreFp16Stride32(gateHi, stageK + t, stageCol, PANEL, gateValue);
+                    ctx.swizzleStoreFp16Stride32(upHi, stageK + t, stageCol, PANEL, upValue);
+                } else {
+                    ctx.swizzleStoreFp16Stride32(gateLo, stageK + t, stageCol, PANEL, gateValue);
+                    ctx.swizzleStoreFp16Stride32(upLo, stageK + t, stageCol, PANEL, upValue);
+                }
+            }
+            ctx.localBarrier();
+
+            HalfFloat[] fragALo = ctx.mmaLoadA(aTileLo, BK);
+            HalfFloat[] fragAHi = ctx.mmaLoadA(aTileHi, BK);
+            accGate =
+                    ctx.mma(fragALo, ctx.mmaLoadBSwizzled(gateLo, BK), accGate, MMAShape.M16N8K16);
+            accGate =
+                    ctx.mma(fragAHi, ctx.mmaLoadBSwizzled(gateHi, BK), accGate, MMAShape.M16N8K16);
+            accUp = ctx.mma(fragALo, ctx.mmaLoadBSwizzled(upLo, BK), accUp, MMAShape.M16N8K16);
+            accUp = ctx.mma(fragAHi, ctx.mmaLoadBSwizzled(upHi, BK), accUp, MMAShape.M16N8K16);
+            ctx.localBarrier();
+        }
+
+        ctx.mmaStore(accGate, gateOut, blockRow, blockCol, n);
+        ctx.mmaStore(accUp, upOut, blockRow, blockCol, n);
+    }
+
+    /** {@code hb = silu(gate) * up} over the chunk. One lane per element. */
+    public static void swiGLUBatch(
+            KernelContext ctx, FloatArray gate, FloatArray up, FloatArray hb) {
+        int index = ctx.globalIdx;
+        float g = gate.get(index);
+        hb.set(index, (g / (1.0f + TornadoMath.exp(-g))) * up.get(index));
     }
 }

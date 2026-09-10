@@ -12,19 +12,19 @@ import org.junit.Test;
 /**
  * What a {@code qwen35} session allocates, on each path.
  *
- * <p>Two things here are unlike every other family and both are about size rather than
- * correctness — which is why they need a test at all. Only one block in four attends, so a
- * key/value store sized by the block count would be four times larger than the model uses; and the
- * recurrent layers hold state that no other family has, which must exist on whichever path is
- * running and must start at zero on both.
+ * <p>Two things here are unlike every other family and both are about size rather than correctness
+ * — which is why they need a test at all. Only one block in four attends, so a key/value store
+ * sized by the block count would be four times larger than the model uses; and the recurrent layers
+ * hold state that no other family has, which must exist on whichever path is running and must start
+ * at zero on both.
  */
 public class Qwen35StateTest {
 
     /** Qwen3.8-27B's shape, at a context small enough to allocate in a test. */
     private static Qwen35Configuration config() {
         return new Qwen35Configuration(
-                "Q8_0", 5120, 17408, 64, 1, 24, 4, 256, 256, 4, 4, 128, 16, 48, 6144, 64,
-                248320, 262144, /* contextLength */ 256, 1e-6f, 1e7f);
+                "Q8_0", 5120, 17408, 64, 1, 24, 4, 256, 256, 4, 4, 128, 16, 48, 6144, 64, 248320,
+                262144, /* contextLength */ 256, 1e-6f, 1e7f);
     }
 
     @After
