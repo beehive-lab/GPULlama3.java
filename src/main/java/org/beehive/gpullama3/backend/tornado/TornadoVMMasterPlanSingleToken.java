@@ -119,6 +119,11 @@ public class TornadoVMMasterPlanSingleToken implements TornadoVMMasterPlan {
 
     // @formatter:on
 
+    @Override
+    public void resetSequenceState() {
+        TornadoVMMasterPlan.resetSequenceState(executionPlan, state, taskGraphLayout.layerIdx(0));
+    }
+
     // @formatter:off
     @Override
     public void forceCopyInReadOnlyData() {

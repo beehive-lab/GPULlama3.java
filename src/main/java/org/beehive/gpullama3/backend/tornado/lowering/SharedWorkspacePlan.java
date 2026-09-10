@@ -139,6 +139,21 @@ public final class SharedWorkspacePlan implements TornadoVMMasterPlan, Invocatio
     }
 
     /**
+     * Delegates, holding the domain's lock.
+     *
+     * <p>The recurrent state lives in the shared workspace, so this is a write another session
+     * could observe. It is taken under the lock for that reason, and it is only correct because a
+     * reset is a session-level act on a workspace the sessions take turns in — the same contract
+     * every other invocation here relies on.
+     */
+    @Override
+    public void resetSequenceState() {
+        synchronized (lock) {
+            shared.resetSequenceState();
+        }
+    }
+
+    /**
      * Releases nothing.
      *
      * <p>The compiled program belongs to the domain and outlives every session that borrowed it; a

@@ -142,6 +142,40 @@ public interface TornadoVMMasterPlan {
 
     void forceCopyInReadOnlyData();
 
+    /**
+     * Returns the session to the sequence condition it was created in.
+     *
+     * <p>Nothing for a family whose only per-sequence memory is a key/value cache. For one with
+     * recurrent state it zeroes that state <b>and puts the zeros on the device</b>: the buffers are
+     * uploaded once and then persist there, so clearing the host arrays alone would leave the
+     * accelerator conditioning the next sequence on the last one.
+     */
+    void resetSequenceState();
+
+    /**
+     * The shared implementation of {@link #resetSequenceState()}: zero on the host, then upload.
+     *
+     * <p>{@code transferToDevice} waits for the device before it returns, so the state is zero
+     * there by the time the caller runs again.
+     *
+     * <p><b>Through one graph, not the whole plan.</b> A plan-wide upload runs once per task-graph
+     * that takes the object as a parameter, and every layer graph takes this state: on the 27B's
+     * batched plan that is 128 uploads of the same 151 MB buffer, 19 GB and 0.7 s for a reset that
+     * has one buffer to write. The graphs share the device buffer — that is what {@code
+     * consumeFromDevice} between them means — so one graph that binds it writes the copy all of
+     * them read.
+     *
+     * @param graphBindingRecurrentState index of a graph that takes these buffers as parameters
+     */
+    static void resetSequenceState(
+            TornadoExecutionPlan executionPlan, State state, int graphBindingRecurrentState) {
+        state.resetSequenceState();
+        Object[] recurrent = state.recurrentDeviceBuffers();
+        if (recurrent.length > 0) {
+            executionPlan.withGraph(graphBindingRecurrentState).transferToDevice(recurrent);
+        }
+    }
+
     FloatArray tornadoVMForwardDecode(int position);
 
     /** Releases all device memory held by this plan. */
