@@ -115,6 +115,43 @@ abstract class CpuGpuParity {
     static final Bounds Q8_0_PACKED_ACTIVATION =
             new Bounds(1.7e-4, 1e-2, 0.32, 5e-2, 0.9994, 0.5, 0.5);
 
+    // @formatter:off
+    /**
+     * The same, for the paths that pack the <b>feed-forward</b> activation as well.
+     *
+     * <p>{@code STANDARD} and sequential prefill quantize the feed-forward's activation at every
+     * position, prompt included; the batched path packs only its decode rows and stays inside
+     * {@link #Q8_0_PACKED_ACTIVATION}. Two different amounts of quantization are two different
+     * envelopes, and widening the shared one to cover this would weaken a path that passes in order
+     * to admit a path that does not. Only the two fully-packed cases take this, and each names the
+     * mode it runs.
+     *
+     * <p><b>A fixture-specific regression envelope for an accepted precision tradeoff.</b> Not a
+     * quality guarantee, and not a statistically calibrated threshold: it is one 63-row trace of
+     * one fixture, and the headroom below is an engineering allowance rather than a measured bound
+     * on variability, which has not been established.
+     *
+     * <p>Measured on that trace, reference RMS 3.272, against the allowance chosen for each:
+     *
+     * <ul>
+     *   <li>largest absolute difference 0.457 of the RMS against {@code 0.70} — about 1.5x, on a
+     *       single worst logit out of 15.6 million;
+     *   <li>relative L2 0.0571 against {@code 0.075} — about 1.3x, and the most informative of the
+     *       three, being an aggregate over a quarter of a million logits per row;
+     *   <li>cosine 0.99837 against {@code 0.9975} — about 1.53x the <i>deficit</i> from one, which
+     *       is the quantity that matters rather than the ratio of the similarities.
+     * </ul>
+     *
+     * <p>Everything else is {@link #Q8_0_PACKED_ACTIVATION}'s, unchanged: the elementwise budget
+     * passes at 33.13% of 50%, and the decision gap does not move, because an argmax reversal where
+     * the reference was not close would still be a defect. On this trace there were none — 0/63 —
+     * with top-5 4.984/5 and top-10 9.873/10.
+     *
+     * <p>These limits are not to be loosened again for the next optimization.
+     */
+    // @formatter:on
+    static final Bounds Q8_0_FULLY_PACKED = new Bounds(1.7e-4, 1e-2, 0.70, 0.075, 0.9975, 0.5, 0.5);
+
     /** The CPU reference against the accelerator running its default single-token path. */
     void assertParity(Fixture fixture, Bounds bounds) throws Exception {
         assertParity(fixture, bounds, 1);

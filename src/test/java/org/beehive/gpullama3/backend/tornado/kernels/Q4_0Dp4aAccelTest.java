@@ -84,6 +84,157 @@ public class Q4_0Dp4aAccelTest {
         return raw;
     }
 
+    // @formatter:off
+    /**
+     * The fused gate/up form: both projections and the SiLU that combines them.
+     *
+     * <p>Against a reference quantizing the activation identically, so what is being checked is the
+     * kernel rather than the representation. Three things it can get wrong that the single
+     * projection cannot: the two weight matrices sharing one activation's scale and correction, the
+     * two halves of the reduction tree, and the SiLU being applied to the gate before the multiply
+     * rather than after.
+     *
+     * <p>The activation carries a <b>zero block</b> — thirty-two exact zeros, whose scale is zero
+     * and whose contribution must be zero rather than a division by it — alongside blocks of mixed
+     * sign and very different magnitudes, so the per-block scales are nonuniform by construction.
+     */
+    // @formatter:on
+    @Test
+    public void theFusedGateUpMatchesAReferenceThatQuantizesTheSameWay() throws Exception {
+        byte[] rawGate = realisticWeights(31337L);
+        byte[] rawUp = realisticWeights(90210L);
+
+        float[] host = new float[N];
+        for (int i = 0; i < N; i++) {
+            int block = i / QK;
+            if (block == 2) {
+                host[i] = 0.0f; // a zero block: scale zero, contribution zero
+            } else if (block % 3 == 0) {
+                host[i] = (float) (Math.sin(0.013 * i) * 1e-3); // tiny magnitudes
+            } else if (block % 3 == 1) {
+                host[i] = (float) (Math.cos(0.021 * i) * 40.0); // large, both signs
+            } else {
+                host[i] = (i % 2 == 0 ? 1 : -1) * (0.25f + (i % 11) * 0.5f);
+            }
+        }
+
+        FloatArray x = new FloatArray(N);
+        for (int i = 0; i < N; i++) {
+            x.set(i, host[i]);
+        }
+        IntArray quants = new IntArray(N / 4);
+        FloatArray scales = new FloatArray(N / QK);
+        IntArray sums = new IntArray(N / QK);
+        quants.init(0);
+        scales.init(0.0f);
+        sums.init(0);
+        FloatArray hb = new FloatArray(D);
+        hb.init(0.0f);
+        ByteArray w1 = toDevice(rawGate);
+        ByteArray w3 = toDevice(rawUp);
+
+        TaskGraph graph =
+                new TaskGraph("fused")
+                        .transferToDevice(
+                                DataTransferMode.EVERY_EXECUTION,
+                                x,
+                                w1,
+                                w3,
+                                quants,
+                                scales,
+                                sums,
+                                hb)
+                        .task(
+                                "quantize",
+                                TransformerComputeKernelsQ4_0::quantizeActivationQ8Blocks,
+                                new KernelContext(),
+                                x,
+                                quants,
+                                scales,
+                                sums)
+                        .task(
+                                "gateUp",
+                                TransformerComputeKernelsQ4_0::fusedFFNGateUpSiLUQ4_0DP4A,
+                                new KernelContext(),
+                                quants,
+                                scales,
+                                sums,
+                                hb,
+                                w1,
+                                w3,
+                                N,
+                                D,
+                                LOCAL)
+                        .transferToHost(DataTransferMode.EVERY_EXECUTION, hb, quants, scales, sums);
+
+        GridScheduler scheduler = new GridScheduler();
+        WorkerGrid1D blocks = new WorkerGrid1D(N);
+        blocks.setLocalWork(QK, 1, 1);
+        scheduler.addWorkerGrid("fused.quantize", blocks);
+        WorkerGrid1D rows = new WorkerGrid1D(D * LOCAL);
+        rows.setLocalWork(LOCAL, 1, 1);
+        scheduler.addWorkerGrid("fused.gateUp", rows);
+        try (TornadoExecutionPlan plan = new TornadoExecutionPlan(graph.snapshot())) {
+            plan.withGridScheduler(scheduler).execute();
+        }
+
+        Quantized reference = new Quantized(host);
+        // The zero block must have come out as a zero scale, not a NaN.
+        assertEquals("the zero block's scale", 0.0f, reference.scales[2], 0.0f);
+        assertEquals("the zero block's scale on the device", 0.0f, scales.get(2), 0.0f);
+        assertEquals("the zero block's sum on the device", 0, sums.get(2));
+
+        double largest = 0;
+        double worst = 0;
+        int worstRow = -1;
+        for (int row = 0; row < D; row++) {
+            double gate = 0;
+            double up = 0;
+            for (int block = 0; block < N / QK; block++) {
+                int gateDot = 0;
+                int upDot = 0;
+                for (int i = 0; i < QK; i++) {
+                    int packedQuant = reference.quants[block * (QK / 4) + i / 4];
+                    int quant = (byte) ((packedQuant >> ((i % 4) * 8)) & 0xFF);
+                    gateDot += (nibbleOf(rawGate, row, block * QK + i) - 8) * quant;
+                    upDot += (nibbleOf(rawUp, row, block * QK + i) - 8) * quant;
+                }
+                gate += (double) scaleOf(rawGate, row, block) * reference.scales[block] * gateDot;
+                up += (double) scaleOf(rawUp, row, block) * reference.scales[block] * upDot;
+            }
+            double silu = gate / (1.0 + Math.exp(-gate));
+            double expected = silu * up;
+            float got = hb.get(row);
+            assertTrue("row " + row + " is " + got, Float.isFinite(got));
+            largest = Math.max(largest, Math.abs(expected));
+            if (Math.abs(expected - got) > worst) {
+                worst = Math.abs(expected - got);
+                worstRow = row;
+            }
+        }
+        System.out.printf(
+                "[FUSED] against the same-quantization reference: worst %.6g at row %d,"
+                        + " largest |out| %.6g%n",
+                worst, worstRow, largest);
+        assertTrue(
+                "worst " + worst + " at row " + worstRow + " against largest " + largest,
+                worst <= 1e-4 * largest);
+    }
+
+    private static int nibbleOf(byte[] raw, int row, int element) {
+        int block = element / QK;
+        int within = element - block * QK;
+        int base = (row * (N / QK) + block) * BLOCK_BYTES;
+        int packed = raw[base + 2 + (within & 15)] & 0xFF;
+        return within < 16 ? (packed & 0xF) : ((packed >> 4) & 0xF);
+    }
+
+    private static float scaleOf(byte[] raw, int row, int block) {
+        int base = (row * (N / QK) + block) * BLOCK_BYTES;
+        int bits = (raw[base] & 0xFF) | ((raw[base + 1] & 0xFF) << 8);
+        return new HalfFloat((short) bits).getFloat32();
+    }
+
     /** The host's copy of the kernel's activation quantization, block by block. */
     private static final class Quantized {
         final int[] quants = new int[N / 4];

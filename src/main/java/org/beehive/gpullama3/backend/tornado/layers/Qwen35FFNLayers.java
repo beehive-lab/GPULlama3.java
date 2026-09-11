@@ -471,8 +471,28 @@ public class Qwen35FFNLayers
                 List.of("ffn_gate", "ffn_up"),
                 gate,
                 up);
+        boolean packed =
+                gate.dataType() == DataType.Q4_0
+                        && x == qwen35State.workspace.wrapXb
+                        && normedActivationQuantized;
         dispatches.add(
-                new Dispatch(layer, "ffn_gate_up", "ffn_gate|ffn_up", gate.dataType(), false));
+                new Dispatch(layer, "ffn_gate_up", "ffn_gate|ffn_up", gate.dataType(), packed));
+        if (packed) {
+            graph.task(
+                    "ffn_gate_up",
+                    TransformerComputeKernelsQ4_0::fusedFFNGateUpSiLUQ4_0DP4A,
+                    context,
+                    qwen35State.workspace.wrapXbQuants,
+                    qwen35State.workspace.wrapXbScales,
+                    qwen35State.workspace.wrapXbSums,
+                    qwen35State.workspace.wrapHb,
+                    gate.asByteArray(),
+                    up.asByteArray(),
+                    config.dim(),
+                    config.hiddenDim(),
+                    MATVEC_LOCAL);
+            return;
+        }
         switch (gate.dataType()) {
             case Q4_0 ->
                     graph.task(
@@ -579,6 +599,22 @@ public class Qwen35FFNLayers
                 "ffn_rms_apply",
                 qwen35State.workspace.tempFFN,
                 require(weights.rms_ffn_weightLayered, layerIndex, "post_attention_norm"));
+
+        if (DP4A) {
+            // Its own quantization, of the feed-forward's own activation. The branch's quants
+            // describe the attention norm's output, which this is not. The scratch is the same
+            // three arrays: the branch's projections are all behind us in this graph, so the
+            // buffers are free, and a second set would cost memory to say the same thing.
+            layer.task(
+                    "ffn_xb_quantize",
+                    TransformerComputeKernelsQ4_0::quantizeActivationQ8Blocks,
+                    context,
+                    qwen35State.workspace.wrapXb,
+                    qwen35State.workspace.wrapXbQuants,
+                    qwen35State.workspace.wrapXbScales,
+                    qwen35State.workspace.wrapXbSums);
+            normedActivationQuantized = true;
+        }
 
         fusedGateUp(
                 layer,
@@ -1279,6 +1315,9 @@ public class Qwen35FFNLayers
             if (DP4A) {
                 WorkerGrid quantize = WorkerGridFactory.genericWorker(config.dim(), 32);
                 scheduler.addWorkerGrid(prefix + "xb_quantize", quantize);
+                scheduler.addWorkerGrid(
+                        prefix + "ffn_xb_quantize",
+                        WorkerGridFactory.genericWorker(config.dim(), 32));
             }
             scheduler.addWorkerGrid(prefix + "ffn_rms_apply", rmsApply);
             scheduler.addWorkerGrid(prefix + "ffn_gate_up", matVecWorker(config.hiddenDim()));
