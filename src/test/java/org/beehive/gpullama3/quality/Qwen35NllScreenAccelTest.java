@@ -112,6 +112,15 @@ public class Qwen35NllScreenAccelTest {
                     .append(model.tokenizer().getClass().getSimpleName())
                     .append('\n');
             report.append("packedIntegerDot=").append(packed).append('\n');
+            // The execution path this screen actually scored, read off the plan and the layer
+            // builder rather than assumed from the absence of a batch width. Which projections
+            // read a quantized activation is the whole subject, so it is recorded, not inferred.
+            report.append("plan=").append(plan.getClass().getSimpleName()).append('\n');
+            report.append("executionCombination=")
+                    .append(
+                            org.beehive.gpullama3.auxiliary.RunMetrics.snapshot()
+                                    .executionCombination())
+                    .append('\n');
 
             double pooledNll = 0;
             long pooledTokens = 0;
