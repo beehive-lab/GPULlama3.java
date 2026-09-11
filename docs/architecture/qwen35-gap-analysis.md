@@ -119,3 +119,33 @@ none of it. Closing that is a kernel to write here, not a feature to request ups
 
 An earlier revision of this document claimed the opposite, on an assumption rather than on a look
 at the API. The claim was wrong and the correction is the most actionable line in the file.
+
+## Packed-integer decode: what won, what lost
+
+Measured on the RTX 5090 Laptop, `Qwen3.8-27B-Q4_0`, weights resident before timing, 100
+iterations after 20 untimed.
+
+| projection | shape (n -> d) | kernel family | floating point | packed | |
+| --- | --- | --- | ---: | ---: | --- |
+| branch projections | 5120 -> 6144 | plain | 0.1133 ms | 0.0415 ms | **2.7x** |
+| `ffn_down` | 17408 -> 5120 | residual | 0.1567 ms | 0.1735 ms | 0.90x |
+| `attn_output` | 6144 -> 5120 | residual | 0.0796 ms | 0.1207 ms | 0.66x |
+
+Times are the matrix-vector alone; the activation quantization adds 0.026-0.042 ms and is
+charged to the packed side in the decisions below. It does **not** scale with the activation's
+length across these measurements — 17408 elements cost no more than 6144 — but that comparison
+is across separate experiments and is not by itself evidence that a longer quantizer is
+intrinsically cheaper.
+
+The two residual candidates were discarded: `ffn_down` at 0.79x and `attn_output` at 0.54x of
+the current kernel, both including preparation. Correctness was not the problem — each agreed
+with a reference quantizing identically to about 1.2e-7 relative, with zero blocks, mixed signs
+and finiteness checked.
+
+**Why the packed form wins at one shape and loses at the other two is not established.** Two
+things differ between them at once: the kernel family, plain against residual, and the shape,
+whose reduction length and row count are swapped. Neither has been isolated. Worth noting for
+anyone who returns to this: the floating-point *residual* kernel at 6144 -> 5120 costs 0.0796 ms
+against the floating-point *plain* kernel's 0.1133 ms at 5120 -> 6144, which is comparable work,
+so the two floating-point kernels appear to differ in more than the residual add. That
+observation is a starting point, not a conclusion.
