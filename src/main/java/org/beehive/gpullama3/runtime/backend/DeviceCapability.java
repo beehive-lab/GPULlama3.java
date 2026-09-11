@@ -49,10 +49,21 @@ public final class DeviceCapability {
 
     /**
      * The device lowers {@code QuantizationUtils.dp4a_packed} to a packed four-way integer
-     * dot-product instruction.
+     * dot-product instruction <b>and</b> computes {@code KernelContext.simdShuffleDown} correctly.
      *
-     * <p>The Java body is a correct scalar fallback, so a device without this still computes the
-     * right answer — it just has no reason to prefer the packed path over the floating-point one.
+     * <p>The Java body of {@code dp4a_packed} is a correct scalar fallback, so a device without
+     * this still computes the right answer — it just has no reason to prefer the packed path over
+     * the floating-point one.
+     *
+     * <p><b>The second half of that contract is not incidental.</b> Every packed kernel reduces
+     * with a warp-shuffle butterfly rather than a shared-memory tree, so this one grant selects
+     * both the instruction and the reduction. It is granted on CUDA alone, where both are
+     * verified; the OpenCL backend lowers {@code dp4a_packed} and would compute the dot products
+     * correctly, but miscompiles the shuffle, so granting this there would produce wrong answers
+     * even though the instruction half holds. A backend that wants the packed arithmetic without
+     * the shuffle needs the kernels to carry a shared-memory reduction again — it is not a matter
+     * of adding a grant. See {@link #WARP_SHUFFLE}, which is a different question about the
+     * floating-point kernels and is granted nowhere.
      */
     public static final DeviceCapability PACKED_INTEGER_DOT = of("packed-integer-dot");
 

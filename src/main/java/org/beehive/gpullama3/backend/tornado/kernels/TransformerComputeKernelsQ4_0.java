@@ -241,6 +241,18 @@ public final class TransformerComputeKernelsQ4_0 {
      *
      * <p>The activations must have been prepared by {@link #quantizeActivationQ8Blocks}; the {@code
      * -8 * sum} correction it precomputes is applied once per block here.
+     *
+     * <p>The reduction is a warp-shuffle butterfly, not a shared-memory tree: each 32-lane warp
+     * reduces its own partial with five {@code simdShuffleDown} steps, one lane per warp writes to
+     * shared memory, and a single barrier separates that from the combine — one barrier where the
+     * tree needed seven at the 128-lane width this repository dispatches. All lanes reach the
+     * shuffles; the only early return is on {@code rowId}, which is uniform across the workgroup,
+     * and {@code localWorkGroupSize} must be a multiple of 32. Shuffles are correct on CUDA and
+     * miscompile on OpenCL, which is why every packed kernel rides on {@code
+     * DeviceCapability.PACKED_INTEGER_DOT}, granted on CUDA alone. Interleaved whole-model A/B,
+     * tg128 b32, FP16 KV and CUDA graphs, RTX 5090 Laptop: 24.16 to 24.67 t/s against the tree,
+     * and 17.19 to 17.37 at depth 381. The order of summation differs from the tree's, so the
+     * floating-point total may round differently; the integer dot products are exact either way.
      */
     // @formatter:on
     public static void matrixVectorGenericQ4_0DP4A(
@@ -258,7 +270,8 @@ public final class TransformerComputeKernelsQ4_0 {
             return;
         }
         int localId = context.localIdx;
-        float[] localSums = context.allocateFloatLocalArray(localWorkGroupSize);
+        int warpCount = localWorkGroupSize / 32;
+        float[] warpSums = context.allocateFloatLocalArray(warpCount);
 
         int blocksPerRow = (n + QK - 1) / QK;
         int rowBlockOffset = rowId * blocksPerRow;
@@ -287,16 +300,23 @@ public final class TransformerComputeKernelsQ4_0 {
             partialSum += weightScale * xScales.get(block) * (dot - 8 * xSums.get(block));
         }
 
-        localSums[localId] = partialSum;
-        context.localBarrier();
-        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
-            if (localId < stride) {
-                localSums[localId] += localSums[localId + stride];
-            }
-            context.localBarrier();
+        partialSum += context.simdShuffleDown(partialSum, 16);
+        partialSum += context.simdShuffleDown(partialSum, 8);
+        partialSum += context.simdShuffleDown(partialSum, 4);
+        partialSum += context.simdShuffleDown(partialSum, 2);
+        partialSum += context.simdShuffleDown(partialSum, 1);
+
+        if ((localId & 31) == 0) {
+            warpSums[localId >> 5] = partialSum;
         }
+        context.localBarrier();
+
         if (localId == 0) {
-            output.set(rowId, localSums[0]);
+            float total = 0.0f;
+            for (int warp = 0; warp < warpCount; warp++) {
+                total += warpSums[warp];
+            }
+            output.set(rowId, total);
         }
     }
 
@@ -499,7 +519,8 @@ public final class TransformerComputeKernelsQ4_0 {
             return;
         }
         int localId = context.localIdx;
-        float[] localSums = context.allocateFloatLocalArray(localWorkGroupSize);
+        int warpCount = localWorkGroupSize / 32;
+        float[] warpSums = context.allocateFloatLocalArray(warpCount);
 
         int blocksPerRow = (n + QK - 1) / QK;
         int rowBlockOffset = rowId * blocksPerRow;
@@ -536,16 +557,23 @@ public final class TransformerComputeKernelsQ4_0 {
             partialSum += weightScale * xScales.get(block) * (dot - 8 * xSums.get(block));
         }
 
-        localSums[localId] = partialSum;
-        context.localBarrier();
-        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
-            if (localId < stride) {
-                localSums[localId] += localSums[localId + stride];
-            }
-            context.localBarrier();
+        partialSum += context.simdShuffleDown(partialSum, 16);
+        partialSum += context.simdShuffleDown(partialSum, 8);
+        partialSum += context.simdShuffleDown(partialSum, 4);
+        partialSum += context.simdShuffleDown(partialSum, 2);
+        partialSum += context.simdShuffleDown(partialSum, 1);
+
+        if ((localId & 31) == 0) {
+            warpSums[localId >> 5] = partialSum;
         }
+        context.localBarrier();
+
         if (localId == 0) {
-            hb.set(rowId, hb.get(rowId) + localSums[0]);
+            float total = 0.0f;
+            for (int warp = 0; warp < warpCount; warp++) {
+                total += warpSums[warp];
+            }
+            hb.set(rowId, hb.get(rowId) + total);
         }
     }
 
@@ -588,7 +616,10 @@ public final class TransformerComputeKernelsQ4_0 {
             return;
         }
 
-        float[] localSums = context.allocateFloatLocalArray(localWorkGroupSize * 2);
+        int warpCount = localWorkGroupSize / 32;
+        // Gate in the first warpCount entries, up in the second — the halves-of-one-array layout
+        // the tree used, at a thirty-second of the size.
+        float[] warpSums = context.allocateFloatLocalArray(warpCount * 2);
         int blocksPerRow = (n + QK - 1) / QK;
         int rowBlockOffset = rowId * blocksPerRow;
 
@@ -652,23 +683,34 @@ public final class TransformerComputeKernelsQ4_0 {
             up += upScale * activationScale * (upDot - correction);
         }
 
-        localSums[localId] = gate;
-        localSums[localWorkGroupSize + localId] = up;
+        gate += context.simdShuffleDown(gate, 16);
+        gate += context.simdShuffleDown(gate, 8);
+        gate += context.simdShuffleDown(gate, 4);
+        gate += context.simdShuffleDown(gate, 2);
+        gate += context.simdShuffleDown(gate, 1);
+        up += context.simdShuffleDown(up, 16);
+        up += context.simdShuffleDown(up, 8);
+        up += context.simdShuffleDown(up, 4);
+        up += context.simdShuffleDown(up, 2);
+        up += context.simdShuffleDown(up, 1);
+
+        if ((localId & 31) == 0) {
+            warpSums[localId >> 5] = gate;
+            warpSums[warpCount + (localId >> 5)] = up;
+        }
         context.localBarrier();
 
-        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
-            if (localId < stride) {
-                localSums[localId] += localSums[localId + stride];
-                localSums[localWorkGroupSize + localId] +=
-                        localSums[localWorkGroupSize + localId + stride];
-            }
-            context.localBarrier();
-        }
-
         if (localId == 0) {
-            float gateSum = localSums[0];
+            float gateSum = 0.0f;
+            float upSum = 0.0f;
+            for (int warp = 0; warp < warpCount; warp++) {
+                gateSum += warpSums[warp];
+                upSum += warpSums[warpCount + warp];
+            }
+            // SiLU is applied to the gate reduced across every warp, never per warp: it is not
+            // linear, so the order is the function.
             float silu = gateSum / (1.0f + TornadoMath.exp(-gateSum));
-            hb.set(rowId, silu * localSums[localWorkGroupSize]);
+            hb.set(rowId, silu * upSum);
         }
     }
 
