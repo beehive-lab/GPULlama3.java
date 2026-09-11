@@ -475,6 +475,129 @@ public final class TransformerComputeKernelsQ4_0 {
 
     // @formatter:off
     /**
+     * {@code hb[row] = silu(w1[row]·x) * (w3[row]·x)} with both projections in packed integers.
+     *
+     * <p>The packed counterpart of {@link #fusedFFNGateUpSiLUQ4_0}, and the same arithmetic around
+     * it: one pass, one local array with gate in the first half and up in the second, one tree
+     * reducing both, and the SiLU applied to the reduced gate before it multiplies the reduced up.
+     * What changes is the inner loop, which walks blocks rather than elements — one block scale per
+     * 32 weights instead of one per weight, and eight {@code dp4a} instructions per block per
+     * projection.
+     *
+     * <p>Both projections read the <b>same</b> quantized activation, so the {@code -8 * sum}
+     * correction and the activation scale are shared between them; only the weight scale and the
+     * integer dot differ. That is what makes the fused form worth keeping in the packed path: the
+     * activation is quantized once and consumed twice, exactly as the two weight matrices are read
+     * against one staged activation in the floating-point form.
+     *
+     * <p>The activation must have been prepared by {@link #quantizeActivationQ8Blocks} from the
+     * activation this projection actually reads — the feed-forward norm's output, not the attention
+     * branch's.
+     */
+    // @formatter:on
+    public static void fusedFFNGateUpSiLUQ4_0DP4A(
+            KernelContext context,
+            IntArray xQuants,
+            FloatArray xScales,
+            IntArray xSums,
+            FloatArray hb,
+            ByteArray w1,
+            ByteArray w3,
+            int n,
+            int d,
+            int localWorkGroupSize) {
+        int rowId = context.groupIdx;
+        int localId = context.localIdx;
+        if (rowId >= d) {
+            return;
+        }
+
+        float[] localSums = context.allocateFloatLocalArray(localWorkGroupSize * 2);
+        int blocksPerRow = (n + QK - 1) / QK;
+        int rowBlockOffset = rowId * blocksPerRow;
+
+        float gate = 0.0f;
+        float up = 0.0f;
+        for (int block = localId; block < blocksPerRow; block += localWorkGroupSize) {
+            int blockByteOffset = (rowBlockOffset + block) * BLOCK_BYTES;
+            float gateScale = w1.getHalfFloat(blockByteOffset).getFloat32();
+            float upScale = w3.getHalfFloat(blockByteOffset).getFloat32();
+            int quantBase = block * (QK / 4);
+            float activationScale = xScales.get(block);
+            int correction = 8 * xSums.get(block);
+
+            int gateDot = 0;
+            int upDot = 0;
+            for (int g = 0; g < 4; g++) {
+                int g0 = w1.get(blockByteOffset + QS_OFFSET + g * 4) & 0xFF;
+                int g1 = w1.get(blockByteOffset + QS_OFFSET + g * 4 + 1) & 0xFF;
+                int g2 = w1.get(blockByteOffset + QS_OFFSET + g * 4 + 2) & 0xFF;
+                int g3 = w1.get(blockByteOffset + QS_OFFSET + g * 4 + 3) & 0xFF;
+                int u0 = w3.get(blockByteOffset + QS_OFFSET + g * 4) & 0xFF;
+                int u1 = w3.get(blockByteOffset + QS_OFFSET + g * 4 + 1) & 0xFF;
+                int u2 = w3.get(blockByteOffset + QS_OFFSET + g * 4 + 2) & 0xFF;
+                int u3 = w3.get(blockByteOffset + QS_OFFSET + g * 4 + 3) & 0xFF;
+                int low = xQuants.get(quantBase + g);
+                int high = xQuants.get(quantBase + 4 + g);
+                gateDot =
+                        QuantizationUtils.dp4a_packed(
+                                (g0 & 0xF)
+                                        | ((g1 & 0xF) << 8)
+                                        | ((g2 & 0xF) << 16)
+                                        | ((g3 & 0xF) << 24),
+                                low,
+                                gateDot);
+                gateDot =
+                        QuantizationUtils.dp4a_packed(
+                                ((g0 >> 4) & 0xF)
+                                        | (((g1 >> 4) & 0xF) << 8)
+                                        | (((g2 >> 4) & 0xF) << 16)
+                                        | (((g3 >> 4) & 0xF) << 24),
+                                high,
+                                gateDot);
+                upDot =
+                        QuantizationUtils.dp4a_packed(
+                                (u0 & 0xF)
+                                        | ((u1 & 0xF) << 8)
+                                        | ((u2 & 0xF) << 16)
+                                        | ((u3 & 0xF) << 24),
+                                low,
+                                upDot);
+                upDot =
+                        QuantizationUtils.dp4a_packed(
+                                ((u0 >> 4) & 0xF)
+                                        | (((u1 >> 4) & 0xF) << 8)
+                                        | (((u2 >> 4) & 0xF) << 16)
+                                        | (((u3 >> 4) & 0xF) << 24),
+                                high,
+                                upDot);
+            }
+            gate += gateScale * activationScale * (gateDot - correction);
+            up += upScale * activationScale * (upDot - correction);
+        }
+
+        localSums[localId] = gate;
+        localSums[localWorkGroupSize + localId] = up;
+        context.localBarrier();
+
+        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSums[localId] += localSums[localId + stride];
+                localSums[localWorkGroupSize + localId] +=
+                        localSums[localWorkGroupSize + localId + stride];
+            }
+            context.localBarrier();
+        }
+
+        if (localId == 0) {
+            float gateSum = localSums[0];
+            float silu = gateSum / (1.0f + TornadoMath.exp(-gateSum));
+            hb.set(rowId, silu * localSums[localWorkGroupSize]);
+        }
+    }
+
+    // @formatter:off
+    /**
      * {@code out[b][row] = w[row]·x[b]} over a chunk of activations, one workgroup per (row, output
      * row).
      *

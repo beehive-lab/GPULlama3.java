@@ -267,15 +267,7 @@ public class Qwen35GraphTopologyAccelTest {
             (dispatch.quantizedActivation() ? packed : notPacked).add(dispatch.task());
         }
 
-        assertEquals(
-                "the projections that read the branch's quantized activation",
-                Set.of(
-                        "attn_q_proj",
-                        "attn_k_proj",
-                        "attn_v_proj",
-                        "ssm_qkv_proj",
-                        "ssm_gate_proj"),
-                packed);
+        assertEquals("the projections that read a quantized activation", expected(), packed);
         assertTrue(
                 "attn_output_proj reads wrapXb after the attention branch overwrote it, so it"
                         + " cannot take the quantized activation",
@@ -284,6 +276,73 @@ public class Qwen35GraphTopologyAccelTest {
                 "ffn_down_proj reads the feed-forward's own activation",
                 notPacked.contains("ffn_down_proj"));
         assertTrue("ssm_out_proj reads the delta-net readout", notPacked.contains("ssm_out_proj"));
+    }
+
+    // @formatter:off
+    /**
+     * With the feed-forward experiment on, the fused gate/up is packed and its activation is its
+     * own.
+     *
+     * <p>Runs only when {@code llama.qwen35.packedFfn} is set, because the flag is read when the
+     * layer builder class loads. What it pins is the thing that would be wrong if the quantization
+     * were emitted in the wrong place: {@code ffn_gate_up} packed, a second quantization task
+     * present, and the branch projections still packed from theirs. The feed-forward norm writes
+     * over the activation the branch quantized, so a packed {@code ffn_gate_up} without its own
+     * quantization task would be reading the attention norm's output.
+     */
+    // @formatter:on
+    @Test
+    public void theFeedForwardPacksAgainstItsOwnQuantization() {
+        assumeTrue(
+                "the feed-forward experiment is off", Boolean.getBoolean("llama.qwen35.packedFfn"));
+        assumeTrue(
+                "no packed-integer-dot device",
+                org.beehive.gpullama3.backend.tornado.device.TornadoDevices.current()
+                        .capabilities()
+                        .supports(
+                                org.beehive.gpullama3.runtime.backend.DeviceCapability
+                                        .PACKED_INTEGER_DOT));
+        Qwen35Configuration config = config();
+        Set<String> packed = new LinkedHashSet<>();
+        for (Qwen35FFNLayers.Dispatch dispatch : build(config).dispatchInventory()) {
+            if (dispatch.quantizedActivation()) {
+                packed.add(dispatch.task());
+            }
+        }
+        assertTrue("ffn_gate_up did not take the packed path", packed.contains("ffn_gate_up"));
+        assertTrue("the branch projections lost theirs", packed.contains("ssm_qkv_proj"));
+
+        GridScheduler scheduler = new GridScheduler();
+        build(config).updateGridScheduler(scheduler);
+        for (int layer = 0; layer < TRUNK_LAYERS; layer++) {
+            List<String> tasks = taskNames(scheduler, layer);
+            assertTrue(
+                    "layer "
+                            + layer
+                            + " packs the feed-forward without quantizing its activation:"
+                            + " "
+                            + tasks,
+                    tasks.contains("ffn_xb_quantize"));
+            assertTrue(
+                    "layer " + layer + " lost the branch's quantization",
+                    tasks.contains("xb_quantize"));
+        }
+    }
+
+    /** The packed set: the branch's five, and the feed-forward's when its experiment is on. */
+    private static Set<String> expected() {
+        Set<String> names =
+                new LinkedHashSet<>(
+                        Set.of(
+                                "attn_q_proj",
+                                "attn_k_proj",
+                                "attn_v_proj",
+                                "ssm_qkv_proj",
+                                "ssm_gate_proj"));
+        if (Boolean.getBoolean("llama.qwen35.packedFfn")) {
+            names.add("ffn_gate_up");
+        }
+        return names;
     }
 
     // ---- batched prefill: which projections reach the tensor cores ----------
@@ -468,8 +527,11 @@ public class Qwen35GraphTopologyAccelTest {
                                                 .PACKED_INTEGER_DOT)
                         ? 1
                         : 0;
-        assertEquals("a recurrent layer's tasks", 20 + quantize, recurrentTasks);
-        assertEquals("an attention layer's tasks", 16 + quantize, attentionTasks);
+        // And one more again where the feed-forward experiment is on: it quantizes its own
+        // activation after the feed-forward norm, which is a different activation.
+        int ffnQuantize = quantize == 1 && Boolean.getBoolean("llama.qwen35.packedFfn") ? 1 : 0;
+        assertEquals("a recurrent layer's tasks", 20 + quantize + ffnQuantize, recurrentTasks);
+        assertEquals("an attention layer's tasks", 16 + quantize + ffnQuantize, attentionTasks);
         assertEquals("the plan's layer tasks", 6 * recurrentTasks + 2 * attentionTasks, total);
     }
 
