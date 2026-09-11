@@ -600,7 +600,7 @@ public class Qwen35FFNLayers
                 qwen35State.workspace.tempFFN,
                 require(weights.rms_ffn_weightLayered, layerIndex, "post_attention_norm"));
 
-        if (DP4A && PACKED_FFN) {
+        if (DP4A) {
             // Its own quantization, of the feed-forward's own activation. The branch's quants
             // describe the attention norm's output, which this is not. The scratch is the same
             // three arrays: the branch's projections are all behind us in this graph, so the
@@ -736,12 +736,6 @@ public class Qwen35FFNLayers
      */
     // @formatter:on
     private boolean normedActivationQuantized;
-
-    /**
-     * TEMPORARY, for the feed-forward experiment. Removed when the extension is decided either way;
-     * the packed path for the branch projections is not behind it.
-     */
-    private static final boolean PACKED_FFN = Boolean.getBoolean("llama.qwen35.packedFfn");
 
     private static final boolean DP4A =
             TornadoDevices.current()
@@ -1321,11 +1315,9 @@ public class Qwen35FFNLayers
             if (DP4A) {
                 WorkerGrid quantize = WorkerGridFactory.genericWorker(config.dim(), 32);
                 scheduler.addWorkerGrid(prefix + "xb_quantize", quantize);
-                if (PACKED_FFN) {
-                    scheduler.addWorkerGrid(
-                            prefix + "ffn_xb_quantize",
-                            WorkerGridFactory.genericWorker(config.dim(), 32));
-                }
+                scheduler.addWorkerGrid(
+                        prefix + "ffn_xb_quantize",
+                        WorkerGridFactory.genericWorker(config.dim(), 32));
             }
             scheduler.addWorkerGrid(prefix + "ffn_rms_apply", rmsApply);
             scheduler.addWorkerGrid(prefix + "ffn_gate_up", matVecWorker(config.hiddenDim()));

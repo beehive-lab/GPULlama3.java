@@ -107,6 +107,9 @@ public class Qwen35SyntheticPrefillParityAccelTest {
     public void aDuplicatedFinalPromptTokenIsDetectable() throws Exception {
         String previousDevice = System.getProperty("use.tornadovm");
         System.setProperty("use.tornadovm", "true");
+        // The floating-point path here too: this case compares the device against the host
+        // exactly, and a quantized activation cannot be exact.
+        System.setProperty("llama.qwen35.packedIntegerDot", "false");
         try (Arena owned = Arena.ofShared()) {
             Qwen35Configuration config = Qwen35SyntheticModel.config();
             Qwen35SyntheticModel.Weights both = new Qwen35SyntheticModel(owned).weights(config);

@@ -280,21 +280,17 @@ public class Qwen35GraphTopologyAccelTest {
 
     // @formatter:off
     /**
-     * With the feed-forward experiment on, the fused gate/up is packed and its activation is its
-     * own.
+     * The fused gate/up is packed, and its activation is its own.
      *
-     * <p>Runs only when {@code llama.qwen35.packedFfn} is set, because the flag is read when the
-     * layer builder class loads. What it pins is the thing that would be wrong if the quantization
-     * were emitted in the wrong place: {@code ffn_gate_up} packed, a second quantization task
-     * present, and the branch projections still packed from theirs. The feed-forward norm writes
-     * over the activation the branch quantized, so a packed {@code ffn_gate_up} without its own
-     * quantization task would be reading the attention norm's output.
+     * <p>What it pins is the thing that would be wrong if the quantization were emitted in the
+     * wrong place: {@code ffn_gate_up} packed, a second quantization task present, and the branch
+     * projections still packed from theirs. The feed-forward norm writes over the activation the
+     * branch quantized, so a packed {@code ffn_gate_up} without its own quantization task would be
+     * reading the attention norm's output.
      */
     // @formatter:on
     @Test
     public void theFeedForwardPacksAgainstItsOwnQuantization() {
-        assumeTrue(
-                "the feed-forward experiment is off", Boolean.getBoolean("llama.qwen35.packedFfn"));
         assumeTrue(
                 "no packed-integer-dot device",
                 org.beehive.gpullama3.backend.tornado.device.TornadoDevices.current()
@@ -329,7 +325,7 @@ public class Qwen35GraphTopologyAccelTest {
         }
     }
 
-    /** The packed set: the branch's five, and the feed-forward's when its experiment is on. */
+    /** The packed set: the branch's five, and the feed-forward against its own quantization. */
     private static Set<String> expected() {
         Set<String> names =
                 new LinkedHashSet<>(
@@ -339,9 +335,7 @@ public class Qwen35GraphTopologyAccelTest {
                                 "attn_v_proj",
                                 "ssm_qkv_proj",
                                 "ssm_gate_proj"));
-        if (Boolean.getBoolean("llama.qwen35.packedFfn")) {
-            names.add("ffn_gate_up");
-        }
+        names.add("ffn_gate_up");
         return names;
     }
 
@@ -527,9 +521,10 @@ public class Qwen35GraphTopologyAccelTest {
                                                 .PACKED_INTEGER_DOT)
                         ? 1
                         : 0;
-        // And one more again where the feed-forward experiment is on: it quantizes its own
-        // activation after the feed-forward norm, which is a different activation.
-        int ffnQuantize = quantize == 1 && Boolean.getBoolean("llama.qwen35.packedFfn") ? 1 : 0;
+        // Two per layer where the capability holds, not one: the branch quantizes the
+        // attention norm's output and the feed-forward quantizes its own, which the norm between
+        // them has made a different activation.
+        int ffnQuantize = quantize;
         assertEquals("a recurrent layer's tasks", 20 + quantize + ffnQuantize, recurrentTasks);
         assertEquals("an attention layer's tasks", 16 + quantize + ffnQuantize, attentionTasks);
         assertEquals("the plan's layer tasks", 6 * recurrentTasks + 2 * attentionTasks, total);
