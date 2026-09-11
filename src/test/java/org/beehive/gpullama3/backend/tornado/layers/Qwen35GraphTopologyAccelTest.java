@@ -233,6 +233,59 @@ public class Qwen35GraphTopologyAccelTest {
         return names;
     }
 
+    // @formatter:off
+    /**
+     * Exactly which projections read a quantized activation, and — more to the point — which do
+     * not.
+     *
+     * <p>The packed-integer path is eligible when three things hold at once: the weights are Q4_0,
+     * the projection folds no residual, and the buffer it reads still holds the activation the
+     * branch quantized. The third is a fact about <b>ordering</b>, and it is the one that can go
+     * wrong silently: {@code wrapXb} is written twice more inside a layer, by the attention
+     * branch's gated output and by the feed-forward norm, so a projection reading it after either
+     * of those would consume the previous activation's quants and produce plausible, wrong numbers.
+     *
+     * <p>{@code attn_output_proj} is the case that proves the point. It reads {@code wrapXb} — the
+     * same array — after the attention branch has overwritten it, and it must <b>not</b> be packed.
+     * Today it is also excluded by folding a residual, which is exactly why this asserts the
+     * outcome rather than trusting that coincidence.
+     */
+    // @formatter:on
+    @Test
+    public void onlyProjectionsReadingTheQuantizedActivationArePacked() {
+        assumeTrue(
+                "no packed-integer-dot device",
+                org.beehive.gpullama3.backend.tornado.device.TornadoDevices.current()
+                        .capabilities()
+                        .supports(
+                                org.beehive.gpullama3.runtime.backend.DeviceCapability
+                                        .PACKED_INTEGER_DOT));
+        Qwen35Configuration config = config();
+        Set<String> packed = new LinkedHashSet<>();
+        Set<String> notPacked = new LinkedHashSet<>();
+        for (Qwen35FFNLayers.Dispatch dispatch : build(config).dispatchInventory()) {
+            (dispatch.quantizedActivation() ? packed : notPacked).add(dispatch.task());
+        }
+
+        assertEquals(
+                "the projections that read the branch's quantized activation",
+                Set.of(
+                        "attn_q_proj",
+                        "attn_k_proj",
+                        "attn_v_proj",
+                        "ssm_qkv_proj",
+                        "ssm_gate_proj"),
+                packed);
+        assertTrue(
+                "attn_output_proj reads wrapXb after the attention branch overwrote it, so it"
+                        + " cannot take the quantized activation",
+                notPacked.contains("attn_output_proj"));
+        assertTrue(
+                "ffn_down_proj reads the feed-forward's own activation",
+                notPacked.contains("ffn_down_proj"));
+        assertTrue("ssm_out_proj reads the delta-net readout", notPacked.contains("ssm_out_proj"));
+    }
+
     // ---- batched prefill: which projections reach the tensor cores ----------
 
     /** The batch width the batched-prefill plan is built for here; a whole number of MMA rows. */

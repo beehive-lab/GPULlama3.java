@@ -82,8 +82,23 @@ public class Qwen35FFNLayers
      */
     private final List<Dispatch> dispatches = new ArrayList<>();
 
-    /** One weight-reading task: where it is, what it reads, and which kernel decodes it. */
-    public record Dispatch(int layer, String task, String role, DataType representation) {}
+    // @formatter:off
+    /**
+     * One weight-reading task: where it is, what it reads, which kernel decodes it, and whether its
+     * <b>activation</b> reached it quantized.
+     *
+     * <p>The last of those is not derivable from the other three. Whether a projection takes the
+     * packed-integer path depends on what the buffer it reads happens to hold at that point in the
+     * layer, which is a fact about ordering rather than about the tensor — so it is recorded here
+     * and asserted, not inferred.
+     */
+    // @formatter:on
+    public record Dispatch(
+            int layer,
+            String task,
+            String role,
+            DataType representation,
+            boolean quantizedActivation) {}
 
     /**
      * The graph layer 0 consumes its activation from.
@@ -168,7 +183,12 @@ public class Qwen35FFNLayers
             int d,
             boolean residual) {
         requireWholeBlocks(layer, task, role, w.dataType(), n);
-        dispatches.add(new Dispatch(layer, task, role, w.dataType()));
+        boolean packed =
+                w.dataType() == DataType.Q4_0
+                        && !residual
+                        && x == state.workspace.wrapXb
+                        && normedActivationQuantized;
+        dispatches.add(new Dispatch(layer, task, role, w.dataType(), packed));
         switch (w.dataType()) {
             case F32 -> {
                 if (residual) {
@@ -237,7 +257,7 @@ public class Qwen35FFNLayers
                 }
             }
             case Q4_0 -> {
-                if (!residual && x == state.workspace.wrapXb && DP4A) {
+                if (!residual && x == state.workspace.wrapXb && normedActivationQuantized) {
                     // The packed-integer path, for a projection whose input the branch already
                     // quantized. Weights stay Q4_0; the activation is what changed representation.
                     graph.task(
@@ -451,7 +471,8 @@ public class Qwen35FFNLayers
                 List.of("ffn_gate", "ffn_up"),
                 gate,
                 up);
-        dispatches.add(new Dispatch(layer, "ffn_gate_up", "ffn_gate|ffn_up", gate.dataType()));
+        dispatches.add(
+                new Dispatch(layer, "ffn_gate_up", "ffn_gate|ffn_up", gate.dataType(), false));
         switch (gate.dataType()) {
             case Q4_0 ->
                     graph.task(
@@ -540,6 +561,7 @@ public class Qwen35FFNLayers
                     qwen35State.workspace.wrapXbScales,
                     qwen35State.workspace.wrapXbSums);
         }
+        normedActivationQuantized = DP4A;
 
         if (config.isRecurrentLayer(layerIndex)) {
             deltaNetBranch(layer, layerIndex);
@@ -548,6 +570,8 @@ public class Qwen35FFNLayers
         }
 
         // The feed-forward's input norm is the file's post_attention_norm; there is no ffn_norm.
+        // It writes over wrapXb, so whatever was quantized from it no longer describes it.
+        normedActivationQuantized = false;
         normalize(
                 layer,
                 "ffn_rms_reduce",
@@ -661,6 +685,22 @@ public class Qwen35FFNLayers
      * disagreements and token-identical greedy output over 120 tokens.
      */
     // @formatter:on
+    // @formatter:off
+    /**
+     * Whether {@code wrapXb} still holds the activation {@code xb_quantize} quantized.
+     *
+     * <p>The buffer is reused inside a layer — the attention branch writes its gated output into
+     * it, and the feed-forward norm writes over it again — so the identity of the array a
+     * projection reads says nothing about <b>which</b> activation is in it. This says. It is set
+     * where the quantization is emitted and cleared at every point the contents change, and it is
+     * what the packed-integer dispatch consults; without it, a projection reading {@code wrapXb}
+     * after either of those writes would silently consume the previous activation's quants. Today
+     * the one projection that would — {@code attn_output_proj} — is excluded for the unrelated
+     * reason that it folds a residual, which is not a property worth depending on.
+     */
+    // @formatter:on
+    private boolean normedActivationQuantized;
+
     private static final boolean DP4A =
             TornadoDevices.current()
                             .capabilities()
@@ -839,6 +879,8 @@ public class Qwen35FFNLayers
         }
 
         // A logistic, not a SiLU: reusing the SwiGLU kernel would multiply by the gate twice.
+        // The gated attention output lands in wrapXb, over the activation that was quantized.
+        normedActivationQuantized = false;
         layer.task(
                 "attn_output_gate",
                 Qwen35AttentionKernels::applyOutputGate,
