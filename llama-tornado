@@ -161,6 +161,12 @@ class LlamaRunner:
         if args.cuda_graphs:
             cmd.append("-Dllama.cudaGraphs=true")
 
+        if args.fp16_kv_cache:
+            cmd.append("-Dllama.kvcache.fp16=true")
+
+        if args.tensor_cores:
+            cmd.append("-Dllama.qwen35.tensorCores=true")
+
         # Debug options
         debug_config = []
 
@@ -486,6 +492,16 @@ def create_parser() -> argparse.ArgumentParser:
     server_group.add_argument("--port", type=int, default=8080, help="Server port (default 8080)")
 
     # Benchmark (llama-bench style)
+    parser.add_argument(
+        "--fp16-kv-cache",
+        action="store_true",
+        help="Hold the key/value cache in half precision (halves its bandwidth and footprint; accumulation stays FP32)",
+    )
+    parser.add_argument(
+        "--tensor-cores",
+        action="store_true",
+        help="Run the qwen35 Q4_0 projections that read the normed chunk on the tensor cores (FP16 multiplicands, FP32 accumulate)",
+    )
     bench_group = parser.add_argument_group("Benchmark (llama-bench style)")
     bench_group.add_argument(
         "--bench",
@@ -689,15 +705,21 @@ def main():
     else:
         args.backend = runner.select_primary_backend(installed_backends)
 
+    # stderr, not stdout: --bench writes a machine-readable document there, and a trailing
+    # human-readable line makes the JSON unparseable.
     if len(installed_backends) > 1:
         names = ", ".join(b.value for b in installed_backends)
         reason = f"requested via --{args.backend.value}" if overridden else "auto-selected"
         print(
             f"Detected TornadoVM backends: {names} (from {runner.tornado_sdk}/etc/tornado.backend) "
-            f"- using {args.backend.value} ({reason})"
+            f"- using {args.backend.value} ({reason})",
+            file=sys.stderr,
         )
     else:
-        print(f"Detected TornadoVM backend: {args.backend.value} (from {runner.tornado_sdk}/etc/tornado.backend)")
+        print(
+            f"Detected TornadoVM backend: {args.backend.value} (from {runner.tornado_sdk}/etc/tornado.backend)",
+            file=sys.stderr,
+        )
 
     return runner.run(args)
 

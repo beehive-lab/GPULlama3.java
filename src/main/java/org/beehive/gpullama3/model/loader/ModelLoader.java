@@ -227,8 +227,48 @@ public abstract class ModelLoader {
      * Q8_0 and F32 materialize as themselves, so every tuple measured on CUDA is predicted
      * byte-for-byte as before.
      */
+    public static org.beehive.gpullama3.runtime.memory.WeightFootprint weightFootprint(Path ggufPath)
+            throws IOException {
+        return weightFootprint(
+                ggufPath, org.beehive.gpullama3.runtime.memory.DeviceRetention.converting());
+    }
+
+    /** {@link #weightFootprint(Path, DeviceRetention)} for a flat set of retained types. */
     public static org.beehive.gpullama3.runtime.memory.WeightFootprint weightFootprint(
-            Path ggufPath) throws IOException {
+            Path ggufPath,
+            java.util.Set<org.beehive.gpullama3.runtime.tensor.DataType> nativeDeviceTypes)
+            throws IOException {
+        return weightFootprint(
+                ggufPath,
+                org.beehive.gpullama3.runtime.memory.DeviceRetention.retaining(nativeDeviceTypes));
+    }
+
+    // @formatter:off
+    /**
+     * The device footprint of a file's weights, given the representations the target family reads
+     * without materializing.
+     *
+     * <p>Descriptors only — no tensor data is touched, which is what makes this usable before a
+     * load rather than after one.
+     *
+     * <p><b>It can under-estimate a mixed file.</b> The decision is taken per tensor here, where a
+     * loader may take it for the whole model: Llama retains Q4_0 only when every per-layer
+     * projection is Q4_0, and materializes all of them otherwise, because a fused kernel reading
+     * two block layouts would read 18-byte blocks as 34-byte ones. A file mixing Q4_0 with another
+     * quantization in its layers would therefore be predicted smaller than it loads.
+     *
+     * <p>That is the tolerable direction. This prediction is used to <b>refuse</b> a load, and a
+     * refusal cannot be overruled by the caller — so an over-estimate blocks a configuration that
+     * would have run, where an under-estimate lets it proceed to the backend's own allocation
+     * error. No quantizer produces such a file today; a real one would be a reason to move the
+     * whole-model rule here rather than to reverse this.
+     *
+     * @param retention what representation each tensor will occupy on the device
+     */
+    // @formatter:on
+    public static org.beehive.gpullama3.runtime.memory.WeightFootprint weightFootprint(
+            Path ggufPath, org.beehive.gpullama3.runtime.memory.DeviceRetention retention)
+            throws IOException {
         GGUF gguf = GGUF.loadGGUFMetadata(ggufPath);
         long perLayer = 0;
         long global = 0;
@@ -242,10 +282,12 @@ public abstract class ModelLoader {
             for (int d : info.dimensions()) {
                 elements *= d;
             }
+            org.beehive.gpullama3.runtime.tensor.DataType source =
+                    org.beehive.gpullama3.format.DataTypeMapping.sourceType(info.ggmlType());
+            // Per tensor, by name and representation: a model is not one dtype, and support can
+            // differ by role as well as by format.
             org.beehive.gpullama3.runtime.tensor.DataType materialized =
-                    org.beehive.gpullama3.format.DataTypeMapping.materializedType(
-                            info.ggmlType(),
-                            org.beehive.gpullama3.runtime.tensor.ExecutionTarget.GPU);
+                    retention.deviceType(info.name(), source);
             long bytes =
                     org.beehive.gpullama3.format.TensorDescriptors.layoutOf(materialized)
                             .byteSize(elements);
@@ -269,6 +311,7 @@ public abstract class ModelLoader {
             case F32 -> new FP32FloatTensor(size, data);
             case Q8_0 -> new Q8_0FloatTensor(size, data);
             case Q4_0 -> new Q4_0FloatTensor(size, data);
+            case Q4_1 -> new Q4_1FloatTensor(size, data);
             case Q4_K -> new Q4_KFloatTensor(size, data);
             case Q5_K -> new Q5_KFloatTensor(size, data);
             case Q6_K -> new Q6_KFloatTensor(size, data);
@@ -319,6 +362,94 @@ public abstract class ModelLoader {
         return loadTornadoTensor(entry);
     }
 
+    /**
+     * Loads a tensor for the device <b>retaining Q4_0</b> rather than materializing it as Q8_0.
+     *
+     * <p>Separate from {@link #loadTornadoTensorRetainingQ4_K} rather than one helper that retains
+     * everything with a kernel: which representations a family can read is a property of that
+     * family's layer graph, and a tensor retained in a format the graph has no kernel for would be
+     * read as the format it is not — fluent output, wrong numbers. A loader opts into exactly what
+     * its own layers dispatch on.
+     */
+    public static TornadoTensor loadTornadoTensorRetainingQ4_0(GGMLTensorEntry entry) {
+        if (entry.ggmlType() == GGMLType.Q4_0) {
+            return org.beehive.gpullama3.backend.tornado.tensor.Q4_0TornadoTensor
+                    .fromTornadoMemorySegment(entry.memorySegment());
+        }
+        return loadTornadoTensor(entry);
+    }
+
+    /**
+     * Loads a tensor for the device in <b>whatever representation the file gave it</b>, for every
+     * quantization the backend has device storage and kernels for.
+     *
+     * <p>The general form of the two helpers above, and the one a family uses when its layer graph
+     * dispatches per tensor rather than assuming one representation. Nothing is converted: a Q4_1
+     * tensor stays Q4_1, a Q5_K tensor stays Q5_K, and a representation with no device storage is
+     * an error here rather than a quiet promotion to Q8_0.
+     *
+     * @throws ModelLoadException if the file holds a representation the device cannot store
+     */
+    public static TornadoTensor loadTornadoTensorNative(GGMLTensorEntry entry) {
+        return switch (entry.ggmlType()) {
+            case F32 ->
+                    org.beehive.gpullama3.backend.tornado.tensor.FP32TornadoTensor
+                            .fromTornadoMemorySegment(entry.memorySegment());
+            case F16 ->
+                    org.beehive.gpullama3.backend.tornado.tensor.FP16TornadoTensor
+                            .fromTornadoMemorySegment(entry.memorySegment());
+            case Q8_0 ->
+                    org.beehive.gpullama3.backend.tornado.tensor.Q8_0TornadoTensor
+                            .fromTornadoMemorySegment(entry.memorySegment());
+            case Q4_0 ->
+                    org.beehive.gpullama3.backend.tornado.tensor.Q4_0TornadoTensor
+                            .fromTornadoMemorySegment(entry.memorySegment());
+            case Q4_1 ->
+                    org.beehive.gpullama3.backend.tornado.tensor.Q4_1TornadoTensor
+                            .fromTornadoMemorySegment(entry.memorySegment());
+            case Q4_K ->
+                    org.beehive.gpullama3.backend.tornado.tensor.Q4_KTornadoTensor
+                            .fromTornadoMemorySegment(entry.memorySegment());
+            case Q5_K ->
+                    org.beehive.gpullama3.backend.tornado.tensor.Q5_KTornadoTensor
+                            .fromTornadoMemorySegment(entry.memorySegment());
+            case Q6_K ->
+                    org.beehive.gpullama3.backend.tornado.tensor.Q6_KTornadoTensor
+                            .fromTornadoMemorySegment(entry.memorySegment());
+            case BF16 -> TornadoTensorLoader.convertBF16ToFP16(rawTensorData(entry));
+            default ->
+                    throw new ModelLoadException(
+                            org.beehive.gpullama3.runtime.diagnostics.DiagnosticCode.MODEL_MALFORMED
+                                            .prefix()
+                                    + entry.name()
+                                    + " is "
+                                    + entry.ggmlType()
+                                    + ", for which this backend has no device storage. It is not"
+                                    + " converted to Q8_0: a representation the device cannot hold"
+                                    + " is a gap to fill, not something to promote silently.");
+        };
+    }
+
+    /** {@link #loadArrayOfTornadoTensors} keeping every representation as the file gave it. */
+    public static TornadoTensor[] loadArrayOfTornadoTensorsNative(
+            int size, IntFunction<GGMLTensorEntry> getTensorEntry) {
+        TornadoTensor[] array = new TornadoTensor[size];
+        for (int i = 0; i < size; i++) {
+            array[i] = loadTornadoTensorNative(getTensorEntry.apply(i));
+        }
+        return array;
+    }
+
+    /** {@link #loadArrayOfTornadoTensors} that retains Q4_0. */
+    public static TornadoTensor[] loadArrayOfTornadoTensorsRetainingQ4_0(
+            int size, IntFunction<GGMLTensorEntry> getTensorEntry) {
+        TornadoTensor[] array = new TornadoTensor[size];
+        for (int i = 0; i < size; i++) {
+            array[i] = loadTornadoTensorRetainingQ4_0(getTensorEntry.apply(i));
+        }
+        return array;
+    }
+
     public static TornadoTensor loadTornadoTensor(GGMLTensorEntry entry) {
         // Describe first: the descriptor states what this tensor becomes on the device — including
         // the Q8_0 materialization for representations with no kernel — and validates the element
@@ -333,7 +464,7 @@ public abstract class ModelLoader {
                 // A representation the device has no kernel for is materialized as Q8_0 at load
                 // The conversion reads through the CPU tensor for that format, which
                 // already knows how to decode it.
-            case Q4_0, Q4_K, Q5_K, Q6_K ->
+            case Q4_0, Q4_1, Q4_K, Q5_K, Q6_K ->
                     TornadoTensorLoader.dequantizeToQ8_0(rawTensorData(entry));
             default ->
                     throw new UnsupportedOperationException(

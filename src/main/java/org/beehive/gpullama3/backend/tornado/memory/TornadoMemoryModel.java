@@ -84,7 +84,10 @@ public final class TornadoMemoryModel {
             Device device,
             long configuredBudgetBytes) {
         long header = device.nativeArrayHeaderBytes();
-        int families = layerGraphFamilies(policy, config.numberOfLayers());
+        int layoutFamilies = layerGraphFamilies(policy, config.numberOfLayers());
+        // How many of those families upload the weights, which is what costs memory. A family
+        // that consumes another's copy costs graphs and not gigabytes.
+        int families = config.weightBindingFamilies(layoutFamilies);
         List<MemoryComponent> components = new ArrayList<>();
 
         // ── weights, classified by whether a layer graph binds them ──────────
@@ -109,7 +112,11 @@ public final class TornadoMemoryModel {
                         (long) weights.globalTensors() * header));
 
         // ── key/value cache ──────────────────────────────────────────────────
-        long kvElements = (long) config.contextLength() * config.numberOfLayers() * config.kvDim();
+        // The layers that actually hold key/value entries, which is every layer for every family
+        // but qwen35 — where it is one in four, and the layer count would predict four times the
+        // store that is allocated.
+        long kvElements =
+                (long) config.contextLength() * config.keyValueLayerCount() * config.kvDim();
         // FP16 KV is a storage choice, so it must be read rather than assumed FP32 — assuming
         // FP32 would over-predict a configured FP16 cache by exactly its own size.
         int kvElementBytes = kvBytesPerElement();
@@ -130,6 +137,20 @@ public final class TornadoMemoryModel {
                         1,
                         24 * header));
 
+        // ── recurrent state, for a family that keeps one ─────────────────────
+        // Zero for every attention-only stack, and 151 MiB for Qwen3.8-27B. It is neither cache
+        // nor scratch: fixed-size per layer, updated in place, and independent of the context
+        // length, so neither of the two components above accounts for it.
+        if (config.recurrentStateBytes() > 0) {
+            components.add(
+                    new MemoryComponent(
+                            "recurrent state",
+                            BufferClass.ACTIVATION_WORKSPACE,
+                            config.recurrentStateBytes(),
+                            1,
+                            2 * header));
+        }
+
         // ── batch staging, only when a batched capacity is configured ────────
         if (policy.phaseStrategy() == ExecutionPolicy.PhaseStrategy.PREFILL_DECODE
                 && policy.prefillBatchSize() > 1) {
@@ -137,7 +158,9 @@ public final class TornadoMemoryModel {
                     new MemoryComponent(
                             "batch staging",
                             BufferClass.BATCH_STAGING,
-                            batchStagingBytes(config, policy.prefillBatchSize()),
+                            batchStagingBytes(config, policy.prefillBatchSize())
+                                    + config.additionalBatchWorkspaceBytes(
+                                            policy.prefillBatchSize()),
                             1,
                             11 * header));
         }

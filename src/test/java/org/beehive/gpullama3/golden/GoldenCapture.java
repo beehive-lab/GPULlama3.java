@@ -81,11 +81,28 @@ public final class GoldenCapture {
     public static Result capture(
             Path ggufPath, boolean useGpu, List<Integer> forcedTokens, int prefillBatchSize)
             throws Exception {
+        return capture(ggufPath, useGpu, forcedTokens, prefillBatchSize, prefillBatchSize > 1);
+    }
+
+    /**
+     * The same capture with the phase strategy stated rather than inferred from the batch width.
+     *
+     * <p>Sequential prefill is {@code PREFILL_DECODE} at a batch of one, which the batch width
+     * alone cannot express: a width of one is also what {@code STANDARD} uses. A caller that wants
+     * prompt ingestion as its own phase says so.
+     */
+    public static Result capture(
+            Path ggufPath,
+            boolean useGpu,
+            List<Integer> forcedTokens,
+            int prefillBatchSize,
+            boolean separatePrefillPhase)
+            throws Exception {
         assertHostLogitsAvailable();
 
         String previousPrefill = System.getProperty("llama.withPrefillDecode");
         String previousBatch = System.getProperty("llama.prefillBatchSize");
-        if (prefillBatchSize > 1) {
+        if (separatePrefillPhase) {
             System.setProperty("llama.withPrefillDecode", "true");
             System.setProperty("llama.prefillBatchSize", String.valueOf(prefillBatchSize));
         }

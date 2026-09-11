@@ -55,7 +55,23 @@ public final class TornadoWorkspace {
     // enabled.
     public HalfFloatArray
             wrapValueCacheFP16; // Optional half-precision value cache (see USE_FP16_KV); null
+
     // unless enabled.
+    // @formatter:off
+    /**
+     * The normalized activation, quantized per block of 32 for the packed-integer projections: four
+     * signed bytes per int, one scale per block, and the sum of each block's quants.
+     *
+     * <p>Written once per branch and read by every Q4_0 projection that takes the normed activation
+     * as its input, which is what pays for the quantization.
+     */
+    // @formatter:on
+    public IntArray wrapXbQuants;
+
+    public FloatArray wrapXbScales;
+
+    public IntArray wrapXbSums;
+
     public IntArray positionHolder;
     public IntArray wrapBlockTable;
     public TornadoNativeArray embeddingX;
@@ -113,6 +129,63 @@ public final class TornadoWorkspace {
     public FloatArray wrapHbU; // TornadoVM wrapper for up states
     public FloatArray wrapRouterLogits;
     public IntArray wrapSelectedExperts;
+
+    // qwen35. Its recurrent layers hold state that is neither a key/value cache nor scratch: the
+    // convolution's rolling window and the delta-net matrices persist across tokens and are
+    // updated in place. Both live in one array per kind, addressed by a per-layer offset, because
+    // a device buffer per layer would be 48 of them to transfer and keep resident.
+    public FloatArray wrapConvState;
+    public FloatArray wrapDeltaState;
+    public FloatArray wrapSsmQkv;
+    public FloatArray wrapSsmConvOut;
+    public FloatArray wrapSsmZ;
+    public FloatArray wrapSsmAlpha;
+    public FloatArray wrapSsmBeta;
+    public FloatArray wrapSsmQ;
+    public FloatArray wrapSsmK;
+    public FloatArray wrapSsmV;
+    public FloatArray wrapSsmOut;
+
+    /** The query half of an attention layer's fused query/gate projection, de-interleaved. */
+    public FloatArray wrapAttnQ;
+
+    /** Its gate half, applied through a logistic to the attention result. */
+    public FloatArray wrapAttnGate;
+
+    // qwen35 batched prefill. The same scratch a chunk wide, row-major: a row is one prompt
+    // token, and every kernel that walks a chunk strides by the buffer's own width. The
+    // single-token buffers are not reused with a stride parameter because a projection's input
+    // width and its output width differ, and a shared buffer would make one of the two a lie.
+    public FloatArray wrapNormedBatch;
+
+    /** The normed chunk as FP16, for the tensor-core projections. */
+    public HalfFloatArray wrapNormedFP16Batch;
+
+    /** Gate and up, before SwiGLU combines them, when the tensor-core path computes them. */
+    public FloatArray wrapGateBatch;
+
+    public FloatArray wrapUpBatch;
+
+    /** The SwiGLU output as FP16, and the tensor-core ffn_down result before it is added back. */
+    public HalfFloatArray wrapHbFP16BatchMMA;
+
+    public FloatArray wrapFFNDownBatch;
+
+    /** The delta-net readout as FP16, for the tensor-core ssm_out projection. */
+    public HalfFloatArray wrapSsmOutFP16Batch;
+
+    public FloatArray wrapQGateBatch;
+    public FloatArray wrapAttnQBatch;
+    public FloatArray wrapAttnGateBatch;
+    public FloatArray wrapSsmQkvBatch;
+    public FloatArray wrapSsmConvOutBatch;
+    public FloatArray wrapSsmZBatch;
+    public FloatArray wrapSsmAlphaBatch;
+    public FloatArray wrapSsmBetaBatch;
+    public FloatArray wrapSsmQBatch;
+    public FloatArray wrapSsmKBatch;
+    public FloatArray wrapSsmVBatch;
+    public FloatArray wrapSsmOutBatch;
     public FloatArray wrapRoutingWeights;
     public FloatArray wrapExpertGate;
     public FloatArray wrapSharedGate;

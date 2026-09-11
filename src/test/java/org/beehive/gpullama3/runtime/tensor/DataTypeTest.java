@@ -25,57 +25,36 @@ public class DataTypeTest {
                         DataType.BF16,
                         DataType.Q8_0,
                         DataType.Q4_0,
+                        DataType.Q4_1,
                         DataType.Q4_K,
                         DataType.Q5_K,
                         DataType.Q6_K),
                 EnumSet.allOf(DataType.class));
     }
 
-    @Test
-    public void theBlockQuantsTheDeviceCannotExecuteAreTheFormatDecodedOnes() {
-        Set<DataType> formatDecoded = EnumSet.noneOf(DataType.class);
-        for (DataType type : DataType.values()) {
-            if (type.isFormatDecoded()) {
-                formatDecoded.add(type);
-            }
-        }
-        assertEquals(
-                "the CPU-decoded quantizations, and only those, are format-decoded",
-                EnumSet.of(DataType.Q4_0, DataType.Q4_K, DataType.Q5_K, DataType.Q6_K),
-                formatDecoded);
-    }
-
-    @Test
-    public void aFormatDecodedTypeMaterializesAsQ8_0() {
-        assertSame(DataType.Q8_0, DataType.Q4_0.materializedFallback());
-        assertSame(DataType.Q8_0, DataType.Q4_K.materializedFallback());
-        assertSame(DataType.Q8_0, DataType.Q5_K.materializedFallback());
-        assertSame(DataType.Q8_0, DataType.Q6_K.materializedFallback());
-    }
-
     /**
-     * BF16 is not format-decoded — the CPU materializes a tensor in it and reads it directly — but
-     * the GPU has no BF16 kernels, so materializing for the device narrows to F16. That makes it
-     * the one type whose fallback is neither itself nor {@code Q8_0}, which is why the fallback is
-     * stated per constant rather than derived from {@code isFormatDecoded()}.
+     * The only narrowing left is a real one.
+     *
+     * <p>This replaces three tests that asserted the opposite: that every block quantization
+     * "materializes as Q8_0", that none of them could be a materialization target, and that the
+     * device could execute none of them. All three encoded one premise — that a quantized weight
+     * cannot reach an accelerator in its own layout — and it was wrong. It is what made a 4-bit
+     * model occupy twice its size on a device.
+     *
+     * <p>{@link DataType#BF16} still narrows, because that is a loss of mantissa bits for want of
+     * BF16 arithmetic: a property of the representation, not a capability gap dressed up as one.
      */
     @Test
-    public void bf16NarrowsToF16WhenMaterialized() {
-        assertSame(DataType.F16, DataType.BF16.materializedFallback());
-        assertFalse(
-                "BF16 is materialized on the CPU, not decoded during compute",
-                DataType.BF16.isFormatDecoded());
-        assertFalse(
-                "BF16 is a float representation, not a block quantization",
-                DataType.BF16.isQuantized());
-    }
-
-    /** A type a target can execute needs no fallback, and must not claim one. */
-    @Test
-    public void anExecutableTypeIsItsOwnMaterialization() {
-        assertSame(DataType.F32, DataType.F32.materializedFallback());
-        assertSame(DataType.F16, DataType.F16.materializedFallback());
-        assertSame(DataType.Q8_0, DataType.Q8_0.materializedFallback());
+    public void onlyBf16Narrows() {
+        assertSame(DataType.F16, DataType.BF16.narrowedFallback());
+        for (DataType type : DataType.values()) {
+            if (type != DataType.BF16) {
+                assertSame(
+                        type + " must be kept as it is, not converted",
+                        type,
+                        type.narrowedFallback());
+            }
+        }
     }
 
     @Test
@@ -100,22 +79,24 @@ public class DataTypeTest {
             }
         }
         assertEquals(
-                Set.of(
-                        "values",
-                        "valueOf",
-                        "isQuantized",
-                        "isFormatDecoded",
-                        "materializedFallback"),
-                methods);
+                Set.of("values", "valueOf", "isQuantized", "narrowedFallback"), methods);
     }
 
-    /** A format-decoded type has no storage form, so it can never be a materialization target. */
+    /**
+     * Nothing narrows to something that is itself narrowed.
+     *
+     * <p>What this used to say was that no fallback is "format-decoded", which was a statement
+     * about storage. The property worth keeping is the fixed point: applying the narrowing twice
+     * changes nothing, so a caller never has to chase a chain.
+     */
     @Test
-    public void noFormatDecodedTypeIsAFallback() {
+    public void narrowingIsAFixedPoint() {
         for (DataType type : DataType.values()) {
-            assertFalse(
-                    type + " falls back to a type nothing can allocate",
-                    type.materializedFallback().isFormatDecoded());
+            DataType once = type.narrowedFallback();
+            assertSame(
+                    type + " narrows to something that narrows again",
+                    once,
+                    once.narrowedFallback());
         }
     }
 }

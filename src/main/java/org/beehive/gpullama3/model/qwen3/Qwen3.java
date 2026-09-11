@@ -107,7 +107,10 @@ public class Qwen3 extends AbstractModel {
             IntConsumer onTokenGenerated,
             TornadoVMMasterPlan tornadoVMPlan) {
         if (state.executionPolicy().phaseStrategy() == PhaseStrategy.PREFILL_DECODE) {
-            return TokenGenerationLoop.generateTokensGPULlama(
+            // Charging the whole prompt against the budget, which is what this family's decode
+            // loop does. Without it a prompt ingested as its own phase produced one token more
+            // than the same prompt in STANDARD — 64 rows against 63, measured on Qwen3-0.6B.
+            return TokenGenerationLoop.generateTokensGPUPrefillDecode(
                     this,
                     state,
                     startPosition,

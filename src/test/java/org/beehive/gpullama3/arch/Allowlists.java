@@ -45,6 +45,7 @@ public final class Allowlists {
                     "org.beehive.gpullama3.model.qwen2.Qwen2",
                     "org.beehive.gpullama3.model.qwen2.Qwen2MoE",
                     "org.beehive.gpullama3.model.qwen3.Qwen3",
+                    "org.beehive.gpullama3.model.qwen35.Qwen35",
                     "org.beehive.gpullama3.model.loader.AbstractModelLoader",
                     "org.beehive.gpullama3.model.loader.DevstralModelLoader",
                     "org.beehive.gpullama3.model.loader.Gemma4ModelLoader",
@@ -55,6 +56,7 @@ public final class Allowlists {
                     "org.beehive.gpullama3.model.loader.Phi3ModelLoader",
                     "org.beehive.gpullama3.model.loader.Qwen2ModelLoader",
                     "org.beehive.gpullama3.model.loader.Qwen2MoEModelLoader",
+                    "org.beehive.gpullama3.model.loader.Qwen35ModelLoader",
                     "org.beehive.gpullama3.model.loader.Qwen3ModelLoader");
 
     /** Rule 5 — loaded-model types with non-final fields. */
@@ -81,7 +83,8 @@ public final class Allowlists {
                     "org.beehive.gpullama3.bench.LlamaBench",
                     "org.beehive.gpullama3.inference.sampler.Sampler",
                     "org.beehive.gpullama3.model.loader.ModelLoader",
-                    "org.beehive.gpullama3.tensor.standard.Q4_0FloatTensor");
+                    "org.beehive.gpullama3.tensor.standard.Q4_0FloatTensor",
+                    "org.beehive.gpullama3.tensor.standard.Q4_1FloatTensor");
 
     /**
      * Rule 15 — classes outside the provider package that still dispatch on {@code ModelType}.
@@ -134,12 +137,14 @@ public final class Allowlists {
                     "org.beehive.gpullama3.model.ModelType$9",
                     "org.beehive.gpullama3.model.ModelType$10",
                     "org.beehive.gpullama3.model.ModelType$11",
+                    "org.beehive.gpullama3.model.ModelType$12",
                     "org.beehive.gpullama3.tensor.standard.ArrayFloatTensor",
                     "org.beehive.gpullama3.tensor.standard.BF16FloatTensor",
                     "org.beehive.gpullama3.tensor.standard.FloatTensor",
                     "org.beehive.gpullama3.tensor.standard.FP16FloatTensor",
                     "org.beehive.gpullama3.tensor.standard.FP32FloatTensor",
                     "org.beehive.gpullama3.tensor.standard.Q4_0FloatTensor",
+                    "org.beehive.gpullama3.tensor.standard.Q4_1FloatTensor",
                     "org.beehive.gpullama3.tensor.standard.Q4_KFloatTensor",
                     "org.beehive.gpullama3.tensor.standard.Q5_KFloatTensor",
                     "org.beehive.gpullama3.tensor.standard.Q6_KFloatTensor",
@@ -147,8 +152,11 @@ public final class Allowlists {
                     "org.beehive.gpullama3.backend.tornado.tensor.TornadoTensor",
                     "org.beehive.gpullama3.backend.tornado.tensor.FP16TornadoTensor",
                     "org.beehive.gpullama3.backend.tornado.tensor.FP32TornadoTensor",
+                    "org.beehive.gpullama3.backend.tornado.tensor.Q4_0TornadoTensor",
                     "org.beehive.gpullama3.backend.tornado.tensor.Q8_0TornadoTensor",
+                    "org.beehive.gpullama3.backend.tornado.tensor.Q4_1TornadoTensor",
                     "org.beehive.gpullama3.backend.tornado.tensor.Q4_KTornadoTensor",
+                    "org.beehive.gpullama3.backend.tornado.tensor.Q5_KTornadoTensor",
                     "org.beehive.gpullama3.backend.tornado.tensor.Q6_KTornadoTensor");
 
     // Rule 7 and Rule 11 have no allowlist: they pass on today's code (policy item 4).

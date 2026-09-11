@@ -80,6 +80,24 @@ public final class TornadoPlanRegistry {
                         .collect(java.util.stream.Collectors.joining(", "));
     }
 
+    /**
+     * The representations this architecture's plans read <b>as they are</b>, without
+     * materialization.
+     *
+     * <p>The provider's own {@code nativeTensorTypes}, which is the declaration that answers this
+     * per tensor. It is separate from {@code supportedDataTypes} because that one admits a plan
+     * for a model-wide representation, and a mixed model holds several: reading admission as
+     * retention under-predicts every tensor whose representation is not the model's.
+     *
+     * <p>Read by the memory preflight, which would otherwise predict every quantized weight at its
+     * Q8_0 size and refuse a configuration that fits. An architecture with no provider retains
+     * nothing, which is the right answer for it: nothing will build it a plan either.
+     */
+    public static java.util.Set<DataType> nativeDeviceTypes(ArchitectureId architecture) {
+        TornadoPlanProvider provider = Index.BY_ID.get(architecture);
+        return provider == null ? java.util.Set.of() : provider.nativeTensorTypes();
+    }
+
     /** Which architectures have migrated to a registered plan provider. */
     public static java.util.Set<ArchitectureId> registered() {
         return new java.util.LinkedHashSet<>(Index.BY_ID.keySet());
@@ -115,6 +133,17 @@ public final class TornadoPlanRegistry {
 
         SingleTokenForwardPlanComponents components =
                 provider.components(quantization, state, model);
+        // A provider may support a mode for one representation and not for another — Llama has
+        // prefill and batch kernels for Q8_0 and F16 but only single-token ones for Q4_0. Without
+        // this the cast below fails with a ClassCastException naming two internal interfaces,
+        // where the contract of this method is that an unsupported combination is refused by name.
+        if (mode == ExecutionMode.PREFILL_DECODE
+                        && !(components instanceof PrefillDecodeForwardPlanComponents)
+                || mode == ExecutionMode.BATCH_PREFILL_DECODE
+                        && !(components instanceof BatchPrefillDecodeForwardPlanComponents)) {
+            throw new UnsupportedOperationException(
+                    mode + " not yet supported for " + model.getModelType() + " + " + quantization);
+        }
         return Optional.of(
                 switch (mode) {
                     case STANDARD -> new SingleTokenForwardPlan(model, components);

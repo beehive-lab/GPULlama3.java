@@ -92,6 +92,7 @@ public final class OperationSupport {
                             DataType.BF16,
                             DataType.Q8_0,
                             DataType.Q4_0,
+                            DataType.Q4_1,
                             DataType.Q4_K,
                             DataType.Q5_K,
                             DataType.Q6_K);
@@ -110,9 +111,16 @@ public final class OperationSupport {
                             SPLIT_FUSED_QKV,
                             SPLIT_GATE_UP,
                             LOGIT_SOFT_CAP,
+                            L2_NORM,
+                            GATED_NORM,
+                            DELTA_RULE_UPDATE,
                             ARG_MAX,
                             SAMPLE ->
                     Set.of(DataType.F32);
+
+                // The convolution kernel is F32 in every file that carries one, and the window it
+                // convolves is an activation.
+            case CAUSAL_CONV_1D -> Set.of(DataType.F32);
 
                 // Mixture of experts: routing and accumulation are float work; expert weights carry
                 // whatever representation the stacked tensors were materialized in.
@@ -124,6 +132,7 @@ public final class OperationSupport {
                             DataType.BF16,
                             DataType.Q8_0,
                             DataType.Q4_0,
+                            DataType.Q4_1,
                             DataType.Q4_K,
                             DataType.Q5_K,
                             DataType.Q6_K);
@@ -149,9 +158,27 @@ public final class OperationSupport {
      */
     private static Set<DataType> gpu(OperationKind kind) {
         return switch (kind) {
-                // Weight-bearing: the two representations plans are built for today.
-            case MAT_VEC, MAT_MUL, EMBEDDING_LOOKUP, VOCAB_PROJECTION ->
-                    Set.of(DataType.F16, DataType.Q8_0);
+                // Weight-bearing, and the quantized ones are read in the file's own layout. A
+                // device kernel decodes a block inside the dot product exactly as the host does;
+                // "the GPU cannot do Q5_K" was never true of the representation, only of a
+                // particular operation's kernel coverage, which is what this table states.
+            case MAT_VEC, VOCAB_PROJECTION ->
+                    Set.of(
+                            DataType.F16,
+                            DataType.Q8_0,
+                            DataType.Q4_0,
+                            DataType.Q4_1,
+                            DataType.Q4_K,
+                            DataType.Q5_K,
+                            DataType.Q6_K);
+
+                // Matrix-matrix has tensor-core kernels for two representations only; a quantized
+                // batch prefill is a separate piece of work.
+            case MAT_MUL -> Set.of(DataType.F16, DataType.Q8_0);
+
+                // The embedding row is gathered on the host and handed over as floats for every
+                // representation but these two, so this is coverage of the *device* gather.
+            case EMBEDDING_LOOKUP -> Set.of(DataType.F16, DataType.Q8_0);
 
                 // Key/value representation, F32 by default and F16 behind the FP16 cache.
             case KV_APPEND, ATTENTION -> Set.of(DataType.F32, DataType.F16);
@@ -173,6 +200,10 @@ public final class OperationSupport {
             case LOGIT_SOFT_CAP, ARG_MAX, SAMPLE -> Set.of(DataType.F32);
 
             case MOE_ROUTER, EXPERT_FEED_FORWARD, WEIGHTED_ACCUMULATE -> Set.of();
+
+                // The recurrent operations: no TornadoVM backend claims the one architecture that
+                // uses them, so they are unsupported by name rather than absent.
+            case L2_NORM, CAUSAL_CONV_1D, DELTA_RULE_UPDATE, GATED_NORM -> Set.of();
         };
     }
 

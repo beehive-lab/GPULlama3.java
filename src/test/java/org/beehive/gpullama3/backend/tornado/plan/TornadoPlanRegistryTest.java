@@ -19,9 +19,11 @@ public class TornadoPlanRegistryTest {
     public void theMigratedProvidersDeclareTheInventoriedMatrix() {
         var llama = provider("llama");
         assertEquals(
-                "both representations",
-                Set.of(DataType.F16, DataType.Q8_0),
+                "both representations, plus the Q4_0 it retains rather than materializes",
+                Set.of(DataType.F16, DataType.Q8_0, DataType.Q4_0),
                 llama.supportedDataTypes());
+        // Declared for the family, not per representation: Q4_0 has single-token kernels only, and
+        // the registry refuses the other two modes for it by name rather than on a cast.
         assertEquals(
                 "all three plan shapes", Set.of(ExecutionMode.values()), llama.supportedModes());
 
@@ -74,7 +76,8 @@ public class TornadoPlanRegistryTest {
                     "qwen3",
                     "gemma4",
                     "phi3",
-                    "granite"
+                    "granite",
+                    "qwen35"
                 }) {
             assertTrue(
                     architecture
@@ -82,7 +85,7 @@ public class TornadoPlanRegistryTest {
                             + " switches are gone",
                     registered.contains(ArchitectureId.of(architecture)));
         }
-        assertEquals("the matrix has ten architectures", 10, registered.size());
+        assertEquals("the matrix has eleven architectures", 11, registered.size());
     }
 
     /**
@@ -104,6 +107,125 @@ public class TornadoPlanRegistryTest {
         assertTrue(
                 "it is registered, which is what distinguishes refusal from absence",
                 TornadoPlanRegistry.registered().contains(ArchitectureId.of("qwen2-moe")));
+    }
+
+    /**
+     * Admission and per-tensor native support are separate declarations.
+     *
+     * <p>For a family whose model is one representation throughout they agree, and the default
+     * says so. They stop agreeing the moment a model is mixed: it reports one representation and
+     * holds several, so a memory prediction built from the admission set counts every tensor that
+     * is not the model's representation at the wrong size. This pins that the preflight reads the
+     * per-tensor declaration and not the admission one.
+     */
+    @Test
+    public void perTensorNativeSupportIsDeclaredApartFromAdmission() {
+        for (TornadoPlanProvider provider : TornadoPlanRegistry.discover()) {
+            assertEquals(
+                    provider.architecture() + " retains what it declares per tensor",
+                    provider.nativeTensorTypes(),
+                    TornadoPlanRegistry.nativeDeviceTypes(provider.architecture()));
+        }
+
+        TornadoPlanProvider uniform =
+                new TornadoPlanProvider() {
+                    @Override
+                    public ArchitectureId architecture() {
+                        return ArchitectureId.of("uniform-test");
+                    }
+
+                    @Override
+                    public Set<DataType> supportedDataTypes() {
+                        return Set.of(DataType.Q8_0);
+                    }
+
+                    @Override
+                    public Set<ExecutionMode> supportedModes() {
+                        return Set.of(ExecutionMode.STANDARD);
+                    }
+
+                    @Override
+                    public org.beehive.gpullama3.backend.tornado.plan.components
+                                    .SingleTokenForwardPlanComponents
+                            components(
+                                    DataType weights,
+                                    org.beehive.gpullama3.inference.state.State state,
+                                    org.beehive.gpullama3.model.Model model) {
+                        throw new UnsupportedOperationException("declaration only");
+                    }
+                };
+        assertEquals(
+                "a uniform family answers both questions the same way, without restating it",
+                uniform.supportedDataTypes(),
+                uniform.nativeTensorTypes());
+
+        TornadoPlanProvider mixed =
+                new TornadoPlanProvider() {
+                    @Override
+                    public ArchitectureId architecture() {
+                        return ArchitectureId.of("mixed-test");
+                    }
+
+                    @Override
+                    public Set<DataType> supportedDataTypes() {
+                        return Set.of(DataType.Q4_0);
+                    }
+
+                    @Override
+                    public Set<DataType> nativeTensorTypes() {
+                        return Set.of(DataType.Q4_0, DataType.Q5_K, DataType.F32);
+                    }
+
+                    @Override
+                    public Set<ExecutionMode> supportedModes() {
+                        return Set.of(ExecutionMode.STANDARD);
+                    }
+
+                    @Override
+                    public org.beehive.gpullama3.backend.tornado.plan.components
+                                    .SingleTokenForwardPlanComponents
+                            components(
+                                    DataType weights,
+                                    org.beehive.gpullama3.inference.state.State state,
+                                    org.beehive.gpullama3.model.Model model) {
+                        throw new UnsupportedOperationException("declaration only");
+                    }
+                };
+        assertTrue(
+                "a mixed family reads representations it does not admit a plan for",
+                mixed.nativeTensorTypes().containsAll(mixed.supportedDataTypes())
+                        && mixed.nativeTensorTypes().size() > mixed.supportedDataTypes().size());
+    }
+
+    /**
+     * {@code qwen35} resolves in all three modes, and reads eight representations per tensor.
+     *
+     * <p>The mode set is a claim the selection layer acts on: a mode declared without graphs fails
+     * from inside TornadoVM, and a mode implemented but not declared is unreachable. Both are
+     * pinned here because this family gained the other two modes after its single-token path
+     * shipped.
+     */
+    @Test
+    public void qwen35ResolvesInEveryMode() {
+        var qwen35 = provider("qwen35");
+        assertEquals(
+                "single token, sequential prefill and batched prefill",
+                Set.of(ExecutionMode.values()),
+                qwen35.supportedModes());
+        assertEquals(
+                "admitted on the representation its trunk projections share",
+                Set.of(DataType.Q4_0),
+                qwen35.supportedDataTypes());
+        assertTrue(
+                "and reads five block layouts and F32 per tensor without materializing any",
+                qwen35.nativeTensorTypes()
+                        .containsAll(
+                                Set.of(
+                                        DataType.F32,
+                                        DataType.Q4_0,
+                                        DataType.Q4_1,
+                                        DataType.Q5_K,
+                                        DataType.Q6_K)));
     }
 
     private static TornadoPlanProvider provider(String architecture) {

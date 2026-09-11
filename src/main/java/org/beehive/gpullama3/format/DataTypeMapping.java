@@ -23,7 +23,7 @@ public final class DataTypeMapping {
     /**
      * What the file holds, in the runtime's vocabulary — before any conversion.
      *
-     * <p>May be a {@linkplain DataType#isFormatDecoded() format-decoded} type: that is the honest
+     * <p>May be a block-encoded quantization: that is the honest
      * answer for a K-quant file, and it is what the CPU path goes on to execute.
      *
      * @throws UnsupportedOperationException naming the type, for a format nothing here executes
@@ -35,6 +35,7 @@ public final class DataTypeMapping {
             case BF16 -> DataType.BF16;
             case Q8_0 -> DataType.Q8_0;
             case Q4_0 -> DataType.Q4_0;
+            case Q4_1 -> DataType.Q4_1;
             case Q4_K -> DataType.Q4_K;
             case Q5_K -> DataType.Q5_K;
             case Q6_K -> DataType.Q6_K;
@@ -51,16 +52,38 @@ public final class DataTypeMapping {
      * hold, and the type an operation on it is parameterized by.
      *
      * <p>On the CPU this is the source type: the host decodes blocks during compute, so nothing is
-     * converted at load. On the GPU a representation with no kernel is converted to its {@linkplain
-     * DataType#materializedFallback() fallback}, which costs device memory — a 4-bit file occupies
-     * roughly twice as much on the device as on disk — and is why native low-bit kernels are worth
-     * having later.
+     * converted at load, and {@link DataType#narrowedFallback()} says which.
+     *
+     * <p><b>This is the legacy answer, and it is not what a family with native kernels uses.</b>
+     * The backend has device storage and matrix-vector kernels for every quantization the engine
+     * recognizes, so a tensor can be — and normally should be — kept in the layout the file gave
+     * it, through {@code ModelLoader.loadTornadoTensorNative}. What remains here is the promotion
+     * to {@link DataType#Q8_0} that families still on the older loading path rely on, which costs
+     * roughly double the device memory for a 4-bit file.
+     *
+     * <p>It is named rather than silent: a caller asking this question is asking "what does the
+     * <i>converting</i> path produce", and the conversion appears in the memory plan. Migrating the
+     * remaining loaders off it is what removes the GPU branch entirely.
      */
     public static DataType materializedType(GGMLType fileType, ExecutionTarget target) {
         DataType source = sourceType(fileType);
         return switch (target) {
             case CPU -> source;
-            case GPU -> source.materializedFallback();
+            case GPU -> legacyDevicePromotion(source);
+        };
+    }
+
+    /**
+     * What the older, converting device path turns a representation into.
+     *
+     * <p>Kept out of {@link DataType} deliberately. It is not a property of the representation —
+     * nothing about Q4_K implies Q8_0 — but a property of a loading path that predates native
+     * device storage.
+     */
+    private static DataType legacyDevicePromotion(DataType source) {
+        return switch (source) {
+            case Q4_0, Q4_1, Q4_K, Q5_K, Q6_K -> DataType.Q8_0;
+            default -> source.narrowedFallback();
         };
     }
 
@@ -107,6 +130,7 @@ public final class DataTypeMapping {
             case BF16 -> GGMLType.BF16;
             case Q8_0 -> GGMLType.Q8_0;
             case Q4_0 -> GGMLType.Q4_0;
+            case Q4_1 -> GGMLType.Q4_1;
             case Q4_K -> GGMLType.Q4_K;
             case Q5_K -> GGMLType.Q5_K;
             case Q6_K -> GGMLType.Q6_K;

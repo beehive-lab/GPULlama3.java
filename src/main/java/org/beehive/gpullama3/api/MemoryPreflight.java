@@ -22,13 +22,21 @@ final class MemoryPreflight {
     /** The predicted plan for this file and these options. Reads descriptors, not tensor data. */
     static MemoryPlan plan(Path modelFile, int contextLength, ModelOptions options)
             throws IOException {
-        // Descriptors only. The loader owns the format types (Rule 4 permits it there and forbids
-        // them here), and what comes back is a neutral footprint.
-        var weights = ModelLoader.weightFootprint(modelFile);
         // loadWeights = false, useTornadovm = false: the configuration comes from metadata and no
         // tensor is materialized, on the host or the device. That is what makes this a *pre*flight.
-        Configuration config =
-                ModelLoader.loadModel(modelFile, contextLength, false, false).configuration();
+        var model = ModelLoader.loadModel(modelFile, contextLength, false, false);
+        Configuration config = model.configuration();
+        // Descriptors only. The loader owns the format types (Rule 4 permits it there and forbids
+        // them here), and what comes back is a neutral footprint.
+        //
+        // The footprint has to know which representations this family keeps as they are, or it
+        // predicts every quantized weight at its Q8_0 size — nearly double for a 4-bit file, which
+        // is the difference between refusing a 27B model on a 24 GB device and running it.
+        var weights =
+                ModelLoader.weightFootprint(
+                        modelFile,
+                        org.beehive.gpullama3.backend.tornado.plan.TornadoPlanRegistry
+                                .nativeDeviceTypes(model.architectureId()));
         return TornadoMemoryModel.predict(
                 weights,
                 config,

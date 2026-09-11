@@ -26,7 +26,19 @@ an identity nobody registered is reported as unrecognized (`GPUL-MOD-002`). It i
 mapped to the nearest family.
 
 Registered architectures today: Llama, Mistral, Qwen2, Qwen3, DeepSeek-R1-Distill-Qwen,
-Granite, Phi-3, Gemma-4, Devstral.
+Granite, Phi-3, Gemma-4, Devstral, Qwen3.5 (`qwen35`).
+
+`qwen35` needed no recognition case at all — the file declares that architecture, nothing
+else claims the name, and the pass-through branch resolved it. A provider class and one
+service line were the whole registration, which is what rule 15 is for. It is also the first
+family with **two kinds of layer**: only every fourth trunk layer attends, and the other
+three mix with a Gated Delta Net recurrence holding fixed-size state instead of a key/value
+cache. See [`qwen35-port-proposal.md`](qwen35-port-proposal.md).
+
+It reuses Qwen 3's tokenizer, turn structure and thinking control, and **does not** reuse its
+tool-call format: Qwen 3 puts a JSON object inside `<tool_call>`, and Qwen 3.5 puts nested
+pseudo-XML there (`<function=name><parameter=x>`). Inheriting the wrong one would have produced a
+model that converses correctly and gets tool calling silently wrong in both directions.
 
 ## Data types and materialization
 
@@ -34,7 +46,7 @@ Granite, Phi-3, Gemma-4, Devstral.
 | --- | --- | --- |
 | `F32`, `F16`, `BF16` | no | no |
 | `Q8_0` | yes | no |
-| `Q4_0`, `Q4_K`, `Q5_K`, `Q6_K` | yes | yes |
+| `Q4_0`, `Q4_1`, `Q4_K`, `Q5_K`, `Q6_K` | yes | yes |
 
 **Dequantization is a materialization concern**, not a model concern and not a kernel
 concern. The runtime tensor vocabulary names no file-format type; the format layer parses
@@ -42,6 +54,25 @@ GGUF and the loading path materializes weights in the representation the chosen 
 executes. Where a K-quant is decoded is therefore the backend's decision: the CPU backend
 may keep a decoded representation, and the TornadoVM backend keeps Q4_K and Q6_K resident
 on the device rather than expanding them on the host.
+
+**Retaining a representation is a per-family capability, not a global one.** `Q4_K`/`Q6_K` are
+retained for Devstral and `Q4_0` for Llama, because those families' layer graphs have kernels
+that decode them in place; the same file loaded for a family without them is still materialized
+as `Q8_0`. The loader opts in explicitly rather than retaining everything with a kernel
+somewhere, because a tensor retained in a format its graph cannot read would be decoded as the
+format it is not — 18-byte blocks addressed as 34-byte ones, which yields weights of plausible
+magnitude and fluent, wrong text.
+
+Retaining is worth roughly half a model's device footprint. Measured on one file,
+`Llama-3.2-1B-Instruct-Q4_0.gguf`, switching only `-Dllama.q4_0.retain`:
+
+| | device peak | decode |
+| --- | --- | --- |
+| retained as `Q4_0` | 1570 MiB | 172.4 tok/s |
+| materialized as `Q8_0` | 2060 MiB | 136.0 tok/s |
+
+Faster as well as smaller, because single-token decode is bandwidth-bound: fewer bytes per
+weight is fewer bytes read per token.
 
 A backend declares which representations it accepts. A combination it does not accept is
 refused, not silently converted — a silent conversion changes the arithmetic and shows up
@@ -102,12 +133,14 @@ assuming the CUDA result carries over.
 | Batched prefill/decode | yes | yes (F16; Q8_0 blocked, see below) | yes | **blocked** |
 | F16 and Q8_0 weights | yes | yes | yes | yes |
 | Q4_K / Q6_K device residency | n/a | yes | yes | yes |
+| Q4_0 device residency (Llama) | n/a | yes | yes | yes |
 | CPU-resident sampling | yes | yes | yes | yes |
 | Device-resident sampling | n/a | yes | yes | yes |
 | Shared KV pool and leases | yes | yes | yes | yes |
 | Prefix caching | yes | yes | yes | yes |
 | Compiled-program caching | n/a | yes | yes | yes |
 | Lowered execution path under `auto` | n/a | Llama/F16/`STANDARD` | selects legacy | selects legacy |
+| `qwen35` (Qwen3.5 / 3.8) | yes | all three modes, Q4_0 | untested | untested |
 | Conversations, tools, thinking control, streaming | yes | yes | yes | yes |
 | Memory preflight confidence | n/a | `EXACT` | `EXACT` | capped at `CONSERVATIVE` |
 | Reset / close / multi-session | yes | yes | yes | yes |
@@ -127,6 +160,17 @@ Recorded external limitations, each with its named cause:
 - **Kernel capture on Metal** — `withPrintKernel()` produces no kernel source, so
   `CompiledProgramIdentityAccelTest` cannot observe there. A capture-path gap, not a
   numerical one.
+- **`qwen35` runs all three modes on CUDA, and only on CUDA.** Sequential prefill reuses the
+  single-token layer graphs with the logits graph skipped; batched prefill has its own layer
+  graphs, in which the convolution and the delta rule scan the chunk in token order inside the
+  kernel rather than treating its rows as independent. The MTP draft head is not built into any
+  of them. OpenCL and Metal have not been run.
+- **`qwen35` attention does not use the split-KV kernel.** Its head is 256 wide and
+  `processHeadsFlashAttentionSplitKVPaged` fixes its query staging and per-thread accumulator
+  at 128 floats per head, so a 256-wide head reads and writes past them — on CUDA an illegal
+  address, which surfaces as a poisoned context and an allocation failure in an unrelated
+  call. This family uses the single-workgroup online-softmax kernel, which sizes its shared
+  memory from the head width it is given, at the cost of the splits' parallelism.
 - **Memory preflight on Metal** is capped at `CONSERVATIVE`. The multiplicity/header model
   `EXACT` depends on was bisected against measurement on CUDA only, and admission acts on
   the confidence level.

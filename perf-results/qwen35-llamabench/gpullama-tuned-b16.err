@@ -1,0 +1,8 @@
+Detected TornadoVM backend: cuda (from /home/orion/.sdkman/candidates/tornadovm/current/etc/tornado.backend)
+WARNING: Using incubator modules: jdk.incubator.vector
+[bench] selection: qwen35 / Q4_0 / BATCH_PREFILL_DECODE (kv FP32)
+[bench] Qwen3.8-27B-Q4_0             pp64 b16          57.66 ± 0.04 t/s (median 57.68)
+[bench] Qwen3.8-27B-Q4_0             pp381 b16         55.89 ± 0.12 t/s (median 55.83)
+[bench] Qwen3.8-27B-Q4_0             pp512 b16         55.63 ± 0.06 t/s (median 55.62)
+[bench] Qwen3.8-27B-Q4_0             pp1024 b16        54.23 ± 0.03 t/s (median 54.23)
+[bench] Qwen3.8-27B-Q4_0             tg128 b16         13.83 ± 0.01 t/s (median 13.83)

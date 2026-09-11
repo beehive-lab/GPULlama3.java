@@ -87,6 +87,9 @@ public abstract class State {
     public final FloatTensor logits; // output logits
     public final int batchsize;
 
+    /** The prefill batch width this state's workspace was sized for; 1 when it holds none. */
+    protected final int prefillBatchWidth;
+
     /** The device arrays this session executes against, or {@code null} on the host-only path. */
     public final org.beehive.gpullama3.backend.tornado.workspace.TornadoWorkspace workspace;
 
@@ -289,6 +292,10 @@ public abstract class State {
         // Assigned before createStateFields, which the subclass overrides and which needs to know
         // whether there is leased storage to bind rather than arrays to allocate.
         this.storageOptions = storageForConstruction();
+        // The width the prefill workspace is sized from, taken once. A family that allocates its
+        // own chunk-wide buffers reads this rather than the execution policy: the policy is
+        // resolved per generation and says nothing about how this state was built.
+        this.prefillBatchWidth = prefillBatchForConstruction();
         this.kvLease = lease;
         this.kvSlot = lease != null ? lease.slot() : 0;
         this.batchsize = batchsize;
@@ -327,7 +334,7 @@ public abstract class State {
 
         // You need at least 9 elements: 1 for the final result + 8 for the workgroup partial sums
 
-        int gpuBatchSize = prefillBatchForConstruction();
+        int gpuBatchSize = prefillBatchWidth;
         if (gpuBatchSize > 1) {
             // The tensor-core GEMM kernels operate on full 128-row M tiles
             // (BM = 128). Pad the GEMM-adjacent activation buffers so any
@@ -431,6 +438,27 @@ public abstract class State {
      */
     protected boolean fillKvFields(
             StateFields fields, Configuration config, int kvDim, boolean useFp16) {
+        return fillKvFields(fields, config, kvDim, config.numberOfLayers(), useFp16);
+    }
+
+    /**
+     * {@link #fillKvFields(StateFields, Configuration, int, boolean)} for a family where not every
+     * layer holds key/value entries.
+     *
+     * <p>{@code qwen35} attends in one layer of four; the other three mix with a recurrence and
+     * have nothing to retain. Sizing the store by the layer count would allocate four times what
+     * the model uses — gigabytes at any useful context — so the store is sized by the layers that
+     * actually write to it, and those layers address it by a <b>dense</b> index rather than their
+     * own. The kernels need no change: {@code layer} is already just a stride multiplier to them.
+     *
+     * @param kvLayers how many layers hold key/value entries; the dense index space they address
+     */
+    protected boolean fillKvFields(
+            StateFields fields,
+            Configuration config,
+            int kvDim,
+            int kvLayers,
+            boolean useFp16) {
         // The caller says whether this family has FP16 kernels at all; the storage options say
         // whether they were asked for. Both must hold.
         useFp16 = useFp16 && storageOptions.usesFp16KeyValueCache();
@@ -458,9 +486,9 @@ public abstract class State {
         // Its own arrays, laid out [block][layer][posInBlock][c] — a permutation of the contiguous
         // layout plus at most blockSize-1 positions of padding.
         int blocksPerSeq = (config.contextLength() + KV_BLOCK_SIZE - 1) / KV_BLOCK_SIZE;
-        int kvElements = blocksPerSeq * config.numberOfLayers() * KV_BLOCK_SIZE * kvDim;
+        int kvElements = blocksPerSeq * kvLayers * KV_BLOCK_SIZE * kvDim;
         fields.kvBlockCfg = KV_BLOCK_SIZE | (blocksPerSeq << 16);
-        fields.kvBlockStride = config.numberOfLayers() * KV_BLOCK_SIZE * kvDim;
+        fields.kvBlockStride = kvLayers * KV_BLOCK_SIZE * kvDim;
         // One sequence's private table, identity-mapped: logical block i is physical block i.
         // Addressed only at slot 0 — it is sized blocksPerSeq, so no larger slot fits in it.
         TornadoWorkspaces.identityBlockTable(workspace, blocksPerSeq);
@@ -508,6 +536,33 @@ public abstract class State {
      */
     protected int batchKvDim(Configuration config) {
         return (config.dim() * config.numberOfKeyValueHeads()) / config.numberOfHeads();
+    }
+
+    /**
+     * Discards whatever this state carries that a position rewind does not.
+     *
+     * <p>A no-op for every family whose only per-sequence memory is a key/value cache: attention
+     * reads no further than the current position, so rewinding the position <i>is</i> the reset,
+     * and clearing the cache would cost a context-length write for no effect.
+     *
+     * <p>It is not a no-op for a family with recurrent state. A convolution window or a delta-net
+     * matrix has summed the whole sequence into a fixed-size buffer with no notion of position, so
+     * a reused session would condition the new sequence on the old one — fluent output, silently
+     * wrong. Such a family overrides this.
+     */
+    public void resetSequenceState() {}
+
+    /**
+     * The device buffers that hold this family's recurrent state, if it keeps any.
+     *
+     * <p>{@link #resetSequenceState()} zeroes the host side, and for these buffers that is not
+     * enough: they are declared {@code FIRST_EXECUTION} and then {@code persistOnDevice}, so the
+     * device copy is written by the kernels and never re-read from the host. A reset that only
+     * clears the host arrays leaves the accelerator continuing the previous sequence. The plan
+     * uploads these after a reset; a family with no recurrent state returns nothing.
+     */
+    public Object[] recurrentDeviceBuffers() {
+        return new Object[0];
     }
 
     // Abstract method - subclasses implement their specific allocation logic and sizes

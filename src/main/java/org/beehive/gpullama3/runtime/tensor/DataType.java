@@ -13,66 +13,84 @@ import org.beehive.gpullama3.api.Experimental;
  *
  * <h2>What is not here</h2>
  *
- * <p>{@link #Q4_0}, {@link #Q4_K}, {@link #Q5_K} and {@link #Q6_K} are here for one specific
- * reason: the CPU path executes them directly, decoding blocks inside the dot product. They are
- * {@linkplain #isFormatDecoded() format-decoded} — no target materializes a tensor in them, and the
- * GPU path does not execute them at all: the loader materializes {@link #Q8_0} instead. That is why
- * the format mapping takes a load target rather than being a global function.
+ * <h2>What this type answers, and what it does not</h2>
  *
- * <p>Nothing depends on this type yet; it is introduced ahead of the descriptors and the mapping
- * that use it. Its public exposure arrives with the facade's dtype accessors.
+ * <p>It describes a <b>representation</b>: how values are laid out, and whether that layout is
+ * blocks with scales ({@link #isQuantized()}). That is all. Three questions it deliberately does
+ * not answer, because each has a different owner and conflating them is what made the engine
+ * believe quantized weights were CPU-only:
+ *
+ * <ul>
+ *   <li><b>Must arithmetic decode a block to read a value?</b> True of every quantized
+ *       representation here, on <i>every</i> backend. A device kernel decodes inside its dot
+ *       product exactly as a host one does. It is a property of the representation and it implies
+ *       nothing about which backend can hold it.
+ *   <li><b>Can a backend store it?</b> The backend's storage vocabulary — for TornadoVM, whether a
+ *       {@code TornadoTensor} wrapper exists.
+ *   <li><b>Does a given operation have a kernel for it?</b> {@code OperationSupport}, per operation
+ *       and per target. A matrix-vector product reads all six quantizations; matrix-matrix has
+ *       tensor-core kernels for two. "The GPU cannot do Q5_K" was never a fact about Q5_K.
+ * </ul>
  */
 @Experimental
 public enum DataType {
 
     /** 32-bit float. What the CPU accumulates in, whatever the weights are stored as. */
-    F32(false, false),
+    F32(false),
 
     /** 16-bit float. Stored and computed with directly on the GPU path. */
-    F16(false, false),
+    F16(false),
 
     /**
      * 16-bit brain float: the same exponent range as {@link #F32} with fewer mantissa bits.
      *
-     * <p>Not {@linkplain #isFormatDecoded() format-decoded}: the CPU materializes a tensor in this
-     * representation and reads it directly. The GPU does not execute it, and converts to {@link
+     * <p>Not block-encoded: the CPU materializes a tensor in this representation and reads it
+     * directly. The GPU does not execute it, and converts to {@link
      * #F16} at load instead — a narrowing that loses exponent range, which is why the conversion is
      * stated in {@link #materializedFallback()} rather than left implicit. The device type exists
      * (TornadoVM's {@code BFloat16Array}, 5.2.0), so this is today's behaviour and not a permanent
      * limit.
      */
-    BF16(false, false),
+    BF16(false),
 
     /** 8-bit block quantization: signed 8-bit values with a per-block scale. */
-    Q8_0(true, false),
+    Q8_0(true),
 
     /**
      * 4-bit block quantization, 32 values to a block with one scale. Like the K-quants it is
      * decoded during compute on the CPU and materialized as {@link #Q8_0} for the GPU.
      */
-    Q4_0(true, true),
+    Q4_0(true),
+
+    /**
+     * 4-bit block quantization with a per-block minimum as well as a scale: {@code d * q + m}, 32
+     * values to a block. Like {@link #Q4_0} it is decoded during compute on the CPU and
+     * materialized as {@link #Q8_0} for the GPU.
+     *
+     * <p>Here because Qwen3.8-27B mixes it into an otherwise Q4_0 file — the first eight layers'
+     * {@code ffn_down} tensors of `Qwen3.8-27B-Q4_0.gguf` are Q4_1.
+     */
+    Q4_1(true),
 
     /**
      * 4-bit K-quantization. CPU only, decoded during compute; the GPU materializes {@link #Q8_0}.
      */
-    Q4_K(true, true),
+    Q4_K(true),
 
     /**
      * 5-bit K-quantization. CPU only, decoded during compute; the GPU materializes {@link #Q8_0}.
      */
-    Q5_K(true, true),
+    Q5_K(true),
 
     /**
      * 6-bit K-quantization. CPU only, decoded during compute; the GPU materializes {@link #Q8_0}.
      */
-    Q6_K(true, true);
+    Q6_K(true);
 
     private final boolean quantized;
-    private final boolean formatDecoded;
 
-    DataType(boolean quantized, boolean formatDecoded) {
+    DataType(boolean quantized) {
         this.quantized = quantized;
-        this.formatDecoded = formatDecoded;
     }
 
     /** Whether values are stored in blocks with scales rather than as plain floats. */
@@ -81,35 +99,21 @@ public enum DataType {
     }
 
     /**
-     * Whether this representation is only ever <i>decoded</i> during compute, never materialized as
-     * a tensor of its own.
+     * The representation this one is <b>narrowed</b> to when no arithmetic exists for it.
      *
-     * <p>The distinction is not decorative. A format-decoded type has no storage form a backend can
-     * be asked to allocate, so it can never be the target of a materialization, and a plan cannot
-     * be built for it on a backend that does not decode it. The K-quants are the case: the CPU
-     * decodes them in the dot product, and the GPU never sees them because the loader turns them
-     * into {@link #Q8_0} first.
+     * <p>One case, and it is a genuine narrowing rather than a capability gap: {@link #BF16} loses
+     * mantissa bits to {@link #F16} because no BF16 device arithmetic is used. The device type
+     * exists (TornadoVM's {@code BFloat16Array}), so this is today's behaviour, not a permanent
+     * limit.
+     *
+     * <p>It used to answer {@link #Q8_0} for every quantized representation, which is how a 4-bit
+     * model came to occupy twice its size on a device. It no longer does: a quantized tensor is
+     * kept in the layout the file gave it, and an operation with no kernel for that layout is
+     * refused by name rather than served by conversion.
+     *
+     * @return the narrowed representation, or this type when it needs none
      */
-    public boolean isFormatDecoded() {
-        return formatDecoded;
-    }
-
-    /**
-     * The representation a target must materialize to run this one, when it cannot execute it
-     * directly.
-     *
-     * <p>Stated here for the format-decoded types and for {@link #BF16}, and only as what it is —
-     * the fallback that exists today. <b>Which target uses it is not this type's business</b>: that
-     * is the mapping's, which takes a load target precisely because the answer differs between CPU
-     * and GPU.
-     *
-     * @return the fallback representation, or this type when it needs none
-     */
-    public DataType materializedFallback() {
-        return switch (this) {
-            case Q4_0, Q4_K, Q5_K, Q6_K -> Q8_0; // format-decoded: the GPU never sees them
-            case BF16 -> F16; // narrowed at load; no BF16 kernels yet
-            default -> this;
-        };
+    public DataType narrowedFallback() {
+        return this == BF16 ? F16 : this;
     }
 }
