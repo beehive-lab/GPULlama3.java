@@ -83,6 +83,19 @@ public class LogitsQ8_0Layer extends AbstractLogitsTaskGraph {
         // projection in whatever the quantizer chose -- Qwen3.5's is Q6_K where its layers are
         // Q4_0 -- and reading one block layout as another produces plausible logits and wrong
         // tokens. A representation with no kernel is refused here rather than converted.
+        if (packedVocabulary(weights)) {
+            // One explicit terminal boundary: the final normalized activation, quantized here and
+            // read by the projection below and by nothing else.
+            logits.task(
+                    "vocab_quantize",
+                    org.beehive.gpullama3.backend.tornado.kernels.TransformerComputeKernelsQ4_0
+                            ::quantizeActivationQ8Blocks,
+                    context,
+                    state.workspace.wrapX,
+                    state.workspace.wrapXbQuants,
+                    state.workspace.wrapXbScales,
+                    state.workspace.wrapXbSums);
+        }
         addVocabularyProjection(logits, weights, config);
 
         logits.transferToHost(DataTransferMode.EVERY_EXECUTION, state.workspace.wrapLogits);
@@ -90,11 +103,43 @@ public class LogitsQ8_0Layer extends AbstractLogitsTaskGraph {
         return logits;
     }
 
+    /**
+     * TEMPORARY, for the Q6_K vocabulary evaluation. Removed when the tradeoff is decided; this is
+     * the only call site it covers.
+     */
+    private boolean packedVocabulary(TornadoWeights weights) {
+        return Boolean.getBoolean("llama.qwen35.packedVocab")
+                && weights.wclsByteArray.dataType()
+                        == org.beehive.gpullama3.runtime.tensor.DataType.Q6_K
+                && state.workspace.wrapXbQuants != null
+                && org.beehive.gpullama3.backend.tornado.device.TornadoDevices.current()
+                        .capabilities()
+                        .supports(
+                                org.beehive.gpullama3.runtime.backend.DeviceCapability
+                                        .PACKED_INTEGER_DOT);
+    }
+
     /** The vocabulary projection task, chosen by what the output projection actually holds. */
     private void addVocabularyProjection(
             TaskGraph logits, TornadoWeights weights, Configuration config) {
         int localSize = LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS;
         var w = weights.wclsByteArray;
+        if (packedVocabulary(weights)) {
+            logits.task(
+                    "vocab_proj",
+                    org.beehive.gpullama3.backend.tornado.kernels.TransformerComputeKernelsQ6_K
+                            ::matrixVectorGenericQ6_KDP4A,
+                    context,
+                    state.workspace.wrapXbQuants,
+                    state.workspace.wrapXbScales,
+                    state.workspace.wrapXbSums,
+                    state.workspace.wrapLogits,
+                    w.asByteArray(),
+                    config.dim(),
+                    config.vocabularySize(),
+                    localSize);
+            return;
+        }
         switch (w.dataType()) {
             case Q8_0 ->
                     logits.task(
@@ -194,6 +239,12 @@ public class LogitsQ8_0Layer extends AbstractLogitsTaskGraph {
         tornadoForwardScheduler.addWorkerGrid("logits.vocab_proj", vocabWorker);
         tornadoForwardScheduler.addWorkerGrid("logits.rms_reduce", rmsReduceWorker(logitsRMS));
         tornadoForwardScheduler.addWorkerGrid("logits.mapContextLogits", logitsRMS);
+        if (weights instanceof TornadoWeights tornadoWeights && packedVocabulary(tornadoWeights)) {
+            tornadoForwardScheduler.addWorkerGrid(
+                    "logits.vocab_quantize",
+                    org.beehive.gpullama3.backend.tornado.scheduling.WorkerGridFactory
+                            .genericWorker(config.dim(), 32));
+        }
         return tornadoForwardScheduler;
     }
 
