@@ -185,9 +185,10 @@ public class Qwen35FFNLayers
         requireWholeBlocks(layer, task, role, w.dataType(), n);
         boolean packed =
                 w.dataType() == DataType.Q4_0
-                        && !residual
-                        && x == state.workspace.wrapXb
-                        && normedActivationQuantized;
+                        && ((!residual && x == state.workspace.wrapXb && normedActivationQuantized)
+                                || (residual
+                                        && x == state.workspace.wrapHb
+                                        && hiddenActivationQuantized));
         dispatches.add(new Dispatch(layer, task, role, w.dataType(), packed));
         switch (w.dataType()) {
             case F32 -> {
@@ -257,7 +258,20 @@ public class Qwen35FFNLayers
                 }
             }
             case Q4_0 -> {
-                if (!residual && x == state.workspace.wrapXb && normedActivationQuantized) {
+                if (residual && x == state.workspace.wrapHb && hiddenActivationQuantized) {
+                    graph.task(
+                            task,
+                            TransformerComputeKernelsQ4_0::matrixVectorGenericWithResidualQ4_0DP4A,
+                            context,
+                            state.workspace.wrapXbQuants,
+                            state.workspace.wrapXbScales,
+                            state.workspace.wrapXbSums,
+                            out,
+                            w.asByteArray(),
+                            n,
+                            d,
+                            MATVEC_LOCAL);
+                } else if (!residual && x == state.workspace.wrapXb && normedActivationQuantized) {
                     // The packed-integer path, for a projection whose input the branch already
                     // quantized. Weights stay Q4_0; the activation is what changed representation.
                     graph.task(
@@ -622,6 +636,21 @@ public class Qwen35FFNLayers
                 require(weights.w1Layered, layerIndex, "ffn_gate"),
                 require(weights.w3Layered, layerIndex, "ffn_up"),
                 qwen35State.workspace.wrapXb);
+        hiddenActivationQuantized = false;
+        if (DP4A && PACKED_FFN_DOWN) {
+            // SwiGLU's output, quantized fresh. It is neither of the activations quantized
+            // earlier in this layer, and the scratch it shares with them is sized for it.
+            layer.task(
+                    "ffn_down_quantize",
+                    TransformerComputeKernelsQ4_0::quantizeActivationQ8Blocks,
+                    context,
+                    qwen35State.workspace.wrapHb,
+                    qwen35State.workspace.wrapXbQuants,
+                    qwen35State.workspace.wrapXbScales,
+                    qwen35State.workspace.wrapXbSums);
+            hiddenActivationQuantized = true;
+        }
+
         matVec(
                 layer,
                 layerIndex,
@@ -736,6 +765,20 @@ public class Qwen35FFNLayers
      */
     // @formatter:on
     private boolean normedActivationQuantized;
+
+    /**
+     * Whether {@code wrapHb} holds the activation the feed-forward's own quantization describes.
+     *
+     * <p>Separate from {@link #normedActivationQuantized} because it is a different buffer holding
+     * a different activation: SwiGLU's output, which only {@code ffn_down} reads.
+     */
+    private boolean hiddenActivationQuantized;
+
+    /**
+     * TEMPORARY, for the {@code ffn_down} evaluation. Not the accepted default; removed when the
+     * tradeoff is decided either way.
+     */
+    private static final boolean PACKED_FFN_DOWN = Boolean.getBoolean("llama.qwen35.packedFfnDown");
 
     private static final boolean DP4A =
             TornadoDevices.current()
@@ -1318,6 +1361,11 @@ public class Qwen35FFNLayers
                 scheduler.addWorkerGrid(
                         prefix + "ffn_xb_quantize",
                         WorkerGridFactory.genericWorker(config.dim(), 32));
+                if (PACKED_FFN_DOWN) {
+                    scheduler.addWorkerGrid(
+                            prefix + "ffn_down_quantize",
+                            WorkerGridFactory.genericWorker(config.hiddenDim(), 32));
+                }
             }
             scheduler.addWorkerGrid(prefix + "ffn_rms_apply", rmsApply);
             scheduler.addWorkerGrid(prefix + "ffn_gate_up", matVecWorker(config.hiddenDim()));

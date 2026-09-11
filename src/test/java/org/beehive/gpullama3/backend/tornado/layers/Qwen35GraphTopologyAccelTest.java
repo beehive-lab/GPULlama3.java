@@ -272,9 +272,11 @@ public class Qwen35GraphTopologyAccelTest {
                 "attn_output_proj reads wrapXb after the attention branch overwrote it, so it"
                         + " cannot take the quantized activation",
                 notPacked.contains("attn_output_proj"));
-        assertTrue(
-                "ffn_down_proj reads the feed-forward's own activation",
-                notPacked.contains("ffn_down_proj"));
+        if (!Boolean.getBoolean("llama.qwen35.packedFfnDown")) {
+            assertTrue(
+                    "ffn_down_proj reads the feed-forward's own activation",
+                    notPacked.contains("ffn_down_proj"));
+        }
         assertTrue("ssm_out_proj reads the delta-net readout", notPacked.contains("ssm_out_proj"));
     }
 
@@ -336,6 +338,10 @@ public class Qwen35GraphTopologyAccelTest {
                                 "ssm_qkv_proj",
                                 "ssm_gate_proj"));
         names.add("ffn_gate_up");
+        if (Boolean.getBoolean("llama.qwen35.packedFfnDown")) {
+            // Under evaluation: ffn_down against its own quantization of the SwiGLU output.
+            names.add("ffn_down_proj");
+        }
         return names;
     }
 
@@ -525,8 +531,16 @@ public class Qwen35GraphTopologyAccelTest {
         // attention norm's output and the feed-forward quantizes its own, which the norm between
         // them has made a different activation.
         int ffnQuantize = quantize;
-        assertEquals("a recurrent layer's tasks", 20 + quantize + ffnQuantize, recurrentTasks);
-        assertEquals("an attention layer's tasks", 16 + quantize + ffnQuantize, attentionTasks);
+        int ffnDownQuantize =
+                quantize == 1 && Boolean.getBoolean("llama.qwen35.packedFfnDown") ? 1 : 0;
+        assertEquals(
+                "a recurrent layer's tasks",
+                20 + quantize + ffnQuantize + ffnDownQuantize,
+                recurrentTasks);
+        assertEquals(
+                "an attention layer's tasks",
+                16 + quantize + ffnQuantize + ffnDownQuantize,
+                attentionTasks);
         assertEquals("the plan's layer tasks", 6 * recurrentTasks + 2 * attentionTasks, total);
     }
 

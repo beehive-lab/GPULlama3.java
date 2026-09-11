@@ -221,6 +221,124 @@ public class Q4_0Dp4aAccelTest {
                 worst <= 1e-4 * largest);
     }
 
+    // @formatter:off
+    /**
+     * The residual form: {@code hb[row] += w[row]·x}, against the same-quantization reference.
+     *
+     * <p>What it adds over the plain case is the accumulate-into-destination, so the destination is
+     * seeded with a value of the same order as the projection's own output — a residual that
+     * vanished, or was applied twice, would otherwise hide inside the sum.
+     *
+     * <p>The activation carries a zero block and blocks of mixed sign and very different
+     * magnitudes, so the per-block scales are nonuniform and the packing signed.
+     */
+    // @formatter:on
+    @Test
+    public void theResidualFormMatchesAReferenceThatQuantizesTheSameWay() throws Exception {
+        byte[] raw = realisticWeights(5150L);
+        float[] host = new float[N];
+        for (int i = 0; i < N; i++) {
+            int block = i / QK;
+            if (block == 5) {
+                host[i] = 0.0f;
+            } else if (block % 4 == 0) {
+                host[i] = (float) (Math.sin(0.011 * i) * 1e-3);
+            } else if (block % 4 == 1) {
+                host[i] = (float) (Math.cos(0.023 * i) * 30.0);
+            } else {
+                host[i] = (i % 2 == 0 ? 1 : -1) * (0.5f + (i % 13) * 0.25f);
+            }
+        }
+        float[] seed = new float[D];
+        for (int i = 0; i < D; i++) {
+            seed[i] = (float) Math.cos(0.07 * i) * 20.0f;
+        }
+
+        FloatArray x = new FloatArray(N);
+        for (int i = 0; i < N; i++) {
+            x.set(i, host[i]);
+        }
+        IntArray quants = new IntArray(N / 4);
+        FloatArray scales = new FloatArray(N / QK);
+        IntArray sums = new IntArray(N / QK);
+        quants.init(0);
+        scales.init(0.0f);
+        sums.init(0);
+        FloatArray hb = new FloatArray(D);
+        for (int i = 0; i < D; i++) {
+            hb.set(i, seed[i]);
+        }
+        ByteArray w = toDevice(raw);
+
+        TaskGraph graph =
+                new TaskGraph("residual")
+                        .transferToDevice(
+                                DataTransferMode.EVERY_EXECUTION, x, w, quants, scales, sums, hb)
+                        .task(
+                                "quantize",
+                                TransformerComputeKernelsQ4_0::quantizeActivationQ8Blocks,
+                                new KernelContext(),
+                                x,
+                                quants,
+                                scales,
+                                sums)
+                        .task(
+                                "matvec",
+                                TransformerComputeKernelsQ4_0
+                                        ::matrixVectorGenericWithResidualQ4_0DP4A,
+                                new KernelContext(),
+                                quants,
+                                scales,
+                                sums,
+                                hb,
+                                w,
+                                N,
+                                D,
+                                LOCAL)
+                        .transferToHost(DataTransferMode.EVERY_EXECUTION, hb, scales, sums);
+
+        GridScheduler scheduler = new GridScheduler();
+        WorkerGrid1D blocks = new WorkerGrid1D(N);
+        blocks.setLocalWork(QK, 1, 1);
+        scheduler.addWorkerGrid("residual.quantize", blocks);
+        WorkerGrid1D rows = new WorkerGrid1D(D * LOCAL);
+        rows.setLocalWork(LOCAL, 1, 1);
+        scheduler.addWorkerGrid("residual.matvec", rows);
+        try (TornadoExecutionPlan plan = new TornadoExecutionPlan(graph.snapshot())) {
+            plan.withGridScheduler(scheduler).execute();
+        }
+
+        Quantized reference = new Quantized(host);
+        assertEquals("the zero block's scale", 0.0f, reference.scales[5], 0.0f);
+        assertEquals("the zero block's scale on the device", 0.0f, scales.get(5), 0.0f);
+        assertEquals("the zero block's sum on the device", 0, sums.get(5));
+
+        double largest = 0;
+        double worst = 0;
+        for (int row = 0; row < D; row++) {
+            double sum = 0;
+            for (int block = 0; block < N / QK; block++) {
+                int dot = 0;
+                for (int i = 0; i < QK; i++) {
+                    int packedQuant = reference.quants[block * (QK / 4) + i / 4];
+                    int quant = (byte) ((packedQuant >> ((i % 4) * 8)) & 0xFF);
+                    dot += (nibbleOf(raw, row, block * QK + i) - 8) * quant;
+                }
+                sum += (double) scaleOf(raw, row, block) * reference.scales[block] * dot;
+            }
+            double expected = seed[row] + sum;
+            float got = hb.get(row);
+            assertTrue("row " + row + " is " + got, Float.isFinite(got));
+            largest = Math.max(largest, Math.abs(expected));
+            worst = Math.max(worst, Math.abs(expected - got));
+        }
+        System.out.printf(
+                "[RESIDUAL] against the same-quantization reference: worst %.6g,"
+                        + " largest |out| %.6g%n",
+                worst, largest);
+        assertTrue("worst " + worst + " against largest " + largest, worst <= 1e-4 * largest);
+    }
+
     private static int nibbleOf(byte[] raw, int row, int element) {
         int block = element / QK;
         int within = element - block * QK;

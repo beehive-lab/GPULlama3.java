@@ -333,11 +333,14 @@ public final class Qwen35State extends State {
         // reused by the feed-forward branch and by the delta-net branch's normalized input.
         workspace.wrapXb = TornadoWorkspaces.floats(Math.max(queryDim, config.dim()));
         workspace.wrapXb2 = TornadoWorkspaces.floats(config.dim());
-        // The normed activation in Q8 blocks, for the packed-integer projections: four quants per
-        // int, one scale and one sum of quants per block of 32.
-        workspace.wrapXbQuants = TornadoWorkspaces.ints(config.dim() / 4);
-        workspace.wrapXbScales = TornadoWorkspaces.floats(config.dim() / 32);
-        workspace.wrapXbSums = TornadoWorkspaces.ints(config.dim() / 32);
+        // An activation in Q8 blocks, for the packed-integer projections: four quants per int, one
+        // scale and one sum of quants per block of 32. Sized for the widest activation any of them
+        // reads -- the feed-forward's hidden width -- and used as a prefix by the narrower ones,
+        // so the three arrays serve every projection rather than one set per width.
+        int widest = Math.max(config.dim(), config.hiddenDim());
+        workspace.wrapXbQuants = TornadoWorkspaces.ints(widest / 4);
+        workspace.wrapXbScales = TornadoWorkspaces.floats(widest / 32);
+        workspace.wrapXbSums = TornadoWorkspaces.ints(widest / 32);
         workspace.wrapHb = TornadoWorkspaces.floats(config.hiddenDim());
         workspace.wrapHb2 = TornadoWorkspaces.floats(config.hiddenDim());
         workspace.wrapLogits = TornadoWorkspaces.floats(config.vocabularySize());
