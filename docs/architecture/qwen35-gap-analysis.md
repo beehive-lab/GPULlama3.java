@@ -123,31 +123,47 @@ at the API. The claim was wrong and the correction is the most actionable line i
 ## Packed-integer decode: measured per projection shape
 
 Measured on the RTX 5090 Laptop, `Qwen3.8-27B-Q4_0`, weights resident before timing, five rounds
-of 100 iterations **with the configurations interleaved**, medians reported.
+of 100 iterations **with the configurations interleaved** and all execution plans live at once,
+medians reported. Keeping every plan resident is itself a condition — it changes what is in cache
+compared with a plan running alone — so these are screening numbers. Whether an optimization is
+useful is decided by a whole-model A/B, not here.
 
-| shape (n -> d) | float plain | float residual | packed plain | packed residual | quantize | packed residual + quantize |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 5120 -> 6144 (branch) | 0.0614 | 0.0705 | 0.0416 | 0.0450 | 0.0156 | 0.0606 |
-| 6144 -> 5120 (`attn_output`) | 0.0590 | 0.0598 | 0.0456 | 0.0381 | 0.0155 | 0.0536 |
-| 17408 -> 5120 (`ffn_down`) | 0.1478 | 0.1475 | 0.0864 | 0.0837 | 0.0150 | 0.0987 |
+| shape (n -> d) | float plain | float residual | packed plain | packed residual | quantize |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 5120 -> 6144 (branch projections) | 0.0614 | 0.0705 | 0.0416 | 0.0450 | 0.0156 |
+| 6144 -> 5120 (`attn_output`) | 0.0590 | 0.0598 | 0.0456 | 0.0381 | 0.0155 |
+| 17408 -> 5120 (`ffn_down`) | 0.1478 | 0.1475 | 0.0864 | 0.0837 | 0.0150 |
 
-Two things this settles.
+**Speedups, each against the kernel the projection actually uses today, with the activation
+quantization charged to the packed side:**
 
-**The residual store costs nothing.** The floating-point plain and residual kernels are the same
-code but for the final store, and they measure the same at every shape here. An earlier note in
-this file claimed the two "appear to differ in more than the residual add"; that compared them at
-*different* shapes and was wrong.
+| projection | today | candidate | ratio |
+| --- | ---: | ---: | ---: |
+| branch projections (plain) | 0.0614 | 0.0416 + 0.0156 = 0.0572 | **1.07x** |
+| `attn_output` (residual) | 0.0598 | 0.0381 + 0.0155 = 0.0536 | **1.12x** |
+| `ffn_down` (residual) | 0.1475 | 0.0837 + 0.0150 = 0.0987 | **1.49x** |
 
-**The activation quantization does not scale with the activation's length.** 5120, 6144 and 17408
-elements all cost about 0.015 ms, measured in one harness in one process, which is what a
-latency-bound kernel looks like.
+The branch figure is the one to read carefully: those projections are plain, not residual, so the
+baseline is 0.0614 and the ratio 1.07x. An earlier draft quoted 1.16x for them by taking the
+*residual* baseline, which is not the kernel they use.
 
-An earlier version of this section reported the two residual candidates losing, at 0.79x and
-0.54x. Those numbers came from a harness that timed each configuration once, in sequence, each in
-its own execution plan. Re-timed here, the first measurement of a graph ran up to **six times**
-slower than a repeat of the same graph — 0.1018 ms against 0.0167 ms for the identical
-quantization — so the ordering, not the kernel, was being measured. Interleaved, both residual
-candidates are faster than what they would replace rather than slower.
+**What the plain/residual comparison does and does not show.** The two floating-point kernels are
+the same code but for the final store. They measure within 1.4% of each other at two shapes
+(0.0590 against 0.0598, 0.1478 against 0.1475) and about 15% apart at the third (0.0614 against
+0.0705). That is close enough to rule out the large structural difference an earlier note in this
+file claimed — that claim compared them at *different* shapes and is withdrawn — and not close
+enough to conclude the residual add is free. Its cost is not established.
 
-None of this changes what is dispatched today. The end-to-end figures elsewhere in this file were
-taken by interleaving two whole-model configurations and repeating them, and are unaffected.
+**The quantization was approximately constant across the three shapes tested**: 5120, 6144 and
+17408 elements all cost about 0.015 ms in one harness in one process. That is what a
+latency-bound kernel looks like over this range; it is not a general claim about length.
+
+**Superseded numbers.** Everything this section previously reported at the level of an individual
+kernel is withdrawn, including the two residual candidates "losing" at 0.79x and 0.54x and the
+branch projections "winning" at 2.6x. Those came from a harness that timed each configuration once,
+in sequence, each in its own execution plan; re-timed, the first measurement of a graph ran up to
+six times slower than a repeat of the identical graph -- 0.1018 ms against 0.0167 ms for the same
+quantization -- so the ordering was being measured. Other microbenchmark figures taken the same way
+elsewhere in these documents are superseded by the same reasoning, without being re-run: the
+whole-model A/B results, which interleaved two configurations and repeated them, are unaffected and
+remain the basis for what is dispatched.
