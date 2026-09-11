@@ -120,32 +120,34 @@ none of it. Closing that is a kernel to write here, not a feature to request ups
 An earlier revision of this document claimed the opposite, on an assumption rather than on a look
 at the API. The claim was wrong and the correction is the most actionable line in the file.
 
-## Packed-integer decode: what won, what lost
+## Packed-integer decode: measured per projection shape
 
-Measured on the RTX 5090 Laptop, `Qwen3.8-27B-Q4_0`, weights resident before timing, 100
-iterations after 20 untimed.
+Measured on the RTX 5090 Laptop, `Qwen3.8-27B-Q4_0`, weights resident before timing, five rounds
+of 100 iterations **with the configurations interleaved**, medians reported.
 
-| projection | shape (n -> d) | kernel family | floating point | packed | |
-| --- | --- | --- | ---: | ---: | --- |
-| branch projections | 5120 -> 6144 | plain | 0.1133 ms | 0.0415 ms | **2.7x** |
-| `ffn_down` | 17408 -> 5120 | residual | 0.1567 ms | 0.1735 ms | 0.90x |
-| `attn_output` | 6144 -> 5120 | residual | 0.0796 ms | 0.1207 ms | 0.66x |
+| shape (n -> d) | float plain | float residual | packed plain | packed residual | quantize | packed residual + quantize |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 5120 -> 6144 (branch) | 0.0614 | 0.0705 | 0.0416 | 0.0450 | 0.0156 | 0.0606 |
+| 6144 -> 5120 (`attn_output`) | 0.0590 | 0.0598 | 0.0456 | 0.0381 | 0.0155 | 0.0536 |
+| 17408 -> 5120 (`ffn_down`) | 0.1478 | 0.1475 | 0.0864 | 0.0837 | 0.0150 | 0.0987 |
 
-Times are the matrix-vector alone; the activation quantization adds 0.026-0.042 ms and is
-charged to the packed side in the decisions below. It does **not** scale with the activation's
-length across these measurements — 17408 elements cost no more than 6144 — but that comparison
-is across separate experiments and is not by itself evidence that a longer quantizer is
-intrinsically cheaper.
+Two things this settles.
 
-The two residual candidates were discarded: `ffn_down` at 0.79x and `attn_output` at 0.54x of
-the current kernel, both including preparation. Correctness was not the problem — each agreed
-with a reference quantizing identically to about 1.2e-7 relative, with zero blocks, mixed signs
-and finiteness checked.
+**The residual store costs nothing.** The floating-point plain and residual kernels are the same
+code but for the final store, and they measure the same at every shape here. An earlier note in
+this file claimed the two "appear to differ in more than the residual add"; that compared them at
+*different* shapes and was wrong.
 
-**Why the packed form wins at one shape and loses at the other two is not established.** Two
-things differ between them at once: the kernel family, plain against residual, and the shape,
-whose reduction length and row count are swapped. Neither has been isolated. Worth noting for
-anyone who returns to this: the floating-point *residual* kernel at 6144 -> 5120 costs 0.0796 ms
-against the floating-point *plain* kernel's 0.1133 ms at 5120 -> 6144, which is comparable work,
-so the two floating-point kernels appear to differ in more than the residual add. That
-observation is a starting point, not a conclusion.
+**The activation quantization does not scale with the activation's length.** 5120, 6144 and 17408
+elements all cost about 0.015 ms, measured in one harness in one process, which is what a
+latency-bound kernel looks like.
+
+An earlier version of this section reported the two residual candidates losing, at 0.79x and
+0.54x. Those numbers came from a harness that timed each configuration once, in sequence, each in
+its own execution plan. Re-timed here, the first measurement of a graph ran up to **six times**
+slower than a repeat of the same graph — 0.1018 ms against 0.0167 ms for the identical
+quantization — so the ordering, not the kernel, was being measured. Interleaved, both residual
+candidates are faster than what they would replace rather than slower.
+
+None of this changes what is dispatched today. The end-to-end figures elsewhere in this file were
+taken by interleaving two whole-model configurations and repeating them, and are unaffected.
