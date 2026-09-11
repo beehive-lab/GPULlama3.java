@@ -100,9 +100,11 @@ public final class TornadoDevices {
      *       KernelContext.simdShuffleDown} and computes the wrong answer, so it must never have
      *       this capability regardless of speed.
      *   <li><b>tensor-core MMA</b> — CUDA only; TornadoVM lowers the MMA intrinsics nowhere else.
-     *   <li><b>packed integer dot</b> — CUDA, where the {@code dp4a} path was measured. It is
-     *       lowered on the other backends as well and its Java body is correct everywhere, so this
-     *       grant withholds a preference, not a result.
+     *   <li><b>packed integer dot</b> — CUDA, where the {@code dp4a} path was measured <i>and</i>
+     *       where the warp shuffle the packed kernels reduce with is correct. The instruction is
+     *       lowered on the other backends as well and its Java body is correct everywhere, so that
+     *       half withholds a preference rather than a result; the reduction half does not, and is
+     *       why this must never be granted on OpenCL.
      *   <li><b>split-KV attention</b> — everywhere except Metal, which fails to JIT {@code
      *       processHeadsFlashAttentionSplitKV}.
      *   <li><b>single-pass RMS</b> — the device half of the scheduler type: an NVIDIA platform.
@@ -121,8 +123,11 @@ public final class TornadoDevices {
         if (type == TornadoVMBackendType.CUDA) {
             capabilities.add(DeviceCapability.TENSOR_CORE_MMA);
             // dp4a is registered for OpenCL and Metal too, and its Java body is a correct scalar
-            // fallback everywhere, so this grant is about where the packed path has been measured
-            // rather than about where it computes the right answer.
+            // fallback everywhere, so the instruction half of this grant is about where the packed
+            // path has been measured rather than about where it computes the right answer. The
+            // reduction half is not: the packed kernels reduce with simdShuffleDown, which OpenCL
+            // miscompiles, so on that backend this grant would be wrong rather than merely
+            // unmeasured. CUDA is the one backend where both halves hold.
             capabilities.add(DeviceCapability.PACKED_INTEGER_DOT);
         }
         if (type != TornadoVMBackendType.METAL) {
