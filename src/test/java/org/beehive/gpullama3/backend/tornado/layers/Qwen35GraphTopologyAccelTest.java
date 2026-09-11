@@ -223,21 +223,28 @@ public class Qwen35GraphTopologyAccelTest {
         }
     }
 
+    // @formatter:off
     /**
-     * Whether the packed Q5_K {@code ssm_out} projection is enabled for this JVM.
+     * Whether the packed-integer path is in play for this JVM, read exactly as {@code
+     * Qwen35FFNLayers} reads it: the device capability, and the escape hatch the exact-comparison
+     * tests set.
      *
-     * <p>Read exactly as {@code Qwen35FFNLayers} reads it — the device capability and the temporary
-     * property together — so this file asserts the plan that was actually built rather than the
-     * one the default would have built. The property is a temporary A/B control; when it goes, this
-     * helper becomes the capability test alone.
+     * <p>Two facts, not one, and the second is why this is a method rather than a capability test.
+     * {@code -Dllama.qwen35.packedIntegerDot=false} puts every packed projection back on the
+     * floating-point kernels, so a suite run that way builds a different plan — and the cases below
+     * assert <b>that</b> plan rather than skipping. It is the existing escape hatch and not a new
+     * option: no other switch selects this.
      */
-    private static boolean packedSsmOut() {
+    // @formatter:on
+    private static boolean packedPathEnabled() {
         return org.beehive.gpullama3.backend.tornado.device.TornadoDevices.current()
                         .capabilities()
                         .supports(
                                 org.beehive.gpullama3.runtime.backend.DeviceCapability
                                         .PACKED_INTEGER_DOT)
-                && Boolean.getBoolean("llama.qwen35.q5kPackedSsmOut");
+                && !"false"
+                        .equalsIgnoreCase(
+                                System.getProperty("llama.qwen35.packedIntegerDot", "true"));
     }
 
     private static List<String> taskNames(GridScheduler scheduler, int layer) {
@@ -270,13 +277,7 @@ public class Qwen35GraphTopologyAccelTest {
     // @formatter:on
     @Test
     public void onlyProjectionsReadingTheQuantizedActivationArePacked() {
-        assumeTrue(
-                "no packed-integer-dot device",
-                org.beehive.gpullama3.backend.tornado.device.TornadoDevices.current()
-                        .capabilities()
-                        .supports(
-                                org.beehive.gpullama3.runtime.backend.DeviceCapability
-                                        .PACKED_INTEGER_DOT));
+        assumeTrue("the packed-integer path is not in play", packedPathEnabled());
         Qwen35Configuration config = config();
         Set<String> packed = new LinkedHashSet<>();
         Set<String> notPacked = new LinkedHashSet<>();
@@ -289,7 +290,7 @@ public class Qwen35GraphTopologyAccelTest {
                 "attn_output_proj reads wrapXb after the attention branch overwrote it, so it"
                         + " cannot take the quantized activation",
                 notPacked.contains("attn_output_proj"));
-        if (packedSsmOut()) {
+        if (packedPathEnabled()) {
             assertTrue(
                     "ssm_out_proj must take the packed path when the Q5_K readout projection is"
                             + " enabled",
@@ -314,13 +315,7 @@ public class Qwen35GraphTopologyAccelTest {
     // @formatter:on
     @Test
     public void theFeedForwardPacksAgainstItsOwnQuantization() {
-        assumeTrue(
-                "no packed-integer-dot device",
-                org.beehive.gpullama3.backend.tornado.device.TornadoDevices.current()
-                        .capabilities()
-                        .supports(
-                                org.beehive.gpullama3.runtime.backend.DeviceCapability
-                                        .PACKED_INTEGER_DOT));
+        assumeTrue("the packed-integer path is not in play", packedPathEnabled());
         Qwen35Configuration config = config();
         Set<String> packed = new LinkedHashSet<>();
         for (Qwen35FFNLayers.Dispatch dispatch : build(config).dispatchInventory()) {
@@ -364,19 +359,14 @@ public class Qwen35GraphTopologyAccelTest {
      * <p>The other half is the layer kind: only a recurrent layer has a readout, so only a
      * recurrent layer may carry this task.
      *
-     * <p>With the candidate disabled this asserts the topology that has always been there: no such
-     * task anywhere, and {@code ssm_out_proj} on the floating-point kernel.
+     * <p>This runs in both directions rather than skipping in one: on a device without the
+     * capability, or under the {@code packedIntegerDot} escape hatch, it asserts the floating-point
+     * topology instead — no quantization tasks at all, and every projection including {@code
+     * ssm_out_proj} on the kernels that decode to floats.
      */
     // @formatter:on
     @Test
     public void theDeltaNetReadoutQuantizationSitsWhereItBelongs() {
-        assumeTrue(
-                "no packed-integer-dot device",
-                org.beehive.gpullama3.backend.tornado.device.TornadoDevices.current()
-                        .capabilities()
-                        .supports(
-                                org.beehive.gpullama3.runtime.backend.DeviceCapability
-                                        .PACKED_INTEGER_DOT));
         Qwen35Configuration config = config();
         Qwen35FFNLayers layers = build(config);
         GridScheduler scheduler = layers.updateGridScheduler(new GridScheduler());
@@ -384,7 +374,7 @@ public class Qwen35GraphTopologyAccelTest {
         for (int layer = 0; layer < TRUNK_LAYERS; layer++) {
             List<String> tasks = taskNames(scheduler, layer);
             boolean recurrent = config.isRecurrentLayer(layer);
-            boolean expected = packedSsmOut() && recurrent;
+            boolean expected = packedPathEnabled() && recurrent;
             assertEquals(
                     "layer " + layer + (recurrent ? " (recurrent)" : " (attention)") + " tasks "
                             + tasks,
@@ -398,7 +388,7 @@ public class Qwen35GraphTopologyAccelTest {
             (dispatch.quantizedActivation() ? packed : notPacked).add(dispatch.task());
         }
 
-        if (packedSsmOut()) {
+        if (packedPathEnabled()) {
             assertTrue("ssm_out_proj lost the packed path", packed.contains("ssm_out_proj"));
             assertTrue(
                     "ssm_qkv_proj lost its quantization, so the readout's was emitted too early",
@@ -410,9 +400,22 @@ public class Qwen35GraphTopologyAccelTest {
                     "the feed-forward reads its own quantization, not the readout's",
                     packed.contains("ffn_gate_up"));
         } else {
+            // The fallback plan, asserted rather than assumed: nothing packed anywhere, and none of
+            // the four quantization tasks emitted.
+            assertTrue(
+                    "no projection may read a quantized activation without the packed path: "
+                            + packed,
+                    packed.isEmpty());
             assertTrue("ssm_out_proj must stay on the floating-point kernel",
                     notPacked.contains("ssm_out_proj"));
-            assertTrue("the branch projections must keep theirs", packed.contains("ssm_qkv_proj"));
+            for (int layer = 0; layer < TRUNK_LAYERS; layer++) {
+                List<String> tasks = taskNames(scheduler, layer);
+                assertFalse("layer " + layer + " quantized an activation", tasks.contains(
+                        "xb_quantize"));
+                assertFalse(
+                        "layer " + layer + " quantized the feed-forward's activation",
+                        tasks.contains("ffn_xb_quantize"));
+            }
         }
     }
 
@@ -429,7 +432,7 @@ public class Qwen35GraphTopologyAccelTest {
         names.add("ffn_gate_up");
         // ffn_down, against its own quantization of the SwiGLU output.
         names.add("ffn_down_proj");
-        if (packedSsmOut()) {
+        if (packedPathEnabled()) {
             // ssm_out, against its own quantization of the delta-net readout.
             names.add("ssm_out_proj");
         }
@@ -610,22 +613,15 @@ public class Qwen35GraphTopologyAccelTest {
 
         // One more per layer where the device takes the packed-integer path: the branch quantizes
         // the normed activation once, for the Q4_0 projections that read it.
-        int quantize =
-                org.beehive.gpullama3.backend.tornado.device.TornadoDevices.current()
-                                .capabilities()
-                                .supports(
-                                        org.beehive.gpullama3.runtime.backend.DeviceCapability
-                                                .PACKED_INTEGER_DOT)
-                        ? 1
-                        : 0;
+        int quantize = packedPathEnabled() ? 1 : 0;
         // Two per layer where the capability holds, not one: the branch quantizes the
         // attention norm's output and the feed-forward quantizes its own, which the norm between
         // them has made a different activation.
         int ffnQuantize = quantize;
         int ffnDownQuantize = quantize;
-        // And one more in a recurrent layer when the packed Q5_K readout projection is enabled:
-        // the delta-net readout's own quantization, which only that layer kind has.
-        int ssmOutQuantize = packedSsmOut() ? 1 : 0;
+        // And one more in a recurrent layer: the delta-net readout's own quantization, for the
+        // packed Q5_K ssm_out projection. Only that layer kind has a readout.
+        int ssmOutQuantize = quantize;
         assertEquals(
                 "a recurrent layer's tasks",
                 20 + quantize + ffnQuantize + ffnDownQuantize + ssmOutQuantize,

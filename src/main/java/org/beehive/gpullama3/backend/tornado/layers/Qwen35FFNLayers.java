@@ -191,10 +191,12 @@ public class Qwen35FFNLayers
                                         && hiddenActivationQuantized));
         // The Q5_K readout projection, computed once and used both to record the dispatch and to
         // choose the kernel below: a flag that decided one and not the other would make the
-        // inventory describe a plan that was not built.
+        // inventory describe a plan that was not built. Eligibility is carried entirely by
+        // ssmActivationQuantized, which is set only where the quantization was actually emitted --
+        // that is, only under the packed gate, only in a recurrent layer, and only when the scratch
+        // was long enough for the readout.
         boolean packedQ5_K =
-                Q5_K_DP4A
-                        && w.dataType() == DataType.Q5_K
+                w.dataType() == DataType.Q5_K
                         && residual
                         && x == state.workspace.wrapSsmOut
                         && ssmActivationQuantized;
@@ -822,11 +824,7 @@ public class Qwen35FFNLayers
      */
     private boolean ssmActivationQuantized;
 
-    // TEMPORARY. The packed Q5_K ssm_out projection is off by default and is enabled only for the
-    // A/B that decides whether it stays. It either becomes unconditional under DP4A or it and the
-    // kernel go; it must not survive as an option.
-    private static final boolean Q5_K_DP4A =
-            DP4A && Boolean.getBoolean("llama.qwen35.q5kPackedSsmOut");
+
 
     /**
      * Whether the shared Q8-block scratch is long enough for an activation of {@code elements}.
@@ -1187,7 +1185,7 @@ public class Qwen35FFNLayers
                 config.rmsNormEps());
 
         ssmActivationQuantized = false;
-        if (Q5_K_DP4A && packedScratchHolds(config.deltaNetValueDim())) {
+        if (DP4A && packedScratchHolds(config.deltaNetValueDim())) {
             // The delta-net readout, quantized fresh. It is none of the activations quantized
             // elsewhere in this layer, and it reuses their scratch: every projection that read
             // those is behind us in this graph, and the arrays are sized for the feed-forward's
@@ -1441,7 +1439,7 @@ public class Qwen35FFNLayers
                         prefix + "ssm_qkv_proj", matVecWorker(config.deltaNetConvDim()));
                 scheduler.addWorkerGrid(
                         prefix + "ssm_gate_proj", matVecWorker(config.deltaNetValueDim()));
-                if (Q5_K_DP4A) {
+                if (DP4A && packedScratchHolds(config.deltaNetValueDim())) {
                     scheduler.addWorkerGrid(
                             prefix + "ssm_out_quantize",
                             WorkerGridFactory.genericWorker(config.deltaNetValueDim(), 32));
