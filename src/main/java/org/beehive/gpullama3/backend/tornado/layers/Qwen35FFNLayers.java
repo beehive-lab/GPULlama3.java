@@ -189,7 +189,16 @@ public class Qwen35FFNLayers
                                 || (residual
                                         && x == state.workspace.wrapHb
                                         && hiddenActivationQuantized));
-        dispatches.add(new Dispatch(layer, task, role, w.dataType(), packed));
+        // The Q5_K readout projection, computed once and used both to record the dispatch and to
+        // choose the kernel below: a flag that decided one and not the other would make the
+        // inventory describe a plan that was not built.
+        boolean packedQ5_K =
+                Q5_K_DP4A
+                        && w.dataType() == DataType.Q5_K
+                        && residual
+                        && x == state.workspace.wrapSsmOut
+                        && ssmActivationQuantized;
+        dispatches.add(new Dispatch(layer, task, role, w.dataType(), packed || packedQ5_K));
         switch (w.dataType()) {
             case F32 -> {
                 if (residual) {
@@ -361,8 +370,7 @@ public class Qwen35FFNLayers
                 }
             }
             case Q5_K -> {
-                if (residual && Q5_K_DP4A && x == state.workspace.wrapSsmOut
-                        && ssmActivationQuantized) {
+                if (packedQ5_K) {
                     // The packed-integer path for ssm_out, whose activation the delta-net branch
                     // has just quantized. Weights stay Q5_K; the activation is what changed
                     // representation.

@@ -223,6 +223,23 @@ public class Qwen35GraphTopologyAccelTest {
         }
     }
 
+    /**
+     * Whether the packed Q5_K {@code ssm_out} projection is enabled for this JVM.
+     *
+     * <p>Read exactly as {@code Qwen35FFNLayers} reads it — the device capability and the temporary
+     * property together — so this file asserts the plan that was actually built rather than the
+     * one the default would have built. The property is a temporary A/B control; when it goes, this
+     * helper becomes the capability test alone.
+     */
+    private static boolean packedSsmOut() {
+        return org.beehive.gpullama3.backend.tornado.device.TornadoDevices.current()
+                        .capabilities()
+                        .supports(
+                                org.beehive.gpullama3.runtime.backend.DeviceCapability
+                                        .PACKED_INTEGER_DOT)
+                && Boolean.getBoolean("llama.qwen35.q5kPackedSsmOut");
+    }
+
     private static List<String> taskNames(GridScheduler scheduler, int layer) {
         List<String> names = new ArrayList<>();
         for (String key : scheduler.keySet()) {
@@ -272,7 +289,16 @@ public class Qwen35GraphTopologyAccelTest {
                 "attn_output_proj reads wrapXb after the attention branch overwrote it, so it"
                         + " cannot take the quantized activation",
                 notPacked.contains("attn_output_proj"));
-        assertTrue("ssm_out_proj reads the delta-net readout", notPacked.contains("ssm_out_proj"));
+        if (packedSsmOut()) {
+            assertTrue(
+                    "ssm_out_proj must take the packed path when the Q5_K readout projection is"
+                            + " enabled",
+                    packed.contains("ssm_out_proj"));
+        } else {
+            assertTrue(
+                    "ssm_out_proj reads the delta-net readout, which nothing has quantized",
+                    notPacked.contains("ssm_out_proj"));
+        }
     }
 
     // @formatter:off
@@ -322,6 +348,74 @@ public class Qwen35GraphTopologyAccelTest {
         }
     }
 
+    // @formatter:off
+    /**
+     * The delta-net readout's quantization: present exactly where it belongs, or absent entirely.
+     *
+     * <p>Placement is the thing that can go wrong silently here, and it is asserted through the
+     * consequences the builder records rather than through a task ordering the grid scheduler does
+     * not preserve. The readout's quantization overwrites the same three scratch arrays the
+     * branch's projections read, and emitting it clears the provenance flag those projections
+     * consult. So a quantization emitted <b>before</b> {@code ssm_qkv_proj} and {@code
+     * ssm_gate_proj} would show up as those two losing the packed path, and one emitted after
+     * {@code ssm_out_proj} would show up as {@code ssm_out_proj} not taking it. Requiring all three
+     * packed at once pins the task to the window between them.
+     *
+     * <p>The other half is the layer kind: only a recurrent layer has a readout, so only a
+     * recurrent layer may carry this task.
+     *
+     * <p>With the candidate disabled this asserts the topology that has always been there: no such
+     * task anywhere, and {@code ssm_out_proj} on the floating-point kernel.
+     */
+    // @formatter:on
+    @Test
+    public void theDeltaNetReadoutQuantizationSitsWhereItBelongs() {
+        assumeTrue(
+                "no packed-integer-dot device",
+                org.beehive.gpullama3.backend.tornado.device.TornadoDevices.current()
+                        .capabilities()
+                        .supports(
+                                org.beehive.gpullama3.runtime.backend.DeviceCapability
+                                        .PACKED_INTEGER_DOT));
+        Qwen35Configuration config = config();
+        Qwen35FFNLayers layers = build(config);
+        GridScheduler scheduler = layers.updateGridScheduler(new GridScheduler());
+
+        for (int layer = 0; layer < TRUNK_LAYERS; layer++) {
+            List<String> tasks = taskNames(scheduler, layer);
+            boolean recurrent = config.isRecurrentLayer(layer);
+            boolean expected = packedSsmOut() && recurrent;
+            assertEquals(
+                    "layer " + layer + (recurrent ? " (recurrent)" : " (attention)") + " tasks "
+                            + tasks,
+                    expected,
+                    tasks.contains("ssm_out_quantize"));
+        }
+
+        Set<String> packed = new LinkedHashSet<>();
+        Set<String> notPacked = new LinkedHashSet<>();
+        for (Qwen35FFNLayers.Dispatch dispatch : layers.dispatchInventory()) {
+            (dispatch.quantizedActivation() ? packed : notPacked).add(dispatch.task());
+        }
+
+        if (packedSsmOut()) {
+            assertTrue("ssm_out_proj lost the packed path", packed.contains("ssm_out_proj"));
+            assertTrue(
+                    "ssm_qkv_proj lost its quantization, so the readout's was emitted too early",
+                    packed.contains("ssm_qkv_proj"));
+            assertTrue(
+                    "ssm_gate_proj lost its quantization, so the readout's was emitted too early",
+                    packed.contains("ssm_gate_proj"));
+            assertTrue(
+                    "the feed-forward reads its own quantization, not the readout's",
+                    packed.contains("ffn_gate_up"));
+        } else {
+            assertTrue("ssm_out_proj must stay on the floating-point kernel",
+                    notPacked.contains("ssm_out_proj"));
+            assertTrue("the branch projections must keep theirs", packed.contains("ssm_qkv_proj"));
+        }
+    }
+
     /** The packed set: the branch's five, and the feed-forward against its own quantization. */
     private static Set<String> expected() {
         Set<String> names =
@@ -335,6 +429,10 @@ public class Qwen35GraphTopologyAccelTest {
         names.add("ffn_gate_up");
         // ffn_down, against its own quantization of the SwiGLU output.
         names.add("ffn_down_proj");
+        if (packedSsmOut()) {
+            // ssm_out, against its own quantization of the delta-net readout.
+            names.add("ssm_out_proj");
+        }
         return names;
     }
 
@@ -525,9 +623,12 @@ public class Qwen35GraphTopologyAccelTest {
         // them has made a different activation.
         int ffnQuantize = quantize;
         int ffnDownQuantize = quantize;
+        // And one more in a recurrent layer when the packed Q5_K readout projection is enabled:
+        // the delta-net readout's own quantization, which only that layer kind has.
+        int ssmOutQuantize = packedSsmOut() ? 1 : 0;
         assertEquals(
                 "a recurrent layer's tasks",
-                20 + quantize + ffnQuantize + ffnDownQuantize,
+                20 + quantize + ffnQuantize + ffnDownQuantize + ssmOutQuantize,
                 recurrentTasks);
         assertEquals(
                 "an attention layer's tasks",
