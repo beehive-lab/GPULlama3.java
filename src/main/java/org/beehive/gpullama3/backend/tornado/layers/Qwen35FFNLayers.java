@@ -637,7 +637,7 @@ public class Qwen35FFNLayers
                 require(weights.w3Layered, layerIndex, "ffn_up"),
                 qwen35State.workspace.wrapXb);
         hiddenActivationQuantized = false;
-        if (DP4A && PACKED_FFN_DOWN) {
+        if (DP4A) {
             // SwiGLU's output, quantized fresh. It is neither of the activations quantized
             // earlier in this layer, and the scratch it shares with them is sized for it.
             layer.task(
@@ -773,12 +773,6 @@ public class Qwen35FFNLayers
      * a different activation: SwiGLU's output, which only {@code ffn_down} reads.
      */
     private boolean hiddenActivationQuantized;
-
-    /**
-     * TEMPORARY, for the {@code ffn_down} evaluation. Not the accepted default; removed when the
-     * tradeoff is decided either way.
-     */
-    private static final boolean PACKED_FFN_DOWN = Boolean.getBoolean("llama.qwen35.packedFfnDown");
 
     private static final boolean DP4A =
             TornadoDevices.current()
@@ -1361,11 +1355,9 @@ public class Qwen35FFNLayers
                 scheduler.addWorkerGrid(
                         prefix + "ffn_xb_quantize",
                         WorkerGridFactory.genericWorker(config.dim(), 32));
-                if (PACKED_FFN_DOWN) {
-                    scheduler.addWorkerGrid(
-                            prefix + "ffn_down_quantize",
-                            WorkerGridFactory.genericWorker(config.hiddenDim(), 32));
-                }
+                scheduler.addWorkerGrid(
+                        prefix + "ffn_down_quantize",
+                        WorkerGridFactory.genericWorker(config.hiddenDim(), 32));
             }
             scheduler.addWorkerGrid(prefix + "ffn_rms_apply", rmsApply);
             scheduler.addWorkerGrid(prefix + "ffn_gate_up", matVecWorker(config.hiddenDim()));

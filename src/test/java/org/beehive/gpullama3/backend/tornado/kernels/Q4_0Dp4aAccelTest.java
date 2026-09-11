@@ -339,6 +339,110 @@ public class Q4_0Dp4aAccelTest {
         assertTrue("worst " + worst + " against largest " + largest, worst <= 1e-4 * largest);
     }
 
+    // @formatter:off
+    /**
+     * A narrower consumer ignores whatever a wider one left in the tail of the shared scratch.
+     *
+     * <p>The three quantization arrays are sized for the widest activation any projection reads —
+     * the feed-forward's hidden width — and the narrower projections use a prefix. That is only
+     * safe if every consumer is governed by the <b>logical</b> activation length it was given
+     * rather than by the capacity of the array, and this is the case that would catch it if one
+     * were not: the tail is filled with values that would produce a grossly different answer if
+     * they were read.
+     *
+     * <p>Both the quantization and the projection are run over the narrow length while the arrays
+     * stay wide, and the result is compared against the same run on arrays with a clean tail.
+     */
+    // @formatter:on
+    @Test
+    public void aNarrowProjectionIgnoresTheWideScratchTail() throws Exception {
+        byte[] raw = realisticWeights(8080L);
+        float[] host = new float[N];
+        for (int i = 0; i < N; i++) {
+            host[i] = (float) Math.sin(0.017 * i) * (1.0f + (i % 5) * 0.3f);
+        }
+        float[] clean = runWithScratch(host, raw, 1, false);
+        float[] poisoned = runWithScratch(host, raw, 4, true);
+        for (int row = 0; row < D; row++) {
+            assertTrue("row " + row + " is " + poisoned[row], Float.isFinite(poisoned[row]));
+            assertEquals(
+                    "row " + row + " changed when the scratch tail was poisoned",
+                    clean[row],
+                    poisoned[row],
+                    0.0f);
+        }
+    }
+
+    /** Runs the narrow projection with scratch {@code capacity} times longer than it needs. */
+    private static float[] runWithScratch(float[] host, byte[] raw, int capacity, boolean poison)
+            throws Exception {
+        FloatArray x = new FloatArray(N);
+        for (int i = 0; i < N; i++) {
+            x.set(i, host[i]);
+        }
+        IntArray quants = new IntArray(N / 4 * capacity);
+        FloatArray scales = new FloatArray(N / QK * capacity);
+        IntArray sums = new IntArray(N / QK * capacity);
+        quants.init(0);
+        scales.init(0.0f);
+        sums.init(0);
+        if (poison) {
+            for (int i = N / 4; i < quants.getSize(); i++) {
+                quants.set(i, 0x7F7F7F7F);
+            }
+            for (int i = N / QK; i < scales.getSize(); i++) {
+                scales.set(i, 1.0e6f);
+                sums.set(i, 4064);
+            }
+        }
+        FloatArray out = new FloatArray(D);
+        out.init(0.0f);
+        ByteArray w = toDevice(raw);
+
+        TaskGraph graph =
+                new TaskGraph("tail")
+                        .transferToDevice(
+                                DataTransferMode.EVERY_EXECUTION, x, w, quants, scales, sums, out)
+                        .task(
+                                "quantize",
+                                TransformerComputeKernelsQ4_0::quantizeActivationQ8Blocks,
+                                new KernelContext(),
+                                x,
+                                quants,
+                                scales,
+                                sums)
+                        .task(
+                                "matvec",
+                                TransformerComputeKernelsQ4_0::matrixVectorGenericQ4_0DP4A,
+                                new KernelContext(),
+                                quants,
+                                scales,
+                                sums,
+                                out,
+                                w,
+                                N,
+                                D,
+                                LOCAL)
+                        .transferToHost(DataTransferMode.EVERY_EXECUTION, out);
+
+        GridScheduler scheduler = new GridScheduler();
+        // The grid is the logical length, not the capacity: the quantization writes the prefix.
+        WorkerGrid1D blocks = new WorkerGrid1D(N);
+        blocks.setLocalWork(QK, 1, 1);
+        scheduler.addWorkerGrid("tail.quantize", blocks);
+        WorkerGrid1D rows = new WorkerGrid1D(D * LOCAL);
+        rows.setLocalWork(LOCAL, 1, 1);
+        scheduler.addWorkerGrid("tail.matvec", rows);
+        try (TornadoExecutionPlan plan = new TornadoExecutionPlan(graph.snapshot())) {
+            plan.withGridScheduler(scheduler).execute();
+        }
+        float[] result = new float[D];
+        for (int i = 0; i < D; i++) {
+            result[i] = out.get(i);
+        }
+        return result;
+    }
+
     private static int nibbleOf(byte[] raw, int row, int element) {
         int block = element / QK;
         int within = element - block * QK;
