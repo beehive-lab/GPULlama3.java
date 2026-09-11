@@ -48,6 +48,15 @@ public final class DeviceCapability {
     public static final DeviceCapability SINGLE_PASS_RMS = of("single-pass-rms");
 
     /**
+     * The device lowers {@code QuantizationUtils.dp4a_packed} to a packed four-way integer
+     * dot-product instruction.
+     *
+     * <p>The Java body is a correct scalar fallback, so a device without this still computes the
+     * right answer — it just has no reason to prefer the packed path over the floating-point one.
+     */
+    public static final DeviceCapability PACKED_INTEGER_DOT = of("packed-integer-dot");
+
+    /**
      * A 32-wide subgroup butterfly reduction over {@code KernelContext.simdShuffleDown} produces
      * correct results for the fused Q/K/V projection kernel family.
      *

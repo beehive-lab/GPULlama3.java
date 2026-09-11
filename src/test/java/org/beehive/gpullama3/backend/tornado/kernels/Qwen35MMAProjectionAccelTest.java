@@ -1,5 +1,6 @@
 package org.beehive.gpullama3.backend.tornado.kernels;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 import java.lang.foreign.Arena;
@@ -263,6 +264,124 @@ public class Qwen35MMAProjectionAccelTest {
         execute(graph, "mmaQ5K.projection", m);
 
         assertMatches("q5k", GGMLType.Q5_K, raw, out, m);
+    }
+
+    // @formatter:off
+    /**
+     * Every {@code Q4_0} nibble value, in both halves of the block, against both signs of scale.
+     *
+     * <p>Not a shape test — an <b>arithmetic</b> one, and it exists because of a defect that a
+     * shape test cannot see. TornadoVM stamps {@code (packed >> 4) & 0xF} as unsigned and emits the
+     * integer recentring {@code q - 8} into an unsigned variable, so every nibble below eight wraps
+     * to about 4.29e9; times a block scale that overflows fp16 to infinity, and the MMA that reads
+     * it produces NaN. The kernels here escape it only because they choose the nibble with a
+     * branch, and the phi merging the two arms is stamped signed — a rewrite to the branchless
+     * form, which is the natural thing to write when a loop covers both halves, reintroduces it.
+     * The reproducer and the emitted code are in {@code docs/architecture/tornadovm-issues}.
+     *
+     * <p>The activation is one-hot: row {@code r} selects element {@code r} of each weight column,
+     * so an output <b>is</b> a decoded weight rather than a sum of them, and each assertion names
+     * one nibble at one position with one scale. Only the high half was ever wrong, and only below
+     * eight, so partial coverage would have passed.
+     */
+    // @formatter:on
+    @Test
+    public void everyNibbleDecodesWithTheSignItsScaleGivesIt() throws Exception {
+        int m = 32;
+        int k = 32;
+
+        // Row r is one-hot at element r, so out[r][c] is that column's weight r.
+        HalfFloatArray a = new HalfFloatArray(m * k);
+        for (int r = 0; r < m; r++) {
+            for (int i = 0; i < k; i++) {
+                a.set(r * k + i, new HalfFloat(i == r ? 1.0f : 0.0f));
+            }
+        }
+
+        byte[] rawGate = new byte[N * 18];
+        byte[] rawUp = new byte[N * 18];
+        float[] gateScale = new float[N];
+        float[] upScale = new float[N];
+        int[][] q = new int[N][k];
+        for (int c = 0; c < N; c++) {
+            int base = c * 18;
+            // 0x2C.. is about +0.06; the same bits with the sign set is its negative. Alternating
+            // by column puts every nibble against both signs.
+            int bits = 0x2C00 | (c & 0xFF);
+            int gateBits = (c % 2 == 0) ? bits : (bits | 0x8000);
+            int upBits = (c % 2 == 0) ? (bits | 0x8000) : bits;
+            rawGate[base] = (byte) (gateBits & 0xFF);
+            rawGate[base + 1] = (byte) (gateBits >> 8);
+            rawUp[base] = (byte) (upBits & 0xFF);
+            rawUp[base + 1] = (byte) (upBits >> 8);
+            gateScale[c] = new HalfFloat((short) gateBits).getFloat32();
+            upScale[c] = new HalfFloat((short) upBits).getFloat32();
+            for (int b = 0; b < 16; b++) {
+                // The low nibble walks 0..15 across the block and the high nibble walks it the
+                // other way, so both halves see every value.
+                int lo = (b + c) & 0xF;
+                int hi = (15 - b + c) & 0xF;
+                rawGate[base + 2 + b] = (byte) ((hi << 4) | lo);
+                rawUp[base + 2 + b] = (byte) ((hi << 4) | lo);
+                q[c][b] = lo;
+                q[c][b + 16] = hi;
+            }
+        }
+
+        ByteArray w1 = toDevice(rawGate);
+        ByteArray w3 = toDevice(rawUp);
+        FloatArray gateOut = new FloatArray(m * N);
+        FloatArray upOut = new FloatArray(m * N);
+        gateOut.init(0.0f);
+        upOut.init(0.0f);
+
+        TaskGraph graph =
+                new TaskGraph("decode")
+                        .transferToDevice(
+                                DataTransferMode.EVERY_EXECUTION, a, w1, w3, gateOut, upOut)
+                        .task(
+                                "gateUp",
+                                Qwen35MMAKernels::projectionMMAQ4_0GateUp,
+                                new KernelContext(),
+                                a,
+                                w1,
+                                w3,
+                                gateOut,
+                                upOut,
+                                m,
+                                N,
+                                k)
+                        .transferToHost(DataTransferMode.EVERY_EXECUTION, gateOut, upOut);
+        execute(graph, "decode.gateUp", m);
+
+        for (int r = 0; r < m; r++) {
+            for (int c = 0; c < N; c++) {
+                float gate = gateOut.get(r * N + c);
+                float up = upOut.get(r * N + c);
+                String where =
+                        "nibble "
+                                + q[c][r]
+                                + " of the "
+                                + (r < 16 ? "low" : "high")
+                                + " half,"
+                                + " column "
+                                + c
+                                + ", row "
+                                + r;
+                assertTrue("gate is " + gate + " at " + where, Float.isFinite(gate));
+                assertTrue("up is " + up + " at " + where, Float.isFinite(up));
+                assertEquals(
+                        "gate at " + where,
+                        new HalfFloat(gateScale[c] * (q[c][r] - 8)).getFloat32(),
+                        gate,
+                        1e-3f);
+                assertEquals(
+                        "up at " + where,
+                        new HalfFloat(upScale[c] * (q[c][r] - 8)).getFloat32(),
+                        up,
+                        1e-3f);
+            }
+        }
     }
 
     private static HalfFloatArray activations(int m) {

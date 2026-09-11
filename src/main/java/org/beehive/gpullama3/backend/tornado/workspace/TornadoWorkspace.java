@@ -55,7 +55,23 @@ public final class TornadoWorkspace {
     // enabled.
     public HalfFloatArray
             wrapValueCacheFP16; // Optional half-precision value cache (see USE_FP16_KV); null
+
     // unless enabled.
+    // @formatter:off
+    /**
+     * The normalized activation, quantized per block of 32 for the packed-integer projections: four
+     * signed bytes per int, one scale per block, and the sum of each block's quants.
+     *
+     * <p>Written once per branch and read by every Q4_0 projection that takes the normed activation
+     * as its input, which is what pays for the quantization.
+     */
+    // @formatter:on
+    public IntArray wrapXbQuants;
+
+    public FloatArray wrapXbScales;
+
+    public IntArray wrapXbSums;
+
     public IntArray positionHolder;
     public IntArray wrapBlockTable;
     public TornadoNativeArray embeddingX;

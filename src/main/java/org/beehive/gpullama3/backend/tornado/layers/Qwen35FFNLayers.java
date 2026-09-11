@@ -2,6 +2,7 @@ package org.beehive.gpullama3.backend.tornado.layers;
 
 import java.util.ArrayList;
 import java.util.List;
+import org.beehive.gpullama3.backend.tornado.device.TornadoDevices;
 import org.beehive.gpullama3.backend.tornado.kernels.Qwen35AttentionKernels;
 import org.beehive.gpullama3.backend.tornado.kernels.Qwen35DeltaNetKernels;
 import org.beehive.gpullama3.backend.tornado.kernels.Qwen3Kernels;
@@ -81,8 +82,23 @@ public class Qwen35FFNLayers
      */
     private final List<Dispatch> dispatches = new ArrayList<>();
 
-    /** One weight-reading task: where it is, what it reads, and which kernel decodes it. */
-    public record Dispatch(int layer, String task, String role, DataType representation) {}
+    // @formatter:off
+    /**
+     * One weight-reading task: where it is, what it reads, which kernel decodes it, and whether its
+     * <b>activation</b> reached it quantized.
+     *
+     * <p>The last of those is not derivable from the other three. Whether a projection takes the
+     * packed-integer path depends on what the buffer it reads happens to hold at that point in the
+     * layer, which is a fact about ordering rather than about the tensor — so it is recorded here
+     * and asserted, not inferred.
+     */
+    // @formatter:on
+    public record Dispatch(
+            int layer,
+            String task,
+            String role,
+            DataType representation,
+            boolean quantizedActivation) {}
 
     /**
      * The graph layer 0 consumes its activation from.
@@ -167,7 +183,12 @@ public class Qwen35FFNLayers
             int d,
             boolean residual) {
         requireWholeBlocks(layer, task, role, w.dataType(), n);
-        dispatches.add(new Dispatch(layer, task, role, w.dataType()));
+        boolean packed =
+                w.dataType() == DataType.Q4_0
+                        && !residual
+                        && x == state.workspace.wrapXb
+                        && normedActivationQuantized;
+        dispatches.add(new Dispatch(layer, task, role, w.dataType(), packed));
         switch (w.dataType()) {
             case F32 -> {
                 if (residual) {
@@ -236,7 +257,22 @@ public class Qwen35FFNLayers
                 }
             }
             case Q4_0 -> {
-                if (residual) {
+                if (!residual && x == state.workspace.wrapXb && normedActivationQuantized) {
+                    // The packed-integer path, for a projection whose input the branch already
+                    // quantized. Weights stay Q4_0; the activation is what changed representation.
+                    graph.task(
+                            task,
+                            TransformerComputeKernelsQ4_0::matrixVectorGenericQ4_0DP4A,
+                            context,
+                            state.workspace.wrapXbQuants,
+                            state.workspace.wrapXbScales,
+                            state.workspace.wrapXbSums,
+                            out,
+                            w.asByteArray(),
+                            n,
+                            d,
+                            MATVEC_LOCAL);
+                } else if (residual) {
                     graph.task(
                             task,
                             TransformerComputeKernelsQ4_0::matrixVectorGenericWithResidualQ4_0,
@@ -435,7 +471,8 @@ public class Qwen35FFNLayers
                 List.of("ffn_gate", "ffn_up"),
                 gate,
                 up);
-        dispatches.add(new Dispatch(layer, "ffn_gate_up", "ffn_gate|ffn_up", gate.dataType()));
+        dispatches.add(
+                new Dispatch(layer, "ffn_gate_up", "ffn_gate|ffn_up", gate.dataType(), false));
         switch (gate.dataType()) {
             case Q4_0 ->
                     graph.task(
@@ -513,6 +550,19 @@ public class Qwen35FFNLayers
                 qwen35State.workspace.temp,
                 require(weights.rms_att_weightLayered, layerIndex, "attn_norm"));
 
+        if (DP4A) {
+            // Once per branch, for every Q4_0 projection below that reads the normed activation.
+            layer.task(
+                    "xb_quantize",
+                    TransformerComputeKernelsQ4_0::quantizeActivationQ8Blocks,
+                    context,
+                    qwen35State.workspace.wrapXb,
+                    qwen35State.workspace.wrapXbQuants,
+                    qwen35State.workspace.wrapXbScales,
+                    qwen35State.workspace.wrapXbSums);
+        }
+        normedActivationQuantized = DP4A;
+
         if (config.isRecurrentLayer(layerIndex)) {
             deltaNetBranch(layer, layerIndex);
         } else {
@@ -520,6 +570,8 @@ public class Qwen35FFNLayers
         }
 
         // The feed-forward's input norm is the file's post_attention_norm; there is no ffn_norm.
+        // It writes over wrapXb, so whatever was quantized from it no longer describes it.
+        normedActivationQuantized = false;
         normalize(
                 layer,
                 "ffn_rms_reduce",
@@ -615,6 +667,53 @@ public class Qwen35FFNLayers
      * output projection.
      */
     // @formatter:on
+    // @formatter:off
+    /**
+     * Whether this device's Q4_0 projections read a quantized activation and a packed integer dot
+     * product rather than a floating-point one.
+     *
+     * <p>A device fact, not a user choice: the packed path needs {@code dp4a} to be lowered, and it
+     * is worth taking only where that has been measured. Everything else about the decision is a
+     * property of the projection — Q4_0 weights, no residual, and an input the branch has already
+     * quantized — and is decided where the task is built.
+     *
+     * <p>Measured on the 27B at chunk 32, interleaved: {@code tg128} 14.73 and 14.72 t/s against
+     * 13.70 and 13.61, and {@code tg128@d381} 11.23 against 10.67 and 10.50. Prefill is untouched
+     * and unchanged. What it costs is in the parity record: the activation is quantized to eight
+     * bits, so the logits move by far more than the floating-point path's bounds allow — relative
+     * L2 2.45e-2 against a 1e-4 bound, cosine 0.99970 — while the decisions did not, at 0/63 argmax
+     * disagreements and token-identical greedy output over 120 tokens.
+     */
+    // @formatter:on
+    // @formatter:off
+    /**
+     * Whether {@code wrapXb} still holds the activation {@code xb_quantize} quantized.
+     *
+     * <p>The buffer is reused inside a layer — the attention branch writes its gated output into
+     * it, and the feed-forward norm writes over it again — so the identity of the array a
+     * projection reads says nothing about <b>which</b> activation is in it. This says. It is set
+     * where the quantization is emitted and cleared at every point the contents change, and it is
+     * what the packed-integer dispatch consults; without it, a projection reading {@code wrapXb}
+     * after either of those writes would silently consume the previous activation's quants. Today
+     * the one projection that would — {@code attn_output_proj} — is excluded for the unrelated
+     * reason that it folds a residual, which is not a property worth depending on.
+     */
+    // @formatter:on
+    private boolean normedActivationQuantized;
+
+    private static final boolean DP4A =
+            TornadoDevices.current()
+                            .capabilities()
+                            .supports(
+                                    org.beehive.gpullama3.runtime.backend.DeviceCapability
+                                            .PACKED_INTEGER_DOT)
+                    // The escape hatch is for the tests whose subject is addressing rather than
+                    // arithmetic: they compare the device against the host exactly, which a
+                    // quantized activation cannot do. Not a user option, and not a CLI flag.
+                    && !"false"
+                            .equalsIgnoreCase(
+                                    System.getProperty("llama.qwen35.packedIntegerDot", "true"));
+
     private void attentionBranch(TaskGraph layer, int layerIndex) {
         final int headDim = config.numberOfHeadsKey();
         final int kvDim = config.kvDim();
@@ -780,6 +879,8 @@ public class Qwen35FFNLayers
         }
 
         // A logistic, not a SiLU: reusing the SwiGLU kernel would multiply by the gate twice.
+        // The gated attention output lands in wrapXb, over the activation that was quantized.
+        normedActivationQuantized = false;
         layer.task(
                 "attn_output_gate",
                 Qwen35AttentionKernels::applyOutputGate,
@@ -1058,6 +1159,13 @@ public class Qwen35FFNLayers
                     valueStore(),
                     qwen35State.workspace.wrapAtt,
                     qwen35State.workspace.wrapHb);
+            if (DP4A) {
+                layer.transferToDevice(
+                        DataTransferMode.FIRST_EXECUTION,
+                        qwen35State.workspace.wrapXbQuants,
+                        qwen35State.workspace.wrapXbScales,
+                        qwen35State.workspace.wrapXbSums);
+            }
             // The recurrent state persists across tokens and is updated in place, so it is
             // uploaded once — zeroed — and never read back. Uploading it every execution would
             // overwrite the device's own history with the host's stale copy.
@@ -1091,6 +1199,13 @@ public class Qwen35FFNLayers
                     qwen35State.workspace.wrapHb,
                     qwen35State.workspace.positionHolder);
             layer.consumeFromDevice(predecessor, qwen35State.workspace.wrapBlockTable);
+            if (DP4A) {
+                layer.consumeFromDevice(
+                        predecessor,
+                        qwen35State.workspace.wrapXbQuants,
+                        qwen35State.workspace.wrapXbScales,
+                        qwen35State.workspace.wrapXbSums);
+            }
             layer.consumeFromDevice(
                     predecessor,
                     qwen35State.workspace.temp,
@@ -1161,6 +1276,10 @@ public class Qwen35FFNLayers
                 scheduler.addWorkerGrid(prefix + "ffn_rms_finalize", rmsFinalize);
             }
             scheduler.addWorkerGrid(prefix + "attn_rms_apply", rmsApply);
+            if (DP4A) {
+                WorkerGrid quantize = WorkerGridFactory.genericWorker(config.dim(), 32);
+                scheduler.addWorkerGrid(prefix + "xb_quantize", quantize);
+            }
             scheduler.addWorkerGrid(prefix + "ffn_rms_apply", rmsApply);
             scheduler.addWorkerGrid(prefix + "ffn_gate_up", matVecWorker(config.hiddenDim()));
             scheduler.addWorkerGrid(prefix + "ffn_down_proj", matVecWorker(config.dim()));

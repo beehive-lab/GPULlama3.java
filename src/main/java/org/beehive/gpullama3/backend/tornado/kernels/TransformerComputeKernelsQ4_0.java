@@ -4,6 +4,8 @@ import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
 import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.IntArray;
+import uk.ac.manchester.tornado.api.utils.QuantizationUtils;
 
 /**
  * Device kernels that read {@code Q4_0} weights <b>in the file's own representation</b>.
@@ -135,6 +137,167 @@ public final class TransformerComputeKernelsQ4_0 {
             context.localBarrier();
         }
         return localSums[0];
+    }
+
+    // ── the packed-integer path ──────────────────────────────────────────────
+
+    // @formatter:off
+    /**
+     * Quantizes one token's activations into {@code Q8}-style blocks, for the packed-integer
+     * matrix-vector below.
+     *
+     * <p>One workgroup of 32 lanes per block, one lane per activation: the block's maximum and the
+     * sum of its quants are shared reductions, and eight lanes do the packing. It writes three
+     * things, and the third is the one that is easy to miss: the <b>sum</b> of the block's
+     * quantized activations. Q4_0 stores an unsigned nibble meaning {@code q - 8}, and
+     *
+     * <pre>  sum (q_w - 8) * q_x  =  sum q_w * q_x  -  8 * sum q_x</pre>
+     *
+     * so the recentring comes out of the inner loop entirely and the dot product runs on the raw
+     * nibbles, which are 0..15 and therefore already valid signed bytes. Nothing in the hot loop
+     * has to build a negative byte — which also keeps it clear of the unsigned-recentring defect
+     * recorded in {@code docs/architecture/tornadovm-issues}.
+     *
+     * <p>A block of exact zeros gets a zero scale and zero quants rather than a division by zero;
+     * its contribution is then zero, which is what it should be.
+     *
+     * @param x the token's activations
+     * @param quants four quantized activations per int, in element order
+     * @param scales one per block
+     * @param sums the sum of each block's quantized activations
+     */
+    // @formatter:on
+    public static void quantizeActivationQ8Blocks(
+            KernelContext context,
+            FloatArray x,
+            IntArray quants,
+            FloatArray scales,
+            IntArray sums) {
+        int block = context.groupIdx;
+        int lane = context.localIdx;
+        int base = block * QK;
+
+        float[] shared = context.allocateFloatLocalArray(QK);
+        int[] sharedQuants = context.allocateIntLocalArray(QK);
+
+        float value = x.get(base + lane);
+        shared[lane] = TornadoMath.abs(value);
+        context.localBarrier();
+        for (int stride = QK / 2; stride > 0; stride >>= 1) {
+            if (lane < stride) {
+                shared[lane] = TornadoMath.max(shared[lane], shared[lane + stride]);
+            }
+            context.localBarrier();
+        }
+        float maxAbs = shared[0];
+        context.localBarrier();
+
+        float inverse = maxAbs > 0.0f ? 127.0f / maxAbs : 0.0f;
+        float scaled = value * inverse;
+        int q = (int) (scaled + (scaled >= 0.0f ? 0.5f : -0.5f));
+        q = TornadoMath.min(127, TornadoMath.max(-127, q));
+        sharedQuants[lane] = q;
+        shared[lane] = q;
+        context.localBarrier();
+
+        // The four quants of one group live in four neighbouring lanes, so packing is eight lanes
+        // reading four entries each rather than one thread walking the block.
+        if (lane < QK / 4) {
+            int packed =
+                    (sharedQuants[lane * 4] & 0xFF)
+                            | ((sharedQuants[lane * 4 + 1] & 0xFF) << 8)
+                            | ((sharedQuants[lane * 4 + 2] & 0xFF) << 16)
+                            | ((sharedQuants[lane * 4 + 3] & 0xFF) << 24);
+            quants.set(block * (QK / 4) + lane, packed);
+        }
+
+        for (int stride = QK / 2; stride > 0; stride >>= 1) {
+            if (lane < stride) {
+                shared[lane] += shared[lane + stride];
+            }
+            context.localBarrier();
+        }
+        if (lane == 0) {
+            scales.set(block, maxAbs / 127.0f);
+            sums.set(block, (int) shared[0]);
+        }
+    }
+
+    // @formatter:off
+    /**
+     * {@code output[row] = w[row] · x} with the weights read as {@code Q4_0} and the dot product
+     * done in packed integers.
+     *
+     * <p>Same shape as {@link #matrixVectorGenericQ4_0} — one workgroup per output row, a shared
+     * reduction — and a different inner loop. That one walks <b>elements</b>, decoding a weight and
+     * re-reading its block scale for each; this one walks <b>blocks</b>, reading the scale once per
+     * 32 weights and issuing eight {@code dp4a} instructions.
+     *
+     * <p>Four consecutive weights come from four consecutive bytes' <b>low</b> nibbles, and the
+     * high nibbles of those same bytes are the four weights sixteen positions later. So one group
+     * of four bytes feeds two dot products, against activation groups {@code 4g} and {@code 16+4g}
+     * — which is the pairing the block layout forces and the reason the loop is written in groups
+     * of four rather than in halves.
+     *
+     * <p>The activations must have been prepared by {@link #quantizeActivationQ8Blocks}; the {@code
+     * -8 * sum} correction it precomputes is applied once per block here.
+     */
+    // @formatter:on
+    public static void matrixVectorGenericQ4_0DP4A(
+            KernelContext context,
+            IntArray xQuants,
+            FloatArray xScales,
+            IntArray xSums,
+            FloatArray output,
+            ByteArray w,
+            int n,
+            int d,
+            int localWorkGroupSize) {
+        int rowId = context.groupIdx;
+        if (rowId >= d) {
+            return;
+        }
+        int localId = context.localIdx;
+        float[] localSums = context.allocateFloatLocalArray(localWorkGroupSize);
+
+        int blocksPerRow = (n + QK - 1) / QK;
+        int rowBlockOffset = rowId * blocksPerRow;
+
+        float partialSum = 0.0f;
+        for (int block = localId; block < blocksPerRow; block += localWorkGroupSize) {
+            int blockByteOffset = (rowBlockOffset + block) * BLOCK_BYTES;
+            float weightScale = w.getHalfFloat(blockByteOffset).getFloat32();
+            int quantBase = block * (QK / 4);
+
+            int dot = 0;
+            for (int g = 0; g < 4; g++) {
+                int b0 = w.get(blockByteOffset + QS_OFFSET + g * 4) & 0xFF;
+                int b1 = w.get(blockByteOffset + QS_OFFSET + g * 4 + 1) & 0xFF;
+                int b2 = w.get(blockByteOffset + QS_OFFSET + g * 4 + 2) & 0xFF;
+                int b3 = w.get(blockByteOffset + QS_OFFSET + g * 4 + 3) & 0xFF;
+                int low = (b0 & 0xF) | ((b1 & 0xF) << 8) | ((b2 & 0xF) << 16) | ((b3 & 0xF) << 24);
+                int high =
+                        ((b0 >> 4) & 0xF)
+                                | (((b1 >> 4) & 0xF) << 8)
+                                | (((b2 >> 4) & 0xF) << 16)
+                                | (((b3 >> 4) & 0xF) << 24);
+                dot = QuantizationUtils.dp4a_packed(low, xQuants.get(quantBase + g), dot);
+                dot = QuantizationUtils.dp4a_packed(high, xQuants.get(quantBase + 4 + g), dot);
+            }
+            partialSum += weightScale * xScales.get(block) * (dot - 8 * xSums.get(block));
+        }
+
+        localSums[localId] = partialSum;
+        context.localBarrier();
+        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSums[localId] += localSums[localId + stride];
+            }
+            context.localBarrier();
+        }
+        if (localId == 0) {
+            output.set(rowId, localSums[0]);
+        }
     }
 
     /** {@code output[row] = w[row]·x}. Q4_0 counterpart of {@code matrixVectorGenericQ8Byte}. */

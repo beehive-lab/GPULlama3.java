@@ -4,32 +4,13 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 import java.lang.foreign.Arena;
-import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
-import java.util.Random;
 import org.beehive.gpullama3.backend.cpu.Qwen35Forward;
-import org.beehive.gpullama3.backend.tornado.tensor.FP32TornadoTensor;
-import org.beehive.gpullama3.backend.tornado.tensor.Q4_0TornadoTensor;
-import org.beehive.gpullama3.backend.tornado.tensor.Q4_1TornadoTensor;
-import org.beehive.gpullama3.backend.tornado.tensor.Q5_KTornadoTensor;
-import org.beehive.gpullama3.backend.tornado.tensor.Q6_KTornadoTensor;
-import org.beehive.gpullama3.backend.tornado.tensor.TornadoTensor;
 import org.beehive.gpullama3.inference.state.Qwen35State;
-import org.beehive.gpullama3.inference.weights.standard.Qwen35StandardWeights;
-import org.beehive.gpullama3.inference.weights.tornado.Qwen35TornadoWeights;
 import org.beehive.gpullama3.model.qwen35.Qwen35;
 import org.beehive.gpullama3.model.qwen35.Qwen35Configuration;
 import org.beehive.gpullama3.runtime.metrics.MetricsSink;
-import org.beehive.gpullama3.runtime.tensor.DataType;
-import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
 import org.beehive.gpullama3.tensor.standard.FloatTensor;
-import org.beehive.gpullama3.tensor.standard.Q4_0FloatTensor;
-import org.beehive.gpullama3.tensor.standard.Q4_1FloatTensor;
-import org.beehive.gpullama3.tensor.standard.Q5_KFloatTensor;
-import org.beehive.gpullama3.tensor.standard.Q6_KFloatTensor;
 import org.junit.Test;
-import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
-import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
 // @formatter:off
 /**
@@ -74,6 +55,12 @@ public class Qwen35SyntheticParityAccelTest {
     public void theWholeForwardPassAgreesWithTheHost() throws Exception {
         String previous = System.getProperty("use.tornadovm");
         System.setProperty("use.tornadovm", "true");
+        // These cases compare the device against the host exactly: their subject is addressing
+        // and chunk invariance, not arithmetic. A quantized activation cannot be exact, so the
+        // Q4_0 projections stay on the floating-point path here. Their precision is covered on the
+        // real model by the parity tests, against bounds written for it. This class gets its own
+        // JVM (reuseForks=false), so the property is read before the layer builder loads.
+        System.setProperty("llama.qwen35.packedIntegerDot", "false");
         try (Arena owned = Arena.ofShared()) {
             Qwen35Configuration config = Qwen35SyntheticModel.config();
             Qwen35SyntheticModel.Weights both = new Qwen35SyntheticModel(owned).weights(config);
@@ -90,17 +77,12 @@ public class Qwen35SyntheticParityAccelTest {
                 int[] tokens = {7, 91};
                 for (int position = 0; position < tokens.length; position++) {
                     FloatTensor expected =
-                            Qwen35Forward.forward(
-                                    hostModel, hostState, tokens[position], position);
+                            Qwen35Forward.forward(hostModel, hostState, tokens[position], position);
                     assertFinite("host logits at position " + position, expected);
 
                     var actual =
                             TornadoForwardPass.forward(
-                                    deviceModel,
-                                    deviceState,
-                                    tokens[position],
-                                    position,
-                                    plan);
+                                    deviceModel, deviceState, tokens[position], position, plan);
 
                     float maxAbs = 0f;
                     for (int i = 0; i < Qwen35SyntheticModel.VOCAB; i++) {

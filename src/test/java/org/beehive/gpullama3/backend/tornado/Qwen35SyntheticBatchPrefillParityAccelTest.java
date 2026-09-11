@@ -24,8 +24,8 @@ import org.junit.Test;
  * <p>This is the gate the batched path exists to pass. Three quarters of this stack is recurrent,
  * so a chunk is not a set of independent rows: the convolution window and the delta-net matrices
  * make token {@code t} depend on token {@code t-1} <i>inside</i> the layer. A batched
- * implementation that reordered them, or that reset the state per chunk, would still produce
- * fluent output and would disagree here.
+ * implementation that reordered them, or that reset the state per chunk, would still produce fluent
+ * output and would disagree here.
  *
  * <p>Three properties are checked, and each fails differently:
  *
@@ -50,9 +50,9 @@ public class Qwen35SyntheticBatchPrefillParityAccelTest {
     /**
      * Only recurrent layers, and only attention layers.
      *
-     * <p>The mixed stack cannot say which mixer moved. An interval past the layer count makes
-     * every block recurrent and an interval of one makes every block attend, so a disagreement
-     * here names the branch instead of leaving it to be bisected.
+     * <p>The mixed stack cannot say which mixer moved. An interval past the layer count makes every
+     * block recurrent and an interval of one makes every block attend, so a disagreement here names
+     * the branch instead of leaving it to be bisected.
      */
     @Test
     public void eachMixerBatchesOnItsOwn() throws Exception {
@@ -93,6 +93,12 @@ public class Qwen35SyntheticBatchPrefillParityAccelTest {
             throws Exception {
         String previousDevice = System.getProperty("use.tornadovm");
         System.setProperty("use.tornadovm", "true");
+        // These cases compare the device against the host exactly: their subject is addressing
+        // and chunk invariance, not arithmetic. A quantized activation cannot be exact, so the
+        // Q4_0 projections stay on the floating-point path here. Their precision is covered on the
+        // real model by the parity tests, against bounds written for it. This class gets its own
+        // JVM (reuseForks=false), so the property is read before the layer builder loads.
+        System.setProperty("llama.qwen35.packedIntegerDot", "false");
         try (Arena owned = Arena.ofShared()) {
             Qwen35Configuration config = Qwen35SyntheticModel.config(attentionInterval);
             Qwen35SyntheticModel.Weights both = new Qwen35SyntheticModel(owned).weights(config);
