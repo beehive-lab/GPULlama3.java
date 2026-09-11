@@ -19,6 +19,6 @@ public class Qwen35PrefillDecodeParityAccelTest extends CpuGpuParity {
 
     @Test
     public void qwen3_8_27b_q4_0_prefillDecodeParity() throws Exception {
-        assertParityPrefillDecode(Fixture.QWEN3_8_27B_Q4_0, Q8_0_PACKED_ACTIVATION);
+        assertParityPrefillDecode(Fixture.QWEN3_8_27B_Q4_0, Q8_0_FULLY_PACKED);
     }
 }
