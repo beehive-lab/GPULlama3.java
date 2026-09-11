@@ -57,6 +57,19 @@ public class Qwen35NllScreenAccelTest {
     /** Where the result lands, so the two configurations can be compared afterwards. */
     private static final String OUTPUT_PROPERTY = "llama.nllScreen.out";
 
+    // @formatter:off
+    /**
+     * Chunk width for the batched variant, or absent for the single-token one.
+     *
+     * <p>The two paths quantize different amounts. {@code STANDARD} packs every position, prompt
+     * included; the batched plan ingests the prompt with its own prefill kernels and packs only the
+     * rows it decodes. A screen of one says nothing about the other, and the parity envelopes are
+     * separate for the same reason, so the batched variant ingests the first half of each passage
+     * as a prompt and scores only the decoded half.
+     */
+    // @formatter:on
+    private static final String BATCH_PROPERTY = "llama.nllScreen.batch";
+
     /** One passage: a repository file, a byte offset, and the register it represents. */
     private record Passage(String name, String path, int byteOffset, int byteLength) {}
 
@@ -89,8 +102,18 @@ public class Qwen35NllScreenAccelTest {
         System.setProperty("use.tornadovm", "true");
         StringBuilder report = new StringBuilder();
         try {
+            int batch = Integer.getInteger(BATCH_PROPERTY, 1);
+            if (batch > 1) {
+                // The plan is chosen from these, not from the state's width: sizing the state
+                // alone leaves the single-token plan in place.
+                System.setProperty("llama.withPrefillDecode", "true");
+                System.setProperty("llama.prefillBatchSize", String.valueOf(batch));
+            }
             Model model = ModelLoader.loadModel(modelPath, 1024, true, true);
-            State state = model.createNewState();
+            State state =
+                    batch > 1
+                            ? State.withPrefillBatchSize(batch, model::createNewState)
+                            : model.createNewState();
             TornadoVMMasterPlan plan = TornadoVMMasterPlan.initializeTornadoVMPlan(state, model);
 
             boolean packed =
@@ -112,6 +135,7 @@ public class Qwen35NllScreenAccelTest {
                     .append(model.tokenizer().getClass().getSimpleName())
                     .append('\n');
             report.append("packedIntegerDot=").append(packed).append('\n');
+            report.append("prefillBatch=").append(batch).append('\n');
             // The execution path this screen actually scored, read off the plan and the layer
             // builder rather than assumed from the absence of a batch width. Which projections
             // read a quantized activation is the whole subject, so it is recorded, not inferred.
@@ -154,18 +178,49 @@ public class Qwen35NllScreenAccelTest {
                     plan.resetSequenceState();
 
                     int[][] scored = NllScoring.scoredPositions(tokens);
+                    // The batched variant ingests the first half as a prompt, unscored, through
+                    // the batched prefill kernels, and scores the decoded half.
+                    int firstScored = batch > 1 ? TOKENS / 2 : 0;
+                    if (batch > 1) {
+                        var batchedPlan =
+                                (org.beehive.gpullama3.backend.tornado
+                                                .TornadoVMMasterPlanBatchPrefillDecode)
+                                        plan;
+                        for (int off = 0; off < firstScored; off += batch) {
+                            int size = Math.min(batch, firstScored - off);
+                            int[] chunk = java.util.Arrays.copyOfRange(tokens, off, off + size);
+                            org.beehive.gpullama3.backend.tornado.TornadoBatchPrefillPass
+                                    .batchPrefill(model, state, chunk, off, size, batchedPlan);
+                        }
+                    }
                     double sum = 0;
+                    int counted = 0;
                     for (int[] pair : scored) {
+                        if (pair[0] < firstScored) {
+                            continue;
+                        }
                         Logits logits =
-                                TornadoForwardPass.forward(
-                                        model, state, tokens[pair[0]], pair[0], plan);
+                                batch > 1
+                                        ? org.beehive.gpullama3.backend.tornado
+                                                .TornadoBatchPrefillPass.decode(
+                                                model,
+                                                state,
+                                                tokens[pair[0]],
+                                                pair[0],
+                                                (org.beehive.gpullama3.backend.tornado
+                                                                .TornadoVMMasterPlanBatchPrefillDecode)
+                                                        plan)
+                                        : TornadoForwardPass.forward(
+                                                model, state, tokens[pair[0]], pair[0], plan);
                         float[] row = new float[logits.size()];
                         for (int i = 0; i < row.length; i++) {
                             row[i] = logits.get(i);
                         }
                         sum += NllScoring.negativeLogLikelihood(row, pair[1]);
+                        counted++;
                     }
-                    double mean = sum / scored.length;
+                    scored = new int[counted][2];
+                    double mean = sum / counted;
                     pooledNll += sum;
                     pooledTokens += scored.length;
 
@@ -187,9 +242,11 @@ public class Qwen35NllScreenAccelTest {
                 plan.freeTornadoExecutionPlan();
             }
 
+            long expectedTokens =
+                    (long) PASSAGES.size() * (batch > 1 ? TOKENS - 1 - TOKENS / 2 : TOKENS - 1);
             assertEquals(
                     "every passage scored the same number of positions",
-                    PASSAGES.size() * (TOKENS - 1),
+                    expectedTokens,
                     pooledTokens);
             double pooledMean = pooledNll / pooledTokens;
             report.append(
