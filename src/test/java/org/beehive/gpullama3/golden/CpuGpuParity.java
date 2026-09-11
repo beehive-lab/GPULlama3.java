@@ -117,6 +117,30 @@ abstract class CpuGpuParity {
 
     // @formatter:off
     /**
+     * For the <b>batched</b> path, whose decode rows carry every packed projection while its prompt
+     * goes through the prefill kernels.
+     *
+     * <p>A third envelope rather than a wider shared one. {@link #Q8_0_PACKED_ACTIVATION} is what
+     * the batched path met when its decode rows carried two packed projections; they now carry
+     * more, and widening the shared constant would weaken whatever else uses it in order to admit
+     * this. {@link #Q8_0_FULLY_PACKED} is a different amount of quantization again -- every
+     * position rather than only the decoded ones -- so it is not this.
+     *
+     * <p><b>Engineering regression limits for an accepted arithmetic, not calibrated quality
+     * thresholds.</b> They say "this path still computes what it computed yesterday"; they say
+     * nothing about whether what it computes is good. A future failure here is something to
+     * investigate, not to widen: the envelope has now been set three times, once per change in what
+     * is packed, and each time the numbers were measured first and the limits written after.
+     *
+     * <p>Measured on the 63-row trace with the packed branch projections, gate/up and ffn_down:
+     * largest absolute difference 1.54620 against a reference RMS of 3.272, relative L2 0.0797096,
+     * cosine 0.99682787, elementwise 33.13%, argmax 0/63, top-5 4.952/5, top-10 9.952/10.
+     */
+    // @formatter:on
+    static final Bounds Q8_0_PACKED_DECODE = new Bounds(1.7e-4, 1e-2, 0.70, 0.12, 0.9955, 0.5, 0.5);
+
+    // @formatter:off
+    /**
      * The same, for the paths that pack the <b>feed-forward</b> activation as well.
      *
      * <p>{@code STANDARD} and sequential prefill quantize the feed-forward's activation at every

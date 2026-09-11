@@ -475,6 +475,82 @@ public final class TransformerComputeKernelsQ4_0 {
 
     // @formatter:off
     /**
+     * {@code hb[row] += w[row]·x} in packed integers — the residual form, not yet dispatched.
+     *
+     * <p>{@link #matrixVectorGenericQ4_0DP4A} with the accumulate-into-destination the residual
+     * projections need. Whether it is worth dispatching is a question about preparation cost rather
+     * than about this loop: a residual projection's activation feeds one projection, not two or
+     * three, and {@code ffn_down}'s is the feed-forward's hidden width rather than the embedding
+     * width, so the quantization it needs is larger and amortized over less.
+     */
+    // @formatter:on
+    public static void matrixVectorGenericWithResidualQ4_0DP4A(
+            KernelContext context,
+            IntArray xQuants,
+            FloatArray xScales,
+            IntArray xSums,
+            FloatArray hb,
+            ByteArray w,
+            int n,
+            int d,
+            int localWorkGroupSize) {
+        int rowId = context.groupIdx;
+        if (rowId >= d) {
+            return;
+        }
+        int localId = context.localIdx;
+        float[] localSums = context.allocateFloatLocalArray(localWorkGroupSize);
+
+        int blocksPerRow = (n + QK - 1) / QK;
+        int rowBlockOffset = rowId * blocksPerRow;
+
+        float partialSum = 0.0f;
+        for (int block = localId; block < blocksPerRow; block += localWorkGroupSize) {
+            int blockByteOffset = (rowBlockOffset + block) * BLOCK_BYTES;
+            float weightScale = w.getHalfFloat(blockByteOffset).getFloat32();
+            int quantBase = block * (QK / 4);
+
+            int dot = 0;
+            for (int g = 0; g < 4; g++) {
+                int b0 = w.get(blockByteOffset + QS_OFFSET + g * 4) & 0xFF;
+                int b1 = w.get(blockByteOffset + QS_OFFSET + g * 4 + 1) & 0xFF;
+                int b2 = w.get(blockByteOffset + QS_OFFSET + g * 4 + 2) & 0xFF;
+                int b3 = w.get(blockByteOffset + QS_OFFSET + g * 4 + 3) & 0xFF;
+                dot =
+                        QuantizationUtils.dp4a_packed(
+                                (b0 & 0xF)
+                                        | ((b1 & 0xF) << 8)
+                                        | ((b2 & 0xF) << 16)
+                                        | ((b3 & 0xF) << 24),
+                                xQuants.get(quantBase + g),
+                                dot);
+                dot =
+                        QuantizationUtils.dp4a_packed(
+                                ((b0 >> 4) & 0xF)
+                                        | (((b1 >> 4) & 0xF) << 8)
+                                        | (((b2 >> 4) & 0xF) << 16)
+                                        | (((b3 >> 4) & 0xF) << 24),
+                                xQuants.get(quantBase + 4 + g),
+                                dot);
+            }
+            partialSum += weightScale * xScales.get(block) * (dot - 8 * xSums.get(block));
+        }
+
+        localSums[localId] = partialSum;
+        context.localBarrier();
+        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSums[localId] += localSums[localId + stride];
+            }
+            context.localBarrier();
+        }
+        if (localId == 0) {
+            hb.set(rowId, hb.get(rowId) + localSums[0]);
+        }
+    }
+
+    // @formatter:off
+    /**
      * {@code hb[row] = silu(w1[row]·x) * (w3[row]·x)} with both projections in packed integers.
      *
      * <p>The packed counterpart of {@link #fusedFFNGateUpSiLUQ4_0}, and the same arithmetic around

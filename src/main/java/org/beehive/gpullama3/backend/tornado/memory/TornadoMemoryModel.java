@@ -241,7 +241,16 @@ public final class TornadoMemoryModel {
                         + kvDim * 2 // k, v
                         + attention * 2 // att and the split-KV variant
                         + dim * 2; // FP16 staging mirrors, counted as floats for headroom
-        return floats * Float.BYTES;
+        // The packed-integer projections' activation, in Q8 blocks: four quants per int plus a
+        // scale and a sum of quants per block of 32, sized for the widest activation any of them
+        // reads. About 22 KiB at Qwen3.8-27B's shape, which is why it changes no prediction here
+        // -- it is counted so the term stays a description of what is allocated.
+        long widest = Math.max(dim, hidden);
+        long quantizationBytes =
+                widest / 4 * Integer.BYTES
+                        + widest / 32 * Float.BYTES
+                        + widest / 32 * Integer.BYTES;
+        return floats * Float.BYTES + quantizationBytes;
     }
 
     /** Staging for a batched prefill chunk: embeddings and per-row activations. */

@@ -4,6 +4,8 @@ import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
 import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.IntArray;
+import uk.ac.manchester.tornado.api.utils.QuantizationUtils;
 
 /**
  * Device kernels that read {@code Q6_K} weights in the file's own representation.
@@ -163,6 +165,103 @@ public final class TransformerComputeKernelsQ6_K {
             context.localBarrier();
         }
         return localSums[0];
+    }
+
+    // @formatter:off
+    /**
+     * {@code output[row] = w[row]·x} with {@code Q6_K} weights and a packed-integer dot product.
+     *
+     * <p>For the vocabulary projection, which is one call per token against a quarter of a million
+     * output rows and is the only {@code Q6_K} site this is dispatched to.
+     *
+     * <p><b>The recentring is done on the weight side.</b> A Q6_K quantum is {@code raw - 32} with
+     * {@code raw} in 0..63, so the recentred value is in -32..31 and fits a signed byte directly.
+     * Building it that way is what {@code vec_dot_q6_K_q8_1_impl_mmvq} does, and it is why this
+     * kernel needs no per-run sum of the activation's quants: there is no correction term. The
+     * subtraction is masked to a byte as it is packed, which is what makes it safe against the
+     * unsigned-stamp wrap recorded in {@code docs/architecture/tornadovm-issues} -- the wrapped
+     * value and the correct one agree in their low eight bits, and the test walks all 64 values.
+     *
+     * <p><b>Scale structure.</b> A super-block is 256 weights with one fp16 {@code d}, sixteen
+     * signed byte scales, and a quantum split across {@code ql} and {@code qh}. A scale covers
+     * sixteen <b>contiguous</b> elements, and the activation's quantization block is thirty-two, so
+     * each scale run sits inside one activation block and the two scales multiply cleanly. The
+     * element-to-byte mapping is the host tensor's, restated: two halves of 128, four groups of 32
+     * within a half, the low nibble for the first two groups and the high nibble for the last two,
+     * with the {@code qh} pair of bits shifted by the group.
+     *
+     * <p>The activation must have been prepared by {@code quantizeActivationQ8Blocks} from the
+     * activation this projection reads.
+     */
+    // @formatter:on
+    public static void matrixVectorGenericQ6_KDP4A(
+            KernelContext context,
+            IntArray xQuants,
+            FloatArray xScales,
+            IntArray xSums,
+            FloatArray output,
+            ByteArray w,
+            int n,
+            int d,
+            int localWorkGroupSize) {
+        int rowId = context.groupIdx;
+        if (rowId >= d) {
+            return;
+        }
+        int localId = context.localIdx;
+        float[] localSums = context.allocateFloatLocalArray(localWorkGroupSize);
+
+        int superBlocksPerRow = n / QK_K;
+        int rowByteOffset = rowId * superBlocksPerRow * BLOCK_BYTES;
+
+        float partialSum = 0.0f;
+        // One scale run of sixteen weights per step: the unit over which d, the byte scale and the
+        // activation's own scale are all constant.
+        int runsPerRow = n / 16;
+        for (int run = localId; run < runsPerRow; run += localWorkGroupSize) {
+            int superBlock = run / 16;
+            int runInBlock = run - superBlock * 16;
+            int base = rowByteOffset + superBlock * BLOCK_BYTES;
+            float d6 = w.getHalfFloat(base + D_OFFSET).getFloat32();
+
+            int half = runInBlock / 8;
+            int groupInHalf = (runInBlock - half * 8) / 2;
+            int is = runInBlock & 1;
+            int scale = w.get(base + SCALES_OFFSET + half * 8 + is + 2 * groupInHalf);
+
+            int qlBase = base + half * 64 + (groupInHalf & 1) * 32 + is * 16;
+            int qhBase = base + QH_OFFSET + half * 32 + is * 16;
+            int qhShift = 2 * groupInHalf;
+            boolean highNibble = groupInHalf >= 2;
+
+            int quantBase = run * 4;
+            int dot = 0;
+            for (int g = 0; g < 4; g++) {
+                int packed = 0;
+                for (int lane = 0; lane < 4; lane++) {
+                    int at = g * 4 + lane;
+                    int ql = w.get(qlBase + at) & 0xFF;
+                    int qh = w.get(qhBase + at) & 0xFF;
+                    int low = highNibble ? ((ql >> 4) & 0xF) : (ql & 0xF);
+                    int raw = low | (((qh >> qhShift) & 3) << 4);
+                    packed |= ((raw - 32) & 0xFF) << (lane * 8);
+                }
+                dot = QuantizationUtils.dp4a_packed(packed, xQuants.get(quantBase + g), dot);
+            }
+            partialSum += d6 * scale * xScales.get(run / 2) * dot;
+        }
+
+        localSums[localId] = partialSum;
+        context.localBarrier();
+        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
+            if (localId < stride) {
+                localSums[localId] += localSums[localId + stride];
+            }
+            context.localBarrier();
+        }
+        if (localId == 0) {
+            output.set(rowId, localSums[0]);
+        }
     }
 
     /** {@code output[row] = w[row]·x}. */
