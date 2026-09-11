@@ -15,20 +15,20 @@ import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 
 // @formatter:off
 /**
- * The decode activation of the batched plan: one token's embedding, and the hand-over of
- * everything batch prefill left on the device.
+ * The decode activation of the batched plan: one token's embedding, and the hand-over of everything
+ * batch prefill left on the device.
  *
  * <p>Two things separate it from the shared {@code BatchDecodeActivation}.
  *
  * <p><b>It converts a Q4_0 embedding row.</b> The shared graph knows F16 and Q8_0, and this
- * family's token embeddings are retained Q4_0 — an 18-byte block against a 34-byte one, which
- * would be read as a plausible activation and wrong output.
+ * family's token embeddings are retained Q4_0 — an 18-byte block against a 34-byte one, which would
+ * be read as a plausible activation and wrong output.
  *
  * <p><b>It relays the recurrent state as well as the key/value store.</b> A recurrence is the
  * sequence's whole history: the convolution windows and delta-net matrices the prefill chunks
- * advanced are what decode continues from, so they travel the same chain the caches do — last
- * batch layer, this graph, decode layer 0. The consume/persist pairs look inert in a bytecode
- * trace and are not: they are what makes those three graphs resolve to one live buffer per array.
+ * advanced are what decode continues from, so they travel the same chain the caches do — last batch
+ * layer, this graph, decode layer 0. The consume/persist pairs look inert in a bytecode trace and
+ * are not: they are what makes those three graphs resolve to one live buffer per array.
  */
 // @formatter:on
 public class Qwen35BatchDecodeActivation implements ActivationTaskGraph {
@@ -52,10 +52,7 @@ public class Qwen35BatchDecodeActivation implements ActivationTaskGraph {
             String lastBatchLayerId) {
         TaskGraph graph =
                 new TaskGraph("decodeActivation")
-                        .consumeFromDevice(
-                                lastBatchLayerId,
-                                state.workspace.wrapKeyCache,
-                                state.workspace.wrapValueCache)
+                        .consumeFromDevice(lastBatchLayerId, keyStore(state), valueStore(state))
                         .consumeFromDevice(lastBatchLayerId, state.workspace.wrapBlockTable)
                         .consumeFromDevice(
                                 lastBatchLayerId,
@@ -90,10 +87,30 @@ public class Qwen35BatchDecodeActivation implements ActivationTaskGraph {
 
         graph.persistOnDevice(state.workspace.wrapBlockTable);
         graph.persistOnDevice(state.workspace.wrapConvState, state.workspace.wrapDeltaState);
-        return graph.persistOnDevice(
-                state.workspace.wrapX,
-                state.workspace.wrapKeyCache,
-                state.workspace.wrapValueCache);
+        return graph.persistOnDevice(state.workspace.wrapX, keyStore(state), valueStore(state));
+    }
+
+    // @formatter:off
+    /**
+     * The key/value store this session actually holds, in whichever precision it is in.
+     *
+     * <p>This graph is the only link between the batch-prefill layers and the decode layers, and
+     * both of those bind the store through the same choice. Binding the FP32 carriers here
+     * unconditionally — which is what this did — left a half-precision session's prefilled history
+     * on one pair of arrays and decode reading another, so the model answered as though the prompt
+     * had never been read. The FP32 arrays exist either way, which is why it did not fail loudly.
+     */
+    // @formatter:on
+    private static Object keyStore(Qwen35State state) {
+        return state.usesFp16KeyValueCache()
+                ? state.workspace.wrapKeyCacheFP16
+                : state.workspace.wrapKeyCache;
+    }
+
+    private static Object valueStore(Qwen35State state) {
+        return state.usesFp16KeyValueCache()
+                ? state.workspace.wrapValueCacheFP16
+                : state.workspace.wrapValueCache;
     }
 
     @Override
