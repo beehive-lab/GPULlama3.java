@@ -103,12 +103,30 @@ public class LogitsQ8_0Layer extends AbstractLogitsTaskGraph {
         return logits;
     }
 
+    // @formatter:off
     /**
-     * TEMPORARY, for the Q6_K vocabulary evaluation. Removed when the tradeoff is decided; this is
-     * the only call site it covers.
+     * Whether the vocabulary projection reads a quantized activation and a packed integer dot
+     * product.
+     *
+     * <p>Three facts, none of them a preference: the output projection is {@code Q6_K}, the device
+     * lowers {@code dp4a}, and this session's state carries the quantization scratch -- which is a
+     * family's choice, so a family without it keeps the kernel it had, as does any other
+     * representation and any other device.
+     *
+     * <p>It also honours the escape hatch the exact-comparison tests use to pin themselves to the
+     * floating-point path. Leaving it out is what made six of them fail: their subject is
+     * addressing, they compare the device against the host exactly, and this projection is as
+     * unable to be exact as the layer ones are.
+     *
+     * <p>This is the only call site. The activation it quantizes is the final normalized one,
+     * quantized in this graph immediately before the projection reads it and read by nothing else,
+     * which is why it needs no provenance flag: there is no second consumer to confuse it with.
      */
+    // @formatter:on
     private boolean packedVocabulary(TornadoWeights weights) {
-        return Boolean.getBoolean("llama.qwen35.packedVocab")
+        return !"false"
+                        .equalsIgnoreCase(
+                                System.getProperty("llama.qwen35.packedIntegerDot", "true"))
                 && weights.wclsByteArray.dataType()
                         == org.beehive.gpullama3.runtime.tensor.DataType.Q6_K
                 && state.workspace.wrapXbQuants != null

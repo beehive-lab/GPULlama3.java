@@ -6,6 +6,7 @@ import static org.junit.Assert.assertTrue;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
+import java.util.Random;
 import org.beehive.gpullama3.tensor.standard.Q6_KFloatTensor;
 import org.junit.Test;
 import uk.ac.manchester.tornado.api.GridScheduler;
@@ -184,5 +185,163 @@ public class Q6_KDp4aAccelTest {
                     got,
                     Math.max(1e-4f, Math.abs(decoded[row]) * 1e-3f));
         }
+    }
+
+    // @formatter:off
+    /**
+     * A dense projection over several super-blocks, against a reference quantizing identically.
+     *
+     * <p>The one-hot case proves the unpacking and nothing else: every dot product it forms has a
+     * single non-zero term, so an accumulation that dropped or double-counted terms would pass it.
+     * This one sums 1024 of them per output with values chosen to cancel — adjacent weights of
+     * opposite sign and activations that change sign within a block — so a misplaced term shows up
+     * rather than averaging out.
+     *
+     * <p>Four super-blocks, byte scales of both signs and differing magnitude within each block, a
+     * zero activation block whose scale must be zero, and activation magnitudes three orders apart.
+     * The reference performs the same block quantization, so what is compared is the kernel's
+     * accumulation and scaling, not the representation's cost -- that difference is reported
+     * separately, against the floating-point kernel.
+     */
+    // @formatter:on
+    @Test
+    public void aDenseProjectionMatchesAReferenceThatQuantizesTheSameWay() throws Exception {
+        int dense = 4 * QK_K; // 1024 inputs, four super-blocks
+        int rows = 96;
+        Random random = new Random(20260911L);
+        byte[] raw = new byte[rows * (dense / QK_K) * BLOCK_BYTES];
+        for (int block = 0; block < rows * (dense / QK_K); block++) {
+            int base = block * BLOCK_BYTES;
+            raw[base + D_OFFSET] = 0x00;
+            raw[base + D_OFFSET + 1] = 0x2C;
+            for (int i = 0; i < 16; i++) {
+                int magnitude = 1 + ((block + i) % 9);
+                raw[base + SCALES_OFFSET + i] = (byte) ((i % 3 == 0) ? -magnitude : magnitude);
+            }
+            for (int e = 0; e < QK_K; e++) {
+                // Neighbours of opposite sign about the midpoint, so terms cancel.
+                int value = (e % 2 == 0) ? 32 + random.nextInt(32) : random.nextInt(32);
+                writeQuantum(raw, base, e, value);
+            }
+        }
+
+        float[] host = new float[dense];
+        for (int i = 0; i < dense; i++) {
+            int block = i / QK;
+            if (block == 9) {
+                host[i] = 0.0f;
+            } else if (block % 3 == 0) {
+                host[i] = (float) (Math.sin(0.013 * i) * 1e-3);
+            } else if (block % 3 == 1) {
+                host[i] = (float) (Math.cos(0.021 * i) * 25.0);
+            } else {
+                host[i] = (i % 2 == 0 ? 1 : -1) * (0.5f + (i % 11) * 0.4f);
+            }
+        }
+
+        FloatArray x = new FloatArray(dense);
+        for (int i = 0; i < dense; i++) {
+            x.set(i, host[i]);
+        }
+        IntArray quants = new IntArray(dense / 4);
+        FloatArray scales = new FloatArray(dense / QK);
+        IntArray sums = new IntArray(dense / QK);
+        quants.init(0);
+        scales.init(0.0f);
+        sums.init(0);
+        FloatArray out = new FloatArray(rows);
+        out.init(0.0f);
+        ByteArray w = new ByteArray(raw.length);
+        for (int i = 0; i < raw.length; i++) {
+            w.set(i, raw[i]);
+        }
+
+        TaskGraph graph =
+                new TaskGraph("dense")
+                        .transferToDevice(
+                                DataTransferMode.EVERY_EXECUTION, x, w, quants, scales, sums, out)
+                        .task(
+                                "quantize",
+                                TransformerComputeKernelsQ4_0::quantizeActivationQ8Blocks,
+                                new KernelContext(),
+                                x,
+                                quants,
+                                scales,
+                                sums)
+                        .task(
+                                "matvec",
+                                TransformerComputeKernelsQ6_K::matrixVectorGenericQ6_KDP4A,
+                                new KernelContext(),
+                                quants,
+                                scales,
+                                sums,
+                                out,
+                                w,
+                                dense,
+                                rows,
+                                LOCAL)
+                        .transferToHost(
+                                DataTransferMode.EVERY_EXECUTION, out, quants, scales, sums);
+        GridScheduler scheduler = new GridScheduler();
+        WorkerGrid1D blocks = new WorkerGrid1D(dense);
+        blocks.setLocalWork(QK, 1, 1);
+        scheduler.addWorkerGrid("dense.quantize", blocks);
+        WorkerGrid1D rowGrid = new WorkerGrid1D(rows * LOCAL);
+        rowGrid.setLocalWork(LOCAL, 1, 1);
+        scheduler.addWorkerGrid("dense.matvec", rowGrid);
+        try (TornadoExecutionPlan plan = new TornadoExecutionPlan(graph.snapshot())) {
+            plan.withGridScheduler(scheduler).execute();
+        }
+
+        assertEquals("the zero block's scale on the device", 0.0f, scales.get(9), 0.0f);
+        assertEquals("the zero block's sum on the device", 0, sums.get(9));
+
+        // The reference: the same quants, the host tensor's own decode, summed in double.
+        int[] hostQuants = new int[dense / 4];
+        float[] hostScales = new float[dense / QK];
+        for (int block = 0; block < dense / QK; block++) {
+            int base = block * QK;
+            float maxAbs = 0;
+            for (int i = 0; i < QK; i++) {
+                maxAbs = Math.max(maxAbs, Math.abs(host[base + i]));
+            }
+            hostScales[block] = maxAbs / 127.0f;
+            float inverse = maxAbs > 0 ? 127.0f / maxAbs : 0.0f;
+            for (int g = 0; g < QK / 4; g++) {
+                int packed = 0;
+                for (int lane = 0; lane < 4; lane++) {
+                    float v = host[base + g * 4 + lane] * inverse;
+                    int q = (int) (v + (v >= 0 ? 0.5f : -0.5f));
+                    q = Math.min(127, Math.max(-127, q));
+                    packed |= (q & 0xFF) << (lane * 8);
+                }
+                hostQuants[block * (QK / 4) + g] = packed;
+            }
+        }
+
+        double largest = 0;
+        double worst = 0;
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment segment = arena.allocate(raw.length);
+            MemorySegment.copy(raw, 0, segment, ValueLayout.JAVA_BYTE, 0, raw.length);
+            Q6_KFloatTensor reference = new Q6_KFloatTensor(rows * dense, segment);
+            for (int row = 0; row < rows; row++) {
+                double sum = 0;
+                for (int i = 0; i < dense; i++) {
+                    int block = i / QK;
+                    int quant = (byte) ((hostQuants[i / 4] >> ((i % 4) * 8)) & 0xFF);
+                    sum += reference.getFloat(row * dense + i) * hostScales[block] * quant;
+                }
+                float got = out.get(row);
+                assertTrue("row " + row + " is " + got, Float.isFinite(got));
+                largest = Math.max(largest, Math.abs(sum));
+                worst = Math.max(worst, Math.abs(sum - got));
+            }
+        }
+        System.out.printf(
+                "[Q6K-DENSE] against the same-quantization reference: worst %.6g,"
+                        + " largest |out| %.6g over %d rows of %d%n",
+                worst, largest, rows, dense);
+        assertTrue("worst " + worst + " against largest " + largest, worst <= 1e-4 * largest);
     }
 }
