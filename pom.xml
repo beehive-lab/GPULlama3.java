@@ -58,7 +58,7 @@
                  legs. 6.0.0 also carries the sketch-phase fix for the LambdaForm hidden-class
                  reader, which took out every F16 family on OpenCL.
                  See docs/architecture/metal/SESSION-2026-09-04.md §1. -->
-        <tornadovm.base.version>6.0.0</tornadovm.base.version>
+        <tornadovm.base.version>6.1.0</tornadovm.base.version>
         <archunit.version>1.4.2</archunit.version>
         <jdk.version.suffix>-jdk21</jdk.version.suffix>
         <!-- TornadoVM's own JDK suffix, deliberately a SEPARATE property from
