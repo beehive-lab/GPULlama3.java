@@ -557,3 +557,52 @@ this file keeps saying that counts are not time.
 
 26 focused MMA, topology, batched-parity, sequential and STANDARD parity and lifecycle tests pass
 with the parity numbers unchanged, and the cross-width comparison was driven explicitly.
+
+## The merged A tile — kept
+
+The same representation change on the other operand, and the last one of this kind: the two A panels
+become one `int[2 * BM * BK / 2]` — 256 ints, 1,024 bytes — the first at byte offset 0 and the
+second at `A_SUBTILE_BYTES` (512). Staging writes `aTile[half * (BM * BK / 2) + j]`, a plain index
+where it used to be `if (half == 0) aTileLo[j] else aTileHi[j]`; the reads become
+`mmaLoadA(aTile, BK, 0)` and `mmaLoadA(aTile, BK, A_SUBTILE_BYTES)`. Merged B, geometry, grid,
+activation reads and packing, arithmetic, barriers, staging order, weight representation and bounds
+are all unchanged, and no other kernel is touched.
+
+**Why each load sees the same panel layout.** The A load is `LdmatrixStmt.Variant.X4`, which is
+`trans=false, swizzle=false` — there is no permutation to preserve. Its per-lane address is
+`__bo = (__row << 5) + __col` with `__row = ((__grp & 1) << 3) + __rit` in [0,15] and
+`__col = (__grp >> 1) << 4` in {0,16}, so a panel reaches at most byte 496 and fits inside 512. The
+offset is added after that address is formed, which the emitted code shows as `__bo += 0` for the
+first load and `__bo += 512` for the second. Element `aTile[128 + j]` is therefore exactly what
+`aTileHi[j]` was, and the panels cannot overlap.
+
+**Bit-identical** to the accepted default at 32 x 17408 x 5120, full chunk and 29-row padded chunk,
+NaN-poisoned buffers, 1,114,112 values, all finite; the whole-model cross-width capture returns the
+same logits again (SHA-256 `e17b0f731220525c`).
+
+In the emission the two `__shared__ int adi_*[128]` become one `adi_3[256]` and the staging stores
+are plain `adi_3[i] = …` with no predicate. **NVCC reconstruction**, against the accepted
+merged-B kernel:
+
+| | merged B (accepted) | merged A+B |
+| --- | ---: | ---: |
+| predicated `STS` | 8 | **0** |
+| `STS` total | 20 | 16 |
+| registers | 64 | 64 |
+| shared memory | 1,536 B | 1,536 B |
+| spill stores / loads | 0 / 0 | 0 / 0 |
+| instructions | 392 | 344 |
+| `IADD` | 78 | 67 |
+
+Unlike the B merge, this one is smaller as well as simpler — but that is a description of the
+listing, not a cost model.
+
+| | accepted | merged A |
+| --- | ---: | ---: |
+| `pp381 b32` | 92.80, 92.69, 92.55 | **117.63, 117.46, 117.16** |
+| medians | 92.69 | **117.46 (+26.7%)** |
+
+Interleaved, warmed, graphs on, tensor cores on, FP16 KV, two repetitions each; ranges disjoint and
+the within-run spread is under 0.3%. 26 focused MMA, topology, batched-parity, sequential and
+STANDARD parity and lifecycle tests pass with the parity numbers unchanged, and cross-width was
+driven explicitly.

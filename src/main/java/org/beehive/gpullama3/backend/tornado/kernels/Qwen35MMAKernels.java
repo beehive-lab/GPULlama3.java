@@ -100,6 +100,9 @@ public final class Qwen35MMAKernels {
     /** Bytes of one eight-column, {@code BK}-deep B panel. */
     private static final int B_SUBTILE_BYTES = 256;
 
+    /** Bytes of one {@code BM}-row, {@code BK}-deep A panel: {@code BM * BK} halves, int-packed. */
+    private static final int A_SUBTILE_BYTES = BM * BK * 2;
+
     private Qwen35MMAKernels() {}
 
     /**
@@ -209,8 +212,12 @@ public final class Qwen35MMAKernels {
         int blockCol = colTile * BN;
         int blocksPerRow = k / QK;
 
-        int[] aTileLo = ctx.allocateIntLocalArray(BM * BK / 2);
-        int[] aTileHi = ctx.allocateIntLocalArray(BM * BK / 2);
+        // One allocation for both A panels, as for B: the first at byte offset zero, the second at
+        // A_SUBTILE_BYTES. The A load applies no swizzle — its per-lane address is
+        // (row << 5) + col with row < 16 and col in {0, 16}, so a panel reaches at most byte 496
+        // and stays inside its own 512 — and the offset-aware load adds the base afterwards, so
+        // each panel sees exactly the layout it had as its own array.
+        int[] aTile = ctx.allocateIntLocalArray(2 * BM * BK / 2);
         // One allocation for both B panels: the low half at byte offset zero, the high half at
         // B_SUBTILE_BYTES. The offset-aware store and load apply the swizzle to the in-panel
         // address first and add the offset afterwards, so each panel keeps exactly the layout it
@@ -257,11 +264,7 @@ public final class Qwen35MMAKernels {
                 int value =
                         (aFP16.get(base).getHalfFloatValue() & 0xFFFF)
                                 | ((aFP16.get(base + 1).getHalfFloatValue() & 0xFFFF) << 16);
-                if (half == 0) {
-                    aTileLo[j] = value;
-                } else {
-                    aTileHi[j] = value;
-                }
+                aTile[half * (BM * BK / 2) + j] = value;
             }
 
             // B: this lane's column, one scale, eight contiguous packed bytes.
@@ -286,13 +289,13 @@ public final class Qwen35MMAKernels {
 
             acc =
                     ctx.mma(
-                            ctx.mmaLoadA(aTileLo, BK),
+                            ctx.mmaLoadA(aTile, BK, 0),
                             ctx.mmaLoadBSwizzled(bTile, BK, 0),
                             acc,
                             MMAShape.M16N8K16);
             acc =
                     ctx.mma(
-                            ctx.mmaLoadA(aTileHi, BK),
+                            ctx.mmaLoadA(aTile, BK, A_SUBTILE_BYTES),
                             ctx.mmaLoadBSwizzled(bTile, BK, B_SUBTILE_BYTES),
                             acc,
                             MMAShape.M16N8K16);
