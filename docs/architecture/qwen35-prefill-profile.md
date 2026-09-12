@@ -287,3 +287,77 @@ the single-panel case; the unsigned-nibble guard it hosted
 two `projectionMMAQ4_0` tasks and asserts the same values. The fused-against-split equivalence
 harness is kept out of the tree at `~/qwen35-gateup-split-equivalence.java`, since it needs a kernel
 that no longer exists.
+
+## Ranking after the split, from the same capture
+
+No recapture: this is the post-split profiler run already taken for the A/B, attributed the same way
+— the **last 24 chunk executions only**, two measured passes, 762 tokens, 1,536 `batchLayer` graph
+executions, compilation chunk and warm-up pass excluded. Window totals: **8,184.4 ms kernel**,
+8,903.0 ms task-graph, 131.8 ms copy-in, 718.6 ms of graph time that is not kernel time (down from
+9,511.5 / 10,582.7 / 123.3 / 1,071.2 before the split).
+
+Every MMA projection is one warp per `m16n8k16` tile: **local size 32**, grid `(M/16) * (N/8)`
+workgroups.
+
+| task | kernel | dtype | M x N x K | workgroups | calls | ms | share | µs/call |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `ffn_down_proj` | `projectionMMAQ4_0` / `…Q4_1` | Q4_0, Q4_1 on blocks 0-7 | 32 x 5120 x 17408 | 1280 | 1536 | 1637.5 | 20.01% | 1066.1 |
+| `ffn_up_proj` | `projectionMMAQ4_0` | Q4_0 | 32 x 17408 x 5120 | 4352 | 1536 | 1609.1 | **19.66%** | 1047.6 |
+| `ffn_gate_proj` | `projectionMMAQ4_0` | Q4_0 | 32 x 17408 x 5120 | 4352 | 1536 | 1513.1 | **18.49%** | 985.1 |
+| `ssm_qkv_proj` | `projectionMMAQ4_0` | Q4_0 | 32 x 10240 x 5120 | 2560 | 1152 | 759.8 | 9.28% | 659.6 |
+| `ssm_out_proj` | `projectionMMAQ5_K` | Q5_K | 32 x 5120 x 6144 | 1280 | 1152 | 539.4 | 6.59% | 468.2 |
+| `ssm_delta_rule` | `deltaRuleScan` | — | — | — | 1152 | 428.7 | 5.24% | 372.1 |
+| `ssm_gate_proj` | `projectionMMAQ4_0` | Q4_0 | 32 x 6144 x 5120 | 1536 | 1152 | 387.2 | 4.73% | 336.1 |
+| `attn_q_proj` (query+gate) | `projectionMMAQ4_0` | Q4_0 | 32 x 12288 x 5120 | 3072 | 384 | 256.8 | 3.14% | 668.8 |
+| `attention` | `attentionBatchFP16Paged` | — | — | — | 384 | 232.7 | 2.84% | 606.1 |
+| `attn_output_proj` | `matrixVectorTiledBatchWithResidualQ4_0` — not MMA, local 128 | Q4_0 | 32 x 5120 x 6144 | — | 384 | 200.7 | 2.45% | 522.7 |
+| `attn_k_proj`, `attn_v_proj` | `projectionMMAQ4_0` | Q4_0 | 32 x 1024 x 5120 | 256 each | 384 each | 104.2 each | 1.27% each | 271 |
+
+Gate and up separately are **18.49% and 19.66%, 38.15% together** — the same two matrices that were
+46.11% as one fused task. `projectionMMAQ4_0` alone is now **77.86%** of prefill kernel time across
+six task names; all MMA projections together are 84.45%.
+
+## Inspection of `projectionMMAQ4_0`, and one candidate
+
+Generated CUDA obtained through `TornadoExecutionPlan.withPrintKernel()` at a small shape; the
+kernel body does not depend on the shape.
+
+**The block scale is decoded in software, per lane, per block.** Source
+(`Qwen35MMAKernels.projectionMMAQ4_0`):
+
+```java
+int base = ((blockCol + stageCol) * blocksPerRow + blockIndex) * BLOCK_BYTES;
+float scale = halfFromBytes(w, base);
+```
+
+`halfFromBytes` reconstructs the half by hand — the file records why it was written that way for a
+different backend — and the generated CUDA is a ten-branch expansion per call, beginning:
+
+```c
+ui_282  =  ui_281 & 1023;          // mantissa
+f_283   =  (float) ui_282;
+ui_284  =  ui_281 >> 10;
+b_285   =  (ui_284 & 31) == 0;     // subnormal?
+if(b_285) { f_286 = f_283 * 5.9604645E-8F; ... }
+else { /* exponent rebuilt by four conditional multiplies */ }
+```
+
+The same dump contains `matrixVectorGenericQ4_0DP4A`, which reads its block scale through
+`w.getHalfFloat(base).getFloat32()` instead, and there the conversion is one instruction:
+
+```c
+f_146  =  __half2float(half_19);
+```
+
+Counted over the two kernels in that one dump: `projectionMMAQ4_0` has **zero** `__half2float` and
+one software expansion; the DP4A kernel has one `__half2float` and no expansion.
+
+Two further observations about the same site, recorded but **not** proposed as the experiment:
+every lane decodes a scale although only eight distinct column scales exist per block
+(`stageCol = lane >> 2`, so four lanes duplicate each), and the loop-invariant nibble-half and
+destination-tile decisions are re-tested per element in the emitted C. Deduplicating across lanes is
+a restructure, not a small change; and the per-element tests are in pre-`ptxas` source, which may
+well hoist them.
+
+**None of this is a measured bottleneck.** Instruction counts in generated C say what work exists,
+not what the hardware stalls on, and Nsight Compute remains unavailable here (`ERR_NVGPUCTRPERM`).
