@@ -261,10 +261,12 @@ public final class Qwen35MMAKernels {
                 int row = j >>> 3;
                 int kk = (j & 7) << 1;
                 int base = (blockRow + row) * k + kBase + half * BK + kk;
-                int value =
-                        (aFP16.get(base).getHalfFloatValue() & 0xFFFF)
-                                | ((aFP16.get(base + 1).getHalfFloatValue() & 0xFFFF) << 16);
-                aTile[half * (BM * BK / 2) + j] = value;
+                // The same two adjacent halves, the same destination slot, packed the same way —
+                // src[base] | src[base + 1] << 16 — but copied global-to-shared without the
+                // register round-trip. `base` is even (k is a whole number of Q4_0 blocks, and
+                // kBase, half * BK and kk are all even), so the source byte address is
+                // header + 2 * base and four-byte aligned, which is what cp.async requires.
+                ctx.asyncCopyToLocal(aTile, half * (BM * BK / 2) + j, aFP16, base);
             }
 
             // B: this lane's column, one scale, eight contiguous packed bytes.
@@ -285,6 +287,12 @@ public final class Qwen35MMAKernels {
                 // (k index, column, columns per row) — the order the swizzled load expects.
                 ctx.mmaStoreBSwizzled(bTile, stageK + t, stageCol, PANEL, value, stageOffset);
             }
+            // Commit the A copies and wait for them before the barrier that publishes both
+            // tiles. Every lane issues the same eight copies and every lane waits, so no MMA can
+            // read a slot whose copy is still in flight. The trailing barrier below is what keeps
+            // the next round's copies from landing in a tile this round is still reading.
+            ctx.asyncCopyCommit();
+            ctx.asyncCopyWaitGroup(0);
             ctx.localBarrier();
 
             acc =

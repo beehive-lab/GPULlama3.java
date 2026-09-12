@@ -696,3 +696,61 @@ variation of a few percent in both builds, and overlapping ranges. It is not a p
 gain**, and the isolated screens are the cleaner evidence that each kernel improved. The whole-model
 figure was not repeated further; no cross-pairing of best and worst runs is used as an uncertainty
 estimate, because pairing runs from different points in a drifting session measures the drift.
+
+## Asynchronous A staging in `projectionMMAQ4_0`
+
+The manual A-tile sequence — two 2-byte global loads, a shift-and-or, a shared store, per slot — is
+replaced by `asyncCopyToLocal(aTile, half * (BM * BK / 2) + j, aFP16, base)`, which lowers to
+`cp.async.ca.shared.global [dst], [src], 4`. The merged A/B allocations, geometry, weight decoding,
+arithmetic, MMA order and barriers are unchanged; B staging is untouched; Q5_K and Q4_1 keep their
+manual staging.
+
+**Architecture floor, read from the compiler rather than from a successful run.** `cp.async`
+requires compute capability 8.0. TornadoVM's `CUDATensorCoreSupportPhase` enforces
+`MMA_MAJOR_MIN = 8, MMA_MINOR_MIN = 0` and puts `CUDACpAsyncCopyNode`,
+`CUDACpAsyncCommitGroupNode` and `CUDACpAsyncWaitGroupNode` in the **same** node set as the MMA
+nodes — its own comment says "cp.async shares the sm_80 floor with mma.sync, so its nodes are gated
+by this same phase". The kernel already contains `CUDAMMALoadANode`, `CUDAMMALoadBSwizzledNode`,
+`CUDAMMAFragmentNode`, `CUDAMMAComputeNode` and `CUDAMMAStoreNode`, so **any device that can run
+this kernel at all has already cleared sm_80**; a device below it is refused by that phase whether
+or not cp.async is present. **No device selection changes, and no new capability, gate or option is
+introduced.** Devices and shapes that are not MMA-eligible keep the scalar tiled kernels, as before.
+
+**Alignment, against the kernel's actual reduction dimension.** The kernel's parameters are
+`(m, n, k)` and `k` is the reduction dimension. At every call site the first argument of
+`mmaEligible`, which is the one checked `% 32 == 0`, is the value passed as `k`:
+
+| call site | guard | task arguments `(m, n, k)` |
+| --- | --- | --- |
+| generic `matVec` | `mmaEligible(n, d)` | `batchSize, d, n` |
+| `ffn_gate_proj`, `ffn_up_proj` | `mmaEligible(config.dim(), config.hiddenDim())` | `batchSize, hiddenDim, dim` |
+| `ffn_down_proj` | `mmaEligible(config.hiddenDim(), config.dim())` | `batchSize, dim, hiddenDim` |
+
+So `32 | k`, hence `k` is even, and `base = (blockRow + row) * k + kBase + half * BK + kk` is even
+for every issued copy — `kBase = blockIndex * 32`, `half * BK` and `kk = (j & 7) << 1` are all even.
+The source byte address is `header(16) + 2 * base`, four-byte aligned, which is what the instruction
+requires; the emission shows `(const char *) ul_0 + 16u + ((long long) i) * 2`.
+
+**Coverage.** Each lane issues eight copies **to its own destinations**, not the same eight: with
+`i = lane + slot * WARP_SIZE` over `lane < 32` and `slot < 8`, `i` takes every value in `[0, 256)`
+exactly once, and the destination `half * 128 + j` equals `i`. The 256-int tile is therefore written
+completely, once per slot, with no overlap between lanes.
+
+**Synchronization.** Every lane commits and waits (`cp.async.commit_group`, `cp.async.wait_group 0`)
+before the `localBarrier` that publishes both tiles, so no MMA reads a slot whose copy is in flight.
+The trailing barrier after the two MMAs still separates a round's reads from the next round's
+writes, including the next round's copies.
+
+**Bit-identical** to the accepted kernel at 32 x 17408 x 5120, full chunk and 29-row padded chunk,
+NaN-poisoned destinations, 1,114,112 values, all finite.
+
+| | accepted | async staging |
+| --- | ---: | ---: |
+| `pp381 b32` | 121.21, 120.80, 120.57 | **139.94, 139.69, 139.51** |
+| medians | 120.80 | **139.69 (+15.6%)** |
+
+Interleaved, warmed, identical settings, two repetitions each; ranges disjoint, within-build spread
+0.53% and 0.31%. **What caused it is not established.** The change replaces a load-pack-store
+sequence with one copy instruction per slot; whether any transfer overlapped the B staging that
+follows was not measured, and there is no cross-iteration pipelining here. No SASS was inspected for
+this variant and no claim rests on instruction counts.
