@@ -394,3 +394,51 @@ The ranges do not overlap. **The speedup is not inferred from the instruction co
 say the work exists, the A/B says what removing it was worth, and nothing here identifies what the
 hardware was doing. 28 focused MMA, topology, parity and lifecycle tests pass with the same parity
 numbers as before, which is what bit-identical outputs require.
+
+## What survives final compilation
+
+The generated CUDA is not what runs. To see what does, the emitted source for `projectionMMAQ4_0`
+was compiled with the installed toolkit the same way TornadoVM compiles it — `CUDACompiler.build`
+passes `--gpu-architecture=sm_120` and nothing else on this machine (cc 12.0, cubin path, no PTX
+JIT) — and disassembled:
+
+```bash
+nvcc -arch=sm_120 -cubin --resource-usage -o mma.cubin mma.cu   # ptxas resource report
+cuobjdump -sass mma.cubin                                        # final SASS
+```
+
+Caveat on the method: this is `nvcc`'s front end rather than NVRTC's, on the same `ptxas`. No
+hardware counters are involved and none are available (`ERR_NVGPUCTRPERM`).
+
+**Resources.** 61 registers, **0 bytes spill stores, 0 bytes spill loads**, 1,536 bytes of shared
+memory, 1 barrier. Shared matches the four declared tiles exactly (512 + 512 + 256 + 256). *No
+occupancy claim follows from this*: what limits residency was not measured.
+
+**The repeated decisions are half optimized away.** Only 2 `BRA` and 3 `ISETP` survive in the whole
+kernel — the loop back-edge and its test. The per-element comparisons visible in the generated C are
+gone. What remains is **predication, not branching**, and in one place it costs a duplicated store:
+
+- the nibble half is one predicated instruction per element, `@P1 SHF.R.U32.HI R22, RZ, 0x4, R58`
+  against the unpredicated `LOP3.LUT R22, R58, 0xf, …` for the low nibble;
+- the destination tile is a **pair** of predicated shared stores per element,
+  `@!P2 STS.U16 [R13+UR8]` / `@P2 STS.U16 [R13+UR7]` — 16 `STS.U16` issued to write 8 values, and
+  12 `STS` to write the A tile's 8 ints. `ptxas` predicates both stores rather than selecting one
+  address, because the two tiles are distinct shared allocations.
+
+**Loads are individual, not combined.** Per lane per block iteration: **8 × `LD.E.U8`** at
+consecutive offsets (`[R20.64]`, `+0x3`, `+0x4`, `+0x5`, `+0x6`, …) for the eight contiguous packed
+weight bytes; **16 × `LD.E.U16`** for the A tile, two per adjacent half pair rather than one 32-bit
+load; and **1 × `LD.E.U16`** for the block scale. No `LDG.64` or `LDG.128` anywhere. (Coalescing
+across the warp is a different question and is not visible here.)
+
+**The scale is loaded and converted per lane.** One `LD.E.U16` and one `HADD2.F32 R22, -RZ,
+R36.H0_H0` per thread per iteration. `stageCol = lane >> 2`, so four lanes carry the same `base` and
+do that work on the same bytes four times; no compiler can remove that, since it is duplication
+across threads rather than within one.
+
+**Retrospective on `5e68ffca`.** Compiling the pre-change source the same way settles that the
+hand-written half decode was not being optimized away: 64 registers, 472 instructions, **9 `BRA`, 9
+`ISETP`, 5 `FSEL`** against 61 registers, 368 instructions, **2 `BRA`, 3 `ISETP`, 0 `FSEL`** after.
+The ten-branch expansion reached the hardware, and removing it removed about a fifth of the kernel's
+instructions. That is a *retrospective check of the premise*, not a re-derivation of the speedup —
+the +3.50% came from the whole-model A/B.
