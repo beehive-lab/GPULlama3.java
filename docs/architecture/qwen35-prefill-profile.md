@@ -754,3 +754,31 @@ Interleaved, warmed, identical settings, two repetitions each; ranges disjoint, 
 sequence with one copy instruction per slot; whether any transfer overlapped the B staging that
 follows was not measured, and there is no cross-iteration pipelining here. No SASS was inspected for
 this variant and no claim rests on instruction counts.
+
+## The same cp.async staging for Q5_K and Q4_1 — **does not compile**
+
+Attempted, reverted, recorded so nobody repeats it. The A-staging replacement that works in
+`projectionMMAQ4_0` was applied unchanged to `projectionMMAQ5_K` and `projectionMMAQ4_1`. The
+prerequisites all hold for both: their reduction dimension is checked by the same `mmaEligible`
+first argument (`mmaEligible(valueDim, dim)` for `ssm_out`, `mmaEligible(hiddenDim, dim)` for the
+early `ffn_down`), so `32 | k` and every `base` is even and four-byte aligned; the staging loop is
+character-for-character the one in Q4_0, so `i = lane + slot * 32` covers `[0, 256)` exactly once
+and each lane copies to its own destinations; the commit/wait sits before the publishing barrier and
+the trailing barrier still separates a round's reads from the next round's writes; and the sm_80
+floor is the same gate the MMA nodes in those kernels already pass.
+
+**NVRTC rejects the result**: `tornado_kernel.cu(17): error: identifier "half" is undefined` on
+`__shared__ half half_4[256];`.
+
+The cause is the include gate, not the kernel. `CUDACompilationResultBuilder#finish` prepends
+`#include <cuda_fp16.h>` only when the emitted source contains `__half`, `half2` or `2half`. Once
+the A staging becomes `cp.async`, these two kernels emit **no** such spelling: their A staging no
+longer produces `__half_as_ushort`, their B store emits the bare `((half *) half_4)[...]`, and their
+block scales go through `halfFromBytes`, which is byte arithmetic. `projectionMMAQ4_0` survives the
+same change only because `5e68ffca` made its scale read emit `__half2float`, which the scan matches.
+
+Both kernels therefore keep their manual A staging. Making them compile would mean either a
+TornadoVM-side change to that scan — the backend emits bare `half` itself, so the gate does not
+cover its own output — or re-introducing an fp16 spelling in the kernel purely to satisfy a text
+match. The first is out of scope here and the second is a workaround, so neither was pursued and no
+timing was taken.

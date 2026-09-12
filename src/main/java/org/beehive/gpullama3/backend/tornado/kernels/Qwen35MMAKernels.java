@@ -287,10 +287,11 @@ public final class Qwen35MMAKernels {
                 // (k index, column, columns per row) — the order the swizzled load expects.
                 ctx.mmaStoreBSwizzled(bTile, stageK + t, stageCol, PANEL, value, stageOffset);
             }
-            // Commit the A copies and wait for them before the barrier that publishes both
-            // tiles. Every lane issues the same eight copies and every lane waits, so no MMA can
-            // read a slot whose copy is still in flight. The trailing barrier below is what keeps
-            // the next round's copies from landing in a tile this round is still reading.
+            // Commit and wait before the barrier that publishes both tiles: every lane issues
+            // its own eight copies -- i = lane + slot * 32 covers 0..255 exactly once across the
+            // warp -- and every lane waits, so no MMA reads a slot whose copy is still in flight.
+            // The trailing barrier below keeps the next round's copies out of a tile this round is
+            // still reading.
             ctx.asyncCopyCommit();
             ctx.asyncCopyWaitGroup(0);
             ctx.localBarrier();
