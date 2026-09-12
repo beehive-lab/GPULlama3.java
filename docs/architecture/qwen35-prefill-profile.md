@@ -143,3 +143,109 @@ Getting it correct first cost a long bisection, and the cause was not geometry a
 4 in `tornadovm-issues`, an unsigned nibble recentring that wrapped to 2^32 - 8 and overflowed
 fp16 to infinity. Every simplified probe passed because the wrap only affects the high nibble
 below eight.
+
+---
+
+# Re-profiled 2026-09-12 on `51de832d`
+
+The sections above were taken before the MMA projections shipped and are kept for their reasoning;
+**their attribution is superseded by this section**. `ssm_out` is no longer an untiled per-row
+matvec at 25.6%, and the projections no longer decode weights on the fly in a float kernel.
+
+## Configuration, and which executions are counted
+
+Throughput configuration, stated because two different runs are quoted below: `--gpu --cuda
+--gpu-memory 22GB --tensor-cores --fp16-kv-cache`, model `Qwen3.8-27B-Q4_0.gguf`, bench
+`-p 381 -n 0 -b 32`. `-b 32` is the **physical prefill chunk**. 381 tokens is 12 chunks: eleven of
+32 rows and one of 29.
+
+Two captures, deliberately not mixed:
+
+| capture | graphs | instrumentation | reported | what it is for |
+| --- | --- | --- | ---: | --- |
+| TornadoVM profiler | off | `--profiler`, per-task `TASK_KERNEL_TIME` | 71.33 t/s | per-task attribution |
+| Nsight Systems | **on** | `--trace=cuda --cuda-graph-trace=node` | 80.44 t/s | timeline, transfers, launch API |
+| neither | on | none | 75.8-76.2 t/s | the throughput number |
+
+Those three throughputs are three different runs, and **none of them may be subtracted from another
+to price the instrumentation**: they differ in more than one thing at a time. Prefill throughput on
+this build has been observed between 71 and 81 t/s across configurations; see the handoff's note
+that the prefill figure itself is unexplained.
+
+**Isolation.** `-r 2` is one untimed warm-up pass plus two measured passes. The profiler stream
+carries 37 chunk executions: one compilation/JIT chunk, then 36 = 3 passes x 12 chunks. Every
+number in the table below comes from the **last 24 chunk executions** — the two measured passes
+only, 762 tokens, 1,536 `batchLayer` graph executions over 64 trunk layers, warm-up and the JIT
+chunk excluded. Totals for that window: **9,511 ms of kernel time**, 10,583 ms of task-graph time,
+123 ms of copy-in.
+
+## Attribution, measured passes only
+
+| task | kernel | calls | ms | share | µs/call |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `ffn_gate_up` | `projectionMMAQ4_0GateUp` | 1536 | 4385.3 | **46.11%** | 2855.0 |
+| `ffn_down_proj` | `projectionMMAQ4_0` (blocks 8+), `projectionMMAQ4_1` (blocks 0-7) | 1536 | 1653.3 | 17.38% | 1076.4 |
+| `ssm_qkv_proj` | `projectionMMAQ4_0` | 1152 | 770.8 | 8.10% | 669.1 |
+| `ssm_out_proj` | `projectionMMAQ5_K` | 1152 | 548.6 | 5.77% | 476.2 |
+| `ssm_delta_rule` | `deltaRuleScan` | 1152 | 435.5 | 4.58% | 378.0 |
+| `ssm_gate_proj` | `projectionMMAQ4_0` | 1152 | 392.1 | 4.12% | 340.3 |
+| `attn_q_proj` (query+gate, 12288 wide) | `projectionMMAQ4_0` | 384 | 260.4 | 2.74% | 678.1 |
+| `attention` | `attentionBatchFP16Paged` | 384 | 237.3 | 2.50% | 618.0 |
+| `attn_output_proj` | `matrixVectorTiledBatchWithResidualQ4_0` — **not MMA** | 384 | 204.4 | 2.15% | 532.3 |
+| `attn_k_proj`, `attn_v_proj` | `projectionMMAQ4_0` | 384 each | 105.9 each | 1.11% each | 275.9 |
+| `attn_rms_reduce`, `ffn_rms_reduce` | `batchedRmsReduce` | 1536 each | ~90 each | 0.95% each | 58.7 |
+| everything else | norms, SiLU, RoPE, KV append, splits | | <60 | <0.7% | |
+
+**Activation preparation is not a cost here**: `convertToFP16` and `convertNormedToFP16` together are
+10.9 ms of 9,671 ms in the Nsight capture, **0.11%**. Neither is data movement: host-to-device copies
+total 2.0 s but are dominated by the one-time weight upload (largest single operation 36.6 ms,
+median operation 448 ns); per-step copies are the batch-info and position holders.
+`cuGraphLaunch` was 36 ms over 1,691 calls, 0.4% of kernel time. In the Nsight capture, summed
+kernel time (9.671 s) is close to the wall time of the two passes it covers (~9.5 s at the
+80.44 t/s it reported), which is consistent with the GPU being busy nearly continuously **in that
+capture** — it is not a measurement of the uninstrumented run.
+
+## Which projections use the tensor cores, and how they are launched
+
+Everything except `attn_output_proj`, which folds a residual and is excluded by `mmaEligible`
+(`Qwen35BatchPrefillLayers:109`). Q4_0, Q4_1 and Q5_K each have their own MMA kernel.
+
+Geometry is one `m16n8k16` tile per workgroup of **one warp** (`BM=16`, `BN=8`, `BK=16`,
+`LOCAL=32`): the grid is `(m/16) * (n/8)` workgroups, and each walks the whole reduction dimension
+in Q4_0 blocks of 32. For `ffn_gate_up` at `m=32, n=17408, k=5120` that is **4,352 workgroups of 32
+threads, each iterating 160 blocks**; for `ffn_down` at `m=32, n=5120, k=17408` it is 1,280
+workgroups of 544 blocks. Both therefore run **696,320 block iterations** per call.
+
+**The partial chunk costs a full chunk.** `mmaEligible` tests the configured batch size, not the
+live chunk, so the 29-row chunk launches the same 32-row grid; `convertToFP16` zeroes the padding
+rows (`row < batchInfo.get(1)`) and they are computed, stored and never read. Measured: chunks 11
+and 23 — the 29-row ones — cost 402.9 ms and 403.3 ms against 385-406 ms for the full chunks. Three
+wasted rows in 381 is ~0.8% of prefill.
+
+## What the numbers say the limit is
+
+Per **block iteration**, which is the unit of work both kernels repeat:
+
+| kernel | panels staged per iteration | block iterations per call | ns per iteration |
+| --- | ---: | ---: | ---: |
+| `projectionMMAQ4_0GateUp` (`ffn_gate_up`) | 2 | 696,320 | **4.10** |
+| `projectionMMAQ4_0` (`ffn_down`, k=17408) | 1 | 696,320 | 1.55 |
+| `projectionMMAQ4_0` (`ssm_qkv`, n=10240) | 1 | 409,600 | 1.63 |
+| `projectionMMAQ4_0` (`ssm_gate`, n=6144) | 1 | 245,760 | 1.38 |
+| `projectionMMAQ4_0` (`attn_q`, n=12288) | 1 | 491,520 | 1.38 |
+
+Single-panel iterations cost 1.38-1.63 ns **regardless of shape, grid size or how much activation
+traffic the shape implies**. The fused two-panel iteration costs 4.10 ns — 2.6x a single panel, not
+2x. `ffn_gate_up` and `ffn_down` perform the identical number of block iterations and stage the same
+16x32 activation tile per iteration, yet differ by 2.65x per call.
+
+**Measured**: the cost tracks panels decoded per iteration, not activation bytes moved.
+**Hypothesis, not measured**: the extra ~40% over two single panels comes from the fused kernel's
+doubled shared-memory footprint (four half arrays plus two int arrays) and its two MMA accumulator
+fragments, either of which can cost occupancy or registers for one warp per workgroup. Nsight
+Compute cannot arbitrate this on this host (`ERR_NVGPUCTRPERM`, unchanged), and no counter evidence
+exists.
+
+Two things this does **not** say. It does not say activation reuse is worthless — the wide-tile
+experiment in §6 changed geometry, grid and staging cadence together and settled only that
+implementation. And a share is not a bound on what a change is worth.
