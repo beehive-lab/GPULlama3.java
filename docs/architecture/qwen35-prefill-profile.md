@@ -249,3 +249,41 @@ exists.
 Two things this does **not** say. It does not say activation reuse is worthless — the wide-tile
 experiment in §6 changed geometry, grid and staging cadence together and settled only that
 implementation. And a share is not a bound on what a change is worth.
+
+## The split gate/up experiment — kept
+
+Acting on the observation above: the fused two-panel task was replaced with **two
+`projectionMMAQ4_0` calls at the same M, N and K**, writing the same two buffers, followed by the
+same SwiGLU task. No new kernel, no option, no precision or layout change; the scalar fallback for
+an ineligible shape is untouched.
+
+Equivalence was checked before anything was measured: at the real 32x17408x5120, full chunk and a
+29-row chunk with zeroed padding rows, gate and up came back **bit-identical** to the fused kernel,
+557,056 of 557,056 values each, all finite. The whole-model cross-width capture then produced the
+same logits as before the change (SHA-256 `e17b0f731220525c`, 15,644,160 values, 63 token ids).
+
+| | fused | split |
+| --- | ---: | ---: |
+| `pp381 b32`, interleaved, graphs on | 76.21, 75.92, 75.89 | **85.65, 85.56, 92.00** |
+| `tg128 b32` | 28.42, 28.33 | 28.41, 28.35 |
+| that projection, per layer-chunk, profiler | 2855.0 µs | 985.1 + 1047.6 = **2032.7 µs** |
+| measured-window kernel total, profiler | 9511.5 ms | 8184.4 ms |
+
+**+12.8% on prefill medians**, decode unchanged, and the projection's kernel time down 28.8% at the
+same shape. The 92.00 t/s reading is real but out of line with the other two split runs; the
+conservative pairing (85.56 against 76.21) is +12.3%.
+
+**What this establishes and what it does not.** It establishes that the two-panel form cost more
+than two single-panel forms of the same shape on this device, at this geometry, for this model —
+and that doing the activation staging twice is cheaper here than whatever the fused body was paying
+for. It does **not** identify the cause: registers, shared memory, occupancy, scheduling and
+intra-kernel synchronization were not measured, and Nsight Compute is still unavailable on this host
+(`ERR_NVGPUCTRPERM`). The panel-count hypothesis in the section above is consistent with the result
+and remains unproven.
+
+The fused kernel had no other production caller and is deleted. Its host-parity case is covered by
+the single-panel case; the unsigned-nibble guard it hosted
+(`everyNibbleDecodesWithTheSignItsScaleGivesIt`, finding 4 in `tornadovm-issues`) now runs against
+two `projectionMMAQ4_0` tasks and asserts the same values. The fused-against-split equivalence
+harness is kept out of the tree at `~/qwen35-gateup-split-equivalence.java`, since it needs a kernel
+that no longer exists.

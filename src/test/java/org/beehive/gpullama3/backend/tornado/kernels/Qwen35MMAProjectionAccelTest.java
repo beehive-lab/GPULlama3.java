@@ -154,41 +154,6 @@ public class Qwen35MMAProjectionAccelTest {
         }
     }
 
-    /** The fused gate/up form: two weight matrices against one staged activation tile. */
-    @Test
-    public void theTensorCoreGateUpMatchesTheHost() throws Exception {
-        byte[] rawGate = randomWeights(20260910L);
-        byte[] rawUp = randomWeights(777L);
-        int m = 32;
-
-        HalfFloatArray a = activations(m);
-        ByteArray w1 = toDevice(rawGate);
-        ByteArray w3 = toDevice(rawUp);
-        FloatArray gateOut = new FloatArray(m * N);
-        FloatArray upOut = new FloatArray(m * N);
-        gateOut.init(0.0f);
-        upOut.init(0.0f);
-
-        TaskGraph graph = new TaskGraph("mmaGateUp");
-        graph.transferToDevice(DataTransferMode.EVERY_EXECUTION, a, w1, w3, gateOut, upOut);
-        graph.task(
-                "gateUp",
-                Qwen35MMAKernels::projectionMMAQ4_0GateUp,
-                new KernelContext(),
-                a,
-                w1,
-                w3,
-                gateOut,
-                upOut,
-                m,
-                N,
-                K);
-        graph.transferToHost(DataTransferMode.EVERY_EXECUTION, gateOut, upOut);
-        execute(graph, "mmaGateUp.gateUp", m);
-
-        assertMatches("gate", GGMLType.Q4_0, rawGate, gateOut, m);
-        assertMatches("up", GGMLType.Q4_0, rawUp, upOut, m);
-    }
 
     /** The Q4_1 form — this model's ffn_down on the first eight blocks. */
     @Test
@@ -335,24 +300,34 @@ public class Qwen35MMAProjectionAccelTest {
         gateOut.init(0.0f);
         upOut.init(0.0f);
 
+        // Two projections of the same shape rather than one two-panel kernel: that is what the
+        // batched feed-forward dispatches, and the decode this guards is the same code either way.
         TaskGraph graph =
                 new TaskGraph("decode")
                         .transferToDevice(
                                 DataTransferMode.EVERY_EXECUTION, a, w1, w3, gateOut, upOut)
                         .task(
-                                "gateUp",
-                                Qwen35MMAKernels::projectionMMAQ4_0GateUp,
+                                "gate",
+                                Qwen35MMAKernels::projectionMMAQ4_0,
                                 new KernelContext(),
                                 a,
                                 w1,
-                                w3,
                                 gateOut,
+                                m,
+                                N,
+                                k)
+                        .task(
+                                "up",
+                                Qwen35MMAKernels::projectionMMAQ4_0,
+                                new KernelContext(),
+                                a,
+                                w3,
                                 upOut,
                                 m,
                                 N,
                                 k)
                         .transferToHost(DataTransferMode.EVERY_EXECUTION, gateOut, upOut);
-        execute(graph, "decode.gateUp", m);
+        execute(graph, "decode.gate", "decode.up", m);
 
         for (int r = 0; r < m; r++) {
             for (int c = 0; c < N; c++) {
@@ -403,14 +378,26 @@ public class Qwen35MMAProjectionAccelTest {
     }
 
     private static void execute(TaskGraph graph, String qualifiedTask, int m) throws Exception {
-        WorkerGrid worker =
-                new WorkerGrid1D(
-                        (m / Qwen35MMAKernels.BM)
-                                * (N / Qwen35MMAKernels.BN)
-                                * Qwen35MMAKernels.LOCAL);
-        worker.setLocalWork(Qwen35MMAKernels.LOCAL, 1, 1);
+        execute(graph, m, qualifiedTask);
+    }
+
+    /** The same, for a graph whose tasks all take the MMA grid. */
+    private static void execute(TaskGraph graph, String firstTask, String secondTask, int m)
+            throws Exception {
+        execute(graph, m, firstTask, secondTask);
+    }
+
+    private static void execute(TaskGraph graph, int m, String... qualifiedTasks) throws Exception {
         GridScheduler scheduler = new GridScheduler();
-        scheduler.addWorkerGrid(qualifiedTask, worker);
+        for (String qualifiedTask : qualifiedTasks) {
+            WorkerGrid worker =
+                    new WorkerGrid1D(
+                            (m / Qwen35MMAKernels.BM)
+                                    * (N / Qwen35MMAKernels.BN)
+                                    * Qwen35MMAKernels.LOCAL);
+            worker.setLocalWork(Qwen35MMAKernels.LOCAL, 1, 1);
+            scheduler.addWorkerGrid(qualifiedTask, worker);
+        }
         try (TornadoExecutionPlan plan = new TornadoExecutionPlan(graph.snapshot())) {
             plan.withGridScheduler(scheduler).execute();
         }
