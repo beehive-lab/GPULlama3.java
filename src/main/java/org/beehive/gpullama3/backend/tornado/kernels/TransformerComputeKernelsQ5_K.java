@@ -3,6 +3,8 @@ package org.beehive.gpullama3.backend.tornado.kernels;
 import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.IntArray;
+import uk.ac.manchester.tornado.api.utils.QuantizationUtils;
 
 /**
  * Device kernels that read {@code Q5_K} weights in the file's own representation.
@@ -375,6 +377,156 @@ public final class TransformerComputeKernelsQ5_K {
         if (context.localIdx == 0) {
             hb.set(rowId, hb.get(rowId) + sum);
         }
+    }
+
+    // @formatter:off
+    /**
+     * {@code hb[row] += w[row]·x} with the weights read as {@code Q5_K} and the dot product done in
+     * packed integers.
+     *
+     * <p>Same shape as {@link #matrixVectorGenericWithResidualQ5_K} — one workgroup per output row,
+     * a lane per 32-element sub-block — and a different inner loop. That one decodes each weight to
+     * a float and multiplies it by a float activation; this one keeps the five-bit integer and
+     * issues eight {@code dp4a} instructions per sub-block against an activation quantized to
+     * eight-bit blocks of the same 32.
+     *
+     * <h2>The algebra, which is not Q4_0's</h2>
+     *
+     * <p>A Q5_K weight is {@code d * sc(sub) * q - dmin * m(sub)}, so a sub-block's contribution
+     * splits into a term over the quantized weights and a term over the activation alone:
+     *
+     * <pre>  sum (d*sc*q_w - dmin*m) * x  =  d*sc * sum q_w*q_x * dx  -  dmin*m * sum q_x * dx</pre>
+     *
+     * <p>The first sum is what {@code dp4a} computes; the second is the plain <b>sum of the
+     * activation's quants</b>, which {@code quantizeActivationQ8Blocks} already stores. This is the
+     * same three-array scratch the Q4_0 path fills and a different use of it: there the sum is
+     * multiplied by the constant 8, Q4_0's recentring; here it is multiplied by the sub-block's own
+     * six-bit minimum. llama.cpp's {@code vec_dot_q5_K_q8_1} computes that sum on the fly with a
+     * {@code dp4a} against {@code 0x01010101}; ours is precomputed, so the inner loop is eight
+     * instructions rather than sixteen.
+     *
+     * <p>The five-bit quants are 0..31 — unsigned, and never recentred — so every packed byte is a
+     * valid signed byte and nothing here can reach the unsigned-recentring defect recorded in
+     * {@code docs/architecture/tornadovm-issues}. There is no activation-side correction constant
+     * at all.
+     *
+     * <p>Four consecutive weights of a sub-block come from four consecutive {@code qs} bytes and
+     * four consecutive {@code qh} bytes, which is why the loop packs in groups of four: the same
+     * grouping the activation's quants already have.
+     *
+     * <p>The reduction is the warp-shuffle butterfly every packed kernel uses, and this kernel is
+     * therefore gated on {@code DeviceCapability.PACKED_INTEGER_DOT} for both of the reasons that
+     * capability names. Devices without it keep {@link #matrixVectorGenericWithResidualQ5_K}.
+     *
+     * <p>The residual is applied once, by the thread that owns the row, after the combine.
+     */
+    // @formatter:on
+    public static void matrixVectorGenericWithResidualQ5_KDP4A(
+            KernelContext context,
+            IntArray xQuants,
+            FloatArray xScales,
+            IntArray xSums,
+            FloatArray hb,
+            ByteArray w,
+            int n,
+            int d,
+            int localWorkGroupSize) {
+        int rowId = context.groupIdx;
+        if (rowId >= d) {
+            return;
+        }
+        int localId = context.localIdx;
+        int warpCount = localWorkGroupSize / 32;
+        float[] warpSums = context.allocateFloatLocalArray(warpCount);
+
+        int blocksPerRow = (n + QK_K - 1) / QK_K;
+        int rowBlockOffset = rowId * blocksPerRow;
+        int subBlocks = n / 32;
+
+        float partialSum = 0.0f;
+        for (int sb = localId; sb < subBlocks; sb += localWorkGroupSize) {
+            partialSum += laneSumPacked(xQuants, xScales, xSums, w, rowBlockOffset, sb);
+        }
+
+        partialSum += context.simdShuffleDown(partialSum, 16);
+        partialSum += context.simdShuffleDown(partialSum, 8);
+        partialSum += context.simdShuffleDown(partialSum, 4);
+        partialSum += context.simdShuffleDown(partialSum, 2);
+        partialSum += context.simdShuffleDown(partialSum, 1);
+
+        if ((localId & 31) == 0) {
+            warpSums[localId >> 5] = partialSum;
+        }
+        context.localBarrier();
+
+        if (localId == 0) {
+            float total = 0.0f;
+            for (int warp = 0; warp < warpCount; warp++) {
+                total += warpSums[warp];
+            }
+            hb.set(rowId, hb.get(rowId) + total);
+        }
+    }
+
+    /**
+     * One sub-block's contribution, in packed integers.
+     *
+     * <p>Its own method for the same code generation reason {@link #laneSum} is: this decode
+     * inlined into the reduction is what made TornadoVM's CUDA backend emit references to an
+     * undeclared {@code context}. Everything a sub-block shares — its scale, its minimum, which
+     * nibble it takes and which bit of {@code qh} — is computed once here, outside the loop over
+     * its 32 weights.
+     */
+    private static float laneSumPacked(
+            IntArray xQuants,
+            FloatArray xScales,
+            IntArray xSums,
+            ByteArray w,
+            int rowBlockOffset,
+            int subBlockIndex) {
+        int block = subBlockIndex / 8;
+        int subInBlock = subBlockIndex - block * 8;
+        int blockByteOffset = (rowBlockOffset + block) * BLOCK_BYTES;
+
+        float d = halfFromBytes(w, blockByteOffset);
+        float dmin = halfFromBytes(w, blockByteOffset + 2);
+        int packedScale = scaleAndMin(w, blockByteOffset + SCALES_OFFSET, subInBlock);
+        float scale = d * (packedScale >> 8);
+        float minimum = dmin * (packedScale & 0xFF);
+
+        int pairIndex = subInBlock >> 1;
+        int highNibble = subInBlock & 1;
+        int qsBase = blockByteOffset + QS_OFFSET + pairIndex * 32;
+        int qhBase = blockByteOffset + QH_OFFSET;
+        int bitShift = pairIndex * 2 + highNibble;
+        int quantBase = subBlockIndex * 8;
+
+        int dot = 0;
+        for (int g = 0; g < 8; g++) {
+            int t = g * 4;
+            int s0 = w.get(qsBase + t) & 0xFF;
+            int s1 = w.get(qsBase + t + 1) & 0xFF;
+            int s2 = w.get(qsBase + t + 2) & 0xFF;
+            int s3 = w.get(qsBase + t + 3) & 0xFF;
+            int q0 = s0 & 0xF;
+            int q1 = s1 & 0xF;
+            int q2 = s2 & 0xF;
+            int q3 = s3 & 0xF;
+            if (highNibble == 1) {
+                q0 = (s0 >> 4) & 0xF;
+                q1 = (s1 >> 4) & 0xF;
+                q2 = (s2 >> 4) & 0xF;
+                q3 = (s3 >> 4) & 0xF;
+            }
+            q0 += ((w.get(qhBase + t) & 0xFF) >> bitShift & 1) * 16;
+            q1 += ((w.get(qhBase + t + 1) & 0xFF) >> bitShift & 1) * 16;
+            q2 += ((w.get(qhBase + t + 2) & 0xFF) >> bitShift & 1) * 16;
+            q3 += ((w.get(qhBase + t + 3) & 0xFF) >> bitShift & 1) * 16;
+            int packedWeights = q0 | (q1 << 8) | (q2 << 16) | (q3 << 24);
+            dot = QuantizationUtils.dp4a_packed(packedWeights, xQuants.get(quantBase + g), dot);
+        }
+
+        return xScales.get(subBlockIndex) * (scale * dot - minimum * xSums.get(subBlockIndex));
     }
 
     /** Subgroup-shuffle variant of {@link #matrixVectorGenericWithResidualQ5_K}. */

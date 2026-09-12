@@ -189,7 +189,18 @@ public class Qwen35FFNLayers
                                 || (residual
                                         && x == state.workspace.wrapHb
                                         && hiddenActivationQuantized));
-        dispatches.add(new Dispatch(layer, task, role, w.dataType(), packed));
+        // The Q5_K readout projection, computed once and used both to record the dispatch and to
+        // choose the kernel below: a flag that decided one and not the other would make the
+        // inventory describe a plan that was not built. Eligibility is carried entirely by
+        // ssmActivationQuantized, which is set only where the quantization was actually emitted --
+        // that is, only under the packed gate, only in a recurrent layer, and only when the scratch
+        // was long enough for the readout.
+        boolean packedQ5_K =
+                w.dataType() == DataType.Q5_K
+                        && residual
+                        && x == state.workspace.wrapSsmOut
+                        && ssmActivationQuantized;
+        dispatches.add(new Dispatch(layer, task, role, w.dataType(), packed || packedQ5_K));
         switch (w.dataType()) {
             case F32 -> {
                 if (residual) {
@@ -361,7 +372,24 @@ public class Qwen35FFNLayers
                 }
             }
             case Q5_K -> {
-                if (residual) {
+                if (packedQ5_K) {
+                    // The packed-integer path for ssm_out, whose activation the delta-net branch
+                    // has just quantized. Weights stay Q5_K; the activation is what changed
+                    // representation.
+                    graph.task(
+                            task,
+                            TransformerComputeKernelsQ5_K
+                                    ::matrixVectorGenericWithResidualQ5_KDP4A,
+                            context,
+                            state.workspace.wrapXbQuants,
+                            state.workspace.wrapXbScales,
+                            state.workspace.wrapXbSums,
+                            out,
+                            w.asByteArray(),
+                            n,
+                            d,
+                            MATVEC_LOCAL);
+                } else if (residual) {
                     graph.task(
                             task,
                             TransformerComputeKernelsQ5_K::matrixVectorGenericWithResidualQ5_K,
@@ -606,6 +634,7 @@ public class Qwen35FFNLayers
         // The feed-forward's input norm is the file's post_attention_norm; there is no ffn_norm.
         // It writes over wrapXb, so whatever was quantized from it no longer describes it.
         normedActivationQuantized = false;
+        ssmActivationQuantized = false;
         normalize(
                 layer,
                 "ffn_rms_reduce",
@@ -786,6 +815,28 @@ public class Qwen35FFNLayers
                     && !"false"
                             .equalsIgnoreCase(
                                     System.getProperty("llama.qwen35.packedIntegerDot", "true"));
+
+    /**
+     * Whether {@code wrapSsmOut} holds the activation {@code ssm_out_quantize} quantized.
+     *
+     * <p>Separate from the two flags above for the same reason they are separate from each other:
+     * a different buffer holding a different activation, with exactly one reader.
+     */
+    private boolean ssmActivationQuantized;
+
+
+
+    /**
+     * Whether the shared Q8-block scratch is long enough for an activation of {@code elements}.
+     *
+     * <p>It is sized for the widest activation the Q4_0 projections read, and the delta-net readout
+     * is not one of those, so its width is a fact to check rather than assume. On the 27B it is
+     * 6144 against a scratch sized for 17408; a configuration where it were not would otherwise
+     * quantize past the end of three arrays.
+     */
+    private boolean packedScratchHolds(int elements) {
+        return elements <= Math.max(config.dim(), config.hiddenDim()) && elements % 32 == 0;
+    }
 
     private void attentionBranch(TaskGraph layer, int layerIndex) {
         final int headDim = config.numberOfHeadsKey();
@@ -1133,6 +1184,26 @@ public class Qwen35FFNLayers
                 headV,
                 config.rmsNormEps());
 
+        ssmActivationQuantized = false;
+        if (DP4A && packedScratchHolds(config.deltaNetValueDim())) {
+            // The delta-net readout, quantized fresh. It is none of the activations quantized
+            // elsewhere in this layer, and it reuses their scratch: every projection that read
+            // those is behind us in this graph, and the arrays are sized for the feed-forward's
+            // hidden width, which is wider than this.
+            layer.task(
+                    "ssm_out_quantize",
+                    TransformerComputeKernelsQ4_0::quantizeActivationQ8Blocks,
+                    context,
+                    qwen35State.workspace.wrapSsmOut,
+                    qwen35State.workspace.wrapXbQuants,
+                    qwen35State.workspace.wrapXbScales,
+                    qwen35State.workspace.wrapXbSums);
+            // The scratch now describes the readout, so whatever the branch quantized from wrapXb
+            // no longer holds -- and this is the point at which a later reader would be wrong.
+            normedActivationQuantized = false;
+            ssmActivationQuantized = true;
+        }
+
         matVec(
                 layer,
                 layerIndex,
@@ -1368,6 +1439,11 @@ public class Qwen35FFNLayers
                         prefix + "ssm_qkv_proj", matVecWorker(config.deltaNetConvDim()));
                 scheduler.addWorkerGrid(
                         prefix + "ssm_gate_proj", matVecWorker(config.deltaNetValueDim()));
+                if (DP4A && packedScratchHolds(config.deltaNetValueDim())) {
+                    scheduler.addWorkerGrid(
+                            prefix + "ssm_out_quantize",
+                            WorkerGridFactory.genericWorker(config.deltaNetValueDim(), 32));
+                }
                 scheduler.addWorkerGrid(
                         prefix + "ssm_beta_proj", matVecWorker(config.numberOfValueHeads()));
                 scheduler.addWorkerGrid(
