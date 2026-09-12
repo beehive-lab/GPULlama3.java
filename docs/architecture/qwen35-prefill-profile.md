@@ -657,3 +657,42 @@ Same shapes, same workload, same instrumentation; only the kernel changed.
 The five untouched kernels move by at most 1.6%, which is what makes the 30-38% on the touched ones
 readable. **These are task times and nothing more**: no occupancy, bandwidth or hardware cause is
 inferred, and none was measured — no counters are available (`ERR_NVGPUCTRPERM`).
+
+## The same tile merge for Q5_K and Q4_1
+
+`projectionMMAQ5_K` and `projectionMMAQ4_1` carried the structure `projectionMMAQ4_0` had before
+`3d350942`/`ad44666e` — four allocations and a branch per element on both operands. They now use one
+allocation per operand with the second panel at a byte offset, exactly as Q4_0 does. Decoding,
+scale and minimum arithmetic, geometry, activation reads, staging order, barriers and bounds are
+unchanged, and Q4_0 itself was not touched.
+
+Bounds were checked per kernel rather than inherited: both use the same `BM`, `BK`, `PANEL` and the
+same store arguments, so a B panel's in-panel address is at most 254 before the swizzle (which
+permutes within the same 256 bytes) and an A panel's per-lane address reaches at most 496 of its
+512. Emission for both shows one `__shared__ int adi_3[256]` and one `__shared__ half half_4[256]`,
+loads at `__bo += 0`, `+= 256` (B) and `+= 512` (A), and unpredicated stores.
+
+**Bit-identical** to each accepted implementation at its production shape — Q5_K `ssm_out`
+32x5120x6144 and Q4_1 `ffn_down` 32x5120x17408 — full chunk and 29-row padded chunk, NaN-poisoned
+destinations, 327,680 values each, all finite.
+
+Isolated kernel screens, warmed, resident weights, medians of nine rounds, two alternating rounds
+per build:
+
+| kernel | accepted | merged |
+| --- | ---: | ---: |
+| Q5_K `ssm_out` | 0.5086, 0.5199 ms | **0.4587, 0.4510 ms** |
+| Q4_1 `ffn_down` | 1.3646, 1.2967 ms | **0.8666, 0.8700 ms** |
+
+Whole model, `pp381 b32`, interleaved, four runs per build, all preserved:
+
+| | runs | median | mean |
+| --- | --- | ---: | ---: |
+| accepted | 120.08, 121.03, 117.74, 117.98 | 119.03 | 119.21 |
+| both merges | 123.58, 122.73, 124.34, 120.68 | **123.16** | **122.83** |
+
+**An observed improvement of about 3%** — +3.47% on medians, +3.04% on means — **with run-to-run
+variation of a few percent in both builds, and overlapping ranges. It is not a proven minimum
+gain**, and the isolated screens are the cleaner evidence that each kernel improved. The whole-model
+figure was not repeated further; no cross-pairing of best and worst runs is used as an uncertainty
+estimate, because pairing runs from different points in a drifting session measures the drift.
