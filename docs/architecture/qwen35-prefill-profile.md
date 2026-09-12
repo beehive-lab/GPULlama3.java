@@ -805,7 +805,7 @@ no claim is made for a big-endian one. `HalfFloatConversionAccelTest` now reads 
 encoding at each layout — strides 18, 20 and 176, offsets 0 and 2 — against `Float.float16ToFloat`:
 63,488 encodings per layout, bit for bit.
 
-**Stage two — async A staging (`e6a63d46`-shaped change, see the commit that follows).** The manual
+**Stage two — async A staging (`54bc0db3`).** The manual
 A sequence becomes `asyncCopyToLocal` plus a commit and a wait before the publishing barrier, as in
 `projectionMMAQ4_0`. It compiles here **only because stage one restored an fp16 spelling**: see
 finding 5 in `tornadovm-issues`, which this repository avoids rather than fixes.
