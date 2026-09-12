@@ -397,8 +397,9 @@ numbers as before, which is what bit-identical outputs require.
 
 ## What survives final compilation
 
-The generated CUDA is not what runs. To see what does, the emitted source for `projectionMMAQ4_0`
-was compiled with the installed toolkit the same way TornadoVM compiles it — `CUDACompiler.build`
+The generated CUDA is not what runs. To get close to what does, the emitted source for
+`projectionMMAQ4_0` was **recompiled with `nvcc`** — not read out of the runtime NVRTC cubin, which
+this inspection never touched — using the same architecture TornadoVM compiles for — `CUDACompiler.build`
 passes `--gpu-architecture=sm_120` and nothing else on this machine (cc 12.0, cubin path, no PTX
 JIT) — and disassembled:
 
@@ -407,8 +408,10 @@ nvcc -arch=sm_120 -cubin --resource-usage -o mma.cubin mma.cu   # ptxas resource
 cuobjdump -sass mma.cubin                                        # final SASS
 ```
 
-Caveat on the method: this is `nvcc`'s front end rather than NVRTC's, on the same `ptxas`. No
-hardware counters are involved and none are available (`ERR_NVGPUCTRPERM`).
+**This is an NVCC reconstruction, supporting evidence rather than an inspection of the runtime
+image**: the same source and the same `ptxas`, but `nvcc`'s front end instead of NVRTC's, and a
+cubin this process compiled rather than the one the JIT loaded. No hardware counters are involved
+and none are available (`ERR_NVGPUCTRPERM`).
 
 **Resources.** 61 registers, **0 bytes spill stores, 0 bytes spill loads**, 1,536 bytes of shared
 memory, 1 barrier. Shared matches the four declared tiles exactly (512 + 512 + 256 + 256). *No
@@ -421,9 +424,11 @@ gone. What remains is **predication, not branching**, and in one place it costs 
 - the nibble half is one predicated instruction per element, `@P1 SHF.R.U32.HI R22, RZ, 0x4, R58`
   against the unpredicated `LOP3.LUT R22, R58, 0xf, …` for the low nibble;
 - the destination tile is a **pair** of predicated shared stores per element,
-  `@!P2 STS.U16 [R13+UR8]` / `@P2 STS.U16 [R13+UR7]` — 16 `STS.U16` issued to write 8 values, and
-  12 `STS` to write the A tile's 8 ints. `ptxas` predicates both stores rather than selecting one
-  address, because the two tiles are distinct shared allocations.
+  `@!P2 STS.U16 [R13+UR8]` / `@P2 STS.U16 [R13+UR7]`. These are **static instructions, not memory
+  writes**: each thread executes exactly one of the pair and the other is predicated off, so the
+  tile is written once per value and the cost is issue slots, not store traffic. Sixteen `STS.U16`
+  appear in the listing for 8 values, and 12 `STS` for the A tile's 8 ints. `ptxas` predicates both
+  rather than selecting one address, because the two tiles are distinct shared allocations.
 
 **Loads are individual, not combined.** Per lane per block iteration: **8 × `LD.E.U8`** at
 consecutive offsets (`[R20.64]`, `+0x3`, `+0x4`, `+0x5`, `+0x6`, …) for the eight contiguous packed
@@ -442,3 +447,61 @@ hand-written half decode was not being optimized away: 64 registers, 472 instruc
 The ten-branch expansion reached the hardware, and removing it removed about a fifth of the kernel's
 instructions. That is a *retrospective check of the premise*, not a re-derivation of the speedup —
 the +3.50% came from the whole-model A/B.
+
+## Correction: the offset-aware tile API exists
+
+An earlier note in this file said merging the two B tiles had no small implementation because
+`swizzleStoreFp16Stride32` and `mmaLoadBSwizzled` take an array and not an array plus offset. **That
+was wrong.** The installed SDK (`tornado-api-6.0.1-jdk21-dev.jar`, verified with `javap`) carries
+byte-offset overloads and a matching offset-aware swizzled store:
+
+```java
+HalfFloat[] mmaLoadA(int[] aTile, int wmmaK, int byteOffset);
+HalfFloat[] mmaLoadB(int[] bTile, int wmmaK, int byteOffset);
+HalfFloat[] mmaLoadBSwizzled(HalfFloat[] bTile, int wmmaK, int byteOffset);
+void        mmaStoreBSwizzled(HalfFloat[] arr, int row, int col, int stride,
+                              HalfFloat value, int byteOffset);
+```
+
+**Where the offset is applied, verified in the emitters rather than assumed** (`CUDALIRStmt`): the
+store computes `__lin = row * stride + col`, `__bo = __lin << 1`, applies the swizzle
+`__bo ^= (((__bo >> 7) & 7u) << 4)`, and only then adds `__bo += byteOffset`. The swizzled load
+computes its per-lane `__bo`, applies the same XOR, and then adds `byteOffset`. **The offset is
+applied after the swizzle on both sides**, so a sub-tile at a multiple of the panel size holds
+exactly the layout a separate allocation would, and with `byteOffset = 0` the emitted address
+arithmetic is what `swizzleStoreFp16Stride32` emits today.
+
+`tornado-examples`' `MatrixMultiplicationMMA` uses this shape: one `bTile`, stores with
+`mmaStoreBSwizzled(bTile, k_row, j, 8, val, subTileId * B_SUBTILE_BYTES)` and loads with
+`mmaLoadBSwizzled(bTile, BK, (bBase + i) * B_SUBTILE_BYTES)`. This repository's own
+`Qwen35MMAKernels` already declares `B_SUBTILE_BYTES = 256` — eight columns, `BK` deep, two bytes —
+and uses it nowhere, a leftover from the wide-tile work.
+
+So one shared allocation can represent today's two B panels: `HalfFloat[2 * PANEL * BK]`, low half at
+`byteOffset = 0` and high half at `byteOffset = B_SUBTILE_BYTES`, with the per-lane choice becoming
+a value rather than a branch. The A tiles need no API at all — they are plain `int[]` indexing.
+
+## Wider reads of the native weights: not available, and exactly why
+
+`ByteArray`'s device-side accessors are `get(int index)` (one byte) and
+`getHalfFloat(int byteIndex)` (two bytes, two-byte aligned). There is no four- or eight-byte read
+and no typed view; `slice`, `getSegment` and the constructors are host-side. Nothing in the API
+widens a global load of Q4_0 weight bytes.
+
+The one wider path that exists is `asyncCopyToLocal(int[] dstTile, int dstIndex, ByteArray src, int
+srcIndex)`, which lowers to `cp.async.ca.shared.global [dst], [src], 4` — a **four-byte** global to
+shared copy whose source address is `srcArray + 16 + srcIndex * elementSize`. PTX requires that
+address to be naturally aligned to the four-byte access, and **Q4_0's 18-byte block stride breaks
+it**: the quantized bytes of block `B` start at `16 + 18B + 2`, and `18B + 2 ≡ 2B + 2 (mod 4)`, which
+is 4-byte aligned only for odd `B`. Half the blocks would be misaligned, so this route is closed for
+the weights without changing their layout — which would mean materializing or duplicating them.
+
+What is precisely missing is a **four-byte read at two-byte alignment** on `ByteArray` (or a
+`cp.async` variant with the same relaxation). Neither exists, and inventing one is a TornadoVM
+change, not a kernel change.
+
+Adjacent, and genuinely available: the same `cp.async` applies to the **activation** tile, whose
+source is a `HalfFloatArray` at an even element index, so its byte address is always four-byte
+aligned; `asyncCopyToLocal(int[], int, HalfFloatArray, int)` packs `src[i] | src[i+1] << 16`, which
+is exactly what the A-tile staging assembles by hand today. It is not as small a change as the tile
+merge — it brings `asyncCopyCommit`/`asyncCopyWaitGroup` and their ordering contract with it.
