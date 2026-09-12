@@ -361,3 +361,36 @@ well hoist them.
 
 **None of this is a measured bottleneck.** Instruction counts in generated C say what work exists,
 not what the hardware stalls on, and Nsight Compute remains unavailable here (`ERR_NVGPUCTRPERM`).
+
+## The block-scale conversion — kept
+
+The candidate above was taken: in `projectionMMAQ4_0` only, `halfFromBytes(w, base)` became
+`w.getHalfFloat(base).getFloat32()`. Geometry, staging order, synchronization, the A-tile path, the
+Q4_1 and Q5_K MMA kernels and `halfFromBytes` itself are untouched.
+
+The offset and interpretation are the same: `getHalfFloat` takes a **byte** index, requires two-byte
+alignment, and reads a native-endian short — Q4_0's block stride is 18 bytes and the scale sits at
+offset 0, so every scale is two-byte aligned, and `halfFromBytes` assembles the same little-endian
+pair. Emission changed as intended: the kernel now contains one `__half2float` and none of the
+ten-branch software expansion, where before it had the expansion and no hardware conversion.
+
+Checks before timing:
+
+- **Every finite half encoding** read from a Q4_0 block-scale position agrees bit for bit with
+  `Float.float16ToFloat` — 63,488 encodings, 31,744 of them negative, 2,046 subnormal, both zeros.
+  That case lives in `HalfFloatConversionAccelTest`.
+- **The whole projection output** at 32 x 17408 x 5120, captured from both builds and compared byte
+  for byte: **identical**, on a full chunk and on a 29-row chunk with zeroed padding rows, 1,114,112
+  values, all finite, weights chosen with small scales of both signs so nothing overflows.
+
+Interleaved, warmed, graphs on, tensor cores on, FP16 KV, two repetitions each:
+
+| | before | after |
+| --- | ---: | ---: |
+| `pp381 b32` | 85.54, 85.31, 85.40 | **88.46, 88.39, 88.27** |
+| medians | 85.40 | **88.39 (+3.50%)** |
+
+The ranges do not overlap. **The speedup is not inferred from the instruction count**: the counts
+say the work exists, the A/B says what removing it was worth, and nothing here identifies what the
+hardware was doing. 28 focused MMA, topology, parity and lifecycle tests pass with the same parity
+numbers as before, which is what bit-identical outputs require.

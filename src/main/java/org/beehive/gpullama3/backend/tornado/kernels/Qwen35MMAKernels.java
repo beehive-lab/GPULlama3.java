@@ -257,7 +257,12 @@ public final class Qwen35MMAKernels {
 
             // B: this lane's column, one scale, eight contiguous packed bytes.
             int base = ((blockCol + stageCol) * blocksPerRow + blockIndex) * BLOCK_BYTES;
-            float scale = halfFromBytes(w, base);
+            // Read through the array's own half accessor rather than assembling the half from two
+            // bytes: the block stride is 18, so every block scale is two-byte aligned, and this
+            // lowers to one hardware conversion where halfFromBytes lowers to a ten-branch
+            // software expansion. Same bytes, same interpretation, same value. The other kernels
+            // in this file keep halfFromBytes.
+            float scale = w.getHalfFloat(base).getFloat32();
             for (int t = 0; t < 8; t++) {
                 int packed = w.get(base + 2 + stageByte + t) & 0xFF;
                 int q = packed & 0xF;

@@ -14,6 +14,7 @@ import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.WorkerGrid1D;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 import uk.ac.manchester.tornado.api.types.HalfFloat;
+import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 
@@ -34,6 +35,100 @@ import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 public class HalfFloatConversionAccelTest {
 
     private static final int N = 4096;
+
+    /**
+     * Reads one half from the block scale's position of each {@code Q4_0} block.
+     *
+     * <p>The stride is the representation's own 18 bytes, so this reads exactly where a Q4_0 kernel
+     * reads its scale, at exactly that alignment.
+     */
+    public static void readBlockScales(KernelContext context, ByteArray blocks, FloatArray out) {
+        int i = context.globalIdx;
+        out.set(i, blocks.getHalfFloat(i * 18).getFloat32());
+    }
+
+    // @formatter:off
+    /**
+     * Every finite half encoding, read from a {@code Q4_0} block scale, equals the value the host
+     * decodes from the same bits.
+     *
+     * <p>{@code Qwen35MMAKernels.projectionMMAQ4_0} reads its block scale with {@code
+     * ByteArray.getHalfFloat} rather than assembling the half from two bytes by hand. The two
+     * routes have to agree on **every** encoding, not on the ones a weight file happens to hold:
+     * negative scales, both zeros, and the subnormal range are exactly where a hand-written decoder
+     * and a hardware conversion part company. Infinities and NaNs are excluded deliberately — a
+     * quantized block scale is neither, and the decoders in this repository say so.
+     */
+    // @formatter:on
+    @Test
+    public void everyFiniteHalfEncodingReadsBackAsTheHostDecodesIt() throws Exception {
+        assumeTrue("environment absent: no accelerator", acceleratorPresent());
+
+        int encodings = 0;
+        for (int bits = 0; bits < 65536; bits++) {
+            if (((bits >> 10) & 0x1F) != 0x1F) {
+                encodings++;
+            }
+        }
+        ByteArray blocks = new ByteArray(encodings * 18);
+        short[] pattern = new short[encodings];
+        int at = 0;
+        for (int bits = 0; bits < 65536; bits++) {
+            if (((bits >> 10) & 0x1F) == 0x1F) {
+                continue; // infinities and NaNs
+            }
+            pattern[at] = (short) bits;
+            blocks.set(at * 18, (byte) (bits & 0xFF));
+            blocks.set(at * 18 + 1, (byte) ((bits >> 8) & 0xFF));
+            at++;
+        }
+        FloatArray out = new FloatArray(encodings);
+        out.init(Float.NaN);
+
+        TaskGraph graph =
+                new TaskGraph("scales")
+                        .transferToDevice(DataTransferMode.EVERY_EXECUTION, blocks)
+                        .task(
+                                "read",
+                                HalfFloatConversionAccelTest::readBlockScales,
+                                new KernelContext(),
+                                blocks,
+                                out)
+                        .transferToHost(DataTransferMode.EVERY_EXECUTION, out);
+        GridScheduler scheduler = new GridScheduler();
+        WorkerGrid worker = new WorkerGrid1D(encodings);
+        worker.setLocalWork(32, 1, 1);
+        scheduler.addWorkerGrid("scales.read", worker);
+        try (TornadoExecutionPlan plan = new TornadoExecutionPlan(graph.snapshot())) {
+            plan.withGridScheduler(scheduler).execute();
+        }
+
+        int negatives = 0;
+        int subnormals = 0;
+        int zeros = 0;
+        for (int i = 0; i < encodings; i++) {
+            short bits = pattern[i];
+            float expected = Float.float16ToFloat(bits);
+            float actual = out.get(i);
+            assertEquals(
+                    "encoding 0x" + Integer.toHexString(bits & 0xFFFF),
+                    Float.floatToRawIntBits(expected),
+                    Float.floatToRawIntBits(actual));
+            if ((bits & 0x8000) != 0) {
+                negatives++;
+            }
+            if (((bits >> 10) & 0x1F) == 0 && (bits & 0x3FF) != 0) {
+                subnormals++;
+            }
+            if ((bits & 0x7FFF) == 0) {
+                zeros++;
+            }
+        }
+        System.out.printf(
+                "[HALF] %d finite encodings agree bit for bit (%d negative, %d subnormal, %d"
+                        + " zeros)%n",
+                encodings, negatives, subnormals, zeros);
+    }
 
     /** Writes each input to FP16 storage; the read-back is what the comparison sees. */
     public static void roundTrip(KernelContext context, FloatArray in, HalfFloatArray out) {
