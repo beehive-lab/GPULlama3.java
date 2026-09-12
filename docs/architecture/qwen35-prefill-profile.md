@@ -606,3 +606,54 @@ Interleaved, warmed, graphs on, tensor cores on, FP16 KV, two repetitions each; 
 the within-run spread is under 0.3%. 26 focused MMA, topology, batched-parity, sequential and
 STANDARD parity and lifecycle tests pass with the parity numbers unchanged, and cross-width was
 driven explicitly.
+
+## Re-profiled at `ad44666e`
+
+Same method as every capture in this file: TornadoVM profiler, graphs off, `-p 381 -n 0 -b 32 -r 2`,
+tensor cores and FP16 KV on, and the **last 24 chunk executions only** — two measured passes, 762
+tokens, 1,536 `batchLayer` graph executions, with the compilation chunk, the warm-up pass and the
+one-time uploads outside the window. That run reported 105.26 t/s, which is an instrumented figure
+and not the 117.2-117.6 t/s the uninstrumented build measures.
+
+Window totals: **6,047.9 ms kernel**, 7,130.1 ms task-graph, 121.5 ms copy-in, 1,082.2 ms of graph
+time that is not kernel time (was 8,184.4 / 8,903.0 / 131.8 / 718.6 at the previous capture).
+
+| task | kernel | calls | ms | share | µs/call |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `ffn_up_proj` | `projectionMMAQ4_0` | 1536 | 1047.7 | **17.32%** | 682.1 |
+| `ffn_gate_proj` | `projectionMMAQ4_0` | 1536 | 1030.9 | **17.05%** | 671.1 |
+| `ffn_down_proj` (Q4_0, blocks 8+) | `projectionMMAQ4_0` | 1344 | 878.7 | 14.53% | 653.8 |
+| `ssm_out_proj` | `projectionMMAQ5_K` | 1152 | 548.2 | 9.06% | 475.8 |
+| `ssm_qkv_proj` | `projectionMMAQ4_0` | 1152 | 484.6 | 8.01% | 420.7 |
+| `ssm_delta_rule` | `deltaRuleScan` | 1152 | 434.2 | 7.18% | 376.9 |
+| `ssm_gate_proj` | `projectionMMAQ4_0` | 1152 | 274.2 | 4.53% | 238.0 |
+| `attention` | `attentionBatchFP16Paged` | 384 | 236.1 | 3.90% | 614.9 |
+| `ffn_down_proj` (Q4_1, blocks 0-7) | `projectionMMAQ4_1` | 192 | 224.5 | 3.71% | 1169.1 |
+| `attn_output_proj` | `matrixVectorTiledBatchWithResidualQ4_0` | 384 | 203.8 | 3.37% | 530.8 |
+| `attn_q_proj` | `projectionMMAQ4_0` | 384 | 180.7 | 2.99% | 470.5 |
+| `attn_k_proj`, `attn_v_proj` | `projectionMMAQ4_0` | 384 each | 47.8 each | 0.79% each | 124.4 |
+
+Gate and up separately: **17.05%** and **17.32%**, **34.37% combined**. `projectionMMAQ4_0` across
+its eight task names: **3,992.1 ms, 66.01%**.
+
+### Per-call against the previous capture, with its own controls
+
+Same shapes, same workload, same instrumentation; only the kernel changed.
+
+| task | previous | now | |
+| --- | ---: | ---: | --- |
+| `ffn_up_proj` | 1047.6 | 682.1 | **-34.9%** |
+| `ffn_gate_proj` | 985.1 | 671.1 | **-31.9%** |
+| `ffn_down_proj` (Q4_0) | 1062.6 | 653.8 | **-38.5%** |
+| `ssm_qkv_proj` | 659.6 | 420.7 | -36.2% |
+| `ssm_gate_proj` | 336.1 | 238.0 | -29.2% |
+| `attn_q_proj` | 668.8 | 470.5 | -29.6% |
+| `ssm_out_proj` (Q5_K, **unchanged kernel**) | 468.2 | 475.8 | +1.6% |
+| `ffn_down_proj` (Q4_1, **unchanged kernel**) | 1172.9 | 1169.1 | -0.3% |
+| `attention` (**unchanged**) | 606.0 | 614.9 | +1.5% |
+| `attn_output_proj` (**unchanged**) | 522.7 | 530.8 | +1.5% |
+| `ssm_delta_rule` (**unchanged**) | 378.0 | 376.9 | -0.3% |
+
+The five untouched kernels move by at most 1.6%, which is what makes the 30-38% on the touched ones
+readable. **These are task times and nothing more**: no occupancy, bandwidth or hardware cause is
+inferred, and none was measured — no counters are available (`ERR_NVGPUCTRPERM`).
