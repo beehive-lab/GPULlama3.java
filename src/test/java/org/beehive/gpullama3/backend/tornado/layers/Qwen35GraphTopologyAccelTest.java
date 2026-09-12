@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import org.beehive.gpullama3.backend.tornado.kernels.Qwen35MMAKernels;
 import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerType;
 import org.beehive.gpullama3.backend.tornado.tensor.FP32TornadoTensor;
 import org.beehive.gpullama3.backend.tornado.tensor.Q4_0TornadoTensor;
@@ -24,6 +25,7 @@ import org.beehive.gpullama3.model.qwen35.Qwen35Configuration;
 import org.beehive.gpullama3.runtime.tensor.DataType;
 import org.junit.Test;
 import uk.ac.manchester.tornado.api.GridScheduler;
+import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
@@ -522,6 +524,58 @@ public class Qwen35GraphTopologyAccelTest {
             assertTrue(
                     "layer " + layer + " has a tensor-core ffn_down without its residual pass",
                     tasks.contains("ffn_down_residual"));
+        }
+    }
+
+    // @formatter:off
+    /**
+     * The batched feed-forward projection is two single-panel tensor-core tasks, not one fused
+     * two-panel task.
+     *
+     * <p>What this pins is the dispatch and the grids, which a kernel test cannot see: both tasks
+     * present in every batched layer, the fused task gone, the SwiGLU that consumes their two
+     * buffers still there, and each projection launched on the MMA geometry — one warp per
+     * {@code BM x BN} output tile — rather than on the scalar matrix-vector grid it would get if
+     * it were missing from the tensor-core task map.
+     */
+    // @formatter:on
+    @Test
+    public void theBatchedFeedForwardProjectsGateAndUpSeparately() {
+        assumeTrue(
+                "no tensor-core-capable device",
+                org.beehive.gpullama3.backend.tornado.TensorCoreSupport
+                        .isTensorCoreCapableBackend());
+        Qwen35Configuration config = config();
+        GridScheduler scheduler = new GridScheduler();
+        buildBatched(config).updateGridScheduler(scheduler);
+
+        long expectedGlobal =
+                (long) (PREFILL_BATCH / Qwen35MMAKernels.BM)
+                        * (config.hiddenDim() / Qwen35MMAKernels.BN)
+                        * Qwen35MMAKernels.LOCAL;
+        for (int layer = 0; layer < TRUNK_LAYERS; layer++) {
+            List<String> tasks = batchTaskNames(scheduler, layer);
+            assertTrue("layer " + layer + " lost the gate projection: " + tasks,
+                    tasks.contains("ffn_gate_proj"));
+            assertTrue("layer " + layer + " lost the up projection: " + tasks,
+                    tasks.contains("ffn_up_proj"));
+            assertTrue("layer " + layer + " lost the SwiGLU that joins them",
+                    tasks.contains("ffn_swiglu"));
+            assertFalse(
+                    "layer " + layer + " still dispatches the fused two-panel projection",
+                    tasks.contains("ffn_gate_up"));
+
+            for (String task : new String[] {"ffn_gate_proj", "ffn_up_proj"}) {
+                WorkerGrid grid = scheduler.get("batchLayer_" + layer + "." + task);
+                assertEquals(
+                        "layer " + layer + " " + task + " global work",
+                        expectedGlobal,
+                        grid.getGlobalWork()[0]);
+                assertEquals(
+                        "layer " + layer + " " + task + " local work",
+                        Qwen35MMAKernels.LOCAL,
+                        grid.getLocalWork()[0]);
+            }
         }
     }
 

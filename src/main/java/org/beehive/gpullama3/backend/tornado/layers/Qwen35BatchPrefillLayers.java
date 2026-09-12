@@ -385,15 +385,28 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     layer, "ffn_gate_up", "ffn_gate|ffn_up", gate.dataType(), "a batched");
         }
         if (mmaEligible(config.dim(), config.hiddenDim())) {
-            mmaTasks.put("batchLayer_" + layer + ".ffn_gate_up", config.hiddenDim());
+            // Two single-panel projections rather than one two-panel kernel. Same M, N and K, the
+            // same FP16 chunk, the same two destination buffers and the same SwiGLU task after
+            // them; each call stages the activation tile for its own panel, which the fused form
+            // staged once. The kernel is the one every other projection already uses.
+            mmaTasks.put("batchLayer_" + layer + ".ffn_gate_proj", config.hiddenDim());
+            mmaTasks.put("batchLayer_" + layer + ".ffn_up_proj", config.hiddenDim());
             graph.task(
-                    "ffn_gate_up",
-                    Qwen35MMAKernels::projectionMMAQ4_0GateUp,
+                    "ffn_gate_proj",
+                    Qwen35MMAKernels::projectionMMAQ4_0,
                     context,
                     state.workspace.wrapNormedFP16Batch,
                     gate.asByteArray(),
-                    up.asByteArray(),
                     state.workspace.wrapGateBatch,
+                    batchSize,
+                    config.hiddenDim(),
+                    config.dim());
+            graph.task(
+                    "ffn_up_proj",
+                    Qwen35MMAKernels::projectionMMAQ4_0,
+                    context,
+                    state.workspace.wrapNormedFP16Batch,
+                    up.asByteArray(),
                     state.workspace.wrapUpBatch,
                     batchSize,
                     config.hiddenDim(),
@@ -1139,11 +1152,18 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 scheduler.addWorkerGrid(prefix + "attn_rms_apply_fp16", fp16Convert);
                 scheduler.addWorkerGrid(prefix + "ffn_rms_apply_fp16", fp16Convert);
             }
-            scheduler.addWorkerGrid(
-                    prefix + "ffn_gate_up",
-                    matVecWorker(prefix + "ffn_gate_up", config.hiddenDim()));
-            if (mmaTasks.containsKey(prefix + "ffn_gate_up")) {
+            if (mmaTasks.containsKey(prefix + "ffn_gate_proj")) {
+                scheduler.addWorkerGrid(
+                        prefix + "ffn_gate_proj",
+                        matVecWorker(prefix + "ffn_gate_proj", config.hiddenDim()));
+                scheduler.addWorkerGrid(
+                        prefix + "ffn_up_proj",
+                        matVecWorker(prefix + "ffn_up_proj", config.hiddenDim()));
                 scheduler.addWorkerGrid(prefix + "ffn_swiglu", swiglu);
+            } else {
+                scheduler.addWorkerGrid(
+                        prefix + "ffn_gate_up",
+                        matVecWorker(prefix + "ffn_gate_up", config.hiddenDim()));
             }
             scheduler.addWorkerGrid(
                     prefix + "ffn_down_proj", matVecWorker(prefix + "ffn_down_proj", config.dim()));
