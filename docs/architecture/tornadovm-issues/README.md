@@ -150,3 +150,91 @@ inferred from the operand's value range.
 
 Environment: TornadoVM 6.0.1-jdk21-dev built locally from develop tip `ae7152e20`, CUDA backend,
 JDK 21, RTX 5090 Laptop (compute 12.0).
+
+## 5. `cuda_fp16.h` is omitted when the kernel's only fp16 use is a bare `half` the backend emitted
+
+**Severity: compilation fails outright** — a kernel that stores into a half-precision shared tile is
+rejected by NVRTC unless some *other* construct happens to spell fp16 in the generated text.
+
+Environment: TornadoVM **6.0.1-jdk21-dev**, CUDA backend, JDK **21.0.2-open**, CUDA toolkit
+**13.1 (nvcc V13.1.115)**, driver **580.142**, **NVIDIA GeForce RTX 5090 Laptop GPU (compute 12.0)**.
+
+Reproducer: [`MissingFp16IncludeRepro.java`](MissingFp16IncludeRepro.java). One kernel, four arrays,
+one `m16n8k16` MMA step; no model, no GGUF, nothing from this engine.
+
+```bash
+export TORNADOVM_HOME=/path/to/tornadovm-6.0.1-jdk21-dev-cuda
+export PATH="$JAVA_HOME/bin:$TORNADOVM_HOME/bin:$PATH"
+mkdir -p /tmp/fp16repro
+javac -proc:none --enable-preview --release 21 \
+      -cp "$TORNADOVM_HOME/share/java/tornado/*" -d /tmp/fp16repro \
+      docs/architecture/tornadovm-issues/MissingFp16IncludeRepro.java
+
+# fails
+tornado --jvm="-Dtornado.recover.bailout=False" \
+        --classpath /tmp/fp16repro tornadovmissues.MissingFp16IncludeRepro
+
+# same kernel plus one getHalfFloat read: compiles and prints "out[0] = 9.0"
+tornado --jvm="-Dtornado.recover.bailout=False" \
+        --classpath /tmp/fp16repro tornadovmissues.MissingFp16IncludeRepro trigger
+```
+
+**Expected**: both runs compile and print a finite `out[0]`.
+
+**Actual**, for the first:
+
+```
+[TornadoVM-CUDA] NVRTC compilation failed:
+tornado_kernel.cu(12): error: identifier "half" is undefined
+    __shared__ half half_4[128];
+               ^
+tornado_kernel.cu(62): error: identifier "half" is undefined
+      ((half *) half_4)[__bo >> 1] = f_28;
+        ^
+```
+
+Both offending lines are **emitted by the backend itself**: the shared tile comes from
+`KernelContext.allocateHalfFloatLocalArray`, and the store from
+`KernelContext.mmaStoreBSwizzled` (`CUDALIRStmt`, the swizzled-store emitter). The second run emits
+the *same* two lines and compiles, because the extra `getHalfFloat(...).getFloat32()` lowers to
+`__half2float`:
+
+```c
+#include <cuda_fp16.h>          // present only in the second run
+  __shared__ half half_5[128];
+    ((half *) half_5)[__bo >> 1] = f_29;
+```
+
+**Where the condition lives.**
+`uk.ac.manchester.tornado.drivers.cuda.graal.compiler.CUDACompilationResultBuilder#finish`
+decides the include by scanning the generated source text:
+
+```java
+if ((source.contains("__half") || source.contains("half2") || source.contains("2half"))
+        && !source.contains("cuda_fp16.h")) {
+    source = CUDAPreamble.PREAMBLE + source;
+}
+```
+
+The scan does not cover the bare `half` spelling that the backend's own emitters produce, so a
+kernel whose only fp16 use is a half-typed shared tile misses the include. A compile-time constant
+value hides the defect — `new HalfFloat(0.5f)` emits `__float2half(0.5F)`, which matches `2half` —
+which is why the reproducer stores a value computed at run time.
+
+**Suspected fix, not applied**: extend that condition to the declaration the backend emits, e.g. add
+`source.contains("__shared__ half ")` and `source.contains("(half *)")` to the disjunction, or
+decide the include where the half-typed local array and the swizzled store are emitted rather than
+by scanning text afterwards. `CUDAPreamble`'s javadoc explains why the include is conditional — some
+toolkits' `cuda_fp16.hpp` does not compile under NVRTC — so making it unconditional is not the
+suggestion.
+
+**How it was found, and what this repository did about it.** Replacing `projectionMMAQ4_0`'s manual
+A-tile staging with `asyncCopyToLocal` removed its last `__half_as_ushort`; the kernel still
+compiled because a separate change had already made its block-scale read emit `__half2float`. The
+same replacement in `projectionMMAQ5_K` and `projectionMMAQ4_1`, whose scales were decoded from raw
+bytes, produced exactly the failure above. Those two kernels then had their scale and minimum reads
+moved to `ByteArray.getHalfFloat` — a change worth making on its own terms, and one that also
+restores the spelling the scan looks for. **That is an avoidance, not a fix**: the defect is
+unchanged, any kernel that stores into a half tile without another fp16 spelling still fails to
+compile, and nothing in TornadoVM has been modified.
+
