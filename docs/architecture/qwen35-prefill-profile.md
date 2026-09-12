@@ -505,3 +505,55 @@ source is a `HalfFloatArray` at an even element index, so its byte address is al
 aligned; `asyncCopyToLocal(int[], int, HalfFloatArray, int)` packs `src[i] | src[i+1] << 16`, which
 is exactly what the A-tile staging assembles by hand today. It is not as small a change as the tile
 merge — it brings `asyncCopyCommit`/`asyncCopyWaitGroup` and their ordering contract with it.
+
+## The merged B tile — kept
+
+Acting on the corrected capability note: `projectionMMAQ4_0`'s two B panels are now **one shared
+allocation** of `2 * PANEL * BK` halves — 512 bytes — with the first panel at byte offset 0 and the
+second at `B_SUBTILE_BYTES` (256), staged through `mmaStoreBSwizzled(..., stageOffset)` and read
+through `mmaLoadBSwizzled(bTile, BK, 0)` and `mmaLoadBSwizzled(bTile, BK, B_SUBTILE_BYTES)`. A
+tiles, geometry, grid, reduction order, activation staging, barriers, weight layout and precision
+are untouched, and no other kernel changed.
+
+Capacity and non-overlap: a panel's in-panel address is `((row * PANEL) + col) * 2` with
+`row < BK`, `col < PANEL`, so at most 254 before the swizzle; the swizzle is an XOR of bit 4 driven
+by bit 7, which permutes within the same 256-byte window; the offset is added afterwards. Each panel
+therefore stays inside its own 256 bytes, and both offsets are multiples of 16 for `ldmatrix`.
+
+**Bit-identical**, which is the check that matters for addressing: the whole projection output at
+32 x 17408 x 5120, captured from both builds into NaN-poisoned buffers and compared byte for byte —
+identical on a full chunk and on a 29-row padded chunk, 1,114,112 values, all finite. The
+whole-model cross-width capture returns the same logits as before (SHA-256 `e17b0f731220525c`).
+
+**The generated code did what was intended; the compiled code is not uniformly smaller.** The
+emitted CUDA now declares one `__shared__ half half_5[256]` instead of two of 128, and the staging
+store is a single `((half *) half_5)[__bo >> 1] = …` with `__bo += <offset>` after the swizzle, with
+no `if`/`else`. In the **NVCC reconstruction** (same source and `ptxas`, not the runtime NVRTC
+image):
+
+| | accepted | merged |
+| --- | ---: | ---: |
+| predicated `STS` | 24 | **8** (the 8 that remain are the A tile's, untouched) |
+| `STS.U16` | 16 | **8** |
+| registers | 61 | **64** |
+| shared memory | 1,536 B | 1,536 B |
+| spill stores / loads | 0 / 0 | 0 / 0 |
+| instructions | 368 | **392** |
+| `IADD` | 59 | 78 |
+
+So the predicated destination selection for B did disappear, and the kernel got **larger**, not
+smaller: the offset arithmetic costs more instructions than the predication saved, and three more
+registers. Whether that is better is not something the listing can answer.
+
+Interleaved, warmed, graphs on, tensor cores on, FP16 KV, two repetitions each:
+
+| | accepted | merged |
+| --- | ---: | ---: |
+| `pp381 b32` | 88.72, 88.93, 88.66 | **92.91, 93.19, 93.07** |
+| medians | 88.72 | **93.07 (+4.90%)** |
+
+Ranges disjoint. A static instruction count that rose while the measured time fell is the reason
+this file keeps saying that counts are not time.
+
+26 focused MMA, topology, batched-parity, sequential and STANDARD parity and lifecycle tests pass
+with the parity numbers unchanged, and the cross-width comparison was driven explicitly.

@@ -211,8 +211,12 @@ public final class Qwen35MMAKernels {
 
         int[] aTileLo = ctx.allocateIntLocalArray(BM * BK / 2);
         int[] aTileHi = ctx.allocateIntLocalArray(BM * BK / 2);
-        HalfFloat[] bTileLo = ctx.allocateHalfFloatLocalArray(PANEL * BK);
-        HalfFloat[] bTileHi = ctx.allocateHalfFloatLocalArray(PANEL * BK);
+        // One allocation for both B panels: the low half at byte offset zero, the high half at
+        // B_SUBTILE_BYTES. The offset-aware store and load apply the swizzle to the in-panel
+        // address first and add the offset afterwards, so each panel keeps exactly the layout it
+        // had as its own array, and the two cannot overlap -- a panel's swizzled address stays
+        // inside its own 256 bytes.
+        HalfFloat[] bTile = ctx.allocateHalfFloatLocalArray(2 * PANEL * BK);
 
         float[] acc = ctx.mmaFragment(0.0f);
 
@@ -230,6 +234,11 @@ public final class Qwen35MMAKernels {
         int stageByte = stageFirst & 15;
         boolean stageHighNibble = stageFirst >= 16;
         boolean stageHighHalf = stageFirst >= 16;
+        // Which panel this lane stages, as a byte offset rather than a choice of array.
+        int stageOffset = 0;
+        if (stageHighHalf) {
+            stageOffset = B_SUBTILE_BYTES;
+        }
         int stageK = stageFirst & 15;
 
         int numBlocks = k / QK;
@@ -271,24 +280,20 @@ public final class Qwen35MMAKernels {
                 }
                 HalfFloat value = new HalfFloat(scale * (q - 8));
                 // (k index, column, columns per row) — the order the swizzled load expects.
-                if (stageHighHalf) {
-                    ctx.swizzleStoreFp16Stride32(bTileHi, stageK + t, stageCol, PANEL, value);
-                } else {
-                    ctx.swizzleStoreFp16Stride32(bTileLo, stageK + t, stageCol, PANEL, value);
-                }
+                ctx.mmaStoreBSwizzled(bTile, stageK + t, stageCol, PANEL, value, stageOffset);
             }
             ctx.localBarrier();
 
             acc =
                     ctx.mma(
                             ctx.mmaLoadA(aTileLo, BK),
-                            ctx.mmaLoadBSwizzled(bTileLo, BK),
+                            ctx.mmaLoadBSwizzled(bTile, BK, 0),
                             acc,
                             MMAShape.M16N8K16);
             acc =
                     ctx.mma(
                             ctx.mmaLoadA(aTileHi, BK),
-                            ctx.mmaLoadBSwizzled(bTileHi, BK),
+                            ctx.mmaLoadBSwizzled(bTile, BK, B_SUBTILE_BYTES),
                             acc,
                             MMAShape.M16N8K16);
             ctx.localBarrier();
