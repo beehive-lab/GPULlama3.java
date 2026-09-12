@@ -47,6 +47,20 @@ public class HalfFloatConversionAccelTest {
         out.set(i, blocks.getHalfFloat(i * 18).getFloat32());
     }
 
+    /**
+     * The same read at an arbitrary block stride and field offset.
+     *
+     * <p>Q4_0's scale is at offset 0 of an 18-byte block, Q4_1's scale and minimum at 0 and 2 of a
+     * 20-byte block, and Q5_K's {@code d} and {@code dmin} at 0 and 2 of a 176-byte super-block.
+     * All three strides are even and both offsets are even, which is what {@code getHalfFloat}
+     * requires; this reads each of those layouts where its kernel reads it.
+     */
+    public static void readBlockField(
+            KernelContext context, ByteArray blocks, FloatArray out, int stride, int offset) {
+        int i = context.globalIdx;
+        out.set(i, blocks.getHalfFloat(i * stride + offset).getFloat32());
+    }
+
     // @formatter:off
     /**
      * Every finite half encoding, read from a {@code Q4_0} block scale, equals the value the host
@@ -128,6 +142,85 @@ public class HalfFloatConversionAccelTest {
                 "[HALF] %d finite encodings agree bit for bit (%d negative, %d subnormal, %d"
                         + " zeros)%n",
                 encodings, negatives, subnormals, zeros);
+    }
+
+    // @formatter:off
+    /**
+     * Every finite half encoding again, at the block strides and field offsets the other quantized
+     * MMA projections use.
+     *
+     * <p>{@code projectionMMAQ4_1} reads a scale and a minimum at offsets 0 and 2 of a 20-byte
+     * block; {@code projectionMMAQ5_K} reads {@code d} and {@code dmin} at 0 and 2 of a 176-byte
+     * super-block. The conversion is the same one either way — what differs is the address, and an
+     * odd stride or offset would be rejected outright — so this asserts the value at each of those
+     * addresses rather than assuming Q4_0's case covers them.
+     */
+    // @formatter:on
+    @Test
+    public void everyFiniteHalfEncodingReadsBackAtEveryBlockLayout() throws Exception {
+        assumeTrue("environment absent: no accelerator", acceleratorPresent());
+
+        int[][] layouts = {{18, 0}, {20, 0}, {20, 2}, {176, 0}, {176, 2}};
+        for (int[] layout : layouts) {
+            int stride = layout[0];
+            int offset = layout[1];
+            assertEquals("stride must be even", 0, stride % 2);
+            assertEquals("offset must be even", 0, offset % 2);
+
+            int encodings = 0;
+            for (int bits = 0; bits < 65536; bits++) {
+                if (((bits >> 10) & 0x1F) != 0x1F) {
+                    encodings++;
+                }
+            }
+            ByteArray blocks = new ByteArray(encodings * stride);
+            blocks.init((byte) 0);
+            short[] pattern = new short[encodings];
+            int at = 0;
+            for (int bits = 0; bits < 65536; bits++) {
+                if (((bits >> 10) & 0x1F) == 0x1F) {
+                    continue;
+                }
+                pattern[at] = (short) bits;
+                blocks.set(at * stride + offset, (byte) (bits & 0xFF));
+                blocks.set(at * stride + offset + 1, (byte) ((bits >> 8) & 0xFF));
+                at++;
+            }
+            FloatArray out = new FloatArray(encodings);
+            out.init(Float.NaN);
+
+            TaskGraph graph =
+                    new TaskGraph("layout")
+                            .transferToDevice(DataTransferMode.EVERY_EXECUTION, blocks)
+                            .task(
+                                    "read",
+                                    HalfFloatConversionAccelTest::readBlockField,
+                                    new KernelContext(),
+                                    blocks,
+                                    out,
+                                    stride,
+                                    offset)
+                            .transferToHost(DataTransferMode.EVERY_EXECUTION, out);
+            GridScheduler scheduler = new GridScheduler();
+            WorkerGrid worker = new WorkerGrid1D(encodings);
+            worker.setLocalWork(32, 1, 1);
+            scheduler.addWorkerGrid("layout.read", worker);
+            try (TornadoExecutionPlan plan = new TornadoExecutionPlan(graph.snapshot())) {
+                plan.withGridScheduler(scheduler).execute();
+            }
+
+            for (int i = 0; i < encodings; i++) {
+                short bits = pattern[i];
+                assertEquals(
+                        "stride " + stride + " offset " + offset + " encoding 0x"
+                                + Integer.toHexString(bits & 0xFFFF),
+                        Float.floatToRawIntBits(Float.float16ToFloat(bits)),
+                        Float.floatToRawIntBits(out.get(i)));
+            }
+            System.out.printf(
+                    "[HALF] stride %3d offset %d: %d finite encodings agree bit for bit%n",
+                    stride, offset, encodings);
+        }
     }
 
     /** Writes each input to FP16 storage; the read-back is what the comparison sees. */

@@ -436,8 +436,11 @@ public final class Qwen35MMAKernels {
             int superBlock = round >> 3;
             int subBlock = round & 7;
             int base = ((blockCol + stageCol) * superBlocksPerRow + superBlock) * K_BLOCK_BYTES;
-            float d = halfFromBytes(w, base);
-            float dmin = halfFromBytes(w, base + 2);
+            // As in the Q4_1 kernel: the super-block stride is 176 and d and dmin sit at offsets 0
+            // and 2, so both addresses are two-byte aligned. The six-bit sub-block scales at
+            // K_SCALES_OFFSET stay byte reads -- they are not halves.
+            float d = w.getHalfFloat(base).getFloat32();
+            float dmin = w.getHalfFloat(base + 2).getFloat32();
             int packedScale = scaleAndMin(w, base + K_SCALES_OFFSET, subBlock);
             float scale = d * (packedScale >> 8);
             float minimum = dmin * (packedScale & 0xFF);
@@ -553,8 +556,13 @@ public final class Qwen35MMAKernels {
             }
 
             int base = ((blockCol + stageCol) * blocksPerRow + blockIndex) * BLOCK_BYTES_Q4_1;
-            float scale = halfFromBytes(w, base);
-            float minimum = halfFromBytes(w, base + 2);
+            // Both fields through the array's own half accessor rather than assembled from two
+            // bytes: the block stride is 20 and the fields sit at offsets 0 and 2, so every address
+            // is two-byte aligned, and this lowers to one hardware conversion where halfFromBytes
+            // lowers to a ten-branch software expansion. Same bytes, and the same value on this
+            // little-endian CUDA target, where the byte pair and the native short agree.
+            float scale = w.getHalfFloat(base).getFloat32();
+            float minimum = w.getHalfFloat(base + 2).getFloat32();
             for (int t = 0; t < 8; t++) {
                 int packed = w.get(base + 4 + stageByte + t) & 0xFF;
                 int q = packed & 0xF;
