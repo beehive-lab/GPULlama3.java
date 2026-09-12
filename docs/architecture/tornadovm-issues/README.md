@@ -156,8 +156,12 @@ JDK 21, RTX 5090 Laptop (compute 12.0).
 **Severity: compilation fails outright** — a kernel that stores into a half-precision shared tile is
 rejected by NVRTC unless some *other* construct happens to spell fp16 in the generated text.
 
-Environment: TornadoVM **6.0.1-jdk21-dev**, CUDA backend, JDK **21.0.2-open**, CUDA toolkit
+Environment: TornadoVM **6.0.1-jdk21-dev**, built from source at commit
+**`ae7152e20797b13902590183e3f07e06fc76843b`** (branch `develop`, 2026-09-09,
+`git describe` = `build-lock-v6.0.0-29-gae7152e20`), CUDA backend, JDK **21.0.2-open**, CUDA toolkit
 **13.1 (nvcc V13.1.115)**, driver **580.142**, **NVIDIA GeForce RTX 5090 Laptop GPU (compute 12.0)**.
+The version string alone does not identify the source: `6.0.1-jdk21-dev` is a development build, so
+the commit above is what the line numbers and the quoted condition refer to.
 
 Reproducer: [`MissingFp16IncludeRepro.java`](MissingFp16IncludeRepro.java). One kernel, four arrays,
 one `m16n8k16` MMA step; no model, no GGUF, nothing from this engine.
