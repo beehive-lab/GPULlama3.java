@@ -782,3 +782,54 @@ TornadoVM-side change to that scan — the backend emits bare `half` itself, so 
 cover its own output — or re-introducing an fp16 spelling in the kernel purely to satisfy a text
 match. The first is out of scope here and the second is a workaround, so neither was pursued and no
 timing was taken.
+
+## Native half reads, then async staging, for Q5_K and Q4_1
+
+Two stages, kept separate so their correctness and their timings are not conflated.
+
+**Stage one — native half reads (`6f98a77f`).** Both kernels assembled their fp16 block fields from
+two byte loads; they now read them with `ByteArray.getHalfFloat`. The inventory was checked field by
+field rather than inherited from Q4_0:
+
+| kernel | field | offset | block stride | address | two-byte aligned |
+| --- | --- | ---: | ---: | --- | --- |
+| Q4_1 | scale | 0 | 20 | `20k` | yes |
+| Q4_1 | minimum | 2 | 20 | `20k + 2` | yes |
+| Q5_K | `d` | 0 | 176 | `176k` | yes |
+| Q5_K | `dmin` | 2 | 176 | `176k + 2` | yes |
+| Q5_K | six-bit sub-block scales | 4 | 176 | — | **not halves**, still byte reads |
+
+`getHalfFloat` reads a native-endian short where `halfFromBytes` composed the byte pair
+little-endian. The two agree **on this little-endian CUDA target**, which is where it was verified;
+no claim is made for a big-endian one. `HalfFloatConversionAccelTest` now reads every finite half
+encoding at each layout — strides 18, 20 and 176, offsets 0 and 2 — against `Float.float16ToFloat`:
+63,488 encodings per layout, bit for bit.
+
+**Stage two — async A staging (`e6a63d46`-shaped change, see the commit that follows).** The manual
+A sequence becomes `asyncCopyToLocal` plus a commit and a wait before the publishing barrier, as in
+`projectionMMAQ4_0`. It compiles here **only because stage one restored an fp16 spelling**: see
+finding 5 in `tornadovm-issues`, which this repository avoids rather than fixes.
+
+Both stages are bit-identical to the accepted kernels at the production shapes (Q5_K `ssm_out`
+32x5120x6144, Q4_1 `ffn_down` 32x5120x17408), full chunk and 29-row padded chunk, NaN-poisoned
+destinations, 327,680 values each, all finite.
+
+Isolated kernel screens, medians of nine rounds, warmed, resident weights, two alternating rounds
+per build:
+
+| kernel | accepted | stage one | stage one + two |
+| --- | ---: | ---: | ---: |
+| Q5_K `ssm_out` | 0.4331, 0.4330 ms | 0.4224, 0.4142 | **0.3670, 0.3653** |
+| Q4_1 `ffn_down` | 0.8315, 0.8373 ms | 0.7538, 0.7550 | **0.6315, 0.6325** |
+
+Whole model, `pp381 b32`, interleaved, identical settings, all runs preserved:
+
+| | runs | median |
+| --- | --- | ---: |
+| accepted | 147.15, 146.51, 146.36 | 146.51 |
+| both stages | 149.93, 150.03, 149.60 | **149.93** |
+
+**+2.33% observed within this session**, ranges disjoint — not a guaranteed minimum. The absolute
+figures are much higher than the previous session's on the same code path; the GPU held 62-63 °C and
+1590 MHz throughout this one. Only the interleaved within-session comparison means anything, and
+these two kernels were 12.8% of prefill kernel time in the last profile.

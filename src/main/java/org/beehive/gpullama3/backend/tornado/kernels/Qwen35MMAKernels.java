@@ -427,10 +427,11 @@ public final class Qwen35MMAKernels {
                 int row = j >>> 3;
                 int kk = (j & 7) << 1;
                 int base = (blockRow + row) * k + kBase + half * BK + kk;
-                int value =
-                        (aFP16.get(base).getHalfFloatValue() & 0xFFFF)
-                                | ((aFP16.get(base + 1).getHalfFloatValue() & 0xFFFF) << 16);
-                aTile[half * (BM * BK / 2) + j] = value;
+                // The same two adjacent halves into the same slot, packed the same way, copied
+                // global-to-shared without the register round-trip. `base` is even -- the dispatch
+                // guard makes k a whole number of blocks, and kBase, half * BK and kk are even --
+                // so the source byte address is header + 2 * base and four-byte aligned.
+                ctx.asyncCopyToLocal(aTile, half * (BM * BK / 2) + j, aFP16, base);
             }
 
             int superBlock = round >> 3;
@@ -466,6 +467,13 @@ public final class Qwen35MMAKernels {
                 HalfFloat value = new HalfFloat(scale * (low + high * 16) - minimum);
                 ctx.mmaStoreBSwizzled(bTile, stageK + t, stageCol, PANEL, value, stageOffset);
             }
+            // Commit and wait before the barrier that publishes both tiles: every lane issues
+            // its own eight copies -- i = lane + slot * 32 covers 0..255 exactly once across the
+            // warp -- and every lane waits, so no MMA reads a slot whose copy is still in flight.
+            // The trailing barrier below keeps the next round's copies out of a tile this round is
+            // still reading.
+            ctx.asyncCopyCommit();
+            ctx.asyncCopyWaitGroup(0);
             ctx.localBarrier();
 
             acc =
@@ -549,10 +557,11 @@ public final class Qwen35MMAKernels {
                 int row = j >>> 3;
                 int kk = (j & 7) << 1;
                 int base = (blockRow + row) * k + kBase + half * BK + kk;
-                int value =
-                        (aFP16.get(base).getHalfFloatValue() & 0xFFFF)
-                                | ((aFP16.get(base + 1).getHalfFloatValue() & 0xFFFF) << 16);
-                aTile[half * (BM * BK / 2) + j] = value;
+                // The same two adjacent halves into the same slot, packed the same way, copied
+                // global-to-shared without the register round-trip. `base` is even -- the dispatch
+                // guard makes k a whole number of blocks, and kBase, half * BK and kk are even --
+                // so the source byte address is header + 2 * base and four-byte aligned.
+                ctx.asyncCopyToLocal(aTile, half * (BM * BK / 2) + j, aFP16, base);
             }
 
             int base = ((blockCol + stageCol) * blocksPerRow + blockIndex) * BLOCK_BYTES_Q4_1;
@@ -572,6 +581,13 @@ public final class Qwen35MMAKernels {
                 HalfFloat value = new HalfFloat(scale * q + minimum);
                 ctx.mmaStoreBSwizzled(bTile, stageK + t, stageCol, PANEL, value, stageOffset);
             }
+            // Commit and wait before the barrier that publishes both tiles: every lane issues
+            // its own eight copies -- i = lane + slot * 32 covers 0..255 exactly once across the
+            // warp -- and every lane waits, so no MMA reads a slot whose copy is still in flight.
+            // The trailing barrier below keeps the next round's copies out of a tile this round is
+            // still reading.
+            ctx.asyncCopyCommit();
+            ctx.asyncCopyWaitGroup(0);
             ctx.localBarrier();
 
             acc =
