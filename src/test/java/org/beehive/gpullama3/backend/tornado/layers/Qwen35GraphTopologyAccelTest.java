@@ -378,7 +378,10 @@ public class Qwen35GraphTopologyAccelTest {
             boolean recurrent = config.isRecurrentLayer(layer);
             boolean expected = packedPathEnabled() && recurrent;
             assertEquals(
-                    "layer " + layer + (recurrent ? " (recurrent)" : " (attention)") + " tasks "
+                    "layer "
+                            + layer
+                            + (recurrent ? " (recurrent)" : " (attention)")
+                            + " tasks "
                             + tasks,
                     expected,
                     tasks.contains("ssm_out_quantize"));
@@ -408,12 +411,14 @@ public class Qwen35GraphTopologyAccelTest {
                     "no projection may read a quantized activation without the packed path: "
                             + packed,
                     packed.isEmpty());
-            assertTrue("ssm_out_proj must stay on the floating-point kernel",
+            assertTrue(
+                    "ssm_out_proj must stay on the floating-point kernel",
                     notPacked.contains("ssm_out_proj"));
             for (int layer = 0; layer < TRUNK_LAYERS; layer++) {
                 List<String> tasks = taskNames(scheduler, layer);
-                assertFalse("layer " + layer + " quantized an activation", tasks.contains(
-                        "xb_quantize"));
+                assertFalse(
+                        "layer " + layer + " quantized an activation",
+                        tasks.contains("xb_quantize"));
                 assertFalse(
                         "layer " + layer + " quantized the feed-forward's activation",
                         tasks.contains("ffn_xb_quantize"));
@@ -447,6 +452,10 @@ public class Qwen35GraphTopologyAccelTest {
     private static final int PREFILL_BATCH = 32;
 
     private static Qwen35BatchPrefillLayers buildBatched(Qwen35Configuration config) {
+        return buildBatched(config, PREFILL_BATCH);
+    }
+
+    private static Qwen35BatchPrefillLayers buildBatched(Qwen35Configuration config, int width) {
         String previousDevice = System.getProperty("use.tornadovm");
         String previousCores = System.getProperty("llama.qwen35.tensorCores");
         System.setProperty("use.tornadovm", "true");
@@ -456,9 +465,8 @@ public class Qwen35GraphTopologyAccelTest {
         try {
             Qwen35State state =
                     (Qwen35State)
-                            State.withPrefillBatchSize(
-                                    PREFILL_BATCH, () -> new Qwen35State(config, -1));
-            return new Qwen35BatchPrefillLayers(state, weights(config), config, PREFILL_BATCH);
+                            State.withPrefillBatchSize(width, () -> new Qwen35State(config, -1));
+            return new Qwen35BatchPrefillLayers(state, weights(config), config, width);
         } finally {
             restore("use.tornadovm", previousDevice);
             restore("llama.qwen35.tensorCores", previousCores);
@@ -534,9 +542,9 @@ public class Qwen35GraphTopologyAccelTest {
      *
      * <p>What this pins is the dispatch and the grids, which a kernel test cannot see: both tasks
      * present in every batched layer, the fused task gone, the SwiGLU that consumes their two
-     * buffers still there, and each projection launched on the MMA geometry — one warp per
-     * {@code BM x BN} output tile — rather than on the scalar matrix-vector grid it would get if
-     * it were missing from the tensor-core task map.
+     * buffers still there, and each projection launched on the MMA geometry — one warp per {@code
+     * BM x BN} output tile — rather than on the scalar matrix-vector grid it would get if it were
+     * missing from the tensor-core task map.
      */
     // @formatter:on
     @Test
@@ -555,11 +563,14 @@ public class Qwen35GraphTopologyAccelTest {
                         * Qwen35MMAKernels.LOCAL;
         for (int layer = 0; layer < TRUNK_LAYERS; layer++) {
             List<String> tasks = batchTaskNames(scheduler, layer);
-            assertTrue("layer " + layer + " lost the gate projection: " + tasks,
+            assertTrue(
+                    "layer " + layer + " lost the gate projection: " + tasks,
                     tasks.contains("ffn_gate_proj"));
-            assertTrue("layer " + layer + " lost the up projection: " + tasks,
+            assertTrue(
+                    "layer " + layer + " lost the up projection: " + tasks,
                     tasks.contains("ffn_up_proj"));
-            assertTrue("layer " + layer + " lost the SwiGLU that joins them",
+            assertTrue(
+                    "layer " + layer + " lost the SwiGLU that joins them",
                     tasks.contains("ffn_swiglu"));
             assertFalse(
                     "layer " + layer + " still dispatches the fused two-panel projection",
@@ -576,6 +587,122 @@ public class Qwen35GraphTopologyAccelTest {
                         Qwen35MMAKernels.LOCAL,
                         grid.getLocalWork()[0]);
             }
+        }
+    }
+
+    // @formatter:off
+    /**
+     * Which batched projections reach the tensor cores at each width, and which do not.
+     *
+     * <p>Two things this pins that no parity test does. First, **the selection is per width**:
+     * `mmaEligible` needs the chunk to fill whole 16-row MMA tiles, so 32 and 64 take the
+     * tensor-core path and a width of 8 cannot — the scalar tiled kernels stay reachable and are
+     * still the only path at an ineligible width. Second, the plan really contains the MMA tasks
+     * and their one-warp-per-tile grids, rather than a property having been set somewhere.
+     *
+     * <p>{@code attn_output_proj} was asserted to be on the **scalar** path, because it folds a
+     * residual. It now takes the same three-task shape `ffn_down` and `ssm_out` take — convert,
+     * project, add back — and this case asserts that shape and its grid instead.
+     */
+    // @formatter:on
+    @Test
+    public void theBatchedPlanSelectsTensorCoresPerWidth() {
+        assumeTrue(
+                "no tensor-core-capable device",
+                org.beehive.gpullama3.backend.tornado.TensorCoreSupport
+                        .isTensorCoreCapableBackend());
+        Qwen35Configuration config = config();
+
+        for (int width : new int[] {32, 64}) {
+            GridScheduler scheduler = new GridScheduler();
+            buildBatched(config, width).updateGridScheduler(scheduler);
+
+            long expectedProjection =
+                    (long) (width / Qwen35MMAKernels.BM)
+                            * (config.hiddenDim() / Qwen35MMAKernels.BN)
+                            * Qwen35MMAKernels.LOCAL;
+            for (int layer = 0; layer < TRUNK_LAYERS; layer++) {
+                List<String> tasks = batchTaskNames(scheduler, layer);
+                for (String task :
+                        new String[] {
+                            "ffn_gate_proj",
+                            "ffn_up_proj",
+                            "ffn_swiglu",
+                            "ffn_down_fp16",
+                            "ffn_down_proj",
+                            "ffn_down_residual"
+                        }) {
+                    assertTrue(
+                            "width "
+                                    + width
+                                    + " layer "
+                                    + layer
+                                    + " is missing "
+                                    + task
+                                    + ": "
+                                    + tasks,
+                            tasks.contains(task));
+                }
+                assertFalse(
+                        "width " + width + " layer " + layer + " kept the fused gate/up task",
+                        tasks.contains("ffn_gate_up"));
+
+                for (String task : new String[] {"ffn_gate_proj", "ffn_up_proj"}) {
+                    WorkerGrid grid = scheduler.get("batchLayer_" + layer + "." + task);
+                    assertEquals(
+                            "width " + width + " " + task + " global work",
+                            expectedProjection,
+                            grid.getGlobalWork()[0]);
+                    assertEquals(
+                            "width " + width + " " + task + " local work",
+                            Qwen35MMAKernels.LOCAL,
+                            grid.getLocalWork()[0]);
+                }
+
+                if (config.isRecurrentLayer(layer)) {
+                    assertTrue(
+                            "width " + width + " layer " + layer + " lost the Q5_K readout path",
+                            tasks.contains("ssm_out_fp16")
+                                    && tasks.contains("ssm_out_proj")
+                                    && tasks.contains("ssm_out_residual"));
+                } else {
+                    // The attention branch's output projection folds a residual, so it takes the
+                    // same three-task shape ffn_down and ssm_out do: convert, project, add back.
+                    assertTrue(
+                            "width "
+                                    + width
+                                    + " layer "
+                                    + layer
+                                    + " lost the attention output"
+                                    + " projection's tensor-core tasks: "
+                                    + tasks,
+                            tasks.contains("attn_output_fp16")
+                                    && tasks.contains("attn_output_proj")
+                                    && tasks.contains("attn_output_residual"));
+                    WorkerGrid grid = scheduler.get("batchLayer_" + layer + ".attn_output_proj");
+                    assertEquals(
+                            "width " + width + " attn_output_proj global work",
+                            (long) (width / Qwen35MMAKernels.BM)
+                                    * (config.dim() / Qwen35MMAKernels.BN)
+                                    * Qwen35MMAKernels.LOCAL,
+                            grid.getGlobalWork()[0]);
+                }
+            }
+        }
+
+        // An ineligible width: whole 16-row tiles are the condition, and 8 does not fill one.
+        GridScheduler scalar = new GridScheduler();
+        buildBatched(config, 8).updateGridScheduler(scalar);
+        for (int layer = 0; layer < TRUNK_LAYERS; layer++) {
+            List<String> tasks = batchTaskNames(scalar, layer);
+            assertTrue(
+                    "width 8 layer " + layer + " must keep the fused scalar gate/up: " + tasks,
+                    tasks.contains("ffn_gate_up"));
+            assertFalse(
+                    "width 8 layer " + layer + " reached the tensor cores",
+                    tasks.contains("ffn_gate_proj")
+                            || tasks.contains("ffn_down_fp16")
+                            || tasks.contains("attn_output_fp16"));
         }
     }
 

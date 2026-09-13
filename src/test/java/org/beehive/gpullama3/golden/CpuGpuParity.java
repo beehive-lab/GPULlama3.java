@@ -193,9 +193,9 @@ abstract class CpuGpuParity {
      * <p>The bounds are the same. A mode that needs looser bounds to pass is a mode that computes
      * something different, and that is the finding, not the configuration.
      */
-    void assertParityBatched(Fixture fixture, Bounds bounds, int prefillBatchSize)
+    GoldenCapture.Result assertParityBatched(Fixture fixture, Bounds bounds, int prefillBatchSize)
             throws Exception {
-        assertParity(fixture, bounds, prefillBatchSize, true);
+        return assertParity(fixture, bounds, prefillBatchSize, true);
     }
 
     /**
@@ -215,7 +215,10 @@ abstract class CpuGpuParity {
         assertParity(fixture, bounds, prefillBatchSize, false);
     }
 
-    private void assertParity(
+    /**
+     * @return the accelerator capture, so a caller can assert what its plan was built to dispatch
+     */
+    private GoldenCapture.Result assertParity(
             Fixture fixture, Bounds bounds, int prefillBatchSize, boolean separatePrefillPhase)
             throws Exception {
         Path model = GoldenFixture.locate(fixture);
@@ -390,6 +393,7 @@ abstract class CpuGpuParity {
                                 + " (gap > %.3g): %s",
                         fixture.quantization, bounds.decisionGap(), wideReversals),
                 wideReversals.isEmpty());
+        return gpu;
     }
 
     /** Number of shared entries between the two top-k sets. */

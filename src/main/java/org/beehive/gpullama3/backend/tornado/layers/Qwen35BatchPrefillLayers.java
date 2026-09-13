@@ -47,17 +47,17 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
 
     // @formatter:off
     /**
-     * Whether the Q4_0 projections that read the normed chunk run on the tensor cores.
+     * Whether this family's eligible batched projections run on the tensor cores.
      *
-     * <p>Off by default, and the reason is a trade rather than a defect. The kernel is correct — it
-     * is held against the host tensor in {@code Qwen35MMAProjectionAccelTest} — and it is worth
-     * about 2.8% of prompt processing. But FP16 multiplicands move the logits enough to break three
-     * of this family's parity bounds, including the absolute ceiling by a factor of five, and 2.8%
-     * does not buy a change to the numerical contract.
+     * <p>Off by default: FP16 multiplicands are not bit-identical to the scalar kernels, so this is
+     * a change to the arithmetic and not only to the speed. What it covers, once on, is every
+     * projection {@link #mmaEligible} admits — the gate and up panels, {@code ffn_down} in both of
+     * this model's representations, the Q5_K recurrent readout and the attention output.
      *
-     * <p>What would: the same treatment for the fused gate/up and {@code ffn_down}, which are
-     * another 57% of the profile between them. Then the contract moves once, for a number worth
-     * moving it for.
+     * <p>Which kernels a plan is built to dispatch is a question about that plan, not about this
+     * field: the {@code Qwen35Mma*} accel classes select the path and then check their own plan's
+     * grid scheduler, and {@code theBatchedPlanSelectsTensorCoresPerWidth} pins the per-width
+     * selection and the MMA grids against the scalar path at an ineligible width.
      */
     // @formatter:on
     private static final boolean TENSOR_CORES = Boolean.getBoolean("llama.qwen35.tensorCores");
@@ -734,12 +734,51 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 attnDim,
                 state.workspace.batchStartPosHolder);
 
+        TornadoTensor attnOutput = require(weights.woLayered, layerIndex, "attn_output");
+        if (attnOutput.dataType() == DataType.Q4_0 && mmaEligible(attnDim, config.dim())) {
+            // The same three-task shape ffn_down and ssm_out use: a tensor-core store overwrites,
+            // so the residual is its own pass.
+            //
+            // Buffer lifetimes, from this graph's task order rather than from capacity alone.
+            // wrapHbFP16BatchMMA holds ceil(batch/16)*16 * hiddenDim halves and is written by
+            // ffn_down_fp16 *later in this same layer*; between here and there nothing reads it, so
+            // the gated attention output can be staged in its first batchSize * attnDim elements
+            // (6144 <= 17408). wrapFFNDownBatch holds batch * dim floats — exactly this
+            // projection's output width — and is likewise written by ffn_down_proj later and read
+            // only by the residual pass that immediately follows each write. wrapXBatch, the
+            // residual destination, is read and written by the add below and by nothing in
+            // between.
+            mmaTasks.put("batchLayer_" + layerIndex + ".attn_output_proj", config.dim());
+            layer.task(
+                    "attn_output_fp16",
+                    Qwen35MMAKernels::convertToFP16,
+                    context,
+                    state.workspace.wrapXbBatch,
+                    state.workspace.wrapHbFP16BatchMMA);
+            layer.task(
+                    "attn_output_proj",
+                    Qwen35MMAKernels::projectionMMAQ4_0,
+                    context,
+                    state.workspace.wrapHbFP16BatchMMA,
+                    attnOutput.asByteArray(),
+                    state.workspace.wrapFFNDownBatch,
+                    batchSize,
+                    config.dim(),
+                    attnDim);
+            layer.task(
+                    "attn_output_residual",
+                    Qwen35MMAKernels::residualAdd,
+                    context,
+                    state.workspace.wrapXBatch,
+                    state.workspace.wrapFFNDownBatch);
+            return;
+        }
         matVecBatch(
                 layer,
                 layerIndex,
                 "attn_output_proj",
                 "attn_output",
-                require(weights.woLayered, layerIndex, "attn_output"),
+                attnOutput,
                 state.workspace.wrapXbBatch,
                 state.workspace.wrapXBatch,
                 attnDim,
@@ -1101,6 +1140,12 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                                 * Qwen35MMAKernels.BM
                                 * config.hiddenDim(),
                         ELEMENTWISE_LOCAL);
+        WorkerGrid attnOutputFP16Convert =
+                WorkerGridFactory.genericWorker(
+                        ((batchSize + Qwen35MMAKernels.BM - 1) / Qwen35MMAKernels.BM)
+                                * Qwen35MMAKernels.BM
+                                * config.attentionOutputInputDim(),
+                        ELEMENTWISE_LOCAL);
         WorkerGrid residualAdd =
                 WorkerGridFactory.genericWorker(batchSize * config.dim(), ELEMENTWISE_LOCAL);
         WorkerGrid swiglu =
@@ -1220,6 +1265,10 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 scheduler.addWorkerGrid(
                         prefix + "attn_output_proj",
                         matVecWorker(prefix + "attn_output_proj", config.dim()));
+                if (mmaTasks.containsKey(prefix + "attn_output_proj")) {
+                    scheduler.addWorkerGrid(prefix + "attn_output_fp16", attnOutputFP16Convert);
+                    scheduler.addWorkerGrid(prefix + "attn_output_residual", residualAdd);
+                }
             }
         }
     }

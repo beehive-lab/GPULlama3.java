@@ -40,6 +40,12 @@ public class Qwen35BatchedFp16KvLifecycleAccelTest {
     private static final String PROMPT =
             "Explain what a matrix multiplication is in one paragraph.";
 
+    /**
+     * What this session's own plan must be built with. Nothing here; the tensor-core subclass
+     * overrides it.
+     */
+    protected void verifyDispatch(DelegatingSession session, int batch, int dim) {}
+
     @Test
     public void aHalfPrecisionKeyValueBatchedSessionCarriesItsPromptIntoDecode() throws Exception {
         Path modelPath = fixtureOrSkip();
@@ -81,6 +87,9 @@ public class Qwen35BatchedFp16KvLifecycleAccelTest {
                                 + "'",
                         first.toLowerCase().contains("multiplication")
                                 || first.toLowerCase().contains("multiply"));
+
+                // The plan this session generated with, before close frees it.
+                verifyDispatch((DelegatingSession) session, 32, model.configuration().dimension());
 
                 // Same session, same request, no reset: the conversation surface resets
                 // transparently when the prefix does not extend, so this is the ordinary

@@ -70,11 +70,19 @@ public class Qwen35CrossWidthCaptureAccelTest {
         GoldenCapture.Result result = GoldenCapture.capture(modelPath, true, forced, width, true);
 
         assertTrue("nothing was captured", !result.rows.isEmpty());
+        verifyDispatch(result, width);
         write(Paths.get(out), width, result);
         System.out.printf(
                 "[CROSSWIDTH] width %d wrote %d rows of %d to %s%n",
                 width, result.rows.size(), result.rows.get(0).length, out);
     }
+
+    /**
+     * What the capture's own plan must be built with for the file it writes to mean what its name
+     * says. Nothing here; the tensor-core subclass overrides it, so a scalar-plan capture cannot be
+     * filed as MMA evidence.
+     */
+    protected void verifyDispatch(GoldenCapture.Result result, int width) {}
 
     private static void write(Path path, int width, GoldenCapture.Result result)
             throws IOException {

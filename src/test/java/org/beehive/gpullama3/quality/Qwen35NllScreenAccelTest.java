@@ -140,11 +140,22 @@ public class Qwen35NllScreenAccelTest {
             // builder rather than assumed from the absence of a batch width. Which projections
             // read a quantized activation is the whole subject, so it is recorded, not inferred.
             report.append("plan=").append(plan.getClass().getSimpleName()).append('\n');
+            // From this plan's own scheduler: the conversion tasks exist only on the MMA branch.
+            var grids =
+                    org.beehive.gpullama3.backend.tornado.PlanDispatchEvidence
+                            .gridSchedulerIfAvailable(plan);
+            report.append("mmaBatchedProjections=")
+                    .append(
+                            org.beehive.gpullama3.backend.tornado.PlanDispatchEvidence
+                                    .qwen35MmaBatchedTasks(grids)
+                                    .size())
+                    .append('\n');
             report.append("executionCombination=")
                     .append(
                             org.beehive.gpullama3.auxiliary.RunMetrics.snapshot()
                                     .executionCombination())
                     .append('\n');
+            verifyDispatch(grids, batch, model.configuration().dim());
 
             double pooledNll = 0;
             long pooledTokens = 0;
@@ -268,6 +279,13 @@ public class Qwen35NllScreenAccelTest {
             }
         }
     }
+
+    /**
+     * What this screen's own plan must be built with for its numbers to describe the path claimed.
+     * Nothing here; the tensor-core subclass overrides it.
+     */
+    protected void verifyDispatch(
+            uk.ac.manchester.tornado.api.GridScheduler grids, int batch, int dim) {}
 
     private static String sha256(byte[] raw, int offset, int length) throws IOException {
         try {
