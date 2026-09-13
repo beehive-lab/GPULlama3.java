@@ -100,6 +100,9 @@ public final class Qwen35MMAKernels {
     /** Bytes of one eight-column, {@code BK}-deep B panel. */
     private static final int B_SUBTILE_BYTES = 256;
 
+    /** Bytes of one {@code BM}-row, {@code BK}-deep A panel: {@code BM * BK} halves, int-packed. */
+    private static final int A_SUBTILE_BYTES = BM * BK * 2;
+
     private Qwen35MMAKernels() {}
 
     /**
@@ -209,10 +212,18 @@ public final class Qwen35MMAKernels {
         int blockCol = colTile * BN;
         int blocksPerRow = k / QK;
 
-        int[] aTileLo = ctx.allocateIntLocalArray(BM * BK / 2);
-        int[] aTileHi = ctx.allocateIntLocalArray(BM * BK / 2);
-        HalfFloat[] bTileLo = ctx.allocateHalfFloatLocalArray(PANEL * BK);
-        HalfFloat[] bTileHi = ctx.allocateHalfFloatLocalArray(PANEL * BK);
+        // One allocation for both A panels, as for B: the first at byte offset zero, the second at
+        // A_SUBTILE_BYTES. The A load applies no swizzle — its per-lane address is
+        // (row << 5) + col with row < 16 and col in {0, 16}, so a panel reaches at most byte 496
+        // and stays inside its own 512 — and the offset-aware load adds the base afterwards, so
+        // each panel sees exactly the layout it had as its own array.
+        int[] aTile = ctx.allocateIntLocalArray(2 * BM * BK / 2);
+        // One allocation for both B panels: the low half at byte offset zero, the high half at
+        // B_SUBTILE_BYTES. The offset-aware store and load apply the swizzle to the in-panel
+        // address first and add the offset afterwards, so each panel keeps exactly the layout it
+        // had as its own array, and the two cannot overlap -- a panel's swizzled address stays
+        // inside its own 256 bytes.
+        HalfFloat[] bTile = ctx.allocateHalfFloatLocalArray(2 * PANEL * BK);
 
         float[] acc = ctx.mmaFragment(0.0f);
 
@@ -230,6 +241,11 @@ public final class Qwen35MMAKernels {
         int stageByte = stageFirst & 15;
         boolean stageHighNibble = stageFirst >= 16;
         boolean stageHighHalf = stageFirst >= 16;
+        // Which panel this lane stages, as a byte offset rather than a choice of array.
+        int stageOffset = 0;
+        if (stageHighHalf) {
+            stageOffset = B_SUBTILE_BYTES;
+        }
         int stageK = stageFirst & 15;
 
         int numBlocks = k / QK;
@@ -245,19 +261,22 @@ public final class Qwen35MMAKernels {
                 int row = j >>> 3;
                 int kk = (j & 7) << 1;
                 int base = (blockRow + row) * k + kBase + half * BK + kk;
-                int value =
-                        (aFP16.get(base).getHalfFloatValue() & 0xFFFF)
-                                | ((aFP16.get(base + 1).getHalfFloatValue() & 0xFFFF) << 16);
-                if (half == 0) {
-                    aTileLo[j] = value;
-                } else {
-                    aTileHi[j] = value;
-                }
+                // The same two adjacent halves, the same destination slot, packed the same way —
+                // src[base] | src[base + 1] << 16 — but copied global-to-shared without the
+                // register round-trip. `base` is even (k is a whole number of Q4_0 blocks, and
+                // kBase, half * BK and kk are all even), so the source byte address is
+                // header + 2 * base and four-byte aligned, which is what cp.async requires.
+                ctx.asyncCopyToLocal(aTile, half * (BM * BK / 2) + j, aFP16, base);
             }
 
             // B: this lane's column, one scale, eight contiguous packed bytes.
             int base = ((blockCol + stageCol) * blocksPerRow + blockIndex) * BLOCK_BYTES;
-            float scale = halfFromBytes(w, base);
+            // Read through the array's own half accessor rather than assembling the half from two
+            // bytes: the block stride is 18, so every block scale is two-byte aligned, and this
+            // lowers to one hardware conversion where halfFromBytes lowers to a ten-branch
+            // software expansion. Same bytes, same interpretation, same value. The other kernels
+            // in this file keep halfFromBytes.
+            float scale = w.getHalfFloat(base).getFloat32();
             for (int t = 0; t < 8; t++) {
                 int packed = w.get(base + 2 + stageByte + t) & 0xFF;
                 int q = packed & 0xF;
@@ -266,24 +285,27 @@ public final class Qwen35MMAKernels {
                 }
                 HalfFloat value = new HalfFloat(scale * (q - 8));
                 // (k index, column, columns per row) — the order the swizzled load expects.
-                if (stageHighHalf) {
-                    ctx.swizzleStoreFp16Stride32(bTileHi, stageK + t, stageCol, PANEL, value);
-                } else {
-                    ctx.swizzleStoreFp16Stride32(bTileLo, stageK + t, stageCol, PANEL, value);
-                }
+                ctx.mmaStoreBSwizzled(bTile, stageK + t, stageCol, PANEL, value, stageOffset);
             }
+            // Commit and wait before the barrier that publishes both tiles: every lane issues
+            // its own eight copies -- i = lane + slot * 32 covers 0..255 exactly once across the
+            // warp -- and every lane waits, so no MMA reads a slot whose copy is still in flight.
+            // The trailing barrier below keeps the next round's copies out of a tile this round is
+            // still reading.
+            ctx.asyncCopyCommit();
+            ctx.asyncCopyWaitGroup(0);
             ctx.localBarrier();
 
             acc =
                     ctx.mma(
-                            ctx.mmaLoadA(aTileLo, BK),
-                            ctx.mmaLoadBSwizzled(bTileLo, BK),
+                            ctx.mmaLoadA(aTile, BK, 0),
+                            ctx.mmaLoadBSwizzled(bTile, BK, 0),
                             acc,
                             MMAShape.M16N8K16);
             acc =
                     ctx.mma(
-                            ctx.mmaLoadA(aTileHi, BK),
-                            ctx.mmaLoadBSwizzled(bTileHi, BK),
+                            ctx.mmaLoadA(aTile, BK, A_SUBTILE_BYTES),
+                            ctx.mmaLoadBSwizzled(bTile, BK, B_SUBTILE_BYTES),
                             acc,
                             MMAShape.M16N8K16);
             ctx.localBarrier();
@@ -375,16 +397,23 @@ public final class Qwen35MMAKernels {
         int blockCol = colTile * BN;
         int superBlocksPerRow = k / QK_K;
 
-        int[] aTileLo = ctx.allocateIntLocalArray(BM * BK / 2);
-        int[] aTileHi = ctx.allocateIntLocalArray(BM * BK / 2);
-        HalfFloat[] bTileLo = ctx.allocateHalfFloatLocalArray(PANEL * BK);
-        HalfFloat[] bTileHi = ctx.allocateHalfFloatLocalArray(PANEL * BK);
+        // One allocation per operand, the second panel at a byte offset, as in
+        // projectionMMAQ4_0. The tile geometry and the addressing are the same here: a B panel's
+        // in-panel address is at most 254 before the swizzle, which permutes within the same 256
+        // bytes, and an A panel's per-lane address reaches at most 496 of its 512. The A load
+        // applies no swizzle; the B store and load apply it before adding the offset.
+        int[] aTile = ctx.allocateIntLocalArray(2 * BM * BK / 2);
+        HalfFloat[] bTile = ctx.allocateHalfFloatLocalArray(2 * PANEL * BK);
 
         float[] acc = ctx.mmaFragment(0.0f);
 
         int stageCol = lane >> 2;
         int stageFirst = (lane & 3) * 8;
         boolean stageHighHalf = stageFirst >= 16;
+        int stageOffset = 0;
+        if (stageHighHalf) {
+            stageOffset = B_SUBTILE_BYTES;
+        }
         int stageK = stageFirst & 15;
 
         int numRounds = k / QK;
@@ -398,21 +427,21 @@ public final class Qwen35MMAKernels {
                 int row = j >>> 3;
                 int kk = (j & 7) << 1;
                 int base = (blockRow + row) * k + kBase + half * BK + kk;
-                int value =
-                        (aFP16.get(base).getHalfFloatValue() & 0xFFFF)
-                                | ((aFP16.get(base + 1).getHalfFloatValue() & 0xFFFF) << 16);
-                if (half == 0) {
-                    aTileLo[j] = value;
-                } else {
-                    aTileHi[j] = value;
-                }
+                // The same two adjacent halves into the same slot, packed the same way, copied
+                // global-to-shared without the register round-trip. `base` is even -- the dispatch
+                // guard makes k a whole number of blocks, and kBase, half * BK and kk are even --
+                // so the source byte address is header + 2 * base and four-byte aligned.
+                ctx.asyncCopyToLocal(aTile, half * (BM * BK / 2) + j, aFP16, base);
             }
 
             int superBlock = round >> 3;
             int subBlock = round & 7;
             int base = ((blockCol + stageCol) * superBlocksPerRow + superBlock) * K_BLOCK_BYTES;
-            float d = halfFromBytes(w, base);
-            float dmin = halfFromBytes(w, base + 2);
+            // As in the Q4_1 kernel: the super-block stride is 176 and d and dmin sit at offsets 0
+            // and 2, so both addresses are two-byte aligned. The six-bit sub-block scales at
+            // K_SCALES_OFFSET stay byte reads -- they are not halves.
+            float d = w.getHalfFloat(base).getFloat32();
+            float dmin = w.getHalfFloat(base + 2).getFloat32();
             int packedScale = scaleAndMin(w, base + K_SCALES_OFFSET, subBlock);
             float scale = d * (packedScale >> 8);
             float minimum = dmin * (packedScale & 0xFF);
@@ -436,24 +465,27 @@ public final class Qwen35MMAKernels {
                 int qhByte = w.get(qhBase + posInSub) & 0xFF;
                 int high = (qhByte >> bitShift) & 1;
                 HalfFloat value = new HalfFloat(scale * (low + high * 16) - minimum);
-                if (stageHighHalf) {
-                    ctx.swizzleStoreFp16Stride32(bTileHi, stageK + t, stageCol, PANEL, value);
-                } else {
-                    ctx.swizzleStoreFp16Stride32(bTileLo, stageK + t, stageCol, PANEL, value);
-                }
+                ctx.mmaStoreBSwizzled(bTile, stageK + t, stageCol, PANEL, value, stageOffset);
             }
+            // Commit and wait before the barrier that publishes both tiles: every lane issues
+            // its own eight copies -- i = lane + slot * 32 covers 0..255 exactly once across the
+            // warp -- and every lane waits, so no MMA reads a slot whose copy is still in flight.
+            // The trailing barrier below keeps the next round's copies out of a tile this round is
+            // still reading.
+            ctx.asyncCopyCommit();
+            ctx.asyncCopyWaitGroup(0);
             ctx.localBarrier();
 
             acc =
                     ctx.mma(
-                            ctx.mmaLoadA(aTileLo, BK),
-                            ctx.mmaLoadBSwizzled(bTileLo, BK),
+                            ctx.mmaLoadA(aTile, BK, 0),
+                            ctx.mmaLoadBSwizzled(bTile, BK, 0),
                             acc,
                             MMAShape.M16N8K16);
             acc =
                     ctx.mma(
-                            ctx.mmaLoadA(aTileHi, BK),
-                            ctx.mmaLoadBSwizzled(bTileHi, BK),
+                            ctx.mmaLoadA(aTile, BK, A_SUBTILE_BYTES),
+                            ctx.mmaLoadBSwizzled(bTile, BK, B_SUBTILE_BYTES),
                             acc,
                             MMAShape.M16N8K16);
             ctx.localBarrier();
@@ -493,10 +525,13 @@ public final class Qwen35MMAKernels {
         int blockCol = colTile * BN;
         int blocksPerRow = k / QK;
 
-        int[] aTileLo = ctx.allocateIntLocalArray(BM * BK / 2);
-        int[] aTileHi = ctx.allocateIntLocalArray(BM * BK / 2);
-        HalfFloat[] bTileLo = ctx.allocateHalfFloatLocalArray(PANEL * BK);
-        HalfFloat[] bTileHi = ctx.allocateHalfFloatLocalArray(PANEL * BK);
+        // One allocation per operand, the second panel at a byte offset, as in
+        // projectionMMAQ4_0. Same tile geometry and same addressing: a B panel's in-panel address
+        // is at most 254 before the swizzle, which permutes within the same 256 bytes, and an A
+        // panel's per-lane address reaches at most 496 of its 512. The A load applies no swizzle;
+        // the B store and load apply it before adding the offset.
+        int[] aTile = ctx.allocateIntLocalArray(2 * BM * BK / 2);
+        HalfFloat[] bTile = ctx.allocateHalfFloatLocalArray(2 * PANEL * BK);
 
         float[] acc = ctx.mmaFragment(0.0f);
 
@@ -505,6 +540,10 @@ public final class Qwen35MMAKernels {
         int stageByte = stageFirst & 15;
         boolean stageHighNibble = stageFirst >= 16;
         boolean stageHighHalf = stageFirst >= 16;
+        int stageOffset = 0;
+        if (stageHighHalf) {
+            stageOffset = B_SUBTILE_BYTES;
+        }
         int stageK = stageFirst & 15;
 
         int numBlocks = k / QK;
@@ -518,19 +557,21 @@ public final class Qwen35MMAKernels {
                 int row = j >>> 3;
                 int kk = (j & 7) << 1;
                 int base = (blockRow + row) * k + kBase + half * BK + kk;
-                int value =
-                        (aFP16.get(base).getHalfFloatValue() & 0xFFFF)
-                                | ((aFP16.get(base + 1).getHalfFloatValue() & 0xFFFF) << 16);
-                if (half == 0) {
-                    aTileLo[j] = value;
-                } else {
-                    aTileHi[j] = value;
-                }
+                // The same two adjacent halves into the same slot, packed the same way, copied
+                // global-to-shared without the register round-trip. `base` is even -- the dispatch
+                // guard makes k a whole number of blocks, and kBase, half * BK and kk are even --
+                // so the source byte address is header + 2 * base and four-byte aligned.
+                ctx.asyncCopyToLocal(aTile, half * (BM * BK / 2) + j, aFP16, base);
             }
 
             int base = ((blockCol + stageCol) * blocksPerRow + blockIndex) * BLOCK_BYTES_Q4_1;
-            float scale = halfFromBytes(w, base);
-            float minimum = halfFromBytes(w, base + 2);
+            // Both fields through the array's own half accessor rather than assembled from two
+            // bytes: the block stride is 20 and the fields sit at offsets 0 and 2, so every address
+            // is two-byte aligned, and this lowers to one hardware conversion where halfFromBytes
+            // lowers to a ten-branch software expansion. Same bytes, and the same value on this
+            // little-endian CUDA target, where the byte pair and the native short agree.
+            float scale = w.getHalfFloat(base).getFloat32();
+            float minimum = w.getHalfFloat(base + 2).getFloat32();
             for (int t = 0; t < 8; t++) {
                 int packed = w.get(base + 4 + stageByte + t) & 0xFF;
                 int q = packed & 0xF;
@@ -538,24 +579,27 @@ public final class Qwen35MMAKernels {
                     q = (packed >> 4) & 0xF;
                 }
                 HalfFloat value = new HalfFloat(scale * q + minimum);
-                if (stageHighHalf) {
-                    ctx.swizzleStoreFp16Stride32(bTileHi, stageK + t, stageCol, PANEL, value);
-                } else {
-                    ctx.swizzleStoreFp16Stride32(bTileLo, stageK + t, stageCol, PANEL, value);
-                }
+                ctx.mmaStoreBSwizzled(bTile, stageK + t, stageCol, PANEL, value, stageOffset);
             }
+            // Commit and wait before the barrier that publishes both tiles: every lane issues
+            // its own eight copies -- i = lane + slot * 32 covers 0..255 exactly once across the
+            // warp -- and every lane waits, so no MMA reads a slot whose copy is still in flight.
+            // The trailing barrier below keeps the next round's copies out of a tile this round is
+            // still reading.
+            ctx.asyncCopyCommit();
+            ctx.asyncCopyWaitGroup(0);
             ctx.localBarrier();
 
             acc =
                     ctx.mma(
-                            ctx.mmaLoadA(aTileLo, BK),
-                            ctx.mmaLoadBSwizzled(bTileLo, BK),
+                            ctx.mmaLoadA(aTile, BK, 0),
+                            ctx.mmaLoadBSwizzled(bTile, BK, 0),
                             acc,
                             MMAShape.M16N8K16);
             acc =
                     ctx.mma(
-                            ctx.mmaLoadA(aTileHi, BK),
-                            ctx.mmaLoadBSwizzled(bTileHi, BK),
+                            ctx.mmaLoadA(aTile, BK, A_SUBTILE_BYTES),
+                            ctx.mmaLoadBSwizzled(bTile, BK, B_SUBTILE_BYTES),
                             acc,
                             MMAShape.M16N8K16);
             ctx.localBarrier();
