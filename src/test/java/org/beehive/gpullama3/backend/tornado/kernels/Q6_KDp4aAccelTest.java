@@ -206,8 +206,26 @@ public class Q6_KDp4aAccelTest {
     // @formatter:on
     @Test
     public void aDenseProjectionMatchesAReferenceThatQuantizesTheSameWay() throws Exception {
-        int dense = 4 * QK_K; // 1024 inputs, four super-blocks
-        int rows = 96;
+        assertDenseMatchesReference(4 * QK_K, 96, LOCAL);
+    }
+
+    // @formatter:off
+    /**
+     * The same comparison at the width the vocabulary projection actually dispatches.
+     *
+     * <p>{@code LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS} is 256, which is eight
+     * warps, and the reduction folds each warp with shuffles before one barrier and a lane-zero
+     * combine. Sixteen super-blocks give 256 scale runs, so <b>every</b> warp carries work, and a
+     * partial that never reached the combine would change the row's total. The case above runs 64
+     * runs over 128 lanes, where the upper warps are idle and would hide exactly that.
+     */
+    // @formatter:on
+    @Test
+    public void aDenseProjectionMatchesTheReferenceAtTheDispatchedWidth() throws Exception {
+        assertDenseMatchesReference(16 * QK_K, 24, 256);
+    }
+
+    private void assertDenseMatchesReference(int dense, int rows, int local) throws Exception {
         Random random = new Random(20260911L);
         byte[] raw = new byte[rows * (dense / QK_K) * BLOCK_BYTES];
         for (int block = 0; block < rows * (dense / QK_K); block++) {
@@ -257,7 +275,7 @@ public class Q6_KDp4aAccelTest {
         }
 
         TaskGraph graph =
-                new TaskGraph("dense")
+                new TaskGraph("dense" + local)
                         .transferToDevice(
                                 DataTransferMode.EVERY_EXECUTION, x, w, quants, scales, sums, out)
                         .task(
@@ -279,16 +297,16 @@ public class Q6_KDp4aAccelTest {
                                 w,
                                 dense,
                                 rows,
-                                LOCAL)
+                                local)
                         .transferToHost(
                                 DataTransferMode.EVERY_EXECUTION, out, quants, scales, sums);
         GridScheduler scheduler = new GridScheduler();
         WorkerGrid1D blocks = new WorkerGrid1D(dense);
         blocks.setLocalWork(QK, 1, 1);
-        scheduler.addWorkerGrid("dense.quantize", blocks);
-        WorkerGrid1D rowGrid = new WorkerGrid1D(rows * LOCAL);
-        rowGrid.setLocalWork(LOCAL, 1, 1);
-        scheduler.addWorkerGrid("dense.matvec", rowGrid);
+        scheduler.addWorkerGrid("dense" + local + ".quantize", blocks);
+        WorkerGrid1D rowGrid = new WorkerGrid1D(rows * local);
+        rowGrid.setLocalWork(local, 1, 1);
+        scheduler.addWorkerGrid("dense" + local + ".matvec", rowGrid);
         try (TornadoExecutionPlan plan = new TornadoExecutionPlan(graph.snapshot())) {
             plan.withGridScheduler(scheduler).execute();
         }
@@ -339,9 +357,9 @@ public class Q6_KDp4aAccelTest {
             }
         }
         System.out.printf(
-                "[Q6K-DENSE] against the same-quantization reference: worst %.6g,"
+                "[Q6K-DENSE] local %d: against the same-quantization reference: worst %.6g,"
                         + " largest |out| %.6g over %d rows of %d%n",
-                worst, largest, rows, dense);
+                local, worst, largest, rows, dense);
         assertTrue("worst " + worst + " against largest " + largest, worst <= 1e-4 * largest);
     }
 }

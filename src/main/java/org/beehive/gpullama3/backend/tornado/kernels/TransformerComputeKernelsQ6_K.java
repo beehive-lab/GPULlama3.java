@@ -192,6 +192,19 @@ public final class TransformerComputeKernelsQ6_K {
      *
      * <p>The activation must have been prepared by {@code quantizeActivationQ8Blocks} from the
      * activation this projection reads.
+     *
+     * <p><b>The reduction is a warp-shuffle butterfly</b>, the same tail {@code
+     * matrixVectorGenericQ4_0DP4A} uses: each 32-lane warp folds its own partial with five {@code
+     * simdShuffleDown} steps, one lane per warp writes to shared memory, and a single barrier
+     * separates that from the combine — one barrier where the tree needed eight at the 256-lane
+     * width the vocabulary projection dispatches. All lanes reach the shuffles; the only early
+     * return is on {@code rowId}, which is uniform across the workgroup, and {@code
+     * localWorkGroupSize} must be a multiple of 32. Shuffles are correct on CUDA and miscompile on
+     * OpenCL, which is already why this kernel rides on {@code
+     * DeviceCapability.PACKED_INTEGER_DOT}.
+     * The order of summation differs from the tree's, so the floating-point total may round
+     * differently; the integer dot products are exact either way, and nothing about the mapping,
+     * the packing or the scale algebra changes.
      */
     // @formatter:on
     public static void matrixVectorGenericQ6_KDP4A(
@@ -209,7 +222,8 @@ public final class TransformerComputeKernelsQ6_K {
             return;
         }
         int localId = context.localIdx;
-        float[] localSums = context.allocateFloatLocalArray(localWorkGroupSize);
+        int warpCount = localWorkGroupSize / 32;
+        float[] warpSums = context.allocateFloatLocalArray(warpCount);
 
         int superBlocksPerRow = n / QK_K;
         int rowByteOffset = rowId * superBlocksPerRow * BLOCK_BYTES;
@@ -251,16 +265,23 @@ public final class TransformerComputeKernelsQ6_K {
             partialSum += d6 * scale * xScales.get(run / 2) * dot;
         }
 
-        localSums[localId] = partialSum;
-        context.localBarrier();
-        for (int stride = localWorkGroupSize / 2; stride > 0; stride >>= 1) {
-            if (localId < stride) {
-                localSums[localId] += localSums[localId + stride];
-            }
-            context.localBarrier();
+        partialSum += context.simdShuffleDown(partialSum, 16);
+        partialSum += context.simdShuffleDown(partialSum, 8);
+        partialSum += context.simdShuffleDown(partialSum, 4);
+        partialSum += context.simdShuffleDown(partialSum, 2);
+        partialSum += context.simdShuffleDown(partialSum, 1);
+
+        if ((localId & 31) == 0) {
+            warpSums[localId >> 5] = partialSum;
         }
+        context.localBarrier();
+
         if (localId == 0) {
-            output.set(rowId, localSums[0]);
+            float total = 0.0f;
+            for (int warp = 0; warp < warpCount; warp++) {
+                total += warpSums[warp];
+            }
+            output.set(rowId, total);
         }
     }
 
