@@ -1,8 +1,10 @@
 package org.beehive.gpullama3.backend.tornado.kernels;
 
 import uk.ac.manchester.tornado.api.KernelContext;
+import uk.ac.manchester.tornado.api.utils.QuantizationUtils;
 import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.IntArray;
 
 /**
  * Device kernels that read {@code Q4_1} weights in the file's own representation.
@@ -129,6 +131,112 @@ public final class TransformerComputeKernelsQ4_1 {
             context.localBarrier();
         }
         return localSums[0];
+    }
+
+    // @formatter:off
+    /**
+     * {@code out[row] += w[row]·x} with the activation in packed integers and the weights left in
+     * native {@code Q4_1}.
+     *
+     * <p><b>The algebra, which is where this differs from Q4_0.</b> A Q4_1 weight is
+     * {@code d * q + m} with {@code q} in 0..15 and no recentring, so against an activation
+     * quantized as {@code x_i = sx * xq_i} a block's contribution is
+     *
+     * <pre>
+     *   Σ (d·q_i + m)(sx·xq_i) = sx · ( d · Σ q_i·xq_i  +  m · Σ xq_i )
+     * </pre>
+     *
+     * The first sum is the {@code dp4a} accumulation; the second is the activation block's sum of
+     * quants, which {@code quantizeActivationQ8Blocks} already records. So where {@link
+     * TransformerComputeKernelsQ4_0#matrixVectorGenericWithResidualQ4_0DP4A} applies {@code dot - 8
+     * * sum} for Q4_0's recentring by eight, this applies {@code d * dot + m * sum}. It is the same
+     * decomposition llama.cpp's {@code vec_dot_q4_1_q8_1_impl} uses: {@code sumi*d4*d8 + m4*s8}.
+     *
+     * <p>A block whose activation was all zero has {@code sx == 0} and {@code Σ xq_i == 0}, so it
+     * contributes exactly nothing — the minimum term does not leak into an empty block.
+     *
+     * <p>The nibble layout is Q4_0's, one header wider: low nibbles are elements 0..15 and high
+     * nibbles 16..31, which is why the low half pairs with quant group {@code g} and the high half
+     * with {@code g + 4}. The reduction is the warp-shuffle butterfly the packed kernels share, so
+     * the summation order differs from the floating-point kernel's and the two agree to rounding.
+     *
+     * <p><b>This changes the numerics</b>: the activation is quantized to int8 where the
+     * floating-point kernel reads it exactly. The weights are untouched and stay Q4_1.
+     */
+    // @formatter:on
+    public static void matrixVectorGenericWithResidualQ4_1DP4A(
+            KernelContext context,
+            IntArray xQuants,
+            FloatArray xScales,
+            IntArray xSums,
+            FloatArray hb,
+            ByteArray w,
+            int n,
+            int d,
+            int localWorkGroupSize) {
+        int rowId = context.groupIdx;
+        if (rowId >= d) {
+            return;
+        }
+        int localId = context.localIdx;
+        int warpCount = localWorkGroupSize / 32;
+        float[] warpSums = context.allocateFloatLocalArray(warpCount);
+
+        int blocksPerRow = (n + QK - 1) / QK;
+        int rowBlockOffset = rowId * blocksPerRow;
+
+        float partialSum = 0.0f;
+        for (int block = localId; block < blocksPerRow; block += localWorkGroupSize) {
+            int blockByteOffset = (rowBlockOffset + block) * BLOCK_BYTES;
+            float weightScale = w.getHalfFloat(blockByteOffset).getFloat32();
+            float weightMin = w.getHalfFloat(blockByteOffset + 2).getFloat32();
+            int quantBase = block * (QK / 4);
+
+            int dot = 0;
+            for (int g = 0; g < 4; g++) {
+                int b0 = w.get(blockByteOffset + QS_OFFSET + g * 4) & 0xFF;
+                int b1 = w.get(blockByteOffset + QS_OFFSET + g * 4 + 1) & 0xFF;
+                int b2 = w.get(blockByteOffset + QS_OFFSET + g * 4 + 2) & 0xFF;
+                int b3 = w.get(blockByteOffset + QS_OFFSET + g * 4 + 3) & 0xFF;
+                dot =
+                        QuantizationUtils.dp4a_packed(
+                                (b0 & 0xF)
+                                        | ((b1 & 0xF) << 8)
+                                        | ((b2 & 0xF) << 16)
+                                        | ((b3 & 0xF) << 24),
+                                xQuants.get(quantBase + g),
+                                dot);
+                dot =
+                        QuantizationUtils.dp4a_packed(
+                                ((b0 >> 4) & 0xF)
+                                        | (((b1 >> 4) & 0xF) << 8)
+                                        | (((b2 >> 4) & 0xF) << 16)
+                                        | (((b3 >> 4) & 0xF) << 24),
+                                xQuants.get(quantBase + 4 + g),
+                                dot);
+            }
+            partialSum +=
+                    xScales.get(block) * (weightScale * dot + weightMin * xSums.get(block));
+        }
+
+        partialSum += context.simdShuffleDown(partialSum, 16);
+        partialSum += context.simdShuffleDown(partialSum, 8);
+        partialSum += context.simdShuffleDown(partialSum, 4);
+        partialSum += context.simdShuffleDown(partialSum, 2);
+        partialSum += context.simdShuffleDown(partialSum, 1);
+
+        if ((localId & 31) == 0) {
+            warpSums[localId >> 5] = partialSum;
+        }
+        context.localBarrier();
+
+        if (localId == 0) {
+            float total = 0.0f;
+            for (int warp = 0; warp < warpCount; warp++) {
+                total += warpSums[warp];
+            }
+            hb.set(rowId, hb.get(rowId) + total);
+        }
     }
 
     /** {@code output[row] = w[row]·x}. */

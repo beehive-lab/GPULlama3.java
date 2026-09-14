@@ -195,6 +195,14 @@ public class Qwen35FFNLayers
                                 || (residual
                                         && x == state.workspace.wrapHb
                                         && hiddenActivationQuantized));
+        // ffn_down where this family holds it as Q4_1 -- the first eight blocks. The activation is
+        // the one ffn_down_quantize already produced for the Q4_0 layers, so the condition is the
+        // Q4_0 residual case's with the representation changed; the weights stay native Q4_1.
+        boolean packedQ4_1 =
+                w.dataType() == DataType.Q4_1
+                        && residual
+                        && x == state.workspace.wrapHb
+                        && hiddenActivationQuantized;
         // The Q5_K readout projection, computed once and used both to record the dispatch and to
         // choose the kernel below: a flag that decided one and not the other would make the
         // inventory describe a plan that was not built. Eligibility is carried entirely by
@@ -206,7 +214,8 @@ public class Qwen35FFNLayers
                         && residual
                         && x == state.workspace.wrapSsmOut
                         && ssmActivationQuantized;
-        dispatches.add(new Dispatch(layer, task, role, w.dataType(), packed || packedQ5_K));
+        dispatches.add(
+                new Dispatch(layer, task, role, w.dataType(), packed || packedQ5_K || packedQ4_1));
         switch (w.dataType()) {
             case F32 -> {
                 if (residual) {
@@ -328,7 +337,25 @@ public class Qwen35FFNLayers
                 }
             }
             case Q4_1 -> {
-                if (residual) {
+                if (packedQ4_1) {
+                    // The same contract the Q4_0 branch above uses: the activation this projection
+                    // reads was quantized into the shared scratch by ffn_down_quantize, which
+                    // already runs for every layer. Weights stay native Q4_1; only the activation
+                    // changed representation.
+                    graph.task(
+                            task,
+                            TransformerComputeKernelsQ4_1
+                                    ::matrixVectorGenericWithResidualQ4_1DP4A,
+                            context,
+                            state.workspace.wrapXbQuants,
+                            state.workspace.wrapXbScales,
+                            state.workspace.wrapXbSums,
+                            out,
+                            w.asByteArray(),
+                            n,
+                            d,
+                            MATVEC_LOCAL);
+                } else if (residual) {
                     graph.task(
                             task,
                             TransformerComputeKernelsQ4_1::matrixVectorGenericWithResidualQ4_1,
