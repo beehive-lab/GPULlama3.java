@@ -773,6 +773,35 @@ public class Qwen35FFNLayers
     }
 
     /** {@code xb = weight ⊙ rms(x)} — the reduction, its finalize where needed, and the apply. */
+    // @formatter:off
+    /**
+     * Whether the gated norm takes a workgroup per head rather than a lane per head.
+     *
+     * <p>A property of the head's width, not a user choice and not a backend one: the wide kernel
+     * reduces through a shared tree, which halves a power-of-two width at every step, and its
+     * local work size is that width. Anything else keeps the per-head lane. This model's value
+     * head is 128 wide.
+     */
+    // @formatter:on
+    // @formatter:off
+    /**
+     * Whether the delta-net L2 norm takes a workgroup per head rather than a lane per head.
+     *
+     * <p>The same condition {@link #gatedNormIsWide} applies, read on the <b>key</b> head's width
+     * because that is what the L2 norm reduces over: the shared tree halves a power-of-two width
+     * at every step and its local work size is that width. This model's key head is 128 wide.
+     */
+    // @formatter:on
+    private boolean l2NormIsWide() {
+        int headDim = config.headKeyDim();
+        return headDim > 0 && (headDim & (headDim - 1)) == 0;
+    }
+
+    private boolean gatedNormIsWide() {
+        int headDim = config.headValueDim();
+        return headDim > 0 && (headDim & (headDim - 1)) == 0;
+    }
+
     private void normalize(
             TaskGraph layer,
             String reduce,
@@ -1264,22 +1293,42 @@ public class Qwen35FFNLayers
                 keyDim,
                 valueDim);
 
-        layer.task(
-                "ssm_l2norm_q",
-                Qwen35DeltaNetKernels::l2NormPerHead,
-                context,
-                qwen35State.workspace.wrapSsmQ,
-                config.numberOfKeyHeads(),
-                headK,
-                config.rmsNormEps());
-        layer.task(
-                "ssm_l2norm_k",
-                Qwen35DeltaNetKernels::l2NormPerHead,
-                context,
-                qwen35State.workspace.wrapSsmK,
-                config.numberOfKeyHeads(),
-                headK,
-                config.rmsNormEps());
+        if (l2NormIsWide()) {
+            // A workgroup per key head and a lane per element. Same equation, same epsilon
+            // placement; the sum of squares becomes a shared tree, which is why this is not
+            // bit-identical to the per-head lane.
+            layer.task(
+                    "ssm_l2norm_q",
+                    Qwen35DeltaNetKernels::l2NormPerHeadWide,
+                    context,
+                    qwen35State.workspace.wrapSsmQ,
+                    headK,
+                    config.rmsNormEps());
+            layer.task(
+                    "ssm_l2norm_k",
+                    Qwen35DeltaNetKernels::l2NormPerHeadWide,
+                    context,
+                    qwen35State.workspace.wrapSsmK,
+                    headK,
+                    config.rmsNormEps());
+        } else {
+            layer.task(
+                    "ssm_l2norm_q",
+                    Qwen35DeltaNetKernels::l2NormPerHead,
+                    context,
+                    qwen35State.workspace.wrapSsmQ,
+                    config.numberOfKeyHeads(),
+                    headK,
+                    config.rmsNormEps());
+            layer.task(
+                    "ssm_l2norm_k",
+                    Qwen35DeltaNetKernels::l2NormPerHead,
+                    context,
+                    qwen35State.workspace.wrapSsmK,
+                    config.numberOfKeyHeads(),
+                    headK,
+                    config.rmsNormEps());
+        }
         layer.task(
                 "ssm_scale_q",
                 TransformerComputeKernels::scaleInPlace,
@@ -1304,16 +1353,31 @@ public class Qwen35FFNLayers
                 headV,
                 recurrent * config.deltaNetStateSize());
 
-        layer.task(
-                "ssm_gated_norm",
-                Qwen35DeltaNetKernels::gatedNormPerHead,
-                context,
-                qwen35State.workspace.wrapSsmOut,
-                qwen35State.workspace.wrapSsmZ,
-                require(weights.ssmNorm, layerIndex, "ssm_norm").asFloatArray(),
-                valueHeads,
-                headV,
-                config.rmsNormEps());
+        if (gatedNormIsWide()) {
+            // A workgroup per head and a lane per element. Same equation, same gate position,
+            // same epsilon; the sum of squares becomes a shared tree, which is why this is not
+            // bit-identical to the per-head lane below.
+            layer.task(
+                    "ssm_gated_norm",
+                    Qwen35DeltaNetKernels::gatedNormPerHeadWide,
+                    context,
+                    qwen35State.workspace.wrapSsmOut,
+                    qwen35State.workspace.wrapSsmZ,
+                    require(weights.ssmNorm, layerIndex, "ssm_norm").asFloatArray(),
+                    headV,
+                    config.rmsNormEps());
+        } else {
+            layer.task(
+                    "ssm_gated_norm",
+                    Qwen35DeltaNetKernels::gatedNormPerHead,
+                    context,
+                    qwen35State.workspace.wrapSsmOut,
+                    qwen35State.workspace.wrapSsmZ,
+                    require(weights.ssmNorm, layerIndex, "ssm_norm").asFloatArray(),
+                    valueHeads,
+                    headV,
+                    config.rmsNormEps());
+        }
 
         ssmActivationQuantized = false;
         if (DP4A && packedScratchHolds(config.deltaNetValueDim())) {
@@ -1551,6 +1615,17 @@ public class Qwen35FFNLayers
         WorkerGrid valueHeads =
                 WorkerGridFactory.genericWorker(
                         config.numberOfValueHeads(), config.numberOfValueHeads());
+        // A workgroup per key head, a lane per element of it, on the same terms as the value
+        // head's grid below.
+        WorkerGrid l2NormWide =
+                WorkerGridFactory.genericWorker(
+                        config.numberOfKeyHeads() * config.headKeyDim(), config.headKeyDim());
+        // A workgroup per value head, a lane per element of it, where the head's width allows
+        // the shared tree; otherwise the one-lane-per-head grid below is what is registered.
+        WorkerGrid gatedNormWide =
+                WorkerGridFactory.genericWorker(
+                        config.numberOfValueHeads() * config.headValueDim(),
+                        config.headValueDim());
         WorkerGrid deltaRule =
                 WorkerGridFactory.genericWorker(
                         config.numberOfValueHeads() * config.headValueDim(), ELEMENTWISE_LOCAL);
@@ -1600,11 +1675,14 @@ public class Qwen35FFNLayers
                 scheduler.addWorkerGrid(prefix + "ssm_conv", convDim);
                 scheduler.addWorkerGrid(prefix + "ssm_conv_silu", convDim);
                 scheduler.addWorkerGrid(prefix + "ssm_split_qkv", convDim);
-                scheduler.addWorkerGrid(prefix + "ssm_l2norm_q", keyHeads);
-                scheduler.addWorkerGrid(prefix + "ssm_l2norm_k", keyHeads);
+                scheduler.addWorkerGrid(
+                        prefix + "ssm_l2norm_q", l2NormIsWide() ? l2NormWide : keyHeads);
+                scheduler.addWorkerGrid(
+                        prefix + "ssm_l2norm_k", l2NormIsWide() ? l2NormWide : keyHeads);
                 scheduler.addWorkerGrid(prefix + "ssm_scale_q", keyDim);
                 scheduler.addWorkerGrid(prefix + "ssm_delta_rule", deltaRule);
-                scheduler.addWorkerGrid(prefix + "ssm_gated_norm", valueHeads);
+                scheduler.addWorkerGrid(
+                        prefix + "ssm_gated_norm", gatedNormIsWide() ? gatedNormWide : valueHeads);
                 scheduler.addWorkerGrid(prefix + "ssm_out_proj", matVecWorker(config.dim()));
             } else {
                 scheduler.addWorkerGrid(

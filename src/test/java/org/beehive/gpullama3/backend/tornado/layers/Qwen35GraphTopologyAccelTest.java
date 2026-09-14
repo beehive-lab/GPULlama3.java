@@ -249,6 +249,54 @@ public class Qwen35GraphTopologyAccelTest {
                                 System.getProperty("llama.qwen35.packedIntegerDot", "true"));
     }
 
+    // @formatter:off
+    /**
+     * The delta-net norms are dispatched a workgroup per head, not a lane per head.
+     *
+     * <p>Both reductions were registered one thread per head — sixteen threads for the whole L2
+     * norm, forty-eight for the gated norm — and the fix is a grid, so a grid is what this pins.
+     * The task names did not change when the kernels did, which is exactly why asserting on names
+     * would not have caught a silent revert to the narrow dispatch.
+     *
+     * <p>Read off the plan the engine actually builds, not recomputed from the config: global work
+     * must be the whole activation and local work the head's width.
+     */
+    // @formatter:on
+    @Test
+    public void theDeltaNetNormsOwnAHeadPerWorkgroup() {
+        Qwen35Configuration config = config();
+        GridScheduler scheduler = new GridScheduler();
+        build(config).updateGridScheduler(scheduler);
+
+        int keyHeads = config.numberOfKeyHeads();
+        int keyDim = config.headKeyDim();
+        int valueHeads = config.numberOfValueHeads();
+        int valueDim = config.headValueDim();
+        // The widths this family has, and the condition the shared tree needs. If either stops
+        // being a power of two the engine falls back and this expectation is the wrong one.
+        assertEquals("the key head's width", 0, keyDim & (keyDim - 1));
+        assertEquals("the value head's width", 0, valueDim & (valueDim - 1));
+
+        int recurrent = -1;
+        for (int layer = 0; layer < TRUNK_LAYERS; layer++) {
+            if (config.isRecurrentLayer(layer)) {
+                recurrent = layer;
+                break;
+            }
+        }
+        assertTrue("no recurrent layer to inspect", recurrent >= 0);
+        String prefix = "layer_" + recurrent + ".";
+        for (String task : new String[] {"ssm_l2norm_q", "ssm_l2norm_k"}) {
+            WorkerGrid grid = scheduler.get(prefix + task);
+            assertEquals(task + " global work", keyHeads * keyDim, (int) grid.getGlobalWork()[0]);
+            assertEquals(task + " local work", keyDim, (int) grid.getLocalWork()[0]);
+        }
+        WorkerGrid gated = scheduler.get(prefix + "ssm_gated_norm");
+        assertEquals(
+                "ssm_gated_norm global work", valueHeads * valueDim, (int) gated.getGlobalWork()[0]);
+        assertEquals("ssm_gated_norm local work", valueDim, (int) gated.getLocalWork()[0]);
+    }
+
     private static List<String> taskNames(GridScheduler scheduler, int layer) {
         List<String> names = new ArrayList<>();
         for (String key : scheduler.keySet()) {

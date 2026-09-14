@@ -247,6 +247,134 @@ public class Qwen35KernelAccelTest {
         assertClose("l2", hostL2, dkeys);
     }
 
+    // @formatter:off
+    /**
+     * The wide L2 norm — a workgroup per key head, a lane per element — against the same CPU
+     * reference the per-head lane is held to, at the production geometry of 16 heads of 128.
+     *
+     * <p>It is the dispatched kernel wherever the key head's width is a power of two, which is
+     * this family's case, so the per-head lane no longer covers what decode runs. The sum of
+     * squares is a shared tree here rather than a left fold, so this is checked against the
+     * reference and not against the other kernel's bits.
+     *
+     * <p>The epsilon clamps the norm — {@code 1 / max(sqrt(ss), eps)} — rather than sitting under
+     * the root, which is not the gated norm's convention, so the inputs cover what that
+     * distinction makes reachable: a head of exact zeros, a head far below the clamp, a head
+     * sitting on it, a head whose elements cancel in sum but not in square, a single nonzero
+     * element, and a head spanning twelve decades.
+     */
+    // @formatter:on
+    @Test
+    public void theWideL2NormRunsOnTheDevice() throws Exception {
+        float[] keys = noise(KEY_DIM, 1.0f);
+        for (int i = 0; i < STATE_DIM; i++) {
+            keys[i] = 0.0f;                                              // head 0: exact zeros
+            keys[STATE_DIM + i] = (i % 2 == 0 ? 1 : -1) * 1.0e-24f;      // head 1: below the clamp
+            keys[2 * STATE_DIM + i] = 8.8e-8f;                           // head 2: on the clamp
+            keys[3 * STATE_DIM + i] = (i % 2 == 0) ? 1.0f : -1.0f;       // head 3: cancellation
+            keys[4 * STATE_DIM + i] = i == 77 ? 3.0e4f : 1.0e-7f;        // head 4: one large
+            keys[5 * STATE_DIM + i] =
+                    (float) ((i % 2 == 0 ? 1 : -1) * Math.pow(10.0, (i % 13) - 6));
+            keys[6 * STATE_DIM + i] = i == 0 ? 2.5f : 0.0f;              // head 6: one nonzero
+        }
+
+        FloatTensor host = new ArrayFloatTensor(keys.clone());
+        for (int head = 0; head < KEY_HEADS; head++) {
+            CpuOperations.l2Norm(host, head * STATE_DIM, STATE_DIM, EPS);
+        }
+
+        FloatArray dkeys = toDevice(keys);
+        TaskGraph graph =
+                new TaskGraph("l2Wide")
+                        .transferToDevice(DataTransferMode.EVERY_EXECUTION, dkeys)
+                        .task(
+                                "k",
+                                Qwen35DeltaNetKernels::l2NormPerHeadWide,
+                                new KernelContext(),
+                                dkeys,
+                                STATE_DIM,
+                                EPS)
+                        .transferToHost(DataTransferMode.EVERY_EXECUTION, dkeys);
+        run(graph, "k", KEY_DIM, STATE_DIM);
+        assertClose("wide l2 norm", host, dkeys);
+        for (int i = 0; i < STATE_DIM; i++) {
+            assertEquals("the zero head must stay zero", 0.0f, dkeys.get(i), 0.0f);
+        }
+        for (int i = 0; i < KEY_DIM; i++) {
+            assertTrue("element " + i + " is not finite", Float.isFinite(dkeys.get(i)));
+        }
+    }
+
+    // @formatter:off
+    /**
+     * The wide gated norm — a workgroup per head, a lane per element — against the same CPU
+     * reference the per-head lane is held to, at the production geometry of 48 heads of 128.
+     *
+     * <p>It is the dispatched kernel wherever the value head's width is a power of two, which is
+     * this family's case, so the per-head lane above no longer covers what decode runs. The sum
+     * of squares is a shared tree here rather than a left fold, so this is deliberately checked
+     * against the reference and not against the other kernel's bits.
+     *
+     * <p>The inputs carry what the mapping could get wrong and the ordinary noise above would
+     * not reach: a head of exact zeros, so the reduction bottoms out at the epsilon; a head whose
+     * values are near the bottom of the float range; a head with one large element among tiny
+     * ones; and gate values saturating the logistic at both ends, plus an exact zero.
+     */
+    // @formatter:on
+    @Test
+    public void theWideGatedNormRunsOnTheDevice() throws Exception {
+        float[] values = noise(VALUE_DIM, 1.0f);
+        float[] gate = noise(VALUE_DIM, 1.0f);
+        float[] weight = noise(STATE_DIM, 1.0f);
+        for (int i = 0; i < STATE_DIM; i++) {
+            values[i] = 0.0f;                                  // head 0: all zero
+            values[STATE_DIM + i] = (i % 2 == 0 ? 1 : -1) * 1.0e-21f;  // head 1: near zero
+            values[2 * STATE_DIM + i] = i == 63 ? 3.0e4f : 1.0e-7f;    // head 2: one large
+        }
+        for (int i = 0; i < VALUE_DIM; i++) {
+            int mode = i % 5;
+            if (mode == 0) {
+                gate[i] = 90.0f;
+            } else if (mode == 1) {
+                gate[i] = -90.0f;
+            } else if (mode == 2) {
+                gate[i] = 0.0f;
+            }
+        }
+
+        FloatTensor host = new ArrayFloatTensor(values.clone());
+        CpuOperations.gatedNorm(
+                host,
+                new ArrayFloatTensor(gate.clone()),
+                new ArrayFloatTensor(weight.clone()),
+                VALUE_HEADS,
+                STATE_DIM,
+                EPS);
+
+        FloatArray dvalues = toDevice(values);
+        FloatArray dgate = toDevice(gate);
+        FloatArray dweight = toDevice(weight);
+        TaskGraph graph =
+                new TaskGraph("gatedWide")
+                        .transferToDevice(
+                                DataTransferMode.EVERY_EXECUTION, dvalues, dgate, dweight)
+                        .task(
+                                "k",
+                                Qwen35DeltaNetKernels::gatedNormPerHeadWide,
+                                new KernelContext(),
+                                dvalues,
+                                dgate,
+                                dweight,
+                                STATE_DIM,
+                                EPS)
+                        .transferToHost(DataTransferMode.EVERY_EXECUTION, dvalues);
+        run(graph, "k", VALUE_DIM, STATE_DIM);
+        assertClose("wide gated norm", host, dvalues);
+        for (int i = 0; i < VALUE_DIM; i++) {
+            assertTrue("element " + i + " is not finite", Float.isFinite(dvalues.get(i)));
+        }
+    }
+
     @Test
     public void theDecayAndBetaRunOnTheDevice() throws Exception {
         float[] alpha = noise(VALUE_HEADS, 1.0f);

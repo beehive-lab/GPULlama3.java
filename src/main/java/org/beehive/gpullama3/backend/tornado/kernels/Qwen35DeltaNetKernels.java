@@ -146,6 +146,59 @@ public final class Qwen35DeltaNetKernels {
         }
     }
 
+    // @formatter:off
+    /**
+     * The L2 norm with a workgroup per head and a lane per element.
+     *
+     * <p>{@link #l2NormPerHead} gives one <b>thread</b> a whole head, so at this model's geometry
+     * — 16 key heads of 128 — the whole kernel is sixteen threads, half a warp, and each walks its
+     * head's 128 elements twice in series. This owns a head per workgroup instead: a lane loads
+     * its element once and keeps it, the sum of squares is a shared tree, and lane zero turns it
+     * into the reciprocal once for the others to read back.
+     *
+     * <p><b>The equation is the lane version's, including where the epsilon sits.</b> It is
+     * {@code 1 / max(sqrt(ss), eps)} — the epsilon clamps the norm itself and is not added under
+     * the root, and there is no division by the head width. That is not the gated norm's
+     * convention and the two must not be made to look alike. A head of exact zeros therefore
+     * takes {@code inv = 1/eps} and stays zero, as it does today.
+     *
+     * <p>What changes is the <b>order of the sum of squares</b>, a tree instead of a left fold, so
+     * this is not bit-identical to {@link #l2NormPerHead} and is not claimed to be.
+     *
+     * <p>The reduction is shared memory and a barrier — no subgroup shuffle — which is the
+     * primitive {@code rowDotShared} already uses on every backend. This kernel is therefore
+     * dispatched exactly where the lane version was, and no backend is added. It does require
+     * {@code headDim} to be a power of two and to equal the local work size; the caller keeps
+     * {@link #l2NormPerHead} for any geometry that is not.
+     */
+    // @formatter:on
+    public static void l2NormPerHeadWide(
+            KernelContext context, FloatArray values, int headDim, float eps) {
+        int head = context.groupIdx;
+        int lane = context.localIdx;
+        int index = head * headDim + lane;
+
+        float[] shared = context.allocateFloatLocalArray(headDim);
+
+        // Read once. The lane that writes this element is the lane that read it, so the in-place
+        // store below cannot race a read of the same address.
+        float v = values.get(index);
+        shared[lane] = v * v;
+        context.localBarrier();
+        for (int stride = headDim >> 1; stride > 0; stride >>= 1) {
+            if (lane < stride) {
+                shared[lane] = shared[lane] + shared[lane + stride];
+            }
+            context.localBarrier();
+        }
+        if (lane == 0) {
+            shared[0] = 1.0f / TornadoMath.max(TornadoMath.sqrt(shared[0]), eps);
+        }
+        context.localBarrier();
+
+        values.set(index, v * shared[0]);
+    }
+
     /** One lane per head. */
     public static void l2NormPerHead(
             KernelContext context, FloatArray values, int heads, int headDim, float eps) {
@@ -316,6 +369,73 @@ public final class Qwen35DeltaNetKernels {
             float silu = z / (1.0f + TornadoMath.exp(-z));
             values.set(base + i, weight.get(i) * (inv * values.get(base + i)) * silu);
         }
+    }
+
+    // @formatter:off
+    /**
+     * The gated norm with a workgroup per head and a lane per element.
+     *
+     * <p>{@link #gatedNormPerHead} gives one <b>thread</b> a whole head, so at this model's
+     * geometry — 48 value heads of 128 — the entire kernel is 48 threads in one workgroup, and it
+     * walks each head's 128 elements twice in series. Two things the generated code showed, rather
+     * than the source:
+     *
+     * <ul>
+     *   <li>the apply loop <b>re-loads</b> {@code values}, which the summing loop has already
+     *       read, so the activation is read twice;
+     *   <li>{@code inv} is written above the loop in the source and the backend <b>sinks it back
+     *       in</b>, so the divide, the add and the {@code rsqrt} run once per element rather than
+     *       once per head — 6144 reciprocal square roots a call where 48 are needed.
+     * </ul>
+     *
+     * <p>Both disappear with the mapping rather than with a rewrite of the arithmetic. A lane owns
+     * one element: it loads its value <b>once</b> and keeps it, the sum of squares is a shared
+     * tree over the workgroup, lane zero turns that into {@code inv} — once per head — and every
+     * lane reads it back through the same shared cell.
+     *
+     * <p>The equation, the gate's position in it, the epsilon and the in-place layout are
+     * unchanged: {@code weight[i] * (inv * v) * silu(z)}, associated exactly as before. What moves
+     * is the <b>order of the sum of squares</b>, a tree instead of a left fold, so this is not
+     * bit-identical to {@link #gatedNormPerHead} and is not claimed to be.
+     *
+     * <p>The tree is shared memory and a barrier, not a subgroup shuffle, so nothing here depends
+     * on the backend. It does require {@code headDim} to be a power of two and to equal the local
+     * work size; the caller keeps {@link #gatedNormPerHead} for any geometry that is not.
+     */
+    // @formatter:on
+    public static void gatedNormPerHeadWide(
+            KernelContext context,
+            FloatArray values,
+            FloatArray gate,
+            FloatArray weight,
+            int headDim,
+            float eps) {
+        int head = context.groupIdx;
+        int lane = context.localIdx;
+        int index = head * headDim + lane;
+
+        float[] shared = context.allocateFloatLocalArray(headDim);
+
+        // Read once. The lane that writes this element is the lane that read it, so the in-place
+        // store below cannot race a read of the same address.
+        float v = values.get(index);
+        shared[lane] = v * v;
+        context.localBarrier();
+        for (int stride = headDim >> 1; stride > 0; stride >>= 1) {
+            if (lane < stride) {
+                shared[lane] = shared[lane] + shared[lane + stride];
+            }
+            context.localBarrier();
+        }
+        if (lane == 0) {
+            shared[0] = 1.0f / TornadoMath.sqrt(shared[0] / headDim + eps);
+        }
+        context.localBarrier();
+        float inv = shared[0];
+
+        float z = gate.get(index);
+        float silu = z / (1.0f + TornadoMath.exp(-z));
+        values.set(index, weight.get(lane) * (inv * v) * silu);
     }
 
     /** One lane per head. */
