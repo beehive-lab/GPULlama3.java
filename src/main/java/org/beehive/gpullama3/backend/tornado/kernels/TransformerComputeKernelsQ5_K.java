@@ -504,25 +504,29 @@ public final class TransformerComputeKernelsQ5_K {
         int dot = 0;
         for (int g = 0; g < 8; g++) {
             int t = g * 4;
-            int s0 = w.get(qsBase + t) & 0xFF;
-            int s1 = w.get(qsBase + t + 1) & 0xFF;
-            int s2 = w.get(qsBase + t + 2) & 0xFF;
-            int s3 = w.get(qsBase + t + 3) & 0xFF;
-            int q0 = s0 & 0xF;
-            int q1 = s1 & 0xF;
-            int q2 = s2 & 0xF;
-            int q3 = s3 & 0xF;
+            // Both planes are read two bytes at a time rather than one, the way the Q4_0 kernels
+            // read their nibbles. getHalfFloatValue() is a bit-preserving load here -- these are
+            // quant bytes, never a number -- and each half is masked to sixteen bits before it is
+            // shifted so the signed short cannot sign-extend. Q5_K needs no alignment argument
+            // beyond the layout: a super-block is 176 bytes (a multiple of sixteen), qs starts at
+            // 48 and steps by 32, qh starts at 16, and t is a multiple of four, so every one of
+            // these addresses is four-byte aligned.
+            int lowBits = w.getHalfFloat(qsBase + t).getHalfFloatValue() & 0xFFFF;
+            int highBits = w.getHalfFloat(qsBase + t + 2).getHalfFloatValue() & 0xFFFF;
+            int qs = lowBits | (highBits << 16);
+            // The same nibble for all four weights, taken across the word instead of per byte.
+            int packedWeights = qs & 0x0F0F0F0F;
             if (highNibble == 1) {
-                q0 = (s0 >> 4) & 0xF;
-                q1 = (s1 >> 4) & 0xF;
-                q2 = (s2 >> 4) & 0xF;
-                q3 = (s3 >> 4) & 0xF;
+                packedWeights = (qs >>> 4) & 0x0F0F0F0F;
             }
-            q0 += ((w.get(qhBase + t) & 0xFF) >> bitShift & 1) * 16;
-            q1 += ((w.get(qhBase + t + 1) & 0xFF) >> bitShift & 1) * 16;
-            q2 += ((w.get(qhBase + t + 2) & 0xFF) >> bitShift & 1) * 16;
-            q3 += ((w.get(qhBase + t + 3) & 0xFF) >> bitShift & 1) * 16;
-            int packedWeights = q0 | (q1 << 8) | (q2 << 16) | (q3 << 24);
+            int hLowBits = w.getHalfFloat(qhBase + t).getHalfFloatValue() & 0xFFFF;
+            int hHighBits = w.getHalfFloat(qhBase + t + 2).getHalfFloatValue() & 0xFFFF;
+            int qh = hLowBits | (hHighBits << 16);
+            // bitShift is at most seven, so shifting the whole word moves each byte's selected
+            // bit to that byte's bit zero; the mask discards what crosses in from the byte above.
+            // The nibbles are at most fifteen, so setting bit four cannot carry and the or is the
+            // add the byte-wise form wrote.
+            packedWeights |= ((qh >>> bitShift) & 0x01010101) << 4;
             dot = QuantizationUtils.dp4a_packed(packedWeights, xQuants.get(quantBase + g), dot);
         }
 

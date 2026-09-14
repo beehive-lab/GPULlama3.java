@@ -284,18 +284,24 @@ public final class TransformerComputeKernelsQ4_0 {
 
             int dot = 0;
             for (int g = 0; g < 4; g++) {
-                int b0 = w.get(blockByteOffset + QS_OFFSET + g * 4) & 0xFF;
-                int b1 = w.get(blockByteOffset + QS_OFFSET + g * 4 + 1) & 0xFF;
-                int b2 = w.get(blockByteOffset + QS_OFFSET + g * 4 + 2) & 0xFF;
-                int b3 = w.get(blockByteOffset + QS_OFFSET + g * 4 + 3) & 0xFF;
-                int low = (b0 & 0xF) | ((b1 & 0xF) << 8) | ((b2 & 0xF) << 16) | ((b3 & 0xF) << 24);
-                int high =
-                        ((b0 >> 4) & 0xF)
-                                | (((b1 >> 4) & 0xF) << 8)
-                                | (((b2 >> 4) & 0xF) << 16)
-                                | (((b3 >> 4) & 0xF) << 24);
-                dot = QuantizationUtils.dp4a_packed(low, xQuants.get(quantBase + g), dot);
-                dot = QuantizationUtils.dp4a_packed(high, xQuants.get(quantBase + 4 + g), dot);
+                // The paired raw-bit read the fused gate/up and the residual form already use:
+                // four packed nibble bytes as two sixteen-bit words, each masked to sixteen bits
+                // before it is shifted so the signed short cannot sign-extend.
+                // getHalfFloatValue() is a bit-preserving load here -- these are quant bytes,
+                // never a number. blockByteOffset is a multiple of eighteen and QS_OFFSET is two,
+                // so the offset is always even, which is what the pair read needs; only every
+                // other Q4_0 quant run is four-byte aligned, which is why this reads pairs.
+                int quantOffset = blockByteOffset + QS_OFFSET + g * 4;
+                int packed =
+                        (w.getHalfFloat(quantOffset).getHalfFloatValue() & 0xFFFF)
+                                | ((w.getHalfFloat(quantOffset + 2).getHalfFloatValue() & 0xFFFF)
+                                        << 16);
+                dot =
+                        QuantizationUtils.dp4a_packed(
+                                packed & 0x0F0F0F0F, xQuants.get(quantBase + g), dot);
+                dot =
+                        QuantizationUtils.dp4a_packed(
+                                (packed >>> 4) & 0x0F0F0F0F, xQuants.get(quantBase + 4 + g), dot);
             }
             partialSum += weightScale * xScales.get(block) * (dot - 8 * xSums.get(block));
         }
@@ -533,26 +539,24 @@ public final class TransformerComputeKernelsQ4_0 {
 
             int dot = 0;
             for (int g = 0; g < 4; g++) {
-                int b0 = w.get(blockByteOffset + QS_OFFSET + g * 4) & 0xFF;
-                int b1 = w.get(blockByteOffset + QS_OFFSET + g * 4 + 1) & 0xFF;
-                int b2 = w.get(blockByteOffset + QS_OFFSET + g * 4 + 2) & 0xFF;
-                int b3 = w.get(blockByteOffset + QS_OFFSET + g * 4 + 3) & 0xFF;
+                // The paired raw-bit read fusedFFNGateUpSiLUQ4_0DP4A uses, for one weight matrix
+                // rather than two: four packed nibble bytes as two sixteen-bit words, each masked
+                // to sixteen bits before it is shifted so the signed short cannot sign-extend.
+                // getHalfFloatValue() is a bit-preserving load here -- these are quant bytes, never
+                // a number. blockByteOffset is a multiple of eighteen and QS_OFFSET is two, so the
+                // offset is always even, which is what the pair read needs; only every other Q4_0
+                // quant run is four-byte aligned, which is why this reads pairs.
+                int quantOffset = blockByteOffset + QS_OFFSET + g * 4;
+                int packed =
+                        (w.getHalfFloat(quantOffset).getHalfFloatValue() & 0xFFFF)
+                                | ((w.getHalfFloat(quantOffset + 2).getHalfFloatValue() & 0xFFFF)
+                                        << 16);
                 dot =
                         QuantizationUtils.dp4a_packed(
-                                (b0 & 0xF)
-                                        | ((b1 & 0xF) << 8)
-                                        | ((b2 & 0xF) << 16)
-                                        | ((b3 & 0xF) << 24),
-                                xQuants.get(quantBase + g),
-                                dot);
+                                packed & 0x0F0F0F0F, xQuants.get(quantBase + g), dot);
                 dot =
                         QuantizationUtils.dp4a_packed(
-                                ((b0 >> 4) & 0xF)
-                                        | (((b1 >> 4) & 0xF) << 8)
-                                        | (((b2 >> 4) & 0xF) << 16)
-                                        | (((b3 >> 4) & 0xF) << 24),
-                                xQuants.get(quantBase + 4 + g),
-                                dot);
+                                (packed >>> 4) & 0x0F0F0F0F, xQuants.get(quantBase + 4 + g), dot);
             }
             partialSum += weightScale * xScales.get(block) * (dot - 8 * xSums.get(block));
         }
@@ -636,48 +640,34 @@ public final class TransformerComputeKernelsQ4_0 {
             int gateDot = 0;
             int upDot = 0;
             for (int g = 0; g < 4; g++) {
-                int g0 = w1.get(blockByteOffset + QS_OFFSET + g * 4) & 0xFF;
-                int g1 = w1.get(blockByteOffset + QS_OFFSET + g * 4 + 1) & 0xFF;
-                int g2 = w1.get(blockByteOffset + QS_OFFSET + g * 4 + 2) & 0xFF;
-                int g3 = w1.get(blockByteOffset + QS_OFFSET + g * 4 + 3) & 0xFF;
-                int u0 = w3.get(blockByteOffset + QS_OFFSET + g * 4) & 0xFF;
-                int u1 = w3.get(blockByteOffset + QS_OFFSET + g * 4 + 1) & 0xFF;
-                int u2 = w3.get(blockByteOffset + QS_OFFSET + g * 4 + 2) & 0xFF;
-                int u3 = w3.get(blockByteOffset + QS_OFFSET + g * 4 + 3) & 0xFF;
+                // Four packed nibble bytes read as two sixteen-bit words rather than four single
+                // bytes. getHalfFloatValue() is used here purely as a bit-preserving load -- these
+                // are quant bytes, never a number -- and each half is masked to sixteen bits before
+                // it is shifted, so the signed short cannot sign-extend into the packed word. The
+                // offset is blockByteOffset + 2 + 4g with blockByteOffset a multiple of eighteen,
+                // so it is always even; a Q4_0 quant run is two-byte aligned and only half of them
+                // are four-byte aligned, which is why this reads pairs rather than one word.
+                int quantOffset = blockByteOffset + QS_OFFSET + g * 4;
+                int gateWord =
+                        (w1.getHalfFloat(quantOffset).getHalfFloatValue() & 0xFFFF)
+                                | ((w1.getHalfFloat(quantOffset + 2).getHalfFloatValue() & 0xFFFF)
+                                        << 16);
+                int upWord =
+                        (w3.getHalfFloat(quantOffset).getHalfFloatValue() & 0xFFFF)
+                                | ((w3.getHalfFloat(quantOffset + 2).getHalfFloatValue() & 0xFFFF)
+                                        << 16);
                 int low = xQuants.get(quantBase + g);
                 int high = xQuants.get(quantBase + 4 + g);
+                // The same four operands the byte-wise packing produced: the low nibble of each of
+                // the four bytes, then the high nibble of each, in the same DP4A pairing and order.
+                gateDot =
+                        QuantizationUtils.dp4a_packed(gateWord & 0x0F0F0F0F, low, gateDot);
                 gateDot =
                         QuantizationUtils.dp4a_packed(
-                                (g0 & 0xF)
-                                        | ((g1 & 0xF) << 8)
-                                        | ((g2 & 0xF) << 16)
-                                        | ((g3 & 0xF) << 24),
-                                low,
-                                gateDot);
-                gateDot =
-                        QuantizationUtils.dp4a_packed(
-                                ((g0 >> 4) & 0xF)
-                                        | (((g1 >> 4) & 0xF) << 8)
-                                        | (((g2 >> 4) & 0xF) << 16)
-                                        | (((g3 >> 4) & 0xF) << 24),
-                                high,
-                                gateDot);
+                                (gateWord >>> 4) & 0x0F0F0F0F, high, gateDot);
+                upDot = QuantizationUtils.dp4a_packed(upWord & 0x0F0F0F0F, low, upDot);
                 upDot =
-                        QuantizationUtils.dp4a_packed(
-                                (u0 & 0xF)
-                                        | ((u1 & 0xF) << 8)
-                                        | ((u2 & 0xF) << 16)
-                                        | ((u3 & 0xF) << 24),
-                                low,
-                                upDot);
-                upDot =
-                        QuantizationUtils.dp4a_packed(
-                                ((u0 >> 4) & 0xF)
-                                        | (((u1 >> 4) & 0xF) << 8)
-                                        | (((u2 >> 4) & 0xF) << 16)
-                                        | (((u3 >> 4) & 0xF) << 24),
-                                high,
-                                upDot);
+                        QuantizationUtils.dp4a_packed((upWord >>> 4) & 0x0F0F0F0F, high, upDot);
             }
             gate += gateScale * activationScale * (gateDot - correction);
             up += upScale * activationScale * (upDot - correction);
