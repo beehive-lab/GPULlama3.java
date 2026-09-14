@@ -225,6 +225,98 @@ public final class TransformerComputeKernelsQ4_0 {
 
     // @formatter:off
     /**
+     * The RMS-norm apply and the block quantization above it, in one kernel.
+     *
+     * <p>{@code TransformerComputeKernelsLayered.reductionOneBlock2WithLayer} followed by {@link
+     * #quantizeActivationQ8Blocks} over the same activation, which is what every decode layer
+     * dispatches twice — once for the attention norm's output and once for the feed-forward's.
+     * The apply is <b>elementwise</b> despite its name ({@code xb[i] = weight[i] * (ss * x[i])},
+     * with {@code ss} the scale the reduce already wrote), and the quantization's workgroup owns
+     * exactly the 32 consecutive elements its own lanes would have normalized. So each lane
+     * computes its element instead of reading it back, and <b>no synchronization crosses a
+     * workgroup</b> — the reduce that does span the row stays the separate task it was.
+     *
+     * <p>{@code xb} is still written. It is not dead: the F32 {@code ssm_alpha} and {@code
+     * ssm_beta} projections read it directly, as does every non-packed projection. What the
+     * fusion removes is the second launch and the read-back of {@code xb}, not the store.
+     *
+     * <p>Same arithmetic, in the same order, so the result is bit-identical: {@code weight * (ss *
+     * x)} is a product of products with no addition, so there is no fused multiply-add for the
+     * compiler to contract differently, and the value a lane computes is the one the separate
+     * apply would have stored and the quantization read back.
+     *
+     * @param xb the normalized activation, still written for its other readers
+     * @param x the residual stream
+     * @param rmsWeights the norm's per-element weights
+     * @param temp the reduce's output; {@code temp[0]} is the scale
+     * @param quants four quantized activations per int, in element order
+     * @param scales one per block
+     * @param sums the sum of each block's quantized activations
+     */
+    // @formatter:on
+    public static void rmsApplyAndQuantizeActivationQ8Blocks(
+            KernelContext context,
+            FloatArray xb,
+            FloatArray x,
+            FloatArray rmsWeights,
+            FloatArray temp,
+            IntArray quants,
+            FloatArray scales,
+            IntArray sums) {
+        int block = context.groupIdx;
+        int lane = context.localIdx;
+        int base = block * QK;
+        int index = base + lane;
+
+        float[] shared = context.allocateFloatLocalArray(QK);
+        int[] sharedQuants = context.allocateIntLocalArray(QK);
+
+        float ss = temp.get(0);
+        float value = rmsWeights.get(index) * (ss * x.get(index));
+        xb.set(index, value);
+
+        shared[lane] = TornadoMath.abs(value);
+        context.localBarrier();
+        for (int stride = QK / 2; stride > 0; stride >>= 1) {
+            if (lane < stride) {
+                shared[lane] = TornadoMath.max(shared[lane], shared[lane + stride]);
+            }
+            context.localBarrier();
+        }
+        float maxAbs = shared[0];
+        context.localBarrier();
+
+        float inverse = maxAbs > 0.0f ? 127.0f / maxAbs : 0.0f;
+        float scaled = value * inverse;
+        int q = (int) (scaled + (scaled >= 0.0f ? 0.5f : -0.5f));
+        q = TornadoMath.min(127, TornadoMath.max(-127, q));
+        sharedQuants[lane] = q;
+        shared[lane] = q;
+        context.localBarrier();
+
+        if (lane < QK / 4) {
+            int packed =
+                    (sharedQuants[lane * 4] & 0xFF)
+                            | ((sharedQuants[lane * 4 + 1] & 0xFF) << 8)
+                            | ((sharedQuants[lane * 4 + 2] & 0xFF) << 16)
+                            | ((sharedQuants[lane * 4 + 3] & 0xFF) << 24);
+            quants.set(block * (QK / 4) + lane, packed);
+        }
+
+        for (int stride = QK / 2; stride > 0; stride >>= 1) {
+            if (lane < stride) {
+                shared[lane] += shared[lane + stride];
+            }
+            context.localBarrier();
+        }
+        if (lane == 0) {
+            scales.set(block, maxAbs / 127.0f);
+            sums.set(block, (int) shared[0]);
+        }
+    }
+
+    // @formatter:off
+    /**
      * {@code output[row] = w[row] · x} with the weights read as {@code Q4_0} and the dot product
      * done in packed integers.
      *

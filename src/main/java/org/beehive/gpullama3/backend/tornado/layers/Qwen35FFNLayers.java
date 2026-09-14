@@ -637,25 +637,17 @@ public class Qwen35FFNLayers
         transferLayerWeights(layer, layerIndex);
 
         // Input normalization, shared by both mixers: xb = attn_norm ⊙ rms(x).
+        // The apply carries the quantization every Q4_0 projection below reads, in one task,
+        // where the capability holds. Without it the apply is the plain elementwise one and
+        // nothing is quantized.
         normalize(
                 layer,
                 "attn_rms_reduce",
                 "attn_rms_finalize",
                 "attn_rms_apply",
                 qwen35State.workspace.temp,
-                require(weights.rms_att_weightLayered, layerIndex, "attn_norm"));
-
-        if (DP4A) {
-            // Once per branch, for every Q4_0 projection below that reads the normed activation.
-            layer.task(
-                    "xb_quantize",
-                    TransformerComputeKernelsQ4_0::quantizeActivationQ8Blocks,
-                    context,
-                    qwen35State.workspace.wrapXb,
-                    qwen35State.workspace.wrapXbQuants,
-                    qwen35State.workspace.wrapXbScales,
-                    qwen35State.workspace.wrapXbSums);
-        }
+                require(weights.rms_att_weightLayered, layerIndex, "attn_norm"),
+                DP4A);
         normedActivationQuantized = DP4A;
 
         if (config.isRecurrentLayer(layerIndex)) {
@@ -668,27 +660,20 @@ public class Qwen35FFNLayers
         // It writes over wrapXb, so whatever was quantized from it no longer describes it.
         normedActivationQuantized = false;
         ssmActivationQuantized = false;
+        // Its own quantization, of the feed-forward's own activation, carried by its own apply.
+        // The branch's quants describe the attention norm's output, which this is not. The
+        // scratch is the same three arrays: the branch's projections are all behind us in this
+        // graph, so the buffers are free, and a second set would cost memory to say the same
+        // thing.
         normalize(
                 layer,
                 "ffn_rms_reduce",
                 "ffn_rms_finalize",
                 "ffn_rms_apply",
                 qwen35State.workspace.tempFFN,
-                require(weights.rms_ffn_weightLayered, layerIndex, "post_attention_norm"));
-
+                require(weights.rms_ffn_weightLayered, layerIndex, "post_attention_norm"),
+                DP4A);
         if (DP4A) {
-            // Its own quantization, of the feed-forward's own activation. The branch's quants
-            // describe the attention norm's output, which this is not. The scratch is the same
-            // three arrays: the branch's projections are all behind us in this graph, so the
-            // buffers are free, and a second set would cost memory to say the same thing.
-            layer.task(
-                    "ffn_xb_quantize",
-                    TransformerComputeKernelsQ4_0::quantizeActivationQ8Blocks,
-                    context,
-                    qwen35State.workspace.wrapXb,
-                    qwen35State.workspace.wrapXbQuants,
-                    qwen35State.workspace.wrapXbScales,
-                    qwen35State.workspace.wrapXbSums);
             normedActivationQuantized = true;
         }
 
@@ -795,6 +780,33 @@ public class Qwen35FFNLayers
             String apply,
             FloatArray scratch,
             TornadoTensor weight) {
+        normalize(layer, reduce, finalize, apply, scratch, weight, false);
+    }
+
+    // @formatter:off
+    /**
+     * The reduce, the optional finalize, and the apply — with the apply folded into the block
+     * quantization when {@code quantize} is set.
+     *
+     * <p>Only the <b>apply</b> is folded. It is elementwise, so the quantization's 32-lane
+     * workgroup owns exactly the elements its own lanes would have normalized and nothing
+     * synchronizes across a workgroup; the reduce, which does span the row, stays its own task
+     * because folding it would need exactly that. {@code wrapXb} is still written — the F32
+     * {@code ssm_alpha} and {@code ssm_beta} projections read it, and so does every non-packed
+     * projection — so what goes away is the second launch and the read-back, not the store.
+     *
+     * <p>The fused task takes the apply's name and the quantization's grid. A caller that folds
+     * must not also emit a separate quantization task for the same activation.
+     */
+    // @formatter:on
+    private void normalize(
+            TaskGraph layer,
+            String reduce,
+            String finalize,
+            String apply,
+            FloatArray scratch,
+            TornadoTensor weight,
+            boolean quantize) {
         layer.task(
                 reduce,
                 rmsReduceKernel(),
@@ -812,6 +824,20 @@ public class Qwen35FFNLayers
                     scratch,
                     config.dim(),
                     config.rmsNormEps());
+        }
+        if (quantize) {
+            layer.task(
+                    apply,
+                    TransformerComputeKernelsQ4_0::rmsApplyAndQuantizeActivationQ8Blocks,
+                    context,
+                    qwen35State.workspace.wrapXb,
+                    qwen35State.workspace.wrapX,
+                    weight.asFloatArray(),
+                    scratch,
+                    qwen35State.workspace.wrapXbQuants,
+                    qwen35State.workspace.wrapXbScales,
+                    qwen35State.workspace.wrapXbSums);
+            return;
         }
         layer.task(
                 apply,
@@ -1537,18 +1563,22 @@ public class Qwen35FFNLayers
                 scheduler.addWorkerGrid(prefix + "attn_rms_finalize", rmsFinalize);
                 scheduler.addWorkerGrid(prefix + "ffn_rms_finalize", rmsFinalize);
             }
-            scheduler.addWorkerGrid(prefix + "attn_rms_apply", rmsApply);
+            // Where the apply carries the quantization it takes the quantization's grid: one
+            // 32-lane workgroup per block, which is the ownership the block maximum needs.
             if (DP4A) {
-                WorkerGrid quantize = WorkerGridFactory.genericWorker(config.dim(), 32);
-                scheduler.addWorkerGrid(prefix + "xb_quantize", quantize);
                 scheduler.addWorkerGrid(
-                        prefix + "ffn_xb_quantize",
+                        prefix + "attn_rms_apply",
+                        WorkerGridFactory.genericWorker(config.dim(), 32));
+                scheduler.addWorkerGrid(
+                        prefix + "ffn_rms_apply",
                         WorkerGridFactory.genericWorker(config.dim(), 32));
                 scheduler.addWorkerGrid(
                         prefix + "ffn_down_quantize",
                         WorkerGridFactory.genericWorker(config.hiddenDim(), 32));
+            } else {
+                scheduler.addWorkerGrid(prefix + "attn_rms_apply", rmsApply);
+                scheduler.addWorkerGrid(prefix + "ffn_rms_apply", rmsApply);
             }
-            scheduler.addWorkerGrid(prefix + "ffn_rms_apply", rmsApply);
             scheduler.addWorkerGrid(prefix + "ffn_gate_up", matVecWorker(config.hiddenDim()));
             scheduler.addWorkerGrid(prefix + "ffn_down_proj", matVecWorker(config.dim()));
 

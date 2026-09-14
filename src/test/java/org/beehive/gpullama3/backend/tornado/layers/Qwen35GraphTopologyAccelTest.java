@@ -309,10 +309,14 @@ public class Qwen35GraphTopologyAccelTest {
      * The fused gate/up is packed, and its activation is its own.
      *
      * <p>What it pins is the thing that would be wrong if the quantization were emitted in the
-     * wrong place: {@code ffn_gate_up} packed, a second quantization task present, and the branch
+     * wrong place: {@code ffn_gate_up} packed, a second quantization present, and the branch
      * projections still packed from theirs. The feed-forward norm writes over the activation the
-     * branch quantized, so a packed {@code ffn_gate_up} without its own quantization task would be
+     * branch quantized, so a packed {@code ffn_gate_up} without its own quantization would be
      * reading the attention norm's output.
+     *
+     * <p>Where the capability holds the quantization is carried by the norm's <b>apply</b> rather
+     * than by a task of its own, so what this checks for is the apply — there must be one per
+     * branch, and the feed-forward's must be distinct from the attention norm's.
      */
     // @formatter:on
     @Test
@@ -338,10 +342,13 @@ public class Qwen35GraphTopologyAccelTest {
                             + " packs the feed-forward without quantizing its activation:"
                             + " "
                             + tasks,
-                    tasks.contains("ffn_xb_quantize"));
+                    tasks.contains("ffn_rms_apply"));
             assertTrue(
                     "layer " + layer + " lost the branch's quantization",
-                    tasks.contains("xb_quantize"));
+                    tasks.contains("attn_rms_apply"));
+            assertFalse(
+                    "layer " + layer + " still emits a standalone quantization task: " + tasks,
+                    tasks.contains("xb_quantize") || tasks.contains("ffn_xb_quantize"));
         }
     }
 
@@ -405,8 +412,8 @@ public class Qwen35GraphTopologyAccelTest {
                     "the feed-forward reads its own quantization, not the readout's",
                     packed.contains("ffn_gate_up"));
         } else {
-            // The fallback plan, asserted rather than assumed: nothing packed anywhere, and none of
-            // the four quantization tasks emitted.
+            // The fallback plan, asserted rather than assumed: nothing packed anywhere, and none
+            // of the quantization tasks emitted. The two norm applies are still there, plain.
             assertTrue(
                     "no projection may read a quantized activation without the packed path: "
                             + packed,
@@ -422,6 +429,12 @@ public class Qwen35GraphTopologyAccelTest {
                 assertFalse(
                         "layer " + layer + " quantized the feed-forward's activation",
                         tasks.contains("ffn_xb_quantize"));
+                assertTrue(
+                        "layer " + layer + " lost the attention norm's apply",
+                        tasks.contains("attn_rms_apply"));
+                assertTrue(
+                        "layer " + layer + " lost the feed-forward norm's apply",
+                        tasks.contains("ffn_rms_apply"));
             }
         }
     }
@@ -792,24 +805,21 @@ public class Qwen35GraphTopologyAccelTest {
             }
         }
 
-        // One more per layer where the device takes the packed-integer path: the branch quantizes
-        // the normed activation once, for the Q4_0 projections that read it.
+        // The branch's and the feed-forward's quantizations add no task of their own: each is
+        // carried by its norm's apply, which is counted in the base below either way. Only the
+        // two that have no apply to ride on cost a task.
         int quantize = packedPathEnabled() ? 1 : 0;
-        // Two per layer where the capability holds, not one: the branch quantizes the
-        // attention norm's output and the feed-forward quantizes its own, which the norm between
-        // them has made a different activation.
-        int ffnQuantize = quantize;
         int ffnDownQuantize = quantize;
         // And one more in a recurrent layer: the delta-net readout's own quantization, for the
         // packed Q5_K ssm_out projection. Only that layer kind has a readout.
         int ssmOutQuantize = quantize;
         assertEquals(
                 "a recurrent layer's tasks",
-                20 + quantize + ffnQuantize + ffnDownQuantize + ssmOutQuantize,
+                20 + ffnDownQuantize + ssmOutQuantize,
                 recurrentTasks);
         assertEquals(
                 "an attention layer's tasks",
-                16 + quantize + ffnQuantize + ffnDownQuantize,
+                16 + ffnDownQuantize,
                 attentionTasks);
         assertEquals("the plan's layer tasks", 6 * recurrentTasks + 2 * attentionTasks, total);
     }
