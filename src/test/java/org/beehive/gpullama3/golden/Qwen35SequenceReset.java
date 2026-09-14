@@ -60,6 +60,12 @@ abstract class Qwen35SequenceReset {
 
     private static final int POLLUTING_TOKENS = 48;
 
+    /**
+     * What this run's own plan had to dispatch for its attention. Nothing here; the half-precision
+     * key/value subclasses override it, because split-KV is selected on that path alone.
+     */
+    void verifyAttentionDispatch(TornadoVMMasterPlan plan) {}
+
     void assertResetRestoresTheSequence(int prefillBatchSize) throws Exception {
         Path modelPath = GoldenFixture.locate(Fixture.QWEN3_8_27B_Q4_0);
         if (modelPath == null) {
@@ -84,6 +90,7 @@ abstract class Qwen35SequenceReset {
         TornadoVMMasterPlan plan = null;
         try {
             plan = TornadoVMMasterPlan.initializeTornadoVMPlan(state, model);
+            verifyAttentionDispatch(plan);
 
             List<float[]> fresh = generate(model, state, plan, PROMPT, TOKENS);
             assertFalse("nothing was generated, so the case proves nothing", fresh.isEmpty());

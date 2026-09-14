@@ -59,6 +59,7 @@ public class Qwen35FFNLayersBatchDecode extends Qwen35FFNLayers {
                 state.workspace.wrapK,
                 state.workspace.wrapV,
                 state.workspace.wrapAtt,
+                state.workspace.wrapAttSplit,
                 state.workspace.wrapHb);
         layer.transferToDevice(
                 DataTransferMode.FIRST_EXECUTION,

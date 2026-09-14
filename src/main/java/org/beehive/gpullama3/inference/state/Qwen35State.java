@@ -353,6 +353,13 @@ public final class Qwen35State extends State {
         workspace.wrapV = TornadoWorkspaces.floats(kvDim);
         workspace.wrapAtt =
                 TornadoWorkspaces.floats(config.numberOfHeads() * config.contextLength());
+        // The split-KV scratch, in its own buffer rather than sharing wrapAtt: per head, nSplits
+        // partial numerators of headSize, then nSplits maxima and nSplits sums. This family's
+        // attention head is config.headSize() wide, which is not the delta-net value head the
+        // recurrent branch is sized by.
+        workspace.wrapAttSplit =
+                TornadoWorkspaces.floats(
+                        config.numberOfHeads() * SPLIT_KV * (config.headSize() + 2));
 
         // The delta-net branch's scratch.
         workspace.wrapSsmQkv = TornadoWorkspaces.floats(config.deltaNetConvDim());

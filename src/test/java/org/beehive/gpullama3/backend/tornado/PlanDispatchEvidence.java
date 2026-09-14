@@ -105,6 +105,42 @@ public final class PlanDispatchEvidence {
         }
     }
 
+    // @formatter:off
+    /**
+     * Asserts that this plan's decode attention is the split-KV pair rather than the per-head
+     * kernel: the split phase and the combine that merges its partials, in every attention layer
+     * that has one.
+     *
+     * <p>The task names are what distinguishes the two shapes — the per-head kernel writes the
+     * attention result itself and has no combine — so a plan that quietly fell back would fail here
+     * instead of being measured as though it had not.
+     *
+     * @param scheduler the plan's own scheduler; a missing one fails here
+     */
+    // @formatter:on
+    public static void assertQwen35SplitKvAttention(GridScheduler scheduler) {
+        assertNotNull(
+                "no grid scheduler for the plan this run built, so its dispatch cannot be checked",
+                scheduler);
+        List<String> attention = new ArrayList<>();
+        List<String> combine = new ArrayList<>();
+        for (String task : new TreeSet<>(scheduler.keySet())) {
+            if (task.endsWith(".attention")) {
+                attention.add(task);
+            } else if (task.endsWith(".attention_combine")) {
+                combine.add(task);
+            }
+        }
+        assertTrue("this plan has no attention task at all", !attention.isEmpty());
+        assertEquals(
+                "every attention layer needs its combine: attention "
+                        + attention.size()
+                        + ", combine "
+                        + combine.size(),
+                attention.size(),
+                combine.size());
+    }
+
     /** The layers whose batched graph holds an attention-output projection, in index order. */
     private static List<Integer> attentionLayers(GridScheduler scheduler) {
         List<Integer> layers = new ArrayList<>();

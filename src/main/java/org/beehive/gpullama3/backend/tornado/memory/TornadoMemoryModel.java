@@ -234,12 +234,22 @@ public final class TornadoMemoryModel {
         long dim = config.dim();
         long hidden = config.hiddenDim();
         long kvDim = config.kvDim();
-        long attention = (long) config.numberOfHeads() * config.contextLength();
+        // Two attention buffers where a family decodes with the split-KV decomposition: the
+        // scalar scratch of heads x context, and the split scratch holding per head nSplits
+        // partial numerators of headSize plus nSplits maxima and sums. The term below counted the
+        // second as another copy of the first; at a wide head and a short context the split
+        // scratch is the larger, so it is now sized from what is actually allocated.
+        long scalarAttention = (long) config.numberOfHeads() * config.contextLength();
+        long splitKvAttention =
+                (long) config.numberOfHeads()
+                        * org.beehive.gpullama3.inference.state.State.SPLIT_KV
+                        * (config.headSize() + 2L);
         long floats =
                 dim * 6 // x, xb, xb2, q, and two spare dim-sized activations
                         + hidden * 2 // hb, hb2
                         + kvDim * 2 // k, v
-                        + attention * 2 // att and the split-KV variant
+                        + scalarAttention // att
+                        + splitKvAttention // the split-KV partials
                         + dim * 2; // FP16 staging mirrors, counted as floats for headroom
         // The packed-integer projections' activation, in Q8 blocks: four quants per int plus a
         // scale and a sum of quants per block of 32, sized for the widest activation any of them
