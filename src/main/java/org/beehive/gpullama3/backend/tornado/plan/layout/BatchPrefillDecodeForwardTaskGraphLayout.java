@@ -2,17 +2,37 @@ package org.beehive.gpullama3.backend.tornado.plan.layout;
 
 // @formatter:off
 /**
- * Graph-index arithmetic for the 2N+3 batch-prefill/decode forward plan.
+ * Graph-index arithmetic for the batch-prefill/decode forward plan.
  *
  * <pre>
- *   [0]         batchPrefillActivation
- *   [1.N]      batchPrefillLayer_0. batchPrefillLayer_{N-1}
- *   [N+1]       decodeActivation    (consumes + re-persists KV cache)
- *   [N+2.2N+1] decodeLayer_0. decodeLayer_{N-1}
- *   [2N+2]      logits
+ *   [0]                         batchPrefillActivation
+ *   [1..N]                      batchPrefillLayer_0 .. batchPrefillLayer_{N-1}
+ *   [N+1]                       decodeActivation    (consumes + re-persists KV cache)
+ *   [N+2..N+1+D]                decode layer graphs, D of them
+ *   [N+2+D]                     logits
  * </pre>
+ *
+ * <p><b>{@code D} is not always {@code N}.</b> A family may put more than one transformer layer in
+ * a decode graph, which costs one graph submission instead of several. The logical layer count and
+ * the decode <i>graph</i> count are therefore separate quantities, and only the second one moves
+ * the indices below. Nothing here says how layers are distributed among those graphs; that is the
+ * layer builder's business.
  */
-public record BatchPrefillDecodeForwardTaskGraphLayout(int N) {
+// @formatter:on
+public record BatchPrefillDecodeForwardTaskGraphLayout(int N, int decodeLayerGraphs) {
+
+    /** The ungrouped layout: one decode graph per layer, which is what every family built. */
+    public BatchPrefillDecodeForwardTaskGraphLayout(int N) {
+        this(N, N);
+    }
+
+    public BatchPrefillDecodeForwardTaskGraphLayout {
+        if (decodeLayerGraphs < 1 || decodeLayerGraphs > N) {
+            throw new IllegalArgumentException(
+                    "decode layer graphs must be between 1 and " + N + ", got " + decodeLayerGraphs);
+        }
+    }
+
     public int batchActivationIdx() {
         return 0;
     }
@@ -25,27 +45,47 @@ public record BatchPrefillDecodeForwardTaskGraphLayout(int N) {
         return N + 1;
     }
 
-    public int decodeLayerIdx(int i) {
-        return N + 2 + i;
+    /**
+     * The index of the {@code g}-th decode layer <b>graph</b>.
+     *
+     * <p>This is what the forward loop iterates. It is indexed by graph, not by layer, because a
+     * graph may hold more than one layer.
+     */
+    public int decodeLayerGraphIdx(int g) {
+        return N + 2 + g;
     }
 
     public int logitsIdx() {
-        return 2 * N + 2;
+        return N + 2 + decodeLayerGraphs;
     }
 
+    /** Per-layer graphs the batch-prefill family builds: one each. */
+    public int batchLayerGraphs() {
+        return N;
+    }
+
+    // @formatter:off
     /**
      * How many distinct <b>layer graph families</b> this topology builds.
      *
-     * <p>Not the graph count. A family is a set of per-layer graphs that each bind the layer's
-     * weights, and the Tornado runtime allocates a device buffer per graph — so this, not {@link
-     * #totalGraphs()}, is the multiplier on per-layer weight memory. This layout has 2.
-     *
-     * <p>{@code TornadoGraphTopology} asserts that {@code totalGraphs() == layerGraphFamilies() * N
-     * + nonLayerGraphs()}, so adding a family here without updating this method fails that check
-     * rather than silently under-predicting memory.
+     * <p>A family is a set of graphs that bind the layers' weights. This layout has 2: the
+     * batch-prefill layers and the decode layers. It is <b>not</b> a graph count and <b>not</b> a
+     * weight multiplier — a family that consumes another's upload costs graphs, not gigabytes,
+     * which is what {@code Configuration.weightBindingFamilies} decides.
      */
+    // @formatter:on
     public int layerGraphFamilies() {
         return 2;
+    }
+
+    /**
+     * Graphs each family contributes, in layout order.
+     *
+     * <p>{@code TornadoGraphTopology} checks this against both the family count and the total, so
+     * a family added without a term here fails rather than under-predicting silently.
+     */
+    public int[] layerFamilyGraphCounts() {
+        return new int[] {batchLayerGraphs(), decodeLayerGraphs};
     }
 
     /** Graphs that are not per-layer: batch activation, decode activation and logits. */
@@ -54,7 +94,6 @@ public record BatchPrefillDecodeForwardTaskGraphLayout(int N) {
     }
 
     public int totalGraphs() {
-        return 2 * N + 3;
+        return batchLayerGraphs() + decodeLayerGraphs + nonLayerGraphs();
     }
 }
-// @formatter:on

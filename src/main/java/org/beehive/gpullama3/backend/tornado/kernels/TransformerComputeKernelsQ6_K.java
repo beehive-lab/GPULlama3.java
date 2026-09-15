@@ -251,15 +251,41 @@ public final class TransformerComputeKernelsQ6_K {
             int quantBase = run * 4;
             int dot = 0;
             for (int g = 0; g < 4; g++) {
-                int packed = 0;
-                for (int lane = 0; lane < 4; lane++) {
-                    int at = g * 4 + lane;
-                    int ql = w.get(qlBase + at) & 0xFF;
-                    int qh = w.get(qhBase + at) & 0xFF;
-                    int low = highNibble ? ((ql >> 4) & 0xF) : (ql & 0xF);
-                    int raw = low | (((qh >> qhShift) & 3) << 4);
-                    packed |= ((raw - 32) & 0xFF) << (lane * 8);
+                // Both planes two bytes at a time instead of one, and the whole reconstruction
+                // on the packed word rather than lane by lane. getHalfFloatValue() is a
+                // bit-preserving load here -- these are quant bytes, never a number -- and each
+                // half is masked to sixteen bits before it is shifted. A super-block is 210
+                // bytes, so its start is even but only every other one is four-byte aligned;
+                // qlBase and qhBase add multiples of sixteen and this adds a multiple of four,
+                // so every address here is even, which is what the pair read needs. The last
+                // pair of a run reads qlBase+14..15 and qhBase+14..15, inside ql's 0..127 and
+                // qh's 128..191.
+                int at = g * 4;
+                int qlWord =
+                        (w.getHalfFloat(qlBase + at).getHalfFloatValue() & 0xFFFF)
+                                | ((w.getHalfFloat(qlBase + at + 2).getHalfFloatValue() & 0xFFFF)
+                                        << 16);
+                int qhWord =
+                        (w.getHalfFloat(qhBase + at).getHalfFloatValue() & 0xFFFF)
+                                | ((w.getHalfFloat(qhBase + at + 2).getHalfFloatValue() & 0xFFFF)
+                                        << 16);
+                // The nibble the run takes, across the word. Uniform per run, not per lane.
+                int low = qlWord & 0x0F0F0F0F;
+                if (highNibble) {
+                    low = (qlWord >>> 4) & 0x0F0F0F0F;
                 }
+                // Q6_K's high plane carries TWO bits per weight, not one: qhShift is 0, 2, 4 or
+                // 6 and the field is two wide, so it never leaves its byte and a single shift of
+                // the whole word with a 0x03030303 mask extracts all four at once.
+                int raw = low | (((qhWord >>> qhShift) & 0x03030303) << 4);
+                // The weight-side recentring, raw - 32, on all four bytes. A word subtract of
+                // 0x20202020 would be wrong: a byte below 32 borrows into its neighbour. Each
+                // byte is a six-bit value, so flipping bit five gives (raw - 32) modulo 64 and
+                // what remains is to propagate that bit into bits six and seven, which is a
+                // sign extension from six bits to eight and stays inside the byte.
+                int flipped = raw ^ 0x20202020;
+                int signBit = flipped & 0x20202020;
+                int packed = flipped | (signBit << 1) | (signBit << 2);
                 dot = QuantizationUtils.dp4a_packed(packed, xQuants.get(quantBase + g), dot);
             }
             partialSum += d6 * scale * xScales.get(run / 2) * dot;

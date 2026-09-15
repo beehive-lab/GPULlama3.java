@@ -19,8 +19,11 @@ import org.junit.Test;
  *
  * <ol>
  *   <li>each layout declares its own family count beside its graph indices;
- *   <li>{@code totalGraphs == families x N + nonLayerGraphs} is checked, so a layout cannot grow a
- *       family without either updating the count or failing here;
+ *   <li>{@code totalGraphs == sum(layerFamilyGraphCounts) + nonLayerGraphs}, together with one
+ *       count per declared family, is checked — so a layout cannot grow a family without either
+ *       stating its graphs or failing here. A family need not build one graph per layer: grouping
+ *       layers changes that term without changing the family count, which is what the memory
+ *       model multiplies by;
  *   <li>{@link TornadoGraphTopology}'s switches have no {@code default}, so a new {@link
  *       ExecutionMode} does not compile until it answers.
  * </ol>
@@ -38,9 +41,10 @@ public class GraphTopologyConsistencyTest {
                                 + layers
                                 + " layers: totalGraphs ("
                                 + TornadoGraphTopology.totalGraphs(mode, layers)
-                                + ") must equal families ("
-                                + TornadoGraphTopology.layerGraphFamilies(mode, layers)
-                                + ") x layers + nonLayerGraphs ("
+                                + ") must equal the graphs its families contribute ("
+                                + java.util.Arrays.toString(
+                                        TornadoGraphTopology.layerFamilyGraphCounts(mode, layers))
+                                + ") plus nonLayerGraphs ("
                                 + TornadoGraphTopology.nonLayerGraphs(mode, layers)
                                 + "). A layout that grew a layer family without updating its"
                                 + " layerGraphFamilies() fails here rather than under-predicting"
@@ -92,6 +96,102 @@ public class GraphTopologyConsistencyTest {
                 "batched prefill is the topology that differs",
                 2 * 16 + 3,
                 TornadoGraphTopology.totalGraphs(ExecutionMode.BATCH_PREFILL_DECODE, 16));
+    }
+
+    // @formatter:off
+    /**
+     * A layout that groups layers into fewer decode graphs stays self-consistent.
+     *
+     * <p>The decode family may hold more than one layer per graph, which costs one submission
+     * instead of several. That breaks the old {@code families x N + nonLayerGraphs} identity — the
+     * decode family no longer contributes {@code N} graphs — so the check is now against the
+     * graphs each family says it contributes. This pins that the new form still catches a layout
+     * whose totals do not add up, rather than having been weakened to accept anything.
+     */
+    // @formatter:on
+    @Test
+    public void aGroupedDecodeLayoutStaysSelfConsistent() {
+        for (int layers : new int[] {1, 2, 7, 16, 64, 65}) {
+            for (int group : new int[] {1, 2}) {
+                int decodeGraphs = (layers + group - 1) / group;
+                var layout = new BatchPrefillDecodeForwardTaskGraphLayout(layers, decodeGraphs);
+
+                assertEquals(
+                        "graphs each family contributes must sum with the non-layer graphs",
+                        layers + decodeGraphs + layout.nonLayerGraphs(),
+                        layout.totalGraphs());
+                assertEquals(
+                        "a term per family",
+                        layout.layerGraphFamilies(),
+                        layout.layerFamilyGraphCounts().length);
+                assertEquals(
+                        "the decode family contributes its graph count",
+                        decodeGraphs,
+                        layout.layerFamilyGraphCounts()[1]);
+                assertEquals(
+                        "logits sits after every decode graph",
+                        layers + 2 + decodeGraphs,
+                        layout.logitsIdx());
+                assertEquals(
+                        "the first decode graph follows the decode activation",
+                        layout.decodeActivationIdx() + 1,
+                        layout.decodeLayerGraphIdx(0));
+                assertEquals(
+                        "the last decode graph sits immediately before logits",
+                        layout.logitsIdx() - 1,
+                        layout.decodeLayerGraphIdx(decodeGraphs - 1));
+                // The batch-prefill family and everything before decode are untouched by grouping.
+                assertEquals(0, layout.batchActivationIdx());
+                assertEquals(1, layout.batchLayerIdx(0));
+                assertEquals(layers, layout.batchLayerIdx(layers - 1));
+                assertEquals(layers + 1, layout.decodeActivationIdx());
+                assertEquals(layers, layout.batchLayerGraphs());
+            }
+        }
+    }
+
+    /** An odd layer count leaves the final decode graph holding one layer, and still adds up. */
+    @Test
+    public void anOddLayerCountIsLaidOutExplicitly() {
+        var layout = new BatchPrefillDecodeForwardTaskGraphLayout(65, 33);
+        assertEquals("33 graphs for 65 layers paired", 33, layout.decodeLayerGraphs());
+        assertEquals(65 + 33 + 3, layout.totalGraphs());
+        assertEquals(65 + 2 + 33, layout.logitsIdx());
+    }
+
+    /** The ungrouped constructor is what every family still gets, and it is the old layout. */
+    @Test
+    public void theUngroupedLayoutIsUnchanged() {
+        for (int layers : new int[] {1, 16, 32, 80}) {
+            var layout = new BatchPrefillDecodeForwardTaskGraphLayout(layers);
+            assertEquals(layers, layout.decodeLayerGraphs());
+            assertEquals(2 * layers + 3, layout.totalGraphs());
+            assertEquals(2 * layers + 2, layout.logitsIdx());
+            assertEquals(layers + 2, layout.decodeLayerGraphIdx(0));
+            assertTrue(
+                    "every family builds a graph per layer here",
+                    TornadoGraphTopology.isUngrouped(ExecutionMode.BATCH_PREFILL_DECODE, layers));
+            assertTrue(TornadoGraphTopology.verify(ExecutionMode.BATCH_PREFILL_DECODE, layers));
+        }
+    }
+
+    // @formatter:off
+    /**
+     * Grouping changes graphs, not weight memory.
+     *
+     * <p>The family count is what the memory model multiplies by, and it counts <b>families</b>,
+     * not graphs. Grouping the decode family into half as many graphs must leave it at two, so
+     * that a grouped plan is not predicted to hold less of the model than it does.
+     */
+    // @formatter:on
+    @Test
+    public void groupingDoesNotChangeTheFamilyCount() {
+        assertEquals(
+                2, new BatchPrefillDecodeForwardTaskGraphLayout(64, 64).layerGraphFamilies());
+        assertEquals(
+                "half as many decode graphs is still two families",
+                2,
+                new BatchPrefillDecodeForwardTaskGraphLayout(64, 32).layerGraphFamilies());
     }
 
     /**

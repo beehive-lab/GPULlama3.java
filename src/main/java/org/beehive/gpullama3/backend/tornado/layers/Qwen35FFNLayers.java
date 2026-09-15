@@ -222,7 +222,7 @@ public class Qwen35FFNLayers
                     throw unsupported(layer, task, role, w.dataType(), "an accumulating");
                 }
                 graph.task(
-                        task,
+                        tn(task),
                         TransformerComputeKernelsLayered::matrixVectorGeneric,
                         context,
                         x,
@@ -235,7 +235,7 @@ public class Qwen35FFNLayers
             case F16 -> {
                 if (residual) {
                     graph.task(
-                            task,
+                            tn(task),
                             TransformerComputeKernelsLayered::matrixVectorGenericWithResidual,
                             context,
                             x,
@@ -246,7 +246,7 @@ public class Qwen35FFNLayers
                             MATVEC_LOCAL);
                 } else {
                     graph.task(
-                            task,
+                            tn(task),
                             TransformerComputeKernelsLayered::matrixVectorGeneric,
                             context,
                             x,
@@ -260,7 +260,7 @@ public class Qwen35FFNLayers
             case Q8_0 -> {
                 if (residual) {
                     graph.task(
-                            task,
+                            tn(task),
                             TransformerComputeKernelsLayered
                                     ::matrixVectorGenericWithResidualQ8_0Byte,
                             context,
@@ -272,7 +272,7 @@ public class Qwen35FFNLayers
                             MATVEC_LOCAL);
                 } else {
                     graph.task(
-                            task,
+                            tn(task),
                             TransformerComputeKernelsLayered::matrixVectorGenericQ8Byte,
                             context,
                             x,
@@ -286,7 +286,7 @@ public class Qwen35FFNLayers
             case Q4_0 -> {
                 if (residual && x == state.workspace.wrapHb && hiddenActivationQuantized) {
                     graph.task(
-                            task,
+                            tn(task),
                             TransformerComputeKernelsQ4_0::matrixVectorGenericWithResidualQ4_0DP4A,
                             context,
                             state.workspace.wrapXbQuants,
@@ -301,7 +301,7 @@ public class Qwen35FFNLayers
                     // The packed-integer path, for a projection whose input the branch already
                     // quantized. Weights stay Q4_0; the activation is what changed representation.
                     graph.task(
-                            task,
+                            tn(task),
                             TransformerComputeKernelsQ4_0::matrixVectorGenericQ4_0DP4A,
                             context,
                             state.workspace.wrapXbQuants,
@@ -314,7 +314,7 @@ public class Qwen35FFNLayers
                             MATVEC_LOCAL);
                 } else if (residual) {
                     graph.task(
-                            task,
+                            tn(task),
                             TransformerComputeKernelsQ4_0::matrixVectorGenericWithResidualQ4_0,
                             context,
                             x,
@@ -325,7 +325,7 @@ public class Qwen35FFNLayers
                             MATVEC_LOCAL);
                 } else {
                     graph.task(
-                            task,
+                            tn(task),
                             TransformerComputeKernelsQ4_0::matrixVectorGenericQ4_0,
                             context,
                             x,
@@ -343,7 +343,7 @@ public class Qwen35FFNLayers
                     // already runs for every layer. Weights stay native Q4_1; only the activation
                     // changed representation.
                     graph.task(
-                            task,
+                            tn(task),
                             TransformerComputeKernelsQ4_1
                                     ::matrixVectorGenericWithResidualQ4_1DP4A,
                             context,
@@ -357,7 +357,7 @@ public class Qwen35FFNLayers
                             MATVEC_LOCAL);
                 } else if (residual) {
                     graph.task(
-                            task,
+                            tn(task),
                             TransformerComputeKernelsQ4_1::matrixVectorGenericWithResidualQ4_1,
                             context,
                             x,
@@ -368,7 +368,7 @@ public class Qwen35FFNLayers
                             MATVEC_LOCAL);
                 } else {
                     graph.task(
-                            task,
+                            tn(task),
                             TransformerComputeKernelsQ4_1::matrixVectorGenericQ4_1,
                             context,
                             x,
@@ -382,7 +382,7 @@ public class Qwen35FFNLayers
             case Q4_K -> {
                 if (residual) {
                     graph.task(
-                            task,
+                            tn(task),
                             TransformerComputeKernelsQ4_K::matrixVectorGenericWithResidualQ4_K,
                             context,
                             x,
@@ -393,7 +393,7 @@ public class Qwen35FFNLayers
                             MATVEC_LOCAL);
                 } else {
                     graph.task(
-                            task,
+                            tn(task),
                             TransformerComputeKernelsQ4_K::matrixVectorGenericQ4_K,
                             context,
                             x,
@@ -410,7 +410,7 @@ public class Qwen35FFNLayers
                     // has just quantized. Weights stay Q5_K; the activation is what changed
                     // representation.
                     graph.task(
-                            task,
+                            tn(task),
                             TransformerComputeKernelsQ5_K
                                     ::matrixVectorGenericWithResidualQ5_KDP4A,
                             context,
@@ -424,7 +424,7 @@ public class Qwen35FFNLayers
                             MATVEC_LOCAL);
                 } else if (residual) {
                     graph.task(
-                            task,
+                            tn(task),
                             TransformerComputeKernelsQ5_K::matrixVectorGenericWithResidualQ5_K,
                             context,
                             x,
@@ -435,7 +435,7 @@ public class Qwen35FFNLayers
                             MATVEC_LOCAL);
                 } else {
                     graph.task(
-                            task,
+                            tn(task),
                             TransformerComputeKernelsQ5_K::matrixVectorGenericQ5_K,
                             context,
                             x,
@@ -449,7 +449,7 @@ public class Qwen35FFNLayers
             case Q6_K -> {
                 if (residual) {
                     graph.task(
-                            task,
+                            tn(task),
                             TransformerComputeKernelsQ6_K::matrixVectorGenericWithResidualQ6_K,
                             context,
                             x,
@@ -460,7 +460,7 @@ public class Qwen35FFNLayers
                             MATVEC_LOCAL);
                 } else {
                     graph.task(
-                            task,
+                            tn(task),
                             TransformerComputeKernelsQ6_K::matrixVectorGenericQ6_K,
                             context,
                             x,
@@ -554,7 +554,7 @@ public class Qwen35FFNLayers
                 new Dispatch(layer, "ffn_gate_up", "ffn_gate|ffn_up", gate.dataType(), packed));
         if (packed) {
             graph.task(
-                    "ffn_gate_up",
+                    tn("ffn_gate_up"),
                     TransformerComputeKernelsQ4_0::fusedFFNGateUpSiLUQ4_0DP4A,
                     context,
                     qwen35State.workspace.wrapXbQuants,
@@ -571,7 +571,7 @@ public class Qwen35FFNLayers
         switch (gate.dataType()) {
             case Q4_0 ->
                     graph.task(
-                            "ffn_gate_up",
+                            tn("ffn_gate_up"),
                             TransformerComputeKernelsQ4_0::fusedFFNGateUpSiLUQ4_0,
                             context,
                             x,
@@ -583,7 +583,7 @@ public class Qwen35FFNLayers
                             MATVEC_LOCAL);
             case Q4_K ->
                     graph.task(
-                            "ffn_gate_up",
+                            tn("ffn_gate_up"),
                             TransformerComputeKernelsQ4_K::fusedFFNGateUpSiLUQ4_K,
                             context,
                             x,
@@ -595,7 +595,7 @@ public class Qwen35FFNLayers
                             MATVEC_LOCAL);
             case Q8_0 ->
                     graph.task(
-                            "ffn_gate_up",
+                            tn("ffn_gate_up"),
                             TransformerComputeKernelsLayered
                                     ::fusedFeedForwardWithSiLUAndGLUActivationQ8_0Byte,
                             context,
@@ -608,7 +608,7 @@ public class Qwen35FFNLayers
                             MATVEC_LOCAL);
             case F16 ->
                     graph.task(
-                            "ffn_gate_up",
+                            tn("ffn_gate_up"),
                             TransformerComputeKernelsLayered
                                     ::fusedFeedForwardWithSiLUAndGLUActivation,
                             context,
@@ -627,13 +627,70 @@ public class Qwen35FFNLayers
 
     // ── the layer graphs ──────────────────────────────────────────────────────
 
+    // @formatter:off
+    /**
+     * The prefix the tasks of {@code layerIndex} carry inside their graph.
+     *
+     * <p>Empty while a layer owns its graph, which is every family's default: the graph name
+     * already separates one layer's {@code attn_rms_reduce} from the next one's. A family that
+     * puts more than one layer in a graph must return something distinct per layer, because grid
+     * keys are {@code graphName.taskName} and two layers would otherwise collide on every task.
+     */
+    // @formatter:on
+    protected String layerTaskPrefix(int layerIndex) {
+        return "";
+    }
+
+    /** The graph {@code layerIndex}'s tasks belong to. One per layer unless a family groups them. */
+    protected String layerGraphName(int layerIndex) {
+        return "layer_" + layerIndex;
+    }
+
+    /** Whether {@code layerIndex} is the first layer of its graph, and so owns the graph's inputs. */
+    protected final boolean firstLayerOfGraph(int layerIndex) {
+        return layerIndex == 0 || !layerGraphName(layerIndex - 1).equals(layerGraphName(layerIndex));
+    }
+
+    /** Whether {@code layerIndex} is the last layer of its graph, and so publishes its outputs. */
+    protected final boolean lastLayerOfGraph(int layerIndex) {
+        return layerIndex == config.numberOfLayers() - 1
+                || !layerGraphName(layerIndex + 1).equals(layerGraphName(layerIndex));
+    }
+
+    /** The prefix in force while the current layer's tasks are being added. */
+    private String taskPrefix = "";
+
+    /** Qualifies a task name with the layer it belongs to, when its graph holds more than one. */
+    private String tn(String name) {
+        return taskPrefix + name;
+    }
+
     @Override
     protected TaskGraph createFFNLayerTaskGraph(int layerIndex) {
-        TaskGraph layer = new TaskGraph("layer_" + layerIndex);
+        return appendLayer(new TaskGraph(layerGraphName(layerIndex)), layerIndex);
+    }
 
-        String predecessor = layerIndex == 0 ? activationGraphName : "layer_" + (layerIndex - 1);
-        layer.consumeFromDevice(predecessor, qwen35State.workspace.wrapX);
-        configureLayerDataTransfers(layer, layerIndex);
+    // @formatter:off
+    /**
+     * Adds one transformer layer's tasks to {@code layer}, in order.
+     *
+     * <p>Separate from graph creation so a family can put more than one layer in a graph. The
+     * inputs a graph consumes and the outputs it persists belong to the graph, not to each layer,
+     * so they are guarded by {@link #firstLayerOfGraph} and {@link #lastLayerOfGraph}; everything
+     * between is per layer and unchanged.
+     */
+    // @formatter:on
+    protected TaskGraph appendLayer(TaskGraph layer, int layerIndex) {
+        taskPrefix = layerTaskPrefix(layerIndex);
+
+        // Only when the producer is a different graph. Within one graph the previous layer's
+        // store of wrapX is an ordinary dependency between tasks and consuming it would be wrong.
+        if (firstLayerOfGraph(layerIndex)) {
+            String predecessor =
+                    layerIndex == 0 ? activationGraphName : layerGraphName(layerIndex - 1);
+            layer.consumeFromDevice(predecessor, qwen35State.workspace.wrapX);
+            configureLayerDataTransfers(layer, layerIndex);
+        }
         transferLayerWeights(layer, layerIndex);
 
         // Input normalization, shared by both mixers: xb = attn_norm ⊙ rms(x).
@@ -688,7 +745,7 @@ public class Qwen35FFNLayers
             // SwiGLU's output, quantized fresh. It is neither of the activations quantized
             // earlier in this layer, and the scratch it shares with them is sized for it.
             layer.task(
-                    "ffn_down_quantize",
+                    tn("ffn_down_quantize"),
                     TransformerComputeKernelsQ4_0::quantizeActivationQ8Blocks,
                     context,
                     qwen35State.workspace.wrapHb,
@@ -710,12 +767,14 @@ public class Qwen35FFNLayers
                 config.dim(),
                 true);
 
-        layer.persistOnDevice(
-                qwen35State.workspace.wrapX,
-                keyStore(),
-                valueStore(),
-                qwen35State.workspace.wrapConvState,
-                qwen35State.workspace.wrapDeltaState);
+        if (lastLayerOfGraph(layerIndex)) {
+            layer.persistOnDevice(
+                    qwen35State.workspace.wrapX,
+                    keyStore(),
+                    valueStore(),
+                    qwen35State.workspace.wrapConvState,
+                    qwen35State.workspace.wrapDeltaState);
+        }
         return layer;
     }
 
@@ -837,7 +896,7 @@ public class Qwen35FFNLayers
             TornadoTensor weight,
             boolean quantize) {
         layer.task(
-                reduce,
+                tn(reduce),
                 rmsReduceKernel(),
                 context,
                 scratch,
@@ -847,7 +906,7 @@ public class Qwen35FFNLayers
                 qwen35State.localSize);
         if (shouldUseFinalNormalization()) {
             layer.task(
-                    finalize,
+                    tn(finalize),
                     TransformerComputeKernelsLayered::reductionFinalNormalization,
                     context,
                     scratch,
@@ -856,7 +915,7 @@ public class Qwen35FFNLayers
         }
         if (quantize) {
             layer.task(
-                    apply,
+                    tn(apply),
                     TransformerComputeKernelsQ4_0::rmsApplyAndQuantizeActivationQ8Blocks,
                     context,
                     qwen35State.workspace.wrapXb,
@@ -869,7 +928,7 @@ public class Qwen35FFNLayers
             return;
         }
         layer.task(
-                apply,
+                tn(apply),
                 TransformerComputeKernelsLayered::reductionOneBlock2WithLayer,
                 context,
                 qwen35State.workspace.wrapXb,
@@ -1005,7 +1064,7 @@ public class Qwen35FFNLayers
                 false);
 
         layer.task(
-                "attn_split_query_gate",
+                tn("attn_split_query_gate"),
                 Qwen35AttentionKernels::splitQueryGate,
                 context,
                 qwen35State.workspace.wrapQ,
@@ -1015,7 +1074,7 @@ public class Qwen35FFNLayers
                 headDim);
 
         layer.task(
-                "attn_qk_norm",
+                tn("attn_qk_norm"),
                 Qwen3Kernels::fusedQKRmsNorm,
                 context,
                 qwen35State.workspace.wrapAttnQ,
@@ -1029,7 +1088,7 @@ public class Qwen35FFNLayers
                 config.rmsNormEps());
 
         layer.task(
-                "attn_rope",
+                tn("attn_rope"),
                 Qwen35AttentionKernels::ropeNeoxPartial,
                 context,
                 qwen35State.workspace.positionHolder,
@@ -1047,7 +1106,7 @@ public class Qwen35FFNLayers
         int kvLayer = config.keyValueLayerIndex(layerIndex);
         if (fp16Kv()) {
             layer.task(
-                    "attn_kv_append",
+                    tn("attn_kv_append"),
                     Qwen35AttentionKernels::appendKeyValueFP16Paged,
                     context,
                     qwen35State.workspace.positionHolder,
@@ -1062,7 +1121,7 @@ public class Qwen35FFNLayers
                     qwen35State.kvBlockStride);
         } else {
             layer.task(
-                    "attn_kv_append",
+                    tn("attn_kv_append"),
                     Qwen35AttentionKernels::appendKeyValuePaged,
                     context,
                     qwen35State.workspace.positionHolder,
@@ -1096,7 +1155,7 @@ public class Qwen35FFNLayers
             // Phase 1: each head's key/value range split across `splits` workgroups, partials into
             // wrapAttSplit in the compact layout the combine expects.
             layer.task(
-                    "attention",
+                    tn("attention"),
                     TransformerPagedKvKernels::processHeadsFlashAttentionSplitKVFP16PagedWideHead,
                     context,
                     qwen35State.workspace.wrapAttnQ,
@@ -1116,7 +1175,7 @@ public class Qwen35FFNLayers
             // Phase 2: merge the per-head partials into wrapXb, where the per-head kernel would
             // have written directly.
             layer.task(
-                    "attention_combine",
+                    tn("attention_combine"),
                     TransformerComputeKernelsLayered::combineSplitKVAttention,
                     context,
                     qwen35State.workspace.wrapAttSplit,
@@ -1126,7 +1185,7 @@ public class Qwen35FFNLayers
                     splits);
         } else if (fp16Kv()) {
             layer.task(
-                    "attention",
+                    tn("attention"),
                     TransformerPagedKvKernels::processHeadsFlashAttentionFP16Paged,
                     context,
                     qwen35State.workspace.wrapAttnQ,
@@ -1144,7 +1203,7 @@ public class Qwen35FFNLayers
                     qwen35State.kvBlockStride);
         } else {
             layer.task(
-                    "attention",
+                    tn("attention"),
                     TransformerPagedKvKernels::processHeadsFlashAttentionPaged,
                     context,
                     qwen35State.workspace.wrapAttnQ,
@@ -1166,7 +1225,7 @@ public class Qwen35FFNLayers
         // The gated attention output lands in wrapXb, over the activation that was quantized.
         normedActivationQuantized = false;
         layer.task(
-                "attn_output_gate",
+                tn("attn_output_gate"),
                 Qwen35AttentionKernels::applyOutputGate,
                 context,
                 qwen35State.workspace.wrapXb,
@@ -1254,7 +1313,7 @@ public class Qwen35FFNLayers
                 false);
 
         layer.task(
-                "ssm_decay_beta",
+                tn("ssm_decay_beta"),
                 Qwen35DeltaNetKernels::decayAndBeta,
                 context,
                 qwen35State.workspace.wrapSsmAlpha,
@@ -1264,7 +1323,7 @@ public class Qwen35FFNLayers
                 valueHeads);
 
         layer.task(
-                "ssm_conv",
+                tn("ssm_conv"),
                 Qwen35DeltaNetKernels::causalConv1d,
                 context,
                 qwen35State.workspace.wrapSsmQkv,
@@ -1275,14 +1334,14 @@ public class Qwen35FFNLayers
                 config.ssmConvKernel(),
                 recurrent * config.convStateSize());
         layer.task(
-                "ssm_conv_silu",
+                tn("ssm_conv_silu"),
                 Qwen35DeltaNetKernels::siluInPlace,
                 context,
                 qwen35State.workspace.wrapSsmConvOut,
                 convDim);
 
         layer.task(
-                "ssm_split_qkv",
+                tn("ssm_split_qkv"),
                 TransformerComputeKernels::splitThreeWay,
                 context,
                 qwen35State.workspace.wrapSsmConvOut,
@@ -1298,14 +1357,14 @@ public class Qwen35FFNLayers
             // placement; the sum of squares becomes a shared tree, which is why this is not
             // bit-identical to the per-head lane.
             layer.task(
-                    "ssm_l2norm_q",
+                    tn("ssm_l2norm_q"),
                     Qwen35DeltaNetKernels::l2NormPerHeadWide,
                     context,
                     qwen35State.workspace.wrapSsmQ,
                     headK,
                     config.rmsNormEps());
             layer.task(
-                    "ssm_l2norm_k",
+                    tn("ssm_l2norm_k"),
                     Qwen35DeltaNetKernels::l2NormPerHeadWide,
                     context,
                     qwen35State.workspace.wrapSsmK,
@@ -1313,7 +1372,7 @@ public class Qwen35FFNLayers
                     config.rmsNormEps());
         } else {
             layer.task(
-                    "ssm_l2norm_q",
+                    tn("ssm_l2norm_q"),
                     Qwen35DeltaNetKernels::l2NormPerHead,
                     context,
                     qwen35State.workspace.wrapSsmQ,
@@ -1321,7 +1380,7 @@ public class Qwen35FFNLayers
                     headK,
                     config.rmsNormEps());
             layer.task(
-                    "ssm_l2norm_k",
+                    tn("ssm_l2norm_k"),
                     Qwen35DeltaNetKernels::l2NormPerHead,
                     context,
                     qwen35State.workspace.wrapSsmK,
@@ -1330,7 +1389,7 @@ public class Qwen35FFNLayers
                     config.rmsNormEps());
         }
         layer.task(
-                "ssm_scale_q",
+                tn("ssm_scale_q"),
                 TransformerComputeKernels::scaleInPlace,
                 context,
                 qwen35State.workspace.wrapSsmQ,
@@ -1338,7 +1397,7 @@ public class Qwen35FFNLayers
                 keyDim);
 
         layer.task(
-                "ssm_delta_rule",
+                tn("ssm_delta_rule"),
                 Qwen35DeltaNetKernels::deltaRule,
                 context,
                 qwen35State.workspace.wrapSsmQ,
@@ -1358,7 +1417,7 @@ public class Qwen35FFNLayers
             // same epsilon; the sum of squares becomes a shared tree, which is why this is not
             // bit-identical to the per-head lane below.
             layer.task(
-                    "ssm_gated_norm",
+                    tn("ssm_gated_norm"),
                     Qwen35DeltaNetKernels::gatedNormPerHeadWide,
                     context,
                     qwen35State.workspace.wrapSsmOut,
@@ -1368,7 +1427,7 @@ public class Qwen35FFNLayers
                     config.rmsNormEps());
         } else {
             layer.task(
-                    "ssm_gated_norm",
+                    tn("ssm_gated_norm"),
                     Qwen35DeltaNetKernels::gatedNormPerHead,
                     context,
                     qwen35State.workspace.wrapSsmOut,
@@ -1386,7 +1445,7 @@ public class Qwen35FFNLayers
             // those is behind us in this graph, and the arrays are sized for the feed-forward's
             // hidden width, which is wider than this.
             layer.task(
-                    "ssm_out_quantize",
+                    tn("ssm_out_quantize"),
                     TransformerComputeKernelsQ4_0::quantizeActivationQ8Blocks,
                     context,
                     qwen35State.workspace.wrapSsmOut,
@@ -1523,7 +1582,9 @@ public class Qwen35FFNLayers
                     qwen35State.workspace.wrapConvState,
                     qwen35State.workspace.wrapDeltaState);
         } else {
-            String predecessor = "layer_" + (layerIndex - 1);
+            // The graph holding the previous layer, which is not "layer_{i-1}" when a family
+            // puts several layers in one graph.
+            String predecessor = layerGraphName(layerIndex - 1);
             layer.consumeFromDevice(
                     predecessor,
                     context,
@@ -1631,7 +1692,9 @@ public class Qwen35FFNLayers
                         config.numberOfValueHeads() * config.headValueDim(), ELEMENTWISE_LOCAL);
 
         for (int layer = 0; layer < config.numberOfLayers(); layer++) {
-            String prefix = "layer_" + layer + ".";
+            // The same graph and the same task qualification the tasks were built with; a
+            // grouped family puts two layers in one graph and distinguishes them by task prefix.
+            String prefix = layerGraphName(layer) + "." + layerTaskPrefix(layer);
             scheduler.addWorkerGrid(prefix + "attn_rms_reduce", rmsReduce);
             scheduler.addWorkerGrid(prefix + "ffn_rms_reduce", rmsReduce);
             if (shouldUseFinalNormalization()) {

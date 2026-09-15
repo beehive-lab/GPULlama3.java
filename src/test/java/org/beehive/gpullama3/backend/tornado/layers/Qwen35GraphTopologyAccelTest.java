@@ -7,8 +7,10 @@ import static org.junit.Assert.fail;
 import static org.junit.Assume.assumeTrue;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.beehive.gpullama3.backend.tornado.kernels.Qwen35MMAKernels;
 import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerType;
@@ -64,11 +66,16 @@ public class Qwen35GraphTopologyAccelTest {
     private static final int INNER = 256;
 
     private static Qwen35Configuration config() {
+        return config(TRUNK_LAYERS);
+    }
+
+    /** The same fixture with a chosen trunk depth, so a remainder group can be exercised. */
+    private static Qwen35Configuration config(int trunkLayers) {
         return new Qwen35Configuration(
                 "Q8_0",
                 DIM,
                 HIDDEN,
-                TRUNK_LAYERS,
+                trunkLayers,
                 NEXTN_LAYERS,
                 HEADS,
                 KV_HEADS,
@@ -295,6 +302,207 @@ public class Qwen35GraphTopologyAccelTest {
         assertEquals(
                 "ssm_gated_norm global work", valueHeads * valueDim, (int) gated.getGlobalWork()[0]);
         assertEquals("ssm_gated_norm local work", valueDim, (int) gated.getLocalWork()[0]);
+    }
+
+    // @formatter:off
+    /**
+     * The batched plan's decode layers are laid out two to a graph.
+     *
+     * <p>Decode submits one graph at a time, so pairing adjacent layers halves the submissions.
+     * What this pins is the part that could silently go wrong: the graph count, that each graph
+     * really holds two layers, that the two layers' tasks do not collide on a grid key, and that
+     * they are registered in layer order. The task names themselves are unchanged for the first
+     * layer of each graph, so only the second one's keys are new.
+     */
+    // @formatter:on
+    @Test
+    public void theBatchedDecodeLayersArePairedTwoToAGraph() {
+        Qwen35Configuration config = config();
+        Qwen35FFNLayersBatchDecode decode = buildBatchDecode(config);
+
+        int layers = config.numberOfLayers();
+        int group = decode.layersPerGraph();
+        int expectedGraphs = (layers + group - 1) / group;
+        assertEquals(
+                "one decode graph per group of layers",
+                expectedGraphs,
+                decode.getFFNLayerImmutableTaskGraphs().size());
+
+        GridScheduler scheduler = new GridScheduler();
+        decode.updateGridScheduler(scheduler);
+
+        // Grid keys are graphName.taskName. Group them by graph and check the shape.
+        Map<String, List<String>> byGraph = new LinkedHashMap<>();
+        Set<String> all = new LinkedHashSet<>();
+        for (String key : scheduler.keySet()) {
+            assertTrue("a grid key is registered twice: " + key, all.add(key));
+            int dot = key.indexOf('.');
+            byGraph.computeIfAbsent(key.substring(0, dot), g -> new ArrayList<>())
+                    .add(key.substring(dot + 1));
+        }
+        assertEquals("one graph per pair", expectedGraphs, byGraph.size());
+
+        // The scheduler's key set is not ordered, so the names are checked as a set and each
+        // graph is looked up by name; build order is pinned separately by the last graph's id.
+        Set<String> expectedNames = new LinkedHashSet<>();
+        for (int g = 0; g < expectedGraphs; g++) {
+            expectedNames.add("layer_" + (group * g));
+        }
+        assertEquals("graphs are named for their first layer", expectedNames, byGraph.keySet());
+        assertEquals(
+                "the logits graph chains from the last decode graph",
+                "layer_" + (group * (expectedGraphs - 1)),
+                decode.getLastFFNLayerTaskGraphID());
+
+        for (int g = 0; g < expectedGraphs; g++) {
+            String name = "layer_" + (group * g);
+            List<String> tasks = byGraph.get(name);
+            assertEquals(
+                    "no task name repeats inside " + name,
+                    tasks.size(),
+                    new LinkedHashSet<>(tasks).size());
+            // Every slot this graph actually holds must be represented, and no other.
+            int held = Math.min(group, layers - group * g);
+            for (int slot = 1; slot < group; slot++) {
+                String slotPrefix = "l" + slot + "_";
+                boolean present = tasks.stream().anyMatch(t -> t.startsWith(slotPrefix));
+                assertEquals(
+                        name + " slot " + slot + " should be "
+                                + (slot < held ? "present" : "absent"),
+                        slot < held,
+                        present);
+            }
+        }
+    }
+
+    // @formatter:off
+    /**
+     * Which graph a paired decode layer consumes its predecessor's output from.
+     *
+     * <p>The check that was missing when pairing first went in, and the one that would have caught
+     * the failure it caused. A layer that is not the first in its graph has its producer inside the
+     * same graph and must not consume at all; a layer that <b>is</b> first consumes from the graph
+     * holding the previous layer — which is {@code layer_0} for layer 2, not {@code layer_1}.
+     * Resolving it as the literal {@code "layer_" + (layerIndex - 1)} names a graph that does not
+     * exist once layers are grouped, and the only thing that caught it was a 99% elementwise
+     * failure in a two-minute device parity run.
+     */
+    // @formatter:on
+    @Test
+    public void aPairedLayerConsumesFromTheGraphHoldingItsPredecessor() {
+        Qwen35Configuration config = config();
+        Qwen35FFNLayersBatchDecode decode = buildBatchDecode(config);
+        int layers = config.numberOfLayers();
+        int group = decode.layersPerGraph();
+        assertTrue("this fixture must span more than one graph", layers > group);
+
+        // The graph names that exist, read off the plan this family actually built.
+        GridScheduler scheduler = new GridScheduler();
+        decode.updateGridScheduler(scheduler);
+        Set<String> builtGraphNames = new LinkedHashSet<>();
+        for (String key : scheduler.keySet()) {
+            builtGraphNames.add(key.substring(0, key.indexOf('.')));
+        }
+        assertEquals(
+                "one graph per group", (layers + group - 1) / group, builtGraphNames.size());
+
+        for (int layer = 0; layer < layers; layer++) {
+            int slot = layer % group;
+            assertEquals(
+                    "layer " + layer + " belongs to its group's graph",
+                    "layer_" + (layer - slot),
+                    decode.layerGraphName(layer));
+            assertEquals(
+                    "only the first layer of a graph owns the graph's inputs",
+                    slot == 0,
+                    decode.firstLayerOfGraph(layer));
+            assertEquals(
+                    "only the last layer of a graph publishes its outputs",
+                    slot == group - 1 || layer == layers - 1,
+                    decode.lastLayerOfGraph(layer));
+
+            if (slot == 0 && layer > 0) {
+                // The group boundary: the producer is the previous GROUP's graph, never the
+                // preceding layer's own index, which is not a graph name at all.
+                String producer = decode.layerGraphName(layer - 1);
+                assertEquals(
+                        "layer " + layer + " must consume from the previous group's graph",
+                        "layer_" + (layer - group),
+                        producer);
+                // Checked against the graphs the family actually built, not against another
+                // computed string: a producer that names no graph is the failure mode.
+                assertTrue(
+                        "layer " + layer + " names a producer that was never built: " + producer
+                                + " (built: " + builtGraphNames + ")",
+                        builtGraphNames.contains(producer));
+            } else if (layer > 0) {
+                assertEquals(
+                        "a layer inside a graph shares it with its predecessor",
+                        decode.layerGraphName(layer - 1),
+                        decode.layerGraphName(layer));
+            }
+        }
+    }
+
+    // @formatter:off
+    /**
+     * A trunk depth that does not divide by the group size leaves a smaller final graph.
+     *
+     * <p>The production depth of 64 divides by four exactly, so the remainder path would
+     * otherwise never be built. Six layers at four to a graph gives one full graph and one
+     * holding two, and the second graph must still own its own inputs and outputs.
+     */
+    // @formatter:on
+    @Test
+    public void aRemainderGroupTakesASmallerGraph() {
+        Qwen35Configuration config = config(6);
+        Qwen35FFNLayersBatchDecode decode = buildBatchDecode(config);
+        int group = decode.layersPerGraph();
+        assumeTrue("this case needs a remainder", 6 % group != 0);
+
+        assertEquals("a full graph and a remainder graph", 2,
+                decode.getFFNLayerImmutableTaskGraphs().size());
+        assertEquals("layer_0", decode.layerGraphName(0));
+        assertEquals("layer_4", decode.layerGraphName(4));
+        assertEquals("layer_4", decode.layerGraphName(5));
+        assertEquals(
+                "the logits graph chains from the remainder graph",
+                "layer_4",
+                decode.getLastFFNLayerTaskGraphID());
+
+        // The remainder graph owns its edges: first layer consumes, last layer persists.
+        assertTrue(decode.firstLayerOfGraph(4));
+        assertFalse(decode.firstLayerOfGraph(5));
+        assertFalse(decode.lastLayerOfGraph(4));
+        assertTrue("the trunk's final layer ends its graph", decode.lastLayerOfGraph(5));
+        assertEquals(
+                "the remainder graph consumes from the full graph before it",
+                "layer_0",
+                decode.layerGraphName(3));
+
+        GridScheduler scheduler = new GridScheduler();
+        decode.updateGridScheduler(scheduler);
+        Set<String> names = new LinkedHashSet<>();
+        for (String key : scheduler.keySet()) {
+            names.add(key.substring(0, key.indexOf('.')));
+        }
+        assertEquals(Set.of("layer_0", "layer_4"), names);
+    }
+
+    private static Qwen35FFNLayersBatchDecode buildBatchDecode(Qwen35Configuration config) {
+        String previous = System.getProperty("use.tornadovm");
+        System.setProperty("use.tornadovm", "true");
+        try {
+            Qwen35State state = new Qwen35State(config, -1);
+            return new Qwen35FFNLayersBatchDecode(
+                    "qwen35FFN", state, weights(config), config, SchedulerType.NVIDIA);
+        } finally {
+            if (previous == null) {
+                System.clearProperty("use.tornadovm");
+            } else {
+                System.setProperty("use.tornadovm", previous);
+            }
+        }
     }
 
     private static List<String> taskNames(GridScheduler scheduler, int layer) {

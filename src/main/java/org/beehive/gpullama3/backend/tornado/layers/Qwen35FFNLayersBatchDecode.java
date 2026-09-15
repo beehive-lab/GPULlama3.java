@@ -4,6 +4,9 @@ import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerType;
 import org.beehive.gpullama3.inference.state.Qwen35State;
 import org.beehive.gpullama3.inference.weights.tornado.Qwen35TornadoWeights;
 import org.beehive.gpullama3.model.qwen35.Qwen35Configuration;
+import java.util.ArrayList;
+import java.util.List;
+import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
@@ -19,6 +22,13 @@ import uk.ac.manchester.tornado.api.enums.DataTransferMode;
  *
  * <p>The weights come the same way, from the batch-prefill graph for the same block: bound with a
  * transfer in both families, a plan would hold the whole model twice.
+ *
+ * <p><b>Several layers to a graph.</b> Decode submits one graph at a time and the host cost of a
+ * submission does not scale with what the graph contains, so adjacent layers share a graph and
+ * the number of submissions falls by that factor. The layers are still built in order and still
+ * separate: each consumes its own weights from its own {@code batchLayer_} producer, and only the
+ * graph's own edges — the activation it consumes and the state it persists — are taken once, by
+ * the first and last layer in it. A final group with fewer layers left takes a smaller graph.
  */
 // @formatter:on
 public class Qwen35FFNLayersBatchDecode extends Qwen35FFNLayers {
@@ -30,6 +40,65 @@ public class Qwen35FFNLayersBatchDecode extends Qwen35FFNLayers {
             Qwen35Configuration config,
             SchedulerType schedulerType) {
         super(taskGraphName, state, weights, config, schedulerType, "decodeActivation");
+    }
+
+    /**
+     * Adjacent layers to a graph.
+     *
+     * <p>Four: decode submissions fall to a quarter without building one graph for the whole
+     * trunk. Not a tuning knob and not user-settable — the grouping is a property of this
+     * family's plan, and changing it is an experiment with its own measurement.
+     */
+    private static final int LAYERS_PER_GRAPH = 4;
+
+    /** How many layers this family puts in one decode graph. Read by the topology tests. */
+    protected int layersPerGraph() {
+        return LAYERS_PER_GRAPH;
+    }
+
+    // @formatter:off
+    /**
+     * One graph per group of layers, in order, with a smaller graph for any remainder.
+     *
+     * <p>Overrides the one-graph-per-layer construction rather than generalising it: the grouping
+     * is this family's, and every other family keeps the loop it had.
+     */
+    // @formatter:on
+    @Override
+    protected void setupFFNLayers() {
+        int layers = config.numberOfLayers();
+        List<ImmutableTaskGraph> graphs = new ArrayList<>();
+        for (int first = 0; first < layers; first += LAYERS_PER_GRAPH) {
+            TaskGraph graph = new TaskGraph(layerGraphName(first));
+            int last = Math.min(first + LAYERS_PER_GRAPH, layers) - 1;
+            for (int layer = first; layer <= last; layer++) {
+                appendLayer(graph, layer);
+            }
+            lastFFNLayerTaskGraphID = graph.getTaskGraphName();
+            graphs.add(graph.snapshot());
+        }
+        ffnLayerITGs = List.copyOf(graphs);
+    }
+
+    /** The graph holding {@code layerIndex}: named for the first layer in it. */
+    @Override
+    protected String layerGraphName(int layerIndex) {
+        return "layer_" + (layerIndex - layerIndex % LAYERS_PER_GRAPH);
+    }
+
+    // @formatter:off
+    /**
+     * What keeps a graph's layers' tasks apart inside it.
+     *
+     * <p>Grid keys are {@code graphName.taskName}, so without this every layer in a graph would
+     * claim {@code layer_0.attn_rms_reduce}. The first layer of a graph keeps the bare names the
+     * ungrouped family used, so only the later slots' keys are new.
+     */
+    // @formatter:on
+    @Override
+    protected String layerTaskPrefix(int layerIndex) {
+        int slot = layerIndex % LAYERS_PER_GRAPH;
+        return slot == 0 ? "" : "l" + slot + "_";
     }
 
     /** The batch-prefill graph for the same block already uploaded these weights. */

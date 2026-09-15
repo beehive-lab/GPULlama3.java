@@ -39,6 +39,13 @@ public record SingleTokenForwardTaskGraphLayout(int N) {
     }
 
     /** Graphs that are not per-layer: activation and logits. */
+    /**
+     * Graphs each family contributes, in layout order. One family, one graph per layer.
+     */
+    public int[] layerFamilyGraphCounts() {
+        return new int[] {N};
+    }
+
     public int nonLayerGraphs() {
         return 2;
     }
