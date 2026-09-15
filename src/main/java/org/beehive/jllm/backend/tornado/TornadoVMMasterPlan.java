@@ -22,7 +22,7 @@ import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
  * </ul>
  *
  * <p>The {@link #initializeTornadoVMPlan} factory selects the implementation based on {@code
- * llama.withPrefillDecode} and {@code llama.prefillBatchSize}:
+ * jllm.withPrefillDecode} and {@code jllm.prefillBatchSize}:
  *
  * <ul>
  *   <li>{@code withPrefillDecode=false} → {@link TornadoVMMasterPlanSingleToken}
@@ -35,10 +35,10 @@ import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 public interface TornadoVMMasterPlan {
 
     boolean ENABLE_TORNADOVM_INIT_TIME =
-            Boolean.parseBoolean(System.getProperty("llama.EnableTimingForTornadoVMInit", "False"));
+            Boolean.parseBoolean(System.getProperty("jllm.EnableTimingForTornadoVMInit", "False"));
 
     /** When {@code true}, {@code withCUDAGraph()} is called — CUDA backend only. */
-    boolean CUDA_GRAPHS = Boolean.parseBoolean(System.getProperty("llama.cudaGraphs", "false"));
+    boolean CUDA_GRAPHS = Boolean.parseBoolean(System.getProperty("jllm.cudaGraphs", "false"));
 
     /**
      * @deprecated Replaced by {@code state.executionPolicy()}. This constant survives only for
@@ -46,17 +46,17 @@ public interface TornadoVMMasterPlan {
      *     a capacity input, not policy — and for the bench harness. It is not read on any execution
      *     path.
      */
-    @Deprecated boolean WITH_PREFILL_DECODE = Boolean.getBoolean("llama.withPrefillDecode");
+    @Deprecated boolean WITH_PREFILL_DECODE = Boolean.getBoolean("jllm.withPrefillDecode");
 
     /**
      * @deprecated see {@link #WITH_PREFILL_DECODE}. Capacity input only.
      */
-    @Deprecated int PREFILL_BATCH_SIZE = Integer.getInteger("llama.prefillBatchSize", 1);
+    @Deprecated int PREFILL_BATCH_SIZE = Integer.getInteger("jllm.prefillBatchSize", 1);
 
     /**
      * Factory: creates, JIT-compiles, and warms up the appropriate TornadoVMMasterPlan.
      *
-     * <p>When {@code llama.withPrefillDecode=true} and {@code llama.prefillBatchSize > 1}, a {@link
+     * <p>When {@code jllm.withPrefillDecode=true} and {@code jllm.prefillBatchSize > 1}, a {@link
      * TornadoVMMasterPlanBatchPrefillDecode} is returned. Otherwise a {@link
      * TornadoVMMasterPlanSingleToken} is returned (used for the baseline path and the sequential
      * prefill/decode path when batch size is 1).

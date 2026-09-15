@@ -26,16 +26,16 @@ public class JllmApp {
     public static final boolean USE_VECTOR_API =
             Boolean.parseBoolean(
                     System.getProperty(
-                            "llama.VectorAPI",
+                            "jllm.VectorAPI",
                             "true")); // Enable Java Vector API for CPU acceleration
     public static final boolean SHOW_PERF_INTERACTIVE =
             Boolean.parseBoolean(
                     System.getProperty(
-                            "llama.ShowPerfInteractive",
+                            "jllm.ShowPerfInteractive",
                             "true")); // Show performance metrics in interactive mode
 
     /**
-     * On-device greedy sampling ({@code -Dllama.deviceSample=true}) keeps the logits on the GPU and
+     * On-device greedy sampling ({@code -Djllm.deviceSample=true}) keeps the logits on the GPU and
      * returns only the argmax token id. It is only valid on the GPU FP16 greedy path for the models
      * whose decode loop reads {@code state.workspace.sampledToken} (Llama / Mistral / Qwen3). For
      * any other configuration the host still needs the full logits row, so the flag is cleared
@@ -45,7 +45,7 @@ public class JllmApp {
      * when the session builds its execution plan.
      */
     private static void guardDeviceSample(LocalModel model, Options options) {
-        if (!Boolean.getBoolean("llama.deviceSample")) {
+        if (!Boolean.getBoolean("jllm.deviceSample")) {
             return;
         }
         boolean greedy = options.temperature() == 0.0f;
@@ -58,7 +58,7 @@ public class JllmApp {
         if (!(options.useTornadovm() && greedy && fp16 && wiredLoop)) {
             System.err.println(
                     "[deviceSample] ignored — requires GPU + greedy (temperature 0) + FP16 + Llama/Mistral/Qwen3");
-            System.clearProperty("llama.deviceSample");
+            System.clearProperty("jllm.deviceSample");
         }
     }
 

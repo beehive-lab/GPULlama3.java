@@ -26,7 +26,7 @@ import org.beehive.jllm.tensor.standard.FloatTensor;
 public abstract class State {
 
     /**
-     * When set ({@code -Dllama.kvcache.fp16=true}), model states that support it additionally
+     * When set ({@code -Djllm.kvcache.fp16=true}), model states that support it additionally
      * allocate half-precision KV caches, and the NVIDIA decode path reads/writes those instead of
      * the FP32 ones (halving KV bandwidth; accumulation stays FP32).
      *
@@ -36,7 +36,7 @@ public abstract class State {
      * #usesFp16KeyValueCache()} rather than re-deriving it from a property. The two answers are not
      * always the same: a leased state holds whatever the pool was built with.
      */
-    @Deprecated public static final boolean USE_FP16_KV = Boolean.getBoolean("llama.kvcache.fp16");
+    @Deprecated public static final boolean USE_FP16_KV = Boolean.getBoolean("jllm.kvcache.fp16");
 
     /**
      * How this state's key/value storage is shaped, resolved <b>per construction</b>.
@@ -58,7 +58,7 @@ public abstract class State {
      * {@code Qwen3State} — reading the same system property with the same default, so a change to
      * one would have silently disagreed with the other.
      */
-    public static final int SPLIT_KV = Integer.getInteger("llama.attention.splitKv.count", 8);
+    public static final int SPLIT_KV = Integer.getInteger("jllm.attention.splitKv.count", 8);
 
     /**
      * Split-KV attention scratch, or {@code null} for a family that does not use it.
@@ -145,7 +145,7 @@ public abstract class State {
 
     // stateful or autoregressive models.
 
-    // Batch-prefill buffers (allocated when llama.prefillBatchSize > 1)
+    // Batch-prefill buffers (allocated when jllm.prefillBatchSize > 1)
 
     /**
      * The storage options the next state built on this thread should use.
@@ -213,7 +213,7 @@ public abstract class State {
      */
     private static int prefillBatchForConstruction() {
         Integer handedIn = PREFILL_BATCH_FOR_CONSTRUCTION.get();
-        return handedIn != null ? handedIn : Integer.getInteger("llama.prefillBatchSize", 1);
+        return handedIn != null ? handedIn : Integer.getInteger("jllm.prefillBatchSize", 1);
     }
 
     /**

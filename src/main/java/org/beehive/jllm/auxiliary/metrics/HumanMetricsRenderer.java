@@ -5,14 +5,14 @@ package org.beehive.jllm.auxiliary.metrics;
  *
  * <p>This is the default renderer — no configuration needed. To enable explicitly:</p>
  * <pre>
- *   -Dllama.metrics.format=human   (default, can be omitted)
- *   -Dllama.metrics.output=stderr  (default, can be omitted)
+ *   -Djllm.metrics.format=human   (default, can be omitted)
+ *   -Djllm.metrics.output=stderr  (default, can be omitted)
  * </pre>
  *
  * <p>To also print TornadoVM initialisation timings (plan creation, JIT, weight copy-in),
  * additionally set:</p>
  * <pre>
- *   -Dllama.EnableTimingForTornadoVMInit=true
+ *   -Djllm.EnableTimingForTornadoVMInit=true
  * </pre>
  */
 public final class HumanMetricsRenderer implements MetricsRenderer {
@@ -35,7 +35,7 @@ public final class HumanMetricsRenderer implements MetricsRenderer {
                     s.totalRate(), s.totalCount(), s.totalDuration() / 1e9));
         }
 
-        if (Boolean.parseBoolean(System.getProperty("llama.EnableTimingForTornadoVMInit", "false"))
+        if (Boolean.parseBoolean(System.getProperty("jllm.EnableTimingForTornadoVMInit", "false"))
                 && s.tornadoPlanCreationDuration() > 0) {
             sb.append(String.format(
                     "GGUF Model Load: %.2f ms%n" +

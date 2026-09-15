@@ -23,8 +23,8 @@ import org.junit.Test;
  */
 public class ThreePhaseModeAccelTest {
 
-    private static final String PREFILL_DECODE = "llama.withPrefillDecode";
-    private static final String PREFILL_BATCH = "llama.prefillBatchSize";
+    private static final String PREFILL_DECODE = "jllm.withPrefillDecode";
+    private static final String PREFILL_BATCH = "jllm.prefillBatchSize";
 
     /**
      * The two modes every backend must run. No capability gate: unlike batched prefill, sequential

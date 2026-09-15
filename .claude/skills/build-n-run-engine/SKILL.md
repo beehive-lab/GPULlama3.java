@@ -55,7 +55,7 @@ through with `UnsupportedClassVersionError`, and the message names a test class 
 the cause.
 
 Accelerator gates are opt-in and need a device, an SDK and the pinned fixtures under
-`$GPULLAMA_TEST_MODELS` or `~/.gpullama3/test-models/`:
+`$JLLM_TEST_MODELS` or `~/.jllm/test-models/`:
 
 ```bash
 ./mvnw clean verify -Paccel-tests
@@ -92,7 +92,7 @@ result, establish all three:
 ```bash
 # The launcher parses its own flags, so engine properties go through JAVA_TOOL_OPTIONS,
 # which is what CI does too.
-JAVA_TOOL_OPTIONS="-Dllama.metrics.format=json -Dllama.metrics.output=file -Dllama.metrics.file=$PWD/run.json" \
+JAVA_TOOL_OPTIONS="-Djllm.metrics.format=json -Djllm.metrics.output=file -Djllm.metrics.file=$PWD/run.json" \
   ./llama-tornado --gpu --model <model.gguf> \
     --prompt "What is the capital of France?" -n 64 --seed 42
 ```

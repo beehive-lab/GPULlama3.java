@@ -34,7 +34,7 @@ public final class BatchedEngineThroughput {
 
         for (String width : widths) {
             int b = Integer.parseInt(width.trim());
-            System.setProperty("llama.prefillBatchSize", String.valueOf(b));
+            System.setProperty("jllm.prefillBatchSize", String.valueOf(b));
             run(modelPath, b, tokens, contextLength);
         }
     }

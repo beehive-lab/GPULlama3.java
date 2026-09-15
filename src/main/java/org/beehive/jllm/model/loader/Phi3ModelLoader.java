@@ -29,7 +29,7 @@ public class Phi3ModelLoader extends AbstractModelLoader<Phi3, Phi3Configuration
     /**
      * Rule 16: loading is library code, so its progress goes through the platform logger and an
      * embedder can silence or route it. Reached only under {@code
-     * llama.EnableTimingForTornadoVMInit}.
+     * jllm.EnableTimingForTornadoVMInit}.
      */
     private static final System.Logger LOGGER = System.getLogger(Phi3ModelLoader.class.getName());
 

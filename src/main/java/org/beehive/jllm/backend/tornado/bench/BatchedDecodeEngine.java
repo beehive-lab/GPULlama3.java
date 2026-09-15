@@ -45,12 +45,12 @@ import uk.ac.manchester.tornado.api.types.arrays.IntArray;
  * the single-stream greedy reference — a bit-exact end-to-end correctness check — while the
  * aggregate B×tok/s is the batching win.
  *
- * <p>Configured with a {@link BatchDecodeOptions}. {@code -Dllama.prefillBatchSize} must still
+ * <p>Configured with a {@link BatchDecodeOptions}. {@code -Djllm.prefillBatchSize} must still
  * equal the batch size, because the prefill plan is sized for it:
  *
  * <pre>
  *   var options = BatchDecodeOptions.of(32);          // batch 32, 512 context, 64 tokens
- *   BatchedDecodeEngine.run(model, prompt, options);  // with -Dllama.prefillBatchSize=32
+ *   BatchedDecodeEngine.run(model, prompt, options);  // with -Djllm.prefillBatchSize=32
  * </pre>
  *
  * <p>The {@code -Dbatch.decode.*} properties this once took are <b>gone</b>; see {@link #run(Model,
@@ -65,11 +65,11 @@ import uk.ac.manchester.tornado.api.types.arrays.IntArray;
  *       -Djdk.version.suffix=-jdk21-dev clean package -DskipTests}
  *   <li>Take {@code llama-tornado --show-command.}, swap the main class to this harness, and pass
  *       the configuration below as a {@link BatchDecodeOptions}. Keep {@code
- *       -Dllama.prefillBatchSize} equal to its batch size.
+ *       -Djllm.prefillBatchSize} equal to its batch size.
  * </ol>
  *
  * <p>Qwen3, static batch (all B streams bit-exact vs single-stream greedy), with {@code
- * -Dllama.prefillBatchSize=32}:
+ * -Djllm.prefillBatchSize=32}:
  *
  * <pre>
  *   BatchDecodeOptions.of(32)
@@ -77,7 +77,7 @@ import uk.ac.manchester.tornado.api.types.arrays.IntArray;
  * </pre>
  *
  * <p>Qwen3, continuous multi-request serving (paged KV + prefix cache), with {@code
- * -Dllama.prefillBatchSize=16}:
+ * -Djllm.prefillBatchSize=16}:
  *
  * <pre>
  *   new BatchDecodeOptions(16, 512, 64, true,   // batch, context, tokens, CUDA graphs
@@ -181,9 +181,9 @@ public class BatchedDecodeEngine {
         int decodeCtx = options.decodeContext();
         int nDecode = options.decodeTokens();
         boolean cudaGraphs = options.cudaGraphs();
-        if (Integer.getInteger("llama.prefillBatchSize", 1) != B) {
+        if (Integer.getInteger("jllm.prefillBatchSize", 1) != B) {
             throw new IllegalStateException(
-                    "Set -Dllama.prefillBatchSize="
+                    "Set -Djllm.prefillBatchSize="
                             + B
                             + " to match the"
                             + " batch size ("

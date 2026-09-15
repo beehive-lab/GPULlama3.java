@@ -31,9 +31,9 @@ import org.beehive.jllm.runtime.metrics.MetricsReport;
  * <p>Configurable via system properties:
  *
  * <ul>
- *   <li>{@code llama.metrics.format} — {@code human} (default) | {@code json} | {@code github}
- *   <li>{@code llama.metrics.output} — {@code stderr} (default) | {@code stdout} | {@code file}
- *   <li>{@code llama.metrics.file} — target path when {@code output=file}
+ *   <li>{@code jllm.metrics.format} — {@code human} (default) | {@code json} | {@code github}
+ *   <li>{@code jllm.metrics.output} — {@code stderr} (default) | {@code stdout} | {@code file}
+ *   <li>{@code jllm.metrics.file} — target path when {@code output=file}
  * </ul>
  */
 public final class RunMetrics {
@@ -144,7 +144,7 @@ public final class RunMetrics {
      * Records which path executed and the exact combination [D-7].
      *
      * <p>Called once per plan construction, from the one factory every caller reaches. A test that
-     * wants to prove which path ran asserts on this rather than reading the {@code llama.lowering}
+     * wants to prove which path ran asserts on this rather than reading the {@code jllm.lowering}
      * property back — the property says what was <b>asked for</b>.
      *
      * @param path {@code lowered} or {@code legacy}
@@ -217,14 +217,14 @@ public final class RunMetrics {
     // ── Output ────────────────────────────────────────────────────────────────
 
     /**
-     * Builds a snapshot, selects a renderer based on {@code llama.metrics.format}, and writes the
-     * result to the sink configured by {@code llama.metrics.output}.
+     * Builds a snapshot, selects a renderer based on {@code jllm.metrics.format}, and writes the
+     * result to the sink configured by {@code jllm.metrics.output}.
      */
     public static void printMetrics() {
         RunMetricsSnapshot snap = snapshot();
 
         MetricsRenderer renderer =
-                switch (System.getProperty("llama.metrics.format", "human").toLowerCase()) {
+                switch (System.getProperty("jllm.metrics.format", "human").toLowerCase()) {
                     case "json" -> new JsonMetricsRenderer();
                     case "github" -> new GitHubMetricsRenderer();
                     default -> new HumanMetricsRenderer();
@@ -232,7 +232,7 @@ public final class RunMetrics {
 
         String rendered = renderer.render(snap);
 
-        switch (System.getProperty("llama.metrics.output", "stderr").toLowerCase()) {
+        switch (System.getProperty("jllm.metrics.output", "stderr").toLowerCase()) {
             case "stdout" -> System.out.print(rendered);
             case "file" -> writeToFile(rendered);
             default -> System.err.print(rendered);
@@ -240,10 +240,10 @@ public final class RunMetrics {
     }
 
     private static void writeToFile(String content) {
-        String filePath = System.getProperty("llama.metrics.file");
+        String filePath = System.getProperty("jllm.metrics.file");
         if (filePath == null || filePath.isBlank()) {
             throw new IllegalStateException(
-                    "llama.metrics.output=file requires llama.metrics.file to be set");
+                    "jllm.metrics.output=file requires jllm.metrics.file to be set");
         }
         Path path = Path.of(filePath);
         try {

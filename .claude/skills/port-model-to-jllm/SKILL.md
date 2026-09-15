@@ -62,7 +62,7 @@ step answers.
 A useful first command, on a real file:
 
 ```bash
-JAVA_TOOL_OPTIONS="-Dllama.metrics.format=json -Dllama.metrics.output=stdout" \
+JAVA_TOOL_OPTIONS="-Djllm.metrics.format=json -Djllm.metrics.output=stdout" \
   ./llama-tornado --model <model.gguf> --prompt hi -n 1 --verbose-init
 ```
 
@@ -152,7 +152,7 @@ switch to edit, and adding one fails the architecture rules.
 - No model architecture package importing TornadoVM (rule 2).
 - Fusion and kernel choice belong to the backend. The program says what is computed.
 - An architecture, dtype or mode combination that is not supported **fails by name**:
-  `UnsupportedLoweringException` for an unimplemented lowering under `llama.lowering=on`,
+  `UnsupportedLoweringException` for an unimplemented lowering under `jllm.lowering=on`,
   `UnsupportedOperationException` for a device selector this build cannot honour. Never
   substitute silently, and never convert a representation a backend did not accept.
 
@@ -163,8 +163,8 @@ switch to edit, and adding one fails the architecture rules.
 A synthetic fixture proves the decomposition. Only a real one proves the port.
 
 - **Fixture identity.** Record the file's SHA-256 and where it came from. Add it to
-  `GoldenFixture` so the suite can find it under `$GPULLAMA_TEST_MODELS` or
-  `~/.gpullama3/test-models/`, and so an absent fixture skips with a named reason instead
+  `GoldenFixture` so the suite can find it under `$JLLM_TEST_MODELS` or
+  `~/.jllm/test-models/`, and so an absent fixture skips with a named reason instead
   of passing.
 - **Deterministic CPU reference.** Generate on the CPU path, twice, and confirm the two
   agree before comparing anything to them.

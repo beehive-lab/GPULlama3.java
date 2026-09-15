@@ -227,7 +227,7 @@
 
         <!-- ─── Class B: accelerator qualification gates ─────────────────────────
                  Opt-in: `mvn verify -Paccel-tests`. Needs TORNADOVM_HOME, a device, and
-                 the pinned model fixtures (GPULLAMA_TEST_MODELS or ~/.gpullama3/test-models).
+                 the pinned model fixtures (JLLM_TEST_MODELS or ~/.jllm/test-models).
                  On a machine without them the tests skip with an explicit marker — a skip
                  is recorded, never reported as a pass.
 
@@ -303,7 +303,7 @@
                                     --add-modules jdk.incubator.vector
                                     -da:tornado.graal...
                                     -Dtornado.recover.bailout=False
-                                    -Dllama.deviceSample=false
+                                    -Djllm.deviceSample=false
                                     -Dtornado.device.memory=20GB
                                     -Dtornado.cuda.priority=100
                                     -Dtornado.opencl.priority=0</argLine>

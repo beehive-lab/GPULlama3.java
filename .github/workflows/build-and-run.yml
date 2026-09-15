@@ -84,21 +84,21 @@ jobs:
           # profile resolved, which is the mechanism being tested. The version is read back
           # afterwards so downstream steps name the artifact the build actually produced.
           ./mvnw clean install
-          GPULLAMA3_VERSION=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout)
-          echo "GPULlama3 version: $GPULLAMA3_VERSION"
-          echo "GPULLAMA3_VERSION=$GPULLAMA3_VERSION" >> $GITHUB_ENV
+          JLLM_VERSION=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout)
+          echo "GPULlama3 version: $JLLM_VERSION"
+          echo "JLLM_VERSION=$JLLM_VERSION" >> $GITHUB_ENV
 
       - name: Check the artifact matches the JDK that built it
         run: |
           set -euo pipefail
           EXPECTED_SUFFIX="-jdk${{ matrix.jdk }}"
-          case "$GPULLAMA3_VERSION" in
+          case "$JLLM_VERSION" in
             *"$EXPECTED_SUFFIX") ;;
-            *) echo "::error::JDK ${{ matrix.jdk }} produced $GPULLAMA3_VERSION, which does not end in $EXPECTED_SUFFIX"; exit 1 ;;
+            *) echo "::error::JDK ${{ matrix.jdk }} produced $JLLM_VERSION, which does not end in $EXPECTED_SUFFIX"; exit 1 ;;
           esac
           # 21 -> class major 65, 25 -> 69.
           EXPECTED_MAJOR=$(( 44 + ${{ matrix.jdk }} ))
-          JAR="target/gpu-llama3-${GPULLAMA3_VERSION}.jar"
+          JAR="target/gpu-llama3-${JLLM_VERSION}.jar"
           MAJOR=$("$JAVA_HOME/bin/javap" -verbose -classpath "$JAR" \
             org.beehive.jllm.model.Model | awk '/major version:/ { print $3; exit }')
           if [ "$MAJOR" != "$EXPECTED_MAJOR" ]; then
@@ -112,12 +112,12 @@ jobs:
             "$JAVA_HOME/bin/jar" tf "$JAR" | grep '^META-INF/services/' || true
             exit 1
           fi
-          echo "$JAR: version $GPULLAMA3_VERSION, class major $MAJOR, $SERVICES service files"
+          echo "$JAR: version $JLLM_VERSION, class major $MAJOR, $SERVICES service files"
 
       - name: Launcher smoke test
         run: |
           set -euo pipefail
-          export LLAMA_ROOT="${{ github.workspace }}"
+          export JLLM_ROOT="${{ github.workspace }}"
           ./llama-tornado --help > /dev/null
           # --show-command without --execute-after-show builds the whole JVM command line,
           # which is what proves the SDK argfile was found and read.
@@ -225,7 +225,7 @@ jobs:
       - name: Build GPULlama3 for this leg
         run: |
           ./mvnw -q clean install -DskipTests
-          echo "GPULLAMA3_VERSION=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout)" >> $GITHUB_ENV
+          echo "JLLM_VERSION=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout)" >> $GITHUB_ENV
 
       - name: Clone the Quarkus LangChain4j extension
         run: |
@@ -238,7 +238,7 @@ jobs:
           cd ${{ github.workspace }}/quarkus-langchain4j
           # -i.bak (extension glued to the flag) is the portable form: GNU sed accepts it and
           # BSD sed requires it — a bare `-i ''` is parsed as the script on BSD sed.
-          sed -i.bak 's/<gpu-llama3\.version>.*<\/gpu-llama3\.version>/<gpu-llama3.version>'$GPULLAMA3_VERSION'<\/gpu-llama3.version>/' pom.xml
+          sed -i.bak 's/<gpu-llama3\.version>.*<\/gpu-llama3\.version>/<gpu-llama3.version>'$JLLM_VERSION'<\/gpu-llama3.version>/' pom.xml
           rm -f pom.xml.bak
           # -Dtornado activates the TornadoVM profile; -am builds only the gpu-llama3 module + deps
           mvn -q clean install -pl integration-tests/gpu-llama3 -am -DskipTests -Dtornado
@@ -246,7 +246,7 @@ jobs:
       - name: Verify GPULlama3 Dependency
         run: |
           cd ${{ github.workspace }}/quarkus-langchain4j/integration-tests/gpu-llama3
-          mvn dependency:tree | grep "io.github.beehive-lab:gpu-llama3:jar:$GPULLAMA3_VERSION"
+          mvn dependency:tree | grep "io.github.beehive-lab:gpu-llama3:jar:$JLLM_VERSION"
 
       - name: Seed GPULlama3 model cache (avoid HuggingFace download on cold runners)
         shell: bash

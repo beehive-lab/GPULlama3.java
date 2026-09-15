@@ -8,7 +8,7 @@ package org.beehive.jllm.runtime.backend;
  * the same computation and two different compiled programs.
  *
  * @param cudaGraphCapture whether {@code withCUDAGraph()} is applied — the property behind {@code
- *     llama.cudaGraphs}, and the reason <a
+ *     jllm.cudaGraphs}, and the reason <a
  *     href="././././././././docs/architecture/memory-and-concurrency.md">capability C1</a>'s fixed
  *     device addresses matter
  */

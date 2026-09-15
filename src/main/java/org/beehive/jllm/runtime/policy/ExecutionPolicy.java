@@ -125,23 +125,23 @@ public final class ExecutionPolicy {
      * policy once per session and carry the value; nothing consults this in a loop.
      */
     public static ExecutionPolicy fromSystemProperties() {
-        boolean prefillDecode = Boolean.getBoolean("llama.withPrefillDecode");
-        int prefillBatch = Integer.getInteger("llama.prefillBatchSize", 1);
+        boolean prefillDecode = Boolean.getBoolean("jllm.withPrefillDecode");
+        int prefillBatch = Integer.getInteger("jllm.prefillBatchSize", 1);
         return builder()
                 .phaseStrategy(
                         prefillDecode ? PhaseStrategy.PREFILL_DECODE : PhaseStrategy.SINGLE_TOKEN)
                 .prefillBatchSize(prefillDecode ? Math.max(1, prefillBatch) : 1)
                 .samplingResidency(
-                        Boolean.getBoolean("llama.deviceSample")
+                        Boolean.getBoolean("jllm.deviceSample")
                                 ? SamplingResidency.DEVICE
                                 : SamplingResidency.HOST)
                 .splitKvPartitions(
-                        Boolean.getBoolean("llama.attention.splitKv")
+                        Boolean.getBoolean("jllm.attention.splitKv")
                                 ? OptionalInt.of(
-                                        Integer.getInteger("llama.attention.splitKv.count", 8))
+                                        Integer.getInteger("jllm.attention.splitKv.count", 8))
                                 : OptionalInt.empty())
-                .packedHalf2Attention(Boolean.getBoolean("llama.attention.deepHalf2"))
-                .scalarFp16KeyValueReads(Boolean.getBoolean("llama.kvcache.fp16.scalar"))
+                .packedHalf2Attention(Boolean.getBoolean("jllm.attention.deepHalf2"))
+                .scalarFp16KeyValueReads(Boolean.getBoolean("jllm.kvcache.fp16.scalar"))
                 .build();
     }
 

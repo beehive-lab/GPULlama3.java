@@ -29,7 +29,7 @@ public class LogitsFP16Layer extends AbstractLogitsTaskGraph {
      *
      * <p><b>Resolved from the session's policy on every read, deliberately not cached in a
      * field</b> (then Metal parity task 8). It was originally a {@code public static final boolean}
-     * read from {@code llama.deviceSample} at class initialization — replaced with a per-session
+     * read from {@code jllm.deviceSample} at class initialization — replaced with a per-session
      * read, then reintroduced as an instance field, which fell into exactly the
      * constructor-ordering pitfall {@link #useSimd32Reduction} was already written to document and
      * avoid: {@link AbstractLogitsTaskGraph}'s constructor invokes {@link #setupLogitsTaskGraph}

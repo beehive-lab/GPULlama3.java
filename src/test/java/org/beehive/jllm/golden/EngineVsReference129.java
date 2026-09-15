@@ -46,7 +46,7 @@ public final class EngineVsReference129 {
         int contextLength = Integer.getInteger("probe.ctx", 512);
         int maxNewTokens = Integer.getInteger("probe.n", 64);
         String prompt = System.getProperty("probe.prompt", "What is the capital of France?");
-        System.setProperty("llama.prefillBatchSize", String.valueOf(batch));
+        System.setProperty("jllm.prefillBatchSize", String.valueOf(batch));
 
         Model model = ModelLoader.loadModel(modelPath, contextLength, true, true);
         int blockTokens = State.KV_BLOCK_SIZE;

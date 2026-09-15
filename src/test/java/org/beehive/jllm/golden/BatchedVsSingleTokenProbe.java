@@ -71,7 +71,7 @@ public final class BatchedVsSingleTokenProbe {
         }
 
         // ── batched path, greedy, one active slot ────────────────────────────────────────────
-        System.setProperty("llama.prefillBatchSize", String.valueOf(batch));
+        System.setProperty("jllm.prefillBatchSize", String.valueOf(batch));
         Model model = ModelLoader.loadModel(modelPath, contextLength, true, true);
         int blockTokens = State.KV_BLOCK_SIZE;
         int blocksPerSlot = (contextLength + blockTokens - 1) / blockTokens;

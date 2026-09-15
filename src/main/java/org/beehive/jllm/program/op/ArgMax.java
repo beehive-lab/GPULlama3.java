@@ -8,7 +8,7 @@ import org.beehive.jllm.runtime.tensor.DataType;
  * Greedy selection: the identifier of the highest-scoring logit.
  *
  * <p>Sampling is an operation and may execute on the device (Rule 8b), which is what makes the
- * existing {@code llama.deviceSample} path expressible rather than a special case. Rule 14 is not
+ * existing {@code jllm.deviceSample} path expressible rather than a special case. Rule 14 is not
  * in tension with that: it forbids core abstractions from <i>requiring</i> a sampler, not from
  * naming one.
  *

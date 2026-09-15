@@ -31,13 +31,13 @@ public class DeviceResidentSamplingAccelTest {
                     false);
         }
         String previousGpu = System.getProperty("use.tornadovm");
-        String previousDeviceSample = System.getProperty("llama.deviceSample");
+        String previousDeviceSample = System.getProperty("jllm.deviceSample");
         System.setProperty("use.tornadovm", "true");
         try {
-            System.clearProperty("llama.deviceSample");
+            System.clearProperty("jllm.deviceSample");
             String hostText = generate(model);
 
-            System.setProperty("llama.deviceSample", "true");
+            System.setProperty("jllm.deviceSample", "true");
             String deviceText = generate(model);
 
             assertTrue(
@@ -51,7 +51,7 @@ public class DeviceResidentSamplingAccelTest {
                     deviceText);
         } finally {
             restore("use.tornadovm", previousGpu);
-            restore("llama.deviceSample", previousDeviceSample);
+            restore("jllm.deviceSample", previousDeviceSample);
         }
     }
 

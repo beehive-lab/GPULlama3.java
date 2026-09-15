@@ -80,7 +80,7 @@ public final class TokenGenerationLoop {
      * Benchmarking aid: keep decoding past the stop token so every run generates the same token
      * count.
      */
-    private static final boolean IGNORE_EOS = Boolean.getBoolean("llama.bench.ignoreEos");
+    private static final boolean IGNORE_EOS = Boolean.getBoolean("jllm.bench.ignoreEos");
 
     private TokenGenerationLoop() {
         // prevent instantiation

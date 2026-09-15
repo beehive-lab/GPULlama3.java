@@ -17,8 +17,8 @@ public record Options(Path modelPath, String prompt, String systemPrompt, String
         require(batchPrefillSize == 1 || withPrefillDecode, "Invalid argument: --batch-prefill-size requires --with-prefill-decode");
         // Publish to system properties so TornadoVMMasterPlan and Llama read the right values
         // even when the JAR is invoked directly (without the Python launcher).
-        if (withPrefillDecode) System.setProperty("llama.withPrefillDecode", "true");
-        if (batchPrefillSize > 1) System.setProperty("llama.prefillBatchSize", String.valueOf(batchPrefillSize));
+        if (withPrefillDecode) System.setProperty("jllm.withPrefillDecode", "true");
+        if (batchPrefillSize > 1) System.setProperty("jllm.prefillBatchSize", String.valueOf(batchPrefillSize));
     }
 
     static void require(boolean condition, String messageFormat, Object... args) {

@@ -12,7 +12,7 @@ import java.util.HexFormat;
  * Locates and verifies the pinned model fixtures for the golden and parity gates.
  *
  * <p>The GGUF files are far too large to commit, so only their SHA-256 is pinned here. The file
- * itself is resolved from {@code $GPULLAMA_TEST_MODELS} or {@code ~/.gpullama3/test-models/}, and
+ * itself is resolved from {@code $JLLM_TEST_MODELS} or {@code ~/.jllm/test-models/}, and
  * an absent fixture produces a fetch instruction rather than a mysterious failure.
  *
  * <p>Per {@code verification-gates.md}, a missing fixture or absent accelerator causes the Class B
@@ -119,11 +119,11 @@ public final class GoldenFixture {
 
     /** Root of the local fixture cache. */
     public static Path modelsRoot() {
-        String env = System.getenv("GPULLAMA_TEST_MODELS");
+        String env = System.getenv("JLLM_TEST_MODELS");
         if (env != null && !env.isBlank()) {
             return Paths.get(env);
         }
-        return Paths.get(System.getProperty("user.home"), ".gpullama3", "test-models");
+        return Paths.get(System.getProperty("user.home"), ".jllm", "test-models");
     }
 
     /**
@@ -141,7 +141,7 @@ public final class GoldenFixture {
                 + modelsRoot()
                 + "\n  sha256: "
                 + fixture.sha256
-                + "\n  Set GPULLAMA_TEST_MODELS to a directory containing it, or place/symlink the"
+                + "\n  Set JLLM_TEST_MODELS to a directory containing it, or place/symlink the"
                 + " file there. It is intentionally not committed.";
     }
 

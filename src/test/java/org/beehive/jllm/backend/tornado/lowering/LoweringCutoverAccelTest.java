@@ -21,7 +21,7 @@ import org.junit.Test;
  * property, so all of them would still pass if the default silently reverted — which is exactly how
  * a cutover regresses without anyone noticing.
  *
- * <p><b>The counter, not the property.</b> Reading {@code llama.lowering} back proves the path was
+ * <p><b>The counter, not the property.</b> Reading {@code jllm.lowering} back proves the path was
  * asked for; {@code loweredPlanCount()} proves a lowered plan was built. This project has already
  * recorded one accelerator gate that passed green while the flag never reached the JVM.
  */

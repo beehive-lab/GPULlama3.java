@@ -20,7 +20,7 @@ import sun.misc.Unsafe;
  */
 public abstract class FloatTensor {
     static final int VECTOR_BIT_SIZE =
-            Integer.getInteger("llama.VectorBitSize", VectorShape.preferredShape().vectorBitSize());
+            Integer.getInteger("jllm.VectorBitSize", VectorShape.preferredShape().vectorBitSize());
     static final boolean USE_VECTOR_API = VECTOR_BIT_SIZE != 0;
 
     // The use of Unsafe in this file is a temporary workaround to support native-image.

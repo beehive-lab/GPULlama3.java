@@ -84,7 +84,7 @@ public final class Q8_0FloatTensor extends FloatTensor {
      * divergence, not a defect — but it is one the default should not carry.
      */
     static final boolean QUANTIZE_ACTIVATION =
-            Boolean.parseBoolean(System.getProperty("llama.quantizeActivation", "false"));
+            Boolean.parseBoolean(System.getProperty("jllm.quantizeActivation", "false"));
 
     @Override
     public float dot(int thisOffset, FloatTensor that, int thatOffset, int size) {

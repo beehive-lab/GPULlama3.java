@@ -75,7 +75,7 @@ Results land under `perf-results/<timestamp>/`.
 6. Save full stdout/stderr logs alongside the metrics JSON.
 
 ```bash
-export JAVA_TOOL_OPTIONS="-Dllama.metrics.format=json -Dllama.metrics.output=file -Dllama.metrics.file=<metrics.json>"
+export JAVA_TOOL_OPTIONS="-Djllm.metrics.format=json -Djllm.metrics.output=file -Djllm.metrics.file=<metrics.json>"
 ./llama-tornado --gpu --model <llama-or-qwen3.gguf> --prompt <prompt> --verbose-init --max-tokens 2048 --seed <seed> <runtime-flags>
 unset JAVA_TOOL_OPTIONS
 ```
@@ -113,7 +113,7 @@ cumulative delta vs baseline. This attributes the gain to the right layer; an is
 at the top of the stack can show "no gain" purely because a lower layer already captured it.
 
 Depth caveat: decode tok/s decays with KV depth, so two runs of different generated length
-are NOT comparable. For equal-length runs use `-Dllama.bench.ignoreEos=true` (disables the
+are NOT comparable. For equal-length runs use `-Djllm.bench.ignoreEos=true` (disables the
 stop-token break so generation runs to `--max-tokens`); without it, models stop early at
 their end-of-turn token and comparisons are rough estimates only. Flag-gated attention/KV
 optimizations also pay off more at depth — a null result at shallow depth (~512) does not

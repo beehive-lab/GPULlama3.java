@@ -119,13 +119,13 @@ public abstract class ModelLoader {
 
     /**
      * Whether discovered providers do the loading. Defaults to true; {@code
-     * -Dllama.providers=false} selects the {@code ModelType} dispatch this replaced.
+     * -Djllm.providers=false} selects the {@code ModelType} dispatch this replaced.
      *
      * <p>The fallback exists for one release, so that a model which loads differently through a
      * provider has a way to be compared rather than a way to be stuck.
      */
     private static boolean providersEnabled() {
-        return !"false".equalsIgnoreCase(System.getProperty("llama.providers", "true"));
+        return !"false".equalsIgnoreCase(System.getProperty("jllm.providers", "true"));
     }
 
     /** For compatibility with langchain4j and quarkus. */

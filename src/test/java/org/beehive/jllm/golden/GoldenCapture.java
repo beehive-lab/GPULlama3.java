@@ -18,7 +18,7 @@ import org.beehive.jllm.model.loader.ModelLoader;
  * capturing needs no production change. Sampling stays greedy (argmax), which makes the seed
  * irrelevant and the token sequence deterministic.
  *
- * <p>Requires {@code -Dllama.deviceSample=false} (the default). With on-device sampling the argmax
+ * <p>Requires {@code -Djllm.deviceSample=false} (the default). With on-device sampling the argmax
  * runs on the GPU and only the token id crosses to the host, so there would be no logits row to
  * capture — {@link #assertHostLogitsAvailable()} makes that explicit rather than silently producing
  * empty goldens.
@@ -41,9 +41,9 @@ public final class GoldenCapture {
     private GoldenCapture() {}
 
     public static void assertHostLogitsAvailable() {
-        if (Boolean.getBoolean("llama.deviceSample")) {
+        if (Boolean.getBoolean("jllm.deviceSample")) {
             throw new IllegalStateException(
-                    "llama.deviceSample=true keeps the logits row on the device; goldens must run with it false");
+                    "jllm.deviceSample=true keeps the logits row on the device; goldens must run with it false");
         }
     }
 
@@ -83,17 +83,17 @@ public final class GoldenCapture {
             throws Exception {
         assertHostLogitsAvailable();
 
-        String previousPrefill = System.getProperty("llama.withPrefillDecode");
-        String previousBatch = System.getProperty("llama.prefillBatchSize");
+        String previousPrefill = System.getProperty("jllm.withPrefillDecode");
+        String previousBatch = System.getProperty("jllm.prefillBatchSize");
         if (prefillBatchSize > 1) {
-            System.setProperty("llama.withPrefillDecode", "true");
-            System.setProperty("llama.prefillBatchSize", String.valueOf(prefillBatchSize));
+            System.setProperty("jllm.withPrefillDecode", "true");
+            System.setProperty("jllm.prefillBatchSize", String.valueOf(prefillBatchSize));
         }
         try {
             return captureWithCurrentPolicy(ggufPath, useGpu, forcedTokens, prefillBatchSize);
         } finally {
-            restore("llama.withPrefillDecode", previousPrefill);
-            restore("llama.prefillBatchSize", previousBatch);
+            restore("jllm.withPrefillDecode", previousPrefill);
+            restore("jllm.prefillBatchSize", previousBatch);
         }
     }
 

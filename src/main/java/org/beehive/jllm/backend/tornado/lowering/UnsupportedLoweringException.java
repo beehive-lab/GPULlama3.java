@@ -3,7 +3,7 @@ package org.beehive.jllm.backend.tornado.lowering;
 import org.beehive.jllm.runtime.diagnostics.DiagnosticCode;
 
 /**
- * Thrown when {@code llama.lowering=on} names a combination that has no lowered implementation
+ * Thrown when {@code jllm.lowering=on} names a combination that has no lowered implementation
  * [D-6].
  *
  * <p>The alternative — selecting legacy and saying nothing — is worse than a failure. A user sets

@@ -23,7 +23,7 @@ import org.junit.Test;
  */
 public class ProviderLoadParityAccelTest {
 
-    private static final String PROVIDERS_PROPERTY = "llama.providers";
+    private static final String PROVIDERS_PROPERTY = "jllm.providers";
 
     @Test
     public void theProviderLoadsWhatModelTypeDispatchLoaded() throws Exception {

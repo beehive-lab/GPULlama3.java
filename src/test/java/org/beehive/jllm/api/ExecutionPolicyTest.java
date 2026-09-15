@@ -124,11 +124,11 @@ public class ExecutionPolicyTest {
     @Test
     public void theDefaultsMatchTodaysPropertyDerivedValues() {
         String[] properties = {
-            "llama.withPrefillDecode",
-            "llama.prefillBatchSize",
-            "llama.deviceSample",
-            "llama.attention.splitKv",
-            "llama.attention.splitKv.count"
+            "jllm.withPrefillDecode",
+            "jllm.prefillBatchSize",
+            "jllm.deviceSample",
+            "jllm.attention.splitKv",
+            "jllm.attention.splitKv.count"
         };
         String[] saved = new String[properties.length];
         for (int i = 0; i < properties.length; i++) {
@@ -142,11 +142,11 @@ public class ExecutionPolicyTest {
                     ExecutionPolicy.builder().build(),
                     fromProperties);
 
-            System.setProperty("llama.withPrefillDecode", "true");
-            System.setProperty("llama.prefillBatchSize", "8");
-            System.setProperty("llama.deviceSample", "true");
-            System.setProperty("llama.attention.splitKv", "true");
-            System.setProperty("llama.attention.splitKv.count", "16");
+            System.setProperty("jllm.withPrefillDecode", "true");
+            System.setProperty("jllm.prefillBatchSize", "8");
+            System.setProperty("jllm.deviceSample", "true");
+            System.setProperty("jllm.attention.splitKv", "true");
+            System.setProperty("jllm.attention.splitKv.count", "16");
             assertEquals(
                     ExecutionPolicy.builder()
                             .phaseStrategy(PhaseStrategy.PREFILL_DECODE)
@@ -159,7 +159,7 @@ public class ExecutionPolicyTest {
             // And it is read per call, not folded: a second read sees the change. That is the
             // defect this whole task removes, so reproducing it in the resolver would be
             // self-defeating.
-            System.setProperty("llama.deviceSample", "false");
+            System.setProperty("jllm.deviceSample", "false");
             assertEquals(
                     SamplingResidency.HOST,
                     ExecutionPolicy.fromSystemProperties().samplingResidency());

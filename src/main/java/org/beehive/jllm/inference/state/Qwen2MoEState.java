@@ -71,7 +71,7 @@ public class Qwen2MoEState extends Qwen2State {
         this.workspace.wrapSharedGate = TornadoWorkspaces.floats(c.sharedExpertHiddenDim());
         this.workspace.wrapSharedOutput = TornadoWorkspaces.floats(c.dim());
 
-        int gpuBatchSize = Integer.getInteger("llama.prefillBatchSize", 1);
+        int gpuBatchSize = Integer.getInteger("jllm.prefillBatchSize", 1);
         if (gpuBatchSize > 1) {
             int assignments = gpuBatchSize * c.numberOfExpertsUsed();
             this.workspace.wrapRouterLogitsBatch =

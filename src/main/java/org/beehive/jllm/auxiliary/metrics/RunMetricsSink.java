@@ -29,12 +29,12 @@ import org.beehive.jllm.runtime.metrics.MetricsSink;
 public final class RunMetricsSink implements MetricsSink {
 
     /** Opt-in switch. Absent or false ⇒ {@link MetricsSink#disabled()}. */
-    public static final String ENABLE_PROPERTY = "llama.metrics.device";
+    public static final String ENABLE_PROPERTY = "jllm.metrics.device";
 
     private final Map<MetricKey, Long> deviceMetrics = new EnumMap<>(MetricKey.class);
 
     /**
-     * The sink the CLI installs: this one when {@code -Dllama.metrics.device=true}, the disabled
+     * The sink the CLI installs: this one when {@code -Djllm.metrics.device=true}, the disabled
      * sink otherwise. Returning the disabled sink rather than a flag on this class keeps the
      * "nobody is listening" answer in one place — the backend asks {@link #isEnabled()} and skips
      * the measurement entirely.

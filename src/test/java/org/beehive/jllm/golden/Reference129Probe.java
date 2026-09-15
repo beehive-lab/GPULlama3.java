@@ -14,7 +14,7 @@ import org.beehive.jllm.model.loader.ModelLoader;
  * since it was absorbed. This is the missing driver, in test scope: the bench is frozen and gains
  * nothing production-shaped from being made executable.
  *
- * <p>{@code -Dprobe.model=… -Dprobe.batch=16 -Dllama.prefillBatchSize=16 …}
+ * <p>{@code -Dprobe.model=… -Dprobe.batch=16 -Djllm.prefillBatchSize=16 …}
  */
 public final class Reference129Probe {
 

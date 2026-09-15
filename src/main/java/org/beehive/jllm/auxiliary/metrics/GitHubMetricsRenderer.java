@@ -7,9 +7,9 @@ package org.beehive.jllm.auxiliary.metrics;
  *
  * <p>Enable via system properties and append the output file to the step summary:</p>
  * <pre>
- *   -Dllama.metrics.format=github
- *   -Dllama.metrics.output=file
- *   -Dllama.metrics.file=/tmp/metrics.md
+ *   -Djllm.metrics.format=github
+ *   -Djllm.metrics.output=file
+ *   -Djllm.metrics.file=/tmp/metrics.md
  * </pre>
  *
  * <p>In a GitHub Actions workflow step:</p>

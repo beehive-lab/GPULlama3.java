@@ -70,7 +70,7 @@ make test-scripts                    # the Python tooling tests
 ```
 
 Accelerator gates are opt-in and need a device, an SDK and the pinned fixtures under
-`$GPULLAMA_TEST_MODELS` or `~/.gpullama3/test-models/`:
+`$JLLM_TEST_MODELS` or `~/.jllm/test-models/`:
 
 ```bash
 export TORNADOVM_HOME=/path/to/sdk

@@ -123,7 +123,7 @@ Config parseArgs(String[] args, List<Backend> installedBackends) {
     }
 
     if (profilerDumpDir == null) {
-        profilerDumpDir = System.getenv("LLAMA_ROOT") + "/profiler-log.json";
+        profilerDumpDir = System.getenv("JLLM_ROOT") + "/profiler-log.json";
     }
 
     // Default direct memory to 3x heap to accommodate K-quant dequantization
@@ -333,7 +333,7 @@ List<String> buildCommand(Config cfg, String javaHome, String tornadoSdk, String
     ));
 
     if (cfg.useGpu()) cmd.add("-Duse.tornadovm=true");
-    if (cfg.verboseInit()) cmd.add("-Dllama.EnableTimingForTornadoVMInit=true");
+    if (cfg.verboseInit()) cmd.add("-Djllm.EnableTimingForTornadoVMInit=true");
 
     // Debug flags
     cmd.add("-Dtornado.debug=" + cfg.debug());
@@ -420,7 +420,7 @@ List<String> buildCommand(Config cfg, String javaHome, String tornadoSdk, String
 }
 
 String resolveLlamaRoot() {
-    var envRoot = System.getenv("LLAMA_ROOT");
+    var envRoot = System.getenv("JLLM_ROOT");
     if (envRoot != null && !envRoot.isBlank()) return envRoot;
 
     // Derive from the script's own location, same as set_paths does
@@ -429,7 +429,7 @@ String resolveLlamaRoot() {
                 .getProtectionDomain().getCodeSource().getLocation().toURI());
         return scriptPath.getParent().toString();
     } catch (Exception e) {
-        System.err.println("Error: LLAMA_ROOT not set and could not determine script location");
+        System.err.println("Error: JLLM_ROOT not set and could not determine script location");
         System.err.println("Note: check set_path in root dir -> source set_path");
         System.exit(1);
         return null;

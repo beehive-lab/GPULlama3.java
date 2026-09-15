@@ -24,7 +24,7 @@ import org.beehive.jllm.runtime.tensor.DataType;
  *
  * <h2>The legacy path is the default</h2>
  *
- * <p>Off unless {@code llama.lowering} is set, and applicable to exactly one tuple: <b>Llama, FP16,
+ * <p>Off unless {@code jllm.lowering} is set, and applicable to exactly one tuple: <b>Llama, FP16,
  * single-token</b>. Everything else — other families, {@code Q8_0}, the prefill/decode and
  * batch-prefill/decode modes — takes the path it took before, unchanged. Those modes stay green as
  * non-regression checks rather than being claimed by this slice (acceptance, corrected).
@@ -40,7 +40,7 @@ public final class LoweredPlanSelection {
      * <p>Was a boolean opt-in; {@code true}/{@code false} still parse, as {@code on}/{@code off}.
      * The name is unchanged so no existing script or invocation breaks.
      */
-    public static final String ENABLE_PROPERTY = "llama.lowering";
+    public static final String ENABLE_PROPERTY = "jllm.lowering";
 
     /**
      * Providers used to declare their supported modes independently, and two declared all three

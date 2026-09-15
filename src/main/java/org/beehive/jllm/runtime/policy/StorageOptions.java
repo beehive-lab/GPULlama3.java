@@ -33,8 +33,8 @@ public record StorageOptions(DataType keyValueRepresentation, boolean sharedKeyV
      */
     public static StorageOptions fromSystemProperties() {
         return new StorageOptions(
-                Boolean.getBoolean("llama.kvcache.fp16") ? DataType.F16 : DataType.F32,
-                Boolean.getBoolean("llama.kv.sharedPool"));
+                Boolean.getBoolean("jllm.kvcache.fp16") ? DataType.F16 : DataType.F32,
+                Boolean.getBoolean("jllm.kv.sharedPool"));
     }
 
     /** Whether key/value entries are half precision. */

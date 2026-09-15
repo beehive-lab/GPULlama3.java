@@ -22,7 +22,7 @@
 # For a flag-selected path rather than two builds, point both sides at one commit and
 # differentiate with per-side properties:
 #
-#   BASELINE_JVM_PROPS=-Dllama.lowering=false CANDIDATE_JVM_PROPS=-Dllama.lowering=true \
+#   BASELINE_JVM_PROPS=-Djllm.lowering=false CANDIDATE_JVM_PROPS=-Djllm.lowering=true \
 #   scripts/perf-ab-run.sh --baseline-ref HEAD --configuration lowering ...
 #
 # Exit codes are the gate's: 0 pass, 1 regression, 2 unstable environment, 3 usage error.
@@ -123,8 +123,8 @@ git -C "$REPO_ROOT" worktree add --detach "$WORKTREE" "$BASELINE_REF" > "$RESULT
 # EXTRA_JVM_PROPS still applies to both sides.
 run_inference() {
     local root="$1" metrics_file="$2" run_log="$3" seed="$4" side_props="$5"
-    LLAMA_ROOT="$root" \
-    JAVA_TOOL_OPTIONS="-Dllama.metrics.format=json -Dllama.metrics.output=file -Dllama.metrics.file=$metrics_file ${EXTRA_JVM_PROPS:-} $side_props" \
+    JLLM_ROOT="$root" \
+    JAVA_TOOL_OPTIONS="-Djllm.metrics.format=json -Djllm.metrics.output=file -Djllm.metrics.file=$metrics_file ${EXTRA_JVM_PROPS:-} $side_props" \
     "$root/llama-tornado" --gpu "$BACKEND_FLAG" \
         --model "$MODELS_DIR/$MODEL_FILE" \
         --prompt "$PROMPT" \

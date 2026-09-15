@@ -8,7 +8,7 @@ import java.util.List;
  * Diagnostic, not a gate: what N live GPU sessions cost in device memory, with and without the
  * shared KV pool.
  *
- * <p>{@code -Dprobe.model=. -Dprobe.sessions=N [-Dllama.kv.sharedPool=true]}
+ * <p>{@code -Dprobe.model=. -Dprobe.sessions=N [-Djllm.kv.sharedPool=true]}
  */
 public final class SharedKvMemoryProbe {
 

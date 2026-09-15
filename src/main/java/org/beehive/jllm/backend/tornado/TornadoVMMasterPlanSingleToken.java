@@ -23,7 +23,7 @@ public class TornadoVMMasterPlanSingleToken implements TornadoVMMasterPlan {
 
     /**
      * Rule 16: library code routes its output through the platform logger, so an embedder can
-     * silence or redirect it. Reached only under {@code llama.EnableTimingForTornadoVMInit}.
+     * silence or redirect it. Reached only under {@code jllm.EnableTimingForTornadoVMInit}.
      */
     private static final System.Logger LOGGER =
             System.getLogger(TornadoVMMasterPlanSingleToken.class.getName());

@@ -80,7 +80,7 @@ public class JllmBench {
             double[] samples) {}
 
     public static void main(String[] args) throws Exception {
-        // --cpu is pre-scanned with -b: llama.enableTornadoVM is read once at class init, and
+        // --cpu is pre-scanned with -b: jllm.enableTornadoVM is read once at class init, and
         // setting it unconditionally is what made every run report a GPU backend, CPU included.
         boolean cpu = false;
         for (String a : args) {
@@ -89,7 +89,7 @@ public class JllmBench {
             }
         }
         final boolean onCpu = cpu;
-        System.setProperty("llama.enableTornadoVM", cpu ? "false" : "true");
+        System.setProperty("jllm.enableTornadoVM", cpu ? "false" : "true");
 
         // Pre-scan -b: the batched-prefill plan + state buffers are gated on these system
         // properties, read once at class-init — set BEFORE any TornadoVM/State class loads.
@@ -104,8 +104,8 @@ public class JllmBench {
             batch = 1;
         }
         if (batch > 1) {
-            System.setProperty("llama.withPrefillDecode", "true");
-            System.setProperty("llama.prefillBatchSize", String.valueOf(batch));
+            System.setProperty("jllm.withPrefillDecode", "true");
+            System.setProperty("jllm.prefillBatchSize", String.valueOf(batch));
         }
         final int batchSize = batch;
 

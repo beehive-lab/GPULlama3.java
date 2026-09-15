@@ -135,16 +135,16 @@ public class ResolvedPolicyReachesThePlanAccelTest {
                     false);
         }
         String previousGpu = System.getProperty("use.tornadovm");
-        String previousKv = System.getProperty("llama.kvcache.fp16");
+        String previousKv = System.getProperty("jllm.kvcache.fp16");
         System.setProperty("use.tornadovm", "true");
         try {
-            System.clearProperty("llama.kvcache.fp16");
+            System.clearProperty("jllm.kvcache.fp16");
             Model fp32Model = ModelLoader.loadModel(model, CONTEXT_LENGTH, true, true);
             assertFalse(
                     "with the property clear the state must hold FP32 key/value arrays",
                     fp32Model.createNewState().usesFp16KeyValueCache());
 
-            System.setProperty("llama.kvcache.fp16", "true");
+            System.setProperty("jllm.kvcache.fp16", "true");
             Model fp16Model = ModelLoader.loadModel(model, CONTEXT_LENGTH, true, true);
             State fp16State = fp16Model.createNewState();
             assertTrue(
@@ -164,9 +164,9 @@ public class ResolvedPolicyReachesThePlanAccelTest {
                 System.setProperty("use.tornadovm", previousGpu);
             }
             if (previousKv == null) {
-                System.clearProperty("llama.kvcache.fp16");
+                System.clearProperty("jllm.kvcache.fp16");
             } else {
-                System.setProperty("llama.kvcache.fp16", previousKv);
+                System.setProperty("jllm.kvcache.fp16", previousKv);
             }
         }
     }

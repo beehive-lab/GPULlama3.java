@@ -98,7 +98,7 @@ run_inference() {
     local metrics_file="$1" run_log="$2" seed="$3"
     # EXTRA_JVM_PROPS is appended, not replaced: this assignment overrides any exported
     # JAVA_TOOL_OPTIONS, so a caller trying to add a property that way silently loses it.
-    JAVA_TOOL_OPTIONS="-Dllama.metrics.format=json -Dllama.metrics.output=file -Dllama.metrics.file=$metrics_file ${EXTRA_JVM_PROPS:-}" \
+    JAVA_TOOL_OPTIONS="-Djllm.metrics.format=json -Djllm.metrics.output=file -Djllm.metrics.file=$metrics_file ${EXTRA_JVM_PROPS:-}" \
     "$REPO_ROOT/llama-tornado" --gpu "$BACKEND_FLAG" \
         --model "$MODELS_DIR/$MODEL_FILE" \
         --prompt "$PROMPT" \

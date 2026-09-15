@@ -137,7 +137,7 @@ public final class OpenAIServer {
                             + " [--batch B]");
             System.exit(1);
         }
-        System.setProperty("llama.enableTornadoVM", String.valueOf(gpu));
+        System.setProperty("jllm.enableTornadoVM", String.valueOf(gpu));
 
         Path path = Paths.get(modelPath);
         // interactive=true bypasses the --prompt-required check; the server never uses it.

@@ -55,8 +55,8 @@ public class BatchedEngineAccelTest {
 
         // The batched buffers on State are allocated only when a batch is asked for, and the plan
         // is built for exactly B rows.
-        String previousBatch = System.getProperty("llama.prefillBatchSize");
-        System.setProperty("llama.prefillBatchSize", String.valueOf(BATCH));
+        String previousBatch = System.getProperty("jllm.prefillBatchSize");
+        System.setProperty("jllm.prefillBatchSize", String.valueOf(BATCH));
         try {
             Model model = ModelLoader.loadModel(modelPath, CONTEXT_LENGTH, true, true);
             assertTrue(
@@ -136,9 +136,9 @@ public class BatchedEngineAccelTest {
             manager.close();
         } finally {
             if (previousBatch == null) {
-                System.clearProperty("llama.prefillBatchSize");
+                System.clearProperty("jllm.prefillBatchSize");
             } else {
-                System.setProperty("llama.prefillBatchSize", previousBatch);
+                System.setProperty("jllm.prefillBatchSize", previousBatch);
             }
         }
     }

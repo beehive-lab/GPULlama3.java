@@ -11,16 +11,16 @@ import java.util.List;
  * <p>Enable via system properties:
  *
  * <pre>
- *   -Dllama.metrics.format=json
- *   -Dllama.metrics.output=stdout   # pipe to jq or another tool
+ *   -Djllm.metrics.format=json
+ *   -Djllm.metrics.output=stdout   # pipe to jq or another tool
  * </pre>
  *
  * <p>Or write to a file:
  *
  * <pre>
- *   -Dllama.metrics.format=json
- *   -Dllama.metrics.output=file
- *   -Dllama.metrics.file=/path/to/metrics.json
+ *   -Djllm.metrics.format=json
+ *   -Djllm.metrics.output=file
+ *   -Djllm.metrics.file=/path/to/metrics.json
  * </pre>
  */
 public final class JsonMetricsRenderer implements MetricsRenderer {

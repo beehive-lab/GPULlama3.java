@@ -22,7 +22,7 @@ public class LlamaFP16FFNLayers
      * Whether this graph uses split-KV (flash-decoding) attention, resolved once from the session's
      * policy.
      *
-     * <p>It was a {@code static final} read from {@code llama.attention.splitKv} at class
+     * <p>It was a {@code static final} read from {@code jllm.attention.splitKv} at class
      * initialization. <b>Selection is policy; the partition count is capacity</b> — the count sizes
      * {@code wrapAttSplit}, so it stays where the array is allocated, and the working value is
      * checked against it rather than assumed equal.
@@ -76,7 +76,7 @@ public class LlamaFP16FFNLayers
                             + " exceed the "
                             + State.SPLIT_KV
                             + " the attention scratch was sized for;"
-                            + " raise llama.attention.splitKv.count, which is the capacity");
+                            + " raise jllm.attention.splitKv.count, which is the capacity");
         }
         this.attentionSplits = working;
         setupFFNLayers();

@@ -116,7 +116,7 @@ public final class GenerateGoldens {
                     Boolean.toString(
                             Boolean.parseBoolean(
                                     System.getProperty("tornado.recover.bailout", "false"))));
-            meta.put("device_sample", Boolean.toString(Boolean.getBoolean("llama.deviceSample")));
+            meta.put("device_sample", Boolean.toString(Boolean.getBoolean("jllm.deviceSample")));
             // Recorded as measured. This was hardcoded to false while GPU execution was
             // non-deterministic — a few repeats could not distinguish "reproducible" from "won the
             // race this time" (Q8_0 passed the repeat check and still diverged about 1 run in 4

@@ -68,9 +68,9 @@ runs:
       working-directory: ${{ github.workspace }}
       env:
         JAVA_TOOL_OPTIONS: >-
-          -Dllama.metrics.format=json
-          -Dllama.metrics.output=file
-          -Dllama.metrics.file=${{ inputs.metrics_file }}
+          -Djllm.metrics.format=json
+          -Djllm.metrics.output=file
+          -Djllm.metrics.file=${{ inputs.metrics_file }}
         METRICS_FILE: ${{ inputs.metrics_file }}
         ROW_LABEL: '${{ inputs.backend }} | ${{ inputs.model }} | ${{ inputs.quantization }} | ${{ inputs.configuration }}'
       run: |

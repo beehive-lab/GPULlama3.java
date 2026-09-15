@@ -38,8 +38,8 @@ golden* instead of an error.
 ## Golden logits
 
 Fixture: `Llama-3.2-1B-Instruct`, F16 and Q8_0. The file's SHA-256 is pinned in the test
-resources; the file itself is not committed — it is resolved from `$GPULLAMA_TEST_MODELS`
-or `~/.gpullama3/test-models/`, and the test fails with a fetch instruction if absent.
+resources; the file itself is not committed — it is resolved from `$JLLM_TEST_MODELS`
+or `~/.jllm/test-models/`, and the test fails with a fetch instruction if absent.
 
 Captured: a fixed prompt, greedy sampling, 64 generated tokens. Compared: the final logits
 row at the last prompt position and at each generated position, plus the emitted token ids.

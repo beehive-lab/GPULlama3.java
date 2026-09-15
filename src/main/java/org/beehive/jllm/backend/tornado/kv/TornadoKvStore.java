@@ -24,7 +24,7 @@ import uk.ac.manchester.tornado.api.types.arrays.IntArray;
  *     + c ]
  * </pre>
  *
- * <p>Precision follows the model's KV setting: FP32 arrays unless {@code llama.kvcache.fp16}, in
+ * <p>Precision follows the model's KV setting: FP32 arrays unless {@code jllm.kvcache.fp16}, in
  * which case the half-precision pair is allocated instead and the FP32 pair is left null. Both are
  * never allocated at once — that would double the largest allocation in the process for nothing.
  */

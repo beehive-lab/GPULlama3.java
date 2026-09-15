@@ -32,7 +32,7 @@ public final class PrefixCacheSavingProbe {
         int requests = Integer.getInteger("probe.requests", 8);
         int batch = Integer.getInteger("probe.b", 4);
         int contextLength = 512;
-        System.setProperty("llama.prefillBatchSize", String.valueOf(batch));
+        System.setProperty("jllm.prefillBatchSize", String.valueOf(batch));
 
         // A long shared opening, as served traffic has: the same system framing every time.
         String shared =
