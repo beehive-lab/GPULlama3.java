@@ -15,6 +15,7 @@ import org.beehive.gpullama3.backend.cpu.CpuForwardPasses;
 import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
 import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlanBatchPrefillDecode;
 import org.beehive.gpullama3.backend.tornado.bench.SyntheticKernelBench;
+import org.beehive.gpullama3.format.GgufModelFacts;
 import org.beehive.gpullama3.inference.ForwardPass;
 import org.beehive.gpullama3.inference.state.State;
 import org.beehive.gpullama3.model.Model;
@@ -271,7 +272,7 @@ public class LlamaBench {
         // Configuration.quantization() names the *activation* class (a Q4_0 file reports "Q8_0"),
         // and a size/bytes-per-param estimate cannot describe a mixed-quantization model. Both
         // columns exist to be compared against llama-bench's, which reports the file.
-        ModelFacts facts = ModelFacts.read(path);
+        GgufModelFacts facts = GgufModelFacts.read(path);
         String quant = facts.quant();
         double sizeGiB = Files.size(path) / (1024.0 * 1024.0 * 1024.0);
         double paramsB = facts.paramsB();
@@ -434,46 +435,6 @@ public class LlamaBench {
                         model, state, toks[start + i], start + i, plan);
             }
         }
-    }
-
-    /** Architecture, file quantization and exact parameter count, straight from the GGUF header. */
-    record ModelFacts(String arch, String quant, double paramsB) {
-
-        static ModelFacts read(Path path) throws java.io.IOException {
-            var gguf = org.beehive.gpullama3.format.GGUF.loadGGUFMetadata(path);
-            Object arch = gguf.getMetadata().get("general.architecture");
-            Object fileType = gguf.getMetadata().get("general.file_type");
-            long params = 0;
-            for (var info : gguf.getTensorInfos().values()) {
-                long n = 1;
-                for (int d : info.dimensions()) {
-                    n *= d;
-                }
-                params += n;
-            }
-            return new ModelFacts(
-                    arch == null ? "unknown" : arch.toString(),
-                    fileTypeName(fileType instanceof Integer i ? i : -1),
-                    params / 1e9);
-        }
-    }
-
-    /** GGUF {@code general.file_type} as llama-bench names it. */
-    static String fileTypeName(int fileType) {
-        return switch (fileType) {
-            case 0 -> "F32";
-            case 1 -> "F16";
-            case 2 -> "Q4_0";
-            case 3 -> "Q4_1";
-            case 7 -> "Q8_0";
-            case 14 -> "Q4_K_S";
-            case 15 -> "Q4_K_M";
-            case 16 -> "Q5_K_S";
-            case 17 -> "Q5_K_M";
-            case 18 -> "Q6_K";
-            case 32 -> "BF16";
-            default -> "type_" + fileType;
-        };
     }
 
     /** The execution mode actually built, read off the plan rather than off the request. */
