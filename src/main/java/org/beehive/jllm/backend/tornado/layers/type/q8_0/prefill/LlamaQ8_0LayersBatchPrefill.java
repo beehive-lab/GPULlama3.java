@@ -20,8 +20,8 @@ import uk.ac.manchester.tornado.api.enums.DataTransferMode;
  * Batched-prefill transformer-layer TaskGraphs for the unified batched prefill-decode plan (Q8_0).
  *
  * <p>Mirrors {@link
- * org.beehive.jllm.backend.tornado.layers.type.fp16.prefill.LlamaFP16LayersBatchPrefill} but
- * uses Q8_0 kernels with inline dequantization. Key differences from the FP16 path:
+ * org.beehive.jllm.backend.tornado.layers.type.fp16.prefill.LlamaFP16LayersBatchPrefill} but uses
+ * Q8_0 kernels with inline dequantization. Key differences from the FP16 path:
  *
  * <ul>
  *   <li>{@code wrapXBatch} is filled with dequantized FP32 embeddings by the host before the

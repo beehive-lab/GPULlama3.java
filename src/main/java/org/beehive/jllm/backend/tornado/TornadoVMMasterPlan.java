@@ -100,8 +100,7 @@ public interface TornadoVMMasterPlan {
         // ran the legacy path however the flag was set: a paired A/B taken through the script was
         // measuring legacy against legacy. `handles` answers false unless the opt-in is set and the
         // tuple is the one the slice implements, so this costs a boolean read otherwise.
-        if (org.beehive.jllm.backend.tornado.lowering.LoweredPlanSelection.handles(
-                model, state)) {
+        if (org.beehive.jllm.backend.tornado.lowering.LoweredPlanSelection.handles(model, state)) {
             reportPath(org.beehive.jllm.runtime.backend.ExecutionPath.LOWERED, model, state);
             return org.beehive.jllm.backend.tornado.lowering.LoweredPlanSelection.lower(
                     model, state, sink);
@@ -189,8 +188,7 @@ public interface TornadoVMMasterPlan {
      * this run take") is a property of the run, not of the compile.
      */
     public static void reportLoweredPath(
-            org.beehive.jllm.model.Model model,
-            org.beehive.jllm.inference.state.State state) {
+            org.beehive.jllm.model.Model model, org.beehive.jllm.inference.state.State state) {
         reportPath(org.beehive.jllm.runtime.backend.ExecutionPath.LOWERED, model, state);
     }
 }

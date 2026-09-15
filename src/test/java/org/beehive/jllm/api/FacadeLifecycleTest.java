@@ -256,8 +256,7 @@ public class FacadeLifecycleTest {
     public void theModelReportsWhatItLoaded() {
         TextGenerationModel model = model();
         assertEquals(512, model.info().contextLength());
-        assertEquals(
-                org.beehive.jllm.runtime.tensor.DataType.Q8_0, model.info().computeType());
+        assertEquals(org.beehive.jllm.runtime.tensor.DataType.Q8_0, model.info().computeType());
         assertEquals(Path.of("stub.gguf"), model.info().source());
         assertEquals(16, model.configuration().layers());
         assertEquals(8, model.configuration().keyValueHeads());

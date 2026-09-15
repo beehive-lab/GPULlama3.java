@@ -35,10 +35,10 @@ public interface Tokenizer {
     boolean isSpecialToken(int tokenIndex);
 
     /**
-     * Determines if a token should be displayed during streaming output. This filters out special tokens, control characters, or other non-displayable content.
+     * Determines if a token should be displayed during streaming output. This filters out special
+     * tokens, control characters, or other non-displayable content.
      *
-     * @param token
-     *         the token to check
+     * @param token the token to check
      * @return true if the token should be displayed to the user, false otherwise
      */
     boolean shouldDisplayToken(int token);
@@ -48,6 +48,4 @@ public interface Tokenizer {
     List<Integer> encodeAsList(String text);
 
     String decode(List<Integer> tokens);
-
 }
-

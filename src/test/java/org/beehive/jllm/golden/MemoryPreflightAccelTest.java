@@ -144,8 +144,7 @@ public class MemoryPreflightAccelTest {
                         ModelOptions.builder()
                                 .contextLength(512)
                                 .executionPolicy(
-                                        org.beehive.jllm.runtime.policy.ExecutionPolicy
-                                                .builder()
+                                        org.beehive.jllm.runtime.policy.ExecutionPolicy.builder()
                                                 .phaseStrategy(
                                                         org.beehive.jllm.runtime.policy
                                                                 .ExecutionPolicy.PhaseStrategy
@@ -167,9 +166,8 @@ public class MemoryPreflightAccelTest {
                                         .filter(
                                                 c ->
                                                         c.bufferClass()
-                                                                == org.beehive.jllm.runtime
-                                                                        .memory.BufferClass
-                                                                        .BATCH_STAGING)
+                                                                == org.beehive.jllm.runtime.memory
+                                                                        .BufferClass.BATCH_STAGING)
                                         .mapToLong(c -> c.logicalBytes())
                                         .sum())
                         / 1048576);

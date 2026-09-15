@@ -22,9 +22,6 @@ public final class Phi3CpuForwardProvider implements CpuForwardProvider {
     public ForwardPass create() {
         return (model, state, token, position) ->
                 InferenceCore.forwardJavaPhi3(
-                        model,
-                        (org.beehive.jllm.inference.state.Phi3State) state,
-                        token,
-                        position);
+                        model, (org.beehive.jllm.inference.state.Phi3State) state, token, position);
     }
 }

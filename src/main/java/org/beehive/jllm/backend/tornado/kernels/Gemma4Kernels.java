@@ -18,8 +18,8 @@ import uk.ac.manchester.tornado.api.types.arrays.IntArray;
  * tables -- some layers reuse an earlier layer's KV cache, the FFN uses a GeGLU activation, and
  * every layer additionally mixes in a per-layer embedding (PLE). None of the existing fused kernels
  * match this shape, so this class provides purpose-built (but otherwise unfused/modular)
- * replacements; see {@link org.beehive.jllm.backend.cpu.InferenceCore#forwardJavaGemma4} for
- * the reference computation each of these mirrors.
+ * replacements; see {@link org.beehive.jllm.backend.cpu.InferenceCore#forwardJavaGemma4} for the
+ * reference computation each of these mirrors.
  */
 // @formatter:off
 public class Gemma4Kernels {
@@ -218,8 +218,8 @@ public class Gemma4Kernels {
      * Qwen3Kernels.ropeRotationWithCacheCopy}'s {@code rotn} pattern for GQA).
      *
      * <p>{@code cacheBaseOffset} is the (possibly shared, see {@link
-     * org.beehive.jllm.inference.state.Gemma4State#cacheLayerBaseOffset}) base element offset
-     * of this layer's slot in the flat {@code keyCache}/{@code valueCache} buffers.
+     * org.beehive.jllm.inference.state.Gemma4State#cacheLayerBaseOffset}) base element offset of
+     * this layer's slot in the flat {@code keyCache}/{@code valueCache} buffers.
      */
     public static void ropeNeoxRotateAndCacheCopy(
             KernelContext context,
@@ -274,8 +274,8 @@ public class Gemma4Kernels {
      * over {@code t} in {@code [windowStart, pos]}, where {@code windowStart = max(0, pos -
      * windowSize + 1)}. Full-attention layers pass {@code windowSize >= contextLength} so that
      * {@code windowStart} is always {@code 0} (plain causal attention) -- see {@link
-     * org.beehive.jllm.backend.cpu.InferenceCore#forwardJavaGemma4}. Gemma4 uses an attention
-     * scale of {@code 1.0} (no {@code 1/sqrt(headDim)}).
+     * org.beehive.jllm.backend.cpu.InferenceCore#forwardJavaGemma4}. Gemma4 uses an attention scale
+     * of {@code 1.0} (no {@code 1/sqrt(headDim)}).
      *
      * <p>{@code cacheBaseOffset} addresses the (possibly shared) KV-cache slot for this layer, see
      * {@link #ropeNeoxRotateAndCacheCopy}.

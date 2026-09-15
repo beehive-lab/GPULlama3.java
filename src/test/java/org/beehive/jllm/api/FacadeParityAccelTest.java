@@ -60,8 +60,7 @@ public class FacadeParityAccelTest {
                     "the Q8_0 fixture's weights execute as Q8_0",
                     java.util.Optional.of(org.beehive.jllm.runtime.tensor.DataType.Q8_0),
                     model.info().weightType());
-            assertEquals(
-                    org.beehive.jllm.runtime.tensor.DataType.Q8_0, model.info().computeType());
+            assertEquals(org.beehive.jllm.runtime.tensor.DataType.Q8_0, model.info().computeType());
         } finally {
             restore(previous);
         }

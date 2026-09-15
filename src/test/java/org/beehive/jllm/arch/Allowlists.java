@@ -91,8 +91,7 @@ public final class Allowlists {
      * plus one service line. The CLI left this list when it moved onto the public facade — it now
      * reads {@code ModelInfo.architecture()} rather than naming a {@code ModelType}.
      */
-    public static final Set<String> RULE_15 =
-            frozen("org.beehive.jllm.model.loader.ModelLoader");
+    public static final Set<String> RULE_15 = frozen("org.beehive.jllm.model.loader.ModelLoader");
 
     /**
      * Rule 16 — console I/O in library code.

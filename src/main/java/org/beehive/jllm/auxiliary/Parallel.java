@@ -10,8 +10,8 @@ public final class Parallel {
         IntStream.range(startInclusive, endExclusive).parallel().forEach(action);
     }
 
-
-    public static void parallelForLong(long startInclusive, long endExclusive, LongConsumer action) {
+    public static void parallelForLong(
+            long startInclusive, long endExclusive, LongConsumer action) {
         if (startInclusive == 0 && endExclusive == 1) {
             action.accept(0);
             return;

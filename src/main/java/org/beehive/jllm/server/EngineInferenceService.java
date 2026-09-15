@@ -104,8 +104,7 @@ public final class EngineInferenceService implements AutoCloseable {
                         executor,
                         batchSize,
                         maxQueuedRequests,
-                        org.beehive.jllm.auxiliary.metrics.RunMetricsSink
-                                .installedOrDisabled());
+                        org.beehive.jllm.auxiliary.metrics.RunMetricsSink.installedOrDisabled());
 
         this.driver = new Thread(this::drive, "engine-step");
         this.driver.setDaemon(true);
@@ -180,8 +179,7 @@ public final class EngineInferenceService implements AutoCloseable {
      * public facade does not expose: there is no {@code GenerationSession} here to render the
      * template. Only text turns reach this server, so only text is translated.
      */
-    private static ChatFormat.Message asFormatMessage(
-            org.beehive.jllm.api.ChatMessage message) {
+    private static ChatFormat.Message asFormatMessage(org.beehive.jllm.api.ChatMessage message) {
         StringBuilder text = new StringBuilder();
         for (org.beehive.jllm.api.ChatContent piece : message.content()) {
             if (piece instanceof org.beehive.jllm.api.ChatContent.Text t) {

@@ -1,12 +1,9 @@
 package org.beehive.jllm.model.format;
 
+import java.util.*;
 import org.beehive.jllm.tokenizer.Qwen3Tokenizer;
 
-import java.util.*;
-
-/**
- * Utility tailored for the Chat Markup Language (ChatML) prompt format.
- */
+/** Utility tailored for the Chat Markup Language (ChatML) prompt format. */
 public class Qwen3ChatFormat implements ChatFormat {
 
     protected final int beginOfText;
@@ -51,15 +48,16 @@ public class Qwen3ChatFormat implements ChatFormat {
         List<Integer> tokens = new ArrayList<>();
         if (endHeader == -1) {
             // DeepSeek-R1
-            String sToken = switch (message.role().name()) {
-                case "system" -> null;
-                case "user" -> "<｜User｜>";
-                case "assistant" -> "<｜Assistant｜>";
-                case "fim_prefix" -> "<|fim_prefix|>";
-                case "fim_middle" -> "<|fim_middle|>";
-                case "fim_suffix" -> "<|fim_suffix|>";
-                default -> null;
-            };
+            String sToken =
+                    switch (message.role().name()) {
+                        case "system" -> null;
+                        case "user" -> "<｜User｜>";
+                        case "assistant" -> "<｜Assistant｜>";
+                        case "fim_prefix" -> "<|fim_prefix|>";
+                        case "fim_middle" -> "<|fim_middle|>";
+                        case "fim_suffix" -> "<|fim_suffix|>";
+                        default -> null;
+                    };
             if (sToken != null) {
                 Integer token = tokenizer.getSpecialTokens().get(sToken);
                 if (token == null) {
@@ -89,7 +87,10 @@ public class Qwen3ChatFormat implements ChatFormat {
         List<Integer> tokens = this.encodeHeader(message);
         // Encode message content as ordinary text
         tokens.addAll(this.tokenizer.encodeOrdinaryAsList(message.content().strip()));
-        boolean isFim = Role.FIM_PREFIX.equals(message.role()) || Role.FIM_SUFFIX.equals(message.role()) || Role.FIM_MIDDLE.equals(message.role());
+        boolean isFim =
+                Role.FIM_PREFIX.equals(message.role())
+                        || Role.FIM_SUFFIX.equals(message.role())
+                        || Role.FIM_MIDDLE.equals(message.role());
         if (imEnd != -1 && !isFim) {
             // Add the end token directly
             tokens.add(imEnd);
@@ -142,9 +143,9 @@ public class Qwen3ChatFormat implements ChatFormat {
 
     /**
      * Genuine Qwen3 exposes the {@code enable_thinking} template switch and so supports thinking
-     * control. DeepSeek-R1 is routed through this same format (detected by the absence of an
-     * {@code <|im_end|>} token) but is a pure reasoning model with no off-switch, so it reports
-     * {@code false} and is left to always reason.
+     * control. DeepSeek-R1 is routed through this same format (detected by the absence of an {@code
+     * <|im_end|>} token) but is a pure reasoning model with no off-switch, so it reports {@code
+     * false} and is left to always reason.
      */
     @Override
     public boolean supportsThinking() {
@@ -152,11 +153,11 @@ public class Qwen3ChatFormat implements ChatFormat {
     }
 
     /**
-     * Qwen3 thinking control. When thinking is disabled, primes a pre-closed
-     * {@code <think>\n\n</think>\n\n} block right after the assistant header so the model skips
-     * its reasoning phase — matching the {@code enable_thinking=false} branch of the official
-     * Qwen3 chat template. When enabled (or for DeepSeek-R1, which cannot disable thinking),
-     * returns nothing and lets the model reason on its own.
+     * Qwen3 thinking control. When thinking is disabled, primes a pre-closed {@code
+     * <think>\n\n</think>\n\n} block right after the assistant header so the model skips its
+     * reasoning phase — matching the {@code enable_thinking=false} branch of the official Qwen3
+     * chat template. When enabled (or for DeepSeek-R1, which cannot disable thinking), returns
+     * nothing and lets the model reason on its own.
      *
      * <p>The {@code <think>}/{@code </think>} markers are emitted as their <em>canonical</em>
      * single token ids (not ordinary BPE sub-pieces): the tokenizer strips them from its special
@@ -190,9 +191,8 @@ public class Qwen3ChatFormat implements ChatFormat {
     }
 
     /**
-     * Qwen3 tool calling system prompt suffix.
-     * Appended to the system message; instructs the model to wrap tool calls in
-     * {@code <tool_call>…</tool_call>} XML tags.
+     * Qwen3 tool calling system prompt suffix. Appended to the system message; instructs the model
+     * to wrap tool calls in {@code <tool_call>…</tool_call>} XML tags.
      */
     @Override
     public String toolSystemPromptSuffix(String toolsJson) {
@@ -210,15 +210,20 @@ public class Qwen3ChatFormat implements ChatFormat {
     }
 
     /**
-     * Re-encodes a prior assistant tool-call turn for multi-turn history.
-     * Format: {@code <|im_start|>assistant\n<tool_call>\nJSON\n</tool_call><|im_end|>}
+     * Re-encodes a prior assistant tool-call turn for multi-turn history. Format: {@code
+     * <|im_start|>assistant\n<tool_call>\nJSON\n</tool_call><|im_end|>}
      */
     @Override
     public List<Integer> encodeToolCallAssistantTurn(ToolCallExtract toolCall) {
         List<Integer> tokens = new ArrayList<>();
         tokens.add(imStart);
         tokens.addAll(tokenizer.encodeOrdinaryAsList("assistant\n"));
-        String json = "{\"name\":\"" + toolCall.name() + "\",\"arguments\":" + toolCall.argumentsJson() + "}";
+        String json =
+                "{\"name\":\""
+                        + toolCall.name()
+                        + "\",\"arguments\":"
+                        + toolCall.argumentsJson()
+                        + "}";
         tokens.addAll(tokenizer.encodeOrdinaryAsList("<tool_call>\n" + json + "\n</tool_call>"));
         if (imEnd != -1) {
             tokens.add(imEnd);
@@ -228,8 +233,8 @@ public class Qwen3ChatFormat implements ChatFormat {
 
     /**
      * Encodes multiple tool calls as a single assistant turn: one {@code <|im_start|>assistant}
-     * header, all {@code <tool_call>} blocks concatenated, then {@code <|im_end|>}.
-     * For a single call, delegates to the existing single-call method.
+     * header, all {@code <tool_call>} blocks concatenated, then {@code <|im_end|>}. For a single
+     * call, delegates to the existing single-call method.
      */
     @Override
     public List<Integer> encodeToolCallAssistantTurn(List<ToolCallExtract> toolCalls) {
@@ -239,8 +244,10 @@ public class Qwen3ChatFormat implements ChatFormat {
         tokens.add(imStart);
         tokens.addAll(tokenizer.encodeOrdinaryAsList("assistant\n"));
         for (ToolCallExtract tc : toolCalls) {
-            String json = "{\"name\":\"" + tc.name() + "\",\"arguments\":" + tc.argumentsJson() + "}";
-            tokens.addAll(tokenizer.encodeOrdinaryAsList("<tool_call>\n" + json + "\n</tool_call>"));
+            String json =
+                    "{\"name\":\"" + tc.name() + "\",\"arguments\":" + tc.argumentsJson() + "}";
+            tokens.addAll(
+                    tokenizer.encodeOrdinaryAsList("<tool_call>\n" + json + "\n</tool_call>"));
         }
         if (imEnd != -1) {
             tokens.add(imEnd);
@@ -258,7 +265,9 @@ public class Qwen3ChatFormat implements ChatFormat {
     public List<Integer> encodeToolResultTurn(String toolCallId, String toolName, String result) {
         List<Integer> tokens = new ArrayList<>();
         tokens.add(imStart);
-        tokens.addAll(tokenizer.encodeOrdinaryAsList("user\n<tool_response>\n" + result + "\n</tool_response>"));
+        tokens.addAll(
+                tokenizer.encodeOrdinaryAsList(
+                        "user\n<tool_response>\n" + result + "\n</tool_response>"));
         if (imEnd != -1) {
             tokens.add(imEnd);
         }
@@ -266,8 +275,8 @@ public class Qwen3ChatFormat implements ChatFormat {
     }
 
     /**
-     * Detects a tool call enclosed in {@code <tool_call>…</tool_call>} tags.
-     * Delegates to {@link ToolCallParserUtils#parseToolCallResponse}.
+     * Detects a tool call enclosed in {@code <tool_call>…</tool_call>} tags. Delegates to {@link
+     * ToolCallParserUtils#parseToolCallResponse}.
      */
     @Override
     public Optional<ToolCallExtract> extractToolCall(String responseText) {

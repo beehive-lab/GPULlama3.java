@@ -4,21 +4,43 @@ import java.io.PrintStream;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
-public record Options(Path modelPath, String prompt, String systemPrompt, String suffix, boolean interactive, float temperature, float topp, long seed, int maxTokens, boolean stream, boolean echo,
-                      boolean useTornadovm, boolean withPrefillDecode, int batchPrefillSize) {
+public record Options(
+        Path modelPath,
+        String prompt,
+        String systemPrompt,
+        String suffix,
+        boolean interactive,
+        float temperature,
+        float topp,
+        long seed,
+        int maxTokens,
+        boolean stream,
+        boolean echo,
+        boolean useTornadovm,
+        boolean withPrefillDecode,
+        int batchPrefillSize) {
 
     public static final int DEFAULT_MAX_TOKENS = 1024;
 
     public Options {
-        require(interactive || prompt != null, "Missing argument: --prompt is required in --instruct mode e.g. --prompt \"Why is the sky blue?\"");
-        require(Float.isNaN(temperature) || 0 <= temperature, "Invalid argument: --temperature must be non-negative");
-        require(Float.isNaN(topp) || 0 <= topp && topp <= 1, "Invalid argument: --top-p must be within [0, 1]");
+        require(
+                interactive || prompt != null,
+                "Missing argument: --prompt is required in --instruct mode e.g. --prompt \"Why is the sky blue?\"");
+        require(
+                Float.isNaN(temperature) || 0 <= temperature,
+                "Invalid argument: --temperature must be non-negative");
+        require(
+                Float.isNaN(topp) || 0 <= topp && topp <= 1,
+                "Invalid argument: --top-p must be within [0, 1]");
         require(batchPrefillSize >= 1, "Invalid argument: --batch-prefill-size must be >= 1");
-        require(batchPrefillSize == 1 || withPrefillDecode, "Invalid argument: --batch-prefill-size requires --with-prefill-decode");
+        require(
+                batchPrefillSize == 1 || withPrefillDecode,
+                "Invalid argument: --batch-prefill-size requires --with-prefill-decode");
         // Publish to system properties so TornadoVMMasterPlan and Llama read the right values
         // even when the JAR is invoked directly (without the Python launcher).
         if (withPrefillDecode) System.setProperty("jllm.withPrefillDecode", "true");
-        if (batchPrefillSize > 1) System.setProperty("jllm.prefillBatchSize", String.valueOf(batchPrefillSize));
+        if (batchPrefillSize > 1)
+            System.setProperty("jllm.prefillBatchSize", String.valueOf(batchPrefillSize));
     }
 
     static void require(boolean condition, String messageFormat, Object... args) {
@@ -43,15 +65,24 @@ public record Options(Path modelPath, String prompt, String systemPrompt, String
         out.println("  --instruct                    run in instruct (once) mode, default mode");
         out.println("  --prompt, -p <string>         input prompt");
         out.println("  --system-prompt, -sp <string> (optional) system prompt (Llama models)");
-        out.println("  --suffix <string>             suffix for fill-in-the-middle request (Codestral)");
-        out.println("  --temperature, -temp <float>  temperature in [0,inf], default: auto-detected from model family");
-        out.println("  --top-p <float>               p value in top-p (nucleus) sampling in [0,1], default: auto-detected from model family");
+        out.println(
+                "  --suffix <string>             suffix for fill-in-the-middle request (Codestral)");
+        out.println(
+                "  --temperature, -temp <float>  temperature in [0,inf], default: auto-detected from model family");
+        out.println(
+                "  --top-p <float>               p value in top-p (nucleus) sampling in [0,1], default: auto-detected from model family");
         out.println("  --seed <long>                 random seed, default System.nanoTime()");
-        out.println("  --max-tokens, -n <int>        number of steps to run for < 0 = limited by context length, default " + DEFAULT_MAX_TOKENS);
-        out.println("  --stream <boolean>            print tokens during generation; may cause encoding artifacts for non ASCII text, default true");
-        out.println("  --echo <boolean>              print ALL tokens to stderr, if true, recommended to set --stream=false, default false");
-        out.println("  --with-prefill-decode         enable prefill/decode separation (skip logits during prefill)");
-        out.println("  --batch-prefill-size <int>    batched prefill chunk size; requires --with-prefill-decode, must be > 1, enables batched CPU/GPU prefill");
+        out.println(
+                "  --max-tokens, -n <int>        number of steps to run for < 0 = limited by context length, default "
+                        + DEFAULT_MAX_TOKENS);
+        out.println(
+                "  --stream <boolean>            print tokens during generation; may cause encoding artifacts for non ASCII text, default true");
+        out.println(
+                "  --echo <boolean>              print ALL tokens to stderr, if true, recommended to set --stream=false, default false");
+        out.println(
+                "  --with-prefill-decode         enable prefill/decode separation (skip logits during prefill)");
+        out.println(
+                "  --batch-prefill-size <int>    batched prefill chunk size; requires --with-prefill-decode, must be > 1, enables batched CPU/GPU prefill");
         out.println();
     }
 
@@ -60,7 +91,7 @@ public record Options(Path modelPath, String prompt, String systemPrompt, String
         String systemPrompt = null;
         String suffix = null;
         float temperature = Float.NaN; // resolved from model family after loading
-        float topp = Float.NaN;        // resolved from model family after loading
+        float topp = Float.NaN; // resolved from model family after loading
         Path modelPath = null;
         long seed = System.nanoTime();
         int maxTokens = DEFAULT_MAX_TOKENS;
@@ -69,7 +100,21 @@ public record Options(Path modelPath, String prompt, String systemPrompt, String
         boolean echo = false;
         boolean useTornadoVM = getDefaultTornadoVM();
 
-        return new Options(modelPath, prompt, systemPrompt, suffix, interactive, temperature, topp, seed, maxTokens, stream, echo, useTornadoVM, false, 1);
+        return new Options(
+                modelPath,
+                prompt,
+                systemPrompt,
+                suffix,
+                interactive,
+                temperature,
+                topp,
+                seed,
+                maxTokens,
+                stream,
+                echo,
+                useTornadoVM,
+                false,
+                1);
     }
 
     public static Options parseOptions(String[] args) {
@@ -77,7 +122,7 @@ public record Options(Path modelPath, String prompt, String systemPrompt, String
         String systemPrompt = null;
         String suffix = null;
         float temperature = Float.NaN; // resolved from model family after loading
-        float topp = Float.NaN;        // resolved from model family after loading
+        float topp = Float.NaN; // resolved from model family after loading
         Path modelPath = null;
         long seed = System.nanoTime();
         int maxTokens = DEFAULT_MAX_TOKENS;
@@ -135,6 +180,20 @@ public record Options(Path modelPath, String prompt, String systemPrompt, String
             useTornadovm = getDefaultTornadoVM();
         }
 
-        return new Options(modelPath, prompt, systemPrompt, suffix, interactive, temperature, topp, seed, maxTokens, stream, echo, useTornadovm, withPrefillDecode, batchPrefillSize);
+        return new Options(
+                modelPath,
+                prompt,
+                systemPrompt,
+                suffix,
+                interactive,
+                temperature,
+                topp,
+                seed,
+                maxTokens,
+                stream,
+                echo,
+                useTornadovm,
+                withPrefillDecode,
+                batchPrefillSize);
     }
 }

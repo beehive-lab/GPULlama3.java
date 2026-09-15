@@ -350,8 +350,7 @@ final class DelegatingModel implements TextGenerationModel {
             org.beehive.jllm.model.Model delegate,
             org.beehive.jllm.runtime.kv.KvLease lease,
             ExecutionPolicy policy) {
-        if (!gpu
-                || !org.beehive.jllm.backend.tornado.lowering.LoweredPlanSelection.enabled()) {
+        if (!gpu || !org.beehive.jllm.backend.tornado.lowering.LoweredPlanSelection.enabled()) {
             return new LegacySessionRuntime(delegate, lease, policy, storageOptions);
         }
         if (!policy.equals(executionPolicy)) {
@@ -406,8 +405,8 @@ final class DelegatingModel implements TextGenerationModel {
                                         .lower(
                                                 delegate,
                                                 loweredWorkspace,
-                                                org.beehive.jllm.auxiliary.metrics
-                                                        .RunMetricsSink.installedOrDisabled()));
+                                                org.beehive.jllm.auxiliary.metrics.RunMetricsSink
+                                                        .installedOrDisabled()));
         // After the acquire, not inside the supplier: on a cache hit the supplier never runs, and
         // this session took the lowered path just the same. Without it a run through the facade
         // reports no execution_path at all.
@@ -421,8 +420,8 @@ final class DelegatingModel implements TextGenerationModel {
                         lease.slot(),
                         delegate.configuration().vocabularySize(),
                         token ->
-                                org.beehive.jllm.backend.tornado.lowering.EmbeddingStaging
-                                        .stage(delegate, loweredWorkspace, token),
+                                org.beehive.jllm.backend.tornado.lowering.EmbeddingStaging.stage(
+                                        delegate, loweredWorkspace, token),
                         false,
                         null);
         // The family's initial seed, taken from a freshly built state rather than assumed: it is

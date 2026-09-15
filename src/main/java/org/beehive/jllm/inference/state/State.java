@@ -123,8 +123,8 @@ public abstract class State {
      * workspace.positionHolder[1]} and {@code workspace.batchStartPosHolder[2]}.
      *
      * <p>0 while the table is this state's own — one sequence, one slot. When the state is built
-     * against a leased {@link org.beehive.jllm.runtime.kv.KvStorage} it is the lease's slot,
-     * and several states then address disjoint ranges of one shared table.
+     * against a leased {@link org.beehive.jllm.runtime.kv.KvStorage} it is the lease's slot, and
+     * several states then address disjoint ranges of one shared table.
      */
     public final int kvSlot;
 
@@ -274,8 +274,7 @@ public abstract class State {
      *
      * @throws IllegalStateException if a plan has already read the policy
      */
-    public void resolveExecutionPolicy(
-            org.beehive.jllm.runtime.policy.ExecutionPolicy policy) {
+    public void resolveExecutionPolicy(org.beehive.jllm.runtime.policy.ExecutionPolicy policy) {
         if (executionPolicyRead) {
             throw new IllegalStateException(
                     "the execution policy was already read by a plan;"
@@ -434,8 +433,7 @@ public abstract class State {
         // The caller says whether this family has FP16 kernels at all; the storage options say
         // whether they were asked for. Both must hold.
         useFp16 = useFp16 && storageOptions.usesFp16KeyValueCache();
-        org.beehive.jllm.runtime.kv.KvStorage storage =
-                kvLease != null ? kvLease.storage() : null;
+        org.beehive.jllm.runtime.kv.KvStorage storage = kvLease != null ? kvLease.storage() : null;
         if (storage != null) {
             // Leased: the backend writes its own arrays in, and this state never learns what they
             // are. Nothing KV-shaped is allocated here — that is the whole point.

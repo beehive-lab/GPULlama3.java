@@ -2,24 +2,26 @@ package org.beehive.jllm.model.qwen2;
 
 import org.beehive.jllm.model.Configuration;
 
-public record Qwen2MoEConfiguration(String quantization,
-                                    int dim,
-                                    int hiddenDim,
-                                    int numberOfLayers,
-                                    int numberOfHeads,
-                                    int numberOfKeyValueHeads,
-                                    int numberOfHeadsKey,
-                                    int numberOfHeadsValue,
-                                    int vocabularySize,
-                                    int contextLengthModel,
-                                    int contextLength,
-                                    int numberOfExperts,
-                                    int numberOfExpertsUsed,
-                                    int moeHiddenDim,
-                                    int sharedExpertHiddenDim,
-                                    boolean sharedWeights,
-                                    float rmsNormEps,
-                                    float ropeTheta) implements Configuration {
+public record Qwen2MoEConfiguration(
+        String quantization,
+        int dim,
+        int hiddenDim,
+        int numberOfLayers,
+        int numberOfHeads,
+        int numberOfKeyValueHeads,
+        int numberOfHeadsKey,
+        int numberOfHeadsValue,
+        int vocabularySize,
+        int contextLengthModel,
+        int contextLength,
+        int numberOfExperts,
+        int numberOfExpertsUsed,
+        int moeHiddenDim,
+        int sharedExpertHiddenDim,
+        boolean sharedWeights,
+        float rmsNormEps,
+        float ropeTheta)
+        implements Configuration {
     @Override
     public String quantization() {
         return quantization;

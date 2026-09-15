@@ -146,8 +146,7 @@ public final class GoldenCapture {
         // adjustment from the same source keeps the row count at TOKENS for every family, instead
         // of encoding one family's arithmetic as a constant that quietly rots.
         int skippedSeed =
-                org.beehive.jllm.inference.PromptIngestion.of(state, promptTokens, 0)
-                        .firstIndex();
+                org.beehive.jllm.inference.PromptIngestion.of(state, promptTokens, 0).firstIndex();
         int budget = promptTokens.size() + TOKENS - skippedSeed;
 
         TornadoVMMasterPlan plan = null;

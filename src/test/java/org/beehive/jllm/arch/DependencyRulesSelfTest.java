@@ -11,8 +11,8 @@ import org.junit.Test;
 
 /**
  * A rule that only ever passes proves nothing — it could be matching the wrong package or silently
- * returning empty. These tests point each rule at {@code org.beehive.jllm.arch.fixture.model}
- * and assert it reports the planted violations.
+ * returning empty. These tests point each rule at {@code org.beehive.jllm.arch.fixture.model} and
+ * assert it reports the planted violations.
  */
 public class DependencyRulesSelfTest {
 

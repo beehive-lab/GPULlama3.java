@@ -1,8 +1,6 @@
 package org.beehive.jllm.model.loader;
 
-/**
- * Exception thrown when model loading fails.
- */
+/** Exception thrown when model loading fails. */
 public class ModelLoadException extends RuntimeException {
 
     public ModelLoadException(String message) {

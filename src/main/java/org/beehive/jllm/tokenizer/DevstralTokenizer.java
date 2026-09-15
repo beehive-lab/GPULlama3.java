@@ -1,7 +1,5 @@
 package org.beehive.jllm.tokenizer;
 
-import org.beehive.jllm.auxiliary.Pair;
-
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -14,18 +12,22 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import org.beehive.jllm.auxiliary.Pair;
 
 /**
  * GPT-2-style BPE tokenizer for Devstral 2 models (Tekken tokenizer).
- * <p>
- * Tekken is a Tiktoken-based BPE tokenizer with explicit merges list and byte-level encoding,
+ *
+ * <p>Tekken is a Tiktoken-based BPE tokenizer with explicit merges list and byte-level encoding,
  * unlike the score-based SentencePiece BPE used by earlier Mistral models.
  */
 public class DevstralTokenizer implements Tokenizer {
     static final Map<Integer, Integer> BYTE_ENCODER = bytesToUnicode();
-    static final Map<Integer, Integer> BYTE_DECODER = BYTE_ENCODER.entrySet().stream().collect(Collectors.toMap(Map.Entry::getValue, Map.Entry::getKey));
+    static final Map<Integer, Integer> BYTE_DECODER =
+            BYTE_ENCODER.entrySet().stream()
+                    .collect(Collectors.toMap(Map.Entry::getValue, Map.Entry::getKey));
 
-    private static final String TEKKEN_PATTERN = "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
+    private static final String TEKKEN_PATTERN =
+            "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
 
     private final Pattern compiledPattern;
     private final Vocabulary vocabulary;
@@ -52,7 +54,9 @@ public class DevstralTokenizer implements Tokenizer {
             // Fallback: detect known Mistral special tokens by name
             for (int i = 0; i < vocabulary.size(); i++) {
                 String token = vocabulary.get(i);
-                if (token.equals("<s>") || token.equals("</s>") || token.equals("<unk>")
+                if (token.equals("<s>")
+                        || token.equals("</s>")
+                        || token.equals("<unk>")
                         || (token.startsWith("[") && token.endsWith("]"))) {
                     specialTokens.put(token, i);
                 }
@@ -62,8 +66,15 @@ public class DevstralTokenizer implements Tokenizer {
 
         // Load merges
         String[] mergeLines = (String[]) metadata.get("tokenizer.ggml.merges");
-        List<Pair<Integer, Integer>> mergeList = Arrays.stream(mergeLines).map(line -> line.split(" "))
-                .map(parts -> new Pair<>(vocabulary.getIndex(parts[0]).orElseThrow(), vocabulary.getIndex(parts[1]).orElseThrow())).toList();
+        List<Pair<Integer, Integer>> mergeList =
+                Arrays.stream(mergeLines)
+                        .map(line -> line.split(" "))
+                        .map(
+                                parts ->
+                                        new Pair<>(
+                                                vocabulary.getIndex(parts[0]).orElseThrow(),
+                                                vocabulary.getIndex(parts[1]).orElseThrow()))
+                        .toList();
 
         this.merges = new HashMap<>();
         for (Pair<Integer, Integer> pair : mergeList) {
@@ -86,7 +97,9 @@ public class DevstralTokenizer implements Tokenizer {
         List<Integer> newIds = new ArrayList<>();
         int i = 0;
         while (i < ids.size()) {
-            if (i < ids.size() - 1 && ids.get(i).equals(pair.first()) && ids.get(i + 1).equals(pair.second())) {
+            if (i < ids.size() - 1
+                    && ids.get(i).equals(pair.first())
+                    && ids.get(i + 1).equals(pair.second())) {
                 newIds.add(idx);
                 i += 2;
             } else {
@@ -166,7 +179,10 @@ public class DevstralTokenizer implements Tokenizer {
         }
 
         assert specialTokens.keySet().containsAll(allowedSpecial);
-        String specialPattern = allowedSpecial.stream().map(Pattern::quote).collect(Collectors.joining("|", "(", ")"));
+        String specialPattern =
+                allowedSpecial.stream()
+                        .map(Pattern::quote)
+                        .collect(Collectors.joining("|", "(", ")"));
         String[] specialChunks = text.split(specialPattern);
 
         List<Integer> ids = new ArrayList<>();
@@ -198,7 +214,12 @@ public class DevstralTokenizer implements Tokenizer {
 
         while (ids.size() >= 2) {
             Map<Pair<Integer, Integer>, Integer> stats = getStats(ids);
-            Pair<Integer, Integer> pair = stats.keySet().stream().min(Comparator.comparingInt(key -> merges.getOrDefault(key, Integer.MAX_VALUE))).orElseThrow();
+            Pair<Integer, Integer> pair =
+                    stats.keySet().stream()
+                            .min(
+                                    Comparator.comparingInt(
+                                            key -> merges.getOrDefault(key, Integer.MAX_VALUE)))
+                            .orElseThrow();
             if (!merges.containsKey(pair)) {
                 break;
             }
@@ -210,7 +231,8 @@ public class DevstralTokenizer implements Tokenizer {
     @Override
     public String decode(List<Integer> tokens) {
         String decoded = decodeImpl(tokens);
-        int[] decodedBytesAsInts = decoded.codePoints().map(cp -> BYTE_DECODER.getOrDefault(cp, cp)).toArray();
+        int[] decodedBytesAsInts =
+                decoded.codePoints().map(cp -> BYTE_DECODER.getOrDefault(cp, cp)).toArray();
         byte[] rawBytes = new byte[decodedBytesAsInts.length];
         for (int i = 0; i < decodedBytesAsInts.length; i++) {
             rawBytes[i] = (byte) decodedBytesAsInts[i];

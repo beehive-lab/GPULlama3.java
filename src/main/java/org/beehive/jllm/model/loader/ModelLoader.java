@@ -118,8 +118,8 @@ public abstract class ModelLoader {
     }
 
     /**
-     * Whether discovered providers do the loading. Defaults to true; {@code
-     * -Djllm.providers=false} selects the {@code ModelType} dispatch this replaced.
+     * Whether discovered providers do the loading. Defaults to true; {@code -Djllm.providers=false}
+     * selects the {@code ModelType} dispatch this replaced.
      *
      * <p>The fallback exists for one release, so that a model which loads differently through a
      * provider has a way to be compared rather than a way to be stuck.
@@ -178,9 +178,7 @@ public abstract class ModelLoader {
             return BackendId.CPU;
         }
         BackendId resolved =
-                org.beehive.jllm.backend.tornado.device.TornadoDevices.current()
-                        .id()
-                        .backend();
+                org.beehive.jllm.backend.tornado.device.TornadoDevices.current().id().backend();
         return BackendId.CPU.equals(resolved) ? BackendId.CUDA : resolved;
     }
 
@@ -227,8 +225,8 @@ public abstract class ModelLoader {
      * Q8_0 and F32 materialize as themselves, so every tuple measured on CUDA is predicted
      * byte-for-byte as before.
      */
-    public static org.beehive.jllm.runtime.memory.WeightFootprint weightFootprint(
-            Path ggufPath) throws IOException {
+    public static org.beehive.jllm.runtime.memory.WeightFootprint weightFootprint(Path ggufPath)
+            throws IOException {
         GGUF gguf = GGUF.loadGGUFMetadata(ggufPath);
         long perLayer = 0;
         long global = 0;
@@ -244,8 +242,7 @@ public abstract class ModelLoader {
             }
             org.beehive.jllm.runtime.tensor.DataType materialized =
                     org.beehive.jllm.format.DataTypeMapping.materializedType(
-                            info.ggmlType(),
-                            org.beehive.jllm.runtime.tensor.ExecutionTarget.GPU);
+                            info.ggmlType(), org.beehive.jllm.runtime.tensor.ExecutionTarget.GPU);
             long bytes =
                     org.beehive.jllm.format.TensorDescriptors.layoutOf(materialized)
                             .byteSize(elements);

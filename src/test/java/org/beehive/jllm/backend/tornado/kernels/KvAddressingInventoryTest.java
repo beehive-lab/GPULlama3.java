@@ -145,8 +145,7 @@ public class KvAddressingInventoryTest {
                         "Qwen2PagedKvKernels.java",
                         "GranitePagedKvKernels.java",
                         "Phi3PagedKvKernels.java")) {
-            String paged =
-                    read(MAIN.resolve("org/beehive/jllm/backend/tornado/kernels/" + file));
+            String paged = read(MAIN.resolve("org/beehive/jllm/backend/tornado/kernels/" + file));
             Matcher m = LEGACY_CONTIGUOUS.matcher(paged);
 
             assertTrue(file + " must address KV only through KvBlockAddress", !m.find());

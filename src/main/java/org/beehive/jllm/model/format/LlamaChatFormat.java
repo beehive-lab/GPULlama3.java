@@ -1,13 +1,11 @@
 package org.beehive.jllm.model.format;
 
-import org.beehive.jllm.tokenizer.LlamaTokenizer;
-import org.beehive.jllm.tokenizer.Tokenizer;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import org.beehive.jllm.tokenizer.Tokenizer;
 
 public class LlamaChatFormat implements ChatFormat {
 
@@ -30,7 +28,7 @@ public class LlamaChatFormat implements ChatFormat {
         this.endOfTurn = specialTokens.get("<|eot_id|>");
         this.endOfText = specialTokens.get("<|end_of_text|>");
         this.endOfMessage = specialTokens.getOrDefault("<|eom_id|>", -1); // only in 3.1
-        this.pythonTag = specialTokens.getOrDefault("<|python_tag|>", -1);  // only in 3.1
+        this.pythonTag = specialTokens.getOrDefault("<|python_tag|>", -1); // only in 3.1
         this.stopTokens = Set.of(endOfText, endOfTurn);
     }
 
@@ -93,10 +91,10 @@ public class LlamaChatFormat implements ChatFormat {
     }
 
     /**
-     * Llama 3.2 Instruct injects tool definitions into the <em>first user message</em>
-     * (the GGUF-embedded chat template has {@code tools_in_user_message = true} by default).
-     * The system message receives only an environment prefix; the tools and usage instructions
-     * go in the user turn.
+     * Llama 3.2 Instruct injects tool definitions into the <em>first user message</em> (the
+     * GGUF-embedded chat template has {@code tools_in_user_message = true} by default). The system
+     * message receives only an environment prefix; the tools and usage instructions go in the user
+     * turn.
      */
     @Override
     public boolean injectsToolsInUserMessage() {
@@ -104,8 +102,8 @@ public class LlamaChatFormat implements ChatFormat {
     }
 
     /**
-     * System-message prefix that signals tool availability to Llama 3.2.
-     * Matches the template's {@code "Environment: ipython\n"} line.
+     * System-message prefix that signals tool availability to Llama 3.2. Matches the template's
+     * {@code "Environment: ipython\n"} line.
      */
     @Override
     public String toolSystemMessagePrefix() {
@@ -113,10 +111,11 @@ public class LlamaChatFormat implements ChatFormat {
     }
 
     /**
-     * Prepends tool definitions and usage instructions to the first user message,
-     * matching the Llama 3.2 GGUF chat template ({@code tools_in_user_message = true}).
+     * Prepends tool definitions and usage instructions to the first user message, matching the
+     * Llama 3.2 GGUF chat template ({@code tools_in_user_message = true}).
      *
      * <p>Format mirrors:
+     *
      * <pre>
      * Given the following functions, please respond with a JSON for a function call
      * with its proper arguments that best answers the given prompt.
@@ -134,12 +133,13 @@ public class LlamaChatFormat implements ChatFormat {
                 + "with its proper arguments that best answers the given prompt.\n\n"
                 + "Respond in the format {\"name\": function name, \"parameters\": dictionary of "
                 + "argument name and its value}. Do not use variables.\n\n"
-                + toolsJson + "\n\n";
+                + toolsJson
+                + "\n\n";
     }
 
     /**
-     * Re-encodes a prior assistant tool-call turn for multi-turn history using the
-     * Llama 3.2 native JSON format: {@code {"name":"…","parameters":{…}}<|eot_id|>}.
+     * Re-encodes a prior assistant tool-call turn for multi-turn history using the Llama 3.2 native
+     * JSON format: {@code {"name":"…","parameters":{…}}<|eot_id|>}.
      */
     @Override
     public List<Integer> encodeToolCallAssistantTurn(ToolCallExtract toolCall) {
@@ -149,7 +149,12 @@ public class LlamaChatFormat implements ChatFormat {
         if (pythonTag != -1) {
             tokens.add(pythonTag);
         }
-        String json = "{\"name\": \"" + toolCall.name() + "\", \"parameters\": " + toolCall.argumentsJson() + "}";
+        String json =
+                "{\"name\": \""
+                        + toolCall.name()
+                        + "\", \"parameters\": "
+                        + toolCall.argumentsJson()
+                        + "}";
         tokens.addAll(tokenizer.encodeAsList(json));
         // LLaMA 3.1 ends tool-call turns with <|eom_id|>; fall back to <|eot_id|> for 3.2.
         tokens.add(endOfMessage != -1 ? endOfMessage : endOfTurn);
@@ -157,8 +162,8 @@ public class LlamaChatFormat implements ChatFormat {
     }
 
     /**
-     * Encodes a tool result using the LLaMA "ipython" role.
-     * Format: {@code <|start_header_id|>ipython<|end_header_id|>\nresult<|eot_id|>}
+     * Encodes a tool result using the LLaMA "ipython" role. Format: {@code
+     * <|start_header_id|>ipython<|end_header_id|>\nresult<|eot_id|>}
      */
     @Override
     public List<Integer> encodeToolResultTurn(String toolCallId, String toolName, String result) {
@@ -173,11 +178,10 @@ public class LlamaChatFormat implements ChatFormat {
     }
 
     /**
-     * Encodes multiple tool calls as a single assistant turn.
-     * For a single call, delegates to the existing single-call method (preserving the
-     * {@code <|python_tag|>} prefix on LLaMA 3.1).
-     * For multiple calls, LLaMA 3.1 prefixes each with {@code <|python_tag|>};
-     * LLaMA 3.2 (no python_tag) uses {@code <tool_call>} blocks.
+     * Encodes multiple tool calls as a single assistant turn. For a single call, delegates to the
+     * existing single-call method (preserving the {@code <|python_tag|>} prefix on LLaMA 3.1). For
+     * multiple calls, LLaMA 3.1 prefixes each with {@code <|python_tag|>}; LLaMA 3.2 (no
+     * python_tag) uses {@code <tool_call>} blocks.
      */
     @Override
     public List<Integer> encodeToolCallAssistantTurn(List<ToolCallExtract> toolCalls) {
@@ -185,7 +189,8 @@ public class LlamaChatFormat implements ChatFormat {
         if (toolCalls.size() == 1) return encodeToolCallAssistantTurn(toolCalls.get(0));
         List<Integer> tokens = new ArrayList<>(encodeHeader(new Message(Role.ASSISTANT, "")));
         for (ToolCallExtract tc : toolCalls) {
-            String json = "{\"name\": \"" + tc.name() + "\", \"parameters\": " + tc.argumentsJson() + "}";
+            String json =
+                    "{\"name\": \"" + tc.name() + "\", \"parameters\": " + tc.argumentsJson() + "}";
             if (pythonTag != -1) {
                 tokens.add(pythonTag);
                 tokens.addAll(tokenizer.encodeAsList(json + "\n"));
@@ -198,10 +203,10 @@ public class LlamaChatFormat implements ChatFormat {
     }
 
     /**
-     * Detects a tool call in the decoded response text.
-     * Supports LLaMA 3.1 (native {@code <|python_tag|>} + {@code "parameters"} key),
-     * LLaMA 3.2 ({@code "arguments"} key, tag often absent), and a raw-JSON fallback
-     * for smaller models. Delegates to {@link ToolCallParserUtils#parseToolCallResponse}.
+     * Detects a tool call in the decoded response text. Supports LLaMA 3.1 (native {@code
+     * <|python_tag|>} + {@code "parameters"} key), LLaMA 3.2 ({@code "arguments"} key, tag often
+     * absent), and a raw-JSON fallback for smaller models. Delegates to {@link
+     * ToolCallParserUtils#parseToolCallResponse}.
      */
     @Override
     public Optional<ToolCallExtract> extractToolCall(String responseText) {
@@ -214,8 +219,8 @@ public class LlamaChatFormat implements ChatFormat {
     }
 
     /**
-     * Adds {@code <|eom_id|>} to the stop tokens when tools are enabled.
-     * LLaMA 3.1 ends tool-call turns with {@code <|eom_id|>} instead of {@code <|eot_id|>}.
+     * Adds {@code <|eom_id|>} to the stop tokens when tools are enabled. LLaMA 3.1 ends tool-call
+     * turns with {@code <|eom_id|>} instead of {@code <|eot_id|>}.
      */
     @Override
     public Set<Integer> getToolAwareStopTokens() {
@@ -224,5 +229,4 @@ public class LlamaChatFormat implements ChatFormat {
         }
         return stopTokens;
     }
-
 }

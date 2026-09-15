@@ -12,8 +12,8 @@ import java.util.stream.IntStream;
 
 /**
  * SentencePiece-style BPE tokenizer with byte fallback, used by Gemma 4 models.
- * <p>
- * Spaces are represented with the SentencePiece marker {@code ▁}, and any codepoint missing from
+ *
+ * <p>Spaces are represented with the SentencePiece marker {@code ▁}, and any codepoint missing from
  * the vocabulary falls back to its individual UTF-8 bytes encoded as {@code <0xXX>} tokens. Pairs
  * are greedily merged according to the highest {@code tokenizer.ggml.scores} value, mirroring
  * {@link MistralTokenizer}.
@@ -28,11 +28,15 @@ public class Gemma4Tokenizer implements Tokenizer {
     public Gemma4Tokenizer(Map<String, Object> metadata, Vocabulary vocabulary) {
         int[] tokenTypes = (int[]) metadata.get("tokenizer.ggml.token_type");
 
-        // Special tokens are anything that isn't a regular sub-word (NORMAL, type 1) or a raw byte-fallback token (BYTE, type 6).
-        Map<String, Integer> specialTokens = IntStream.range(0, vocabulary.size())
-                .filter(t -> tokenTypes[t] != 1 && tokenTypes[t] != 6)
-                .boxed()
-                .collect(Collectors.toMap(vocabulary::get, t -> t, (first, second) -> first));
+        // Special tokens are anything that isn't a regular sub-word (NORMAL, type 1) or a raw
+        // byte-fallback token (BYTE, type 6).
+        Map<String, Integer> specialTokens =
+                IntStream.range(0, vocabulary.size())
+                        .filter(t -> tokenTypes[t] != 1 && tokenTypes[t] != 6)
+                        .boxed()
+                        .collect(
+                                Collectors.toMap(
+                                        vocabulary::get, t -> t, (first, second) -> first));
 
         this.vocabulary = vocabulary;
         this.specialTokens = new HashMap<>(specialTokens);
@@ -78,7 +82,8 @@ public class Gemma4Tokenizer implements Tokenizer {
             if (id != -1) {
                 tokens.add(id);
             } else {
-                // byte fallback: encode each UTF-8 byte as a <0xXX> token (offset by the index of <0x00>)
+                // byte fallback: encode each UTF-8 byte as a <0xXX> token (offset by the index of
+                // <0x00>)
                 for (byte b : singleCodepoint.getBytes(StandardCharsets.UTF_8)) {
                     tokens.add(Byte.toUnsignedInt(b) + byte0);
                 }
@@ -131,8 +136,12 @@ public class Gemma4Tokenizer implements Tokenizer {
                 // byte-fallback tokens decode back to their raw byte/codepoint
                 String prefix = "<0x";
                 String suffix = ">";
-                if (tokenString.length() == 6 && tokenString.startsWith(prefix) && tokenString.endsWith(suffix)) {
-                    String code = tokenString.substring(prefix.length(), tokenString.length() - suffix.length());
+                if (tokenString.length() == 6
+                        && tokenString.startsWith(prefix)
+                        && tokenString.endsWith(suffix)) {
+                    String code =
+                            tokenString.substring(
+                                    prefix.length(), tokenString.length() - suffix.length());
                     int cp = Integer.parseInt(code, 16);
                     tokenString = Character.toString(cp);
                 }

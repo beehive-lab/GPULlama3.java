@@ -13,7 +13,7 @@
  *        org.beehive.jllm.examples.HelloGeneration model.gguf
  * </pre>
  *
- * <p>To run on an accelerator, launch through {@code jllm}, which sets the JVM flags and
- * {@code -Duse.tornadovm=true} that {@link org.beehive.jllm.api.ModelOptions} reads.
+ * <p>To run on an accelerator, launch through {@code jllm}, which sets the JVM flags and {@code
+ * -Duse.tornadovm=true} that {@link org.beehive.jllm.api.ModelOptions} reads.
  */
 package org.beehive.jllm.examples;

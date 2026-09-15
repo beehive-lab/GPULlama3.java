@@ -20,8 +20,7 @@ import org.beehive.jllm.runtime.tensor.LongIndexedTensor;
  * <p>Note: {@code per_layer_token_embd} is intentionally <b>not</b> present here -- at ~2.35
  * billion elements it is far too large to keep resident on the GPU. Its per-token row is instead
  * gathered on the host (see {@code CpuOperations.embeddingLookupLongIndexed}) and streamed to the
- * GPU each step via {@link
- * org.beehive.jllm.inference.state.Gemma4State#wrapPerLayerTokenEmbedRow}.
+ * GPU each step via {@link org.beehive.jllm.inference.state.Gemma4State#wrapPerLayerTokenEmbedRow}.
  */
 public class Gemma4TornadoWeights extends TornadoWeights {
 

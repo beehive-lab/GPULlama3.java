@@ -26,8 +26,7 @@ import org.junit.Test;
  */
 public class DispatchLedgerTest {
 
-    private static final Path TORNADO =
-            Path.of("src/main/java/org/beehive/jllm/backend/tornado");
+    private static final Path TORNADO = Path.of("src/main/java/org/beehive/jllm/backend/tornado");
 
     /** The two representation-specific subtrees: layer implementations and plan components. */
     private static final List<Path> DISPATCH_ROOTS =

@@ -13,8 +13,8 @@ import org.beehive.jllm.model.loader.Qwen2ModelLoader;
 import org.beehive.jllm.model.loader.Qwen3ModelLoader;
 
 /**
- * Enumerates the different types of models supported by jllm. This enum helps in
- * categorizing and handling model-specific logic based on the type of model being used.
+ * Enumerates the different types of models supported by jllm. This enum helps in categorizing and
+ * handling model-specific logic based on the type of model being used.
  *
  * <p><b>Usage:</b> Use {@code ModelType} to specify or retrieve the type of large language model
  * (LLM), such as Llama or Qwen3. This ensures clean and structured handling of model behaviors and

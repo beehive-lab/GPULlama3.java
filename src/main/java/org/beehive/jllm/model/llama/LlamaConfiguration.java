@@ -3,16 +3,18 @@ package org.beehive.jllm.model.llama;
 import org.beehive.jllm.model.Configuration;
 
 // @formatter:off
-public record LlamaConfiguration(String quantization,
-                                 int dim,
-                                 int hiddenDim,
-                                 int numberOfLayers,
-                                 int numberOfHeads,
-                                 int numberOfKeyValueHeads,
-                                 int vocabularySize,
-                                 int contextLength,
-                                 float rmsNormEps,
-                                 float ropeTheta) implements Configuration {
+public record LlamaConfiguration(
+        String quantization,
+        int dim,
+        int hiddenDim,
+        int numberOfLayers,
+        int numberOfHeads,
+        int numberOfKeyValueHeads,
+        int vocabularySize,
+        int contextLength,
+        float rmsNormEps,
+        float ropeTheta)
+        implements Configuration {
 
     @Override
     public String quantization() {
@@ -48,8 +50,8 @@ public record LlamaConfiguration(String quantization,
      * Creates a new Configuration with a different context length.
      *
      * @param newContextLength The new context length to use
-     * @return A new Configuration instance with updated context length,
-     *         or the current instance if newContextLength is negative
+     * @return A new Configuration instance with updated context length, or the current instance if
+     *     newContextLength is negative
      */
     // @formatter:off
     public LlamaConfiguration withContextLength(int newContextLength) {
@@ -66,9 +68,7 @@ public record LlamaConfiguration(String quantization,
                 this.vocabularySize,
                 newContextLength,
                 this.rmsNormEps,
-                this.ropeTheta
-        );
+                this.ropeTheta);
     }
     // @formatter:on
 }
-

@@ -145,8 +145,7 @@ public class KvCacheManagerTest {
     }
 
     /** Counts publishes; the real store copies the table into a device array. */
-    private static final class RecordingStorage
-            implements org.beehive.jllm.runtime.kv.KvStorage {
+    private static final class RecordingStorage implements org.beehive.jllm.runtime.kv.KvStorage {
         int publishes;
 
         @Override

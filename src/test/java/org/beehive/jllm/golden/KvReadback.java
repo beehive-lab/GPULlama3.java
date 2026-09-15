@@ -14,8 +14,8 @@ import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
 /**
  * Diagnostic: characterises the wrapKeyCache host readback, which differs on every iteration under
- * -Djllm.diag.transfers even when the logits are bit-identical. Reports where in the buffer
- * the differences sit and whether the changing region is ever non-zero.
+ * -Djllm.diag.transfers even when the logits are bit-identical. Reports where in the buffer the
+ * differences sit and whether the changing region is ever non-zero.
  */
 public final class KvReadback {
 

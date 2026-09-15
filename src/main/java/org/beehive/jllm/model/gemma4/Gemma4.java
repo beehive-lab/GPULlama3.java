@@ -71,13 +71,12 @@ public class Gemma4 extends AbstractModel {
         int nEmbdPerLayer = configuration.embeddingLengthPerLayer();
         int perLayerTotal = configuration.numberOfLayers() * nEmbdPerLayer;
         float scale = (float) Math.sqrt(nEmbdPerLayer);
-        org.beehive.jllm.backend.tornado.tensor.TornadoTensorLoader
-                .copyEmbeddingRowToFloatArray(
-                        gemma4Weights.perLayerTokenEmbd,
-                        token,
-                        perLayerTotal,
-                        state.workspace.wrapPerLayerTokenEmbedRow,
-                        scale);
+        org.beehive.jllm.backend.tornado.tensor.TornadoTensorLoader.copyEmbeddingRowToFloatArray(
+                gemma4Weights.perLayerTokenEmbd,
+                token,
+                perLayerTotal,
+                state.workspace.wrapPerLayerTokenEmbedRow,
+                scale);
     }
 
     @Override

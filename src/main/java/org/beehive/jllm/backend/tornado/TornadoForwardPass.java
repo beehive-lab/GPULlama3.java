@@ -45,8 +45,7 @@ public final class TornadoForwardPass {
             int position,
             TornadoVMMasterPlan tornadoVMMasterPlan) {
         if (tornadoVMMasterPlan
-                instanceof
-                org.beehive.jllm.backend.tornado.lowering.InvocationBoundary boundary) {
+                instanceof org.beehive.jllm.backend.tornado.lowering.InvocationBoundary boundary) {
             return boundary.invoke(token, position).logits();
         }
 

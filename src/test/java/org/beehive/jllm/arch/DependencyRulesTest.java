@@ -60,8 +60,8 @@ public class DependencyRulesTest {
      * be convenient.
      *
      * <p>The consumers live in {@code auxiliary.metrics} and are reached through {@link
-     * org.beehive.jllm.runtime.metrics.MetricsSink}. Inference, the backends, the runtime and
-     * the program layer record <b>through the seam</b>; formatting and I/O belong to the layer that
+     * org.beehive.jllm.runtime.metrics.MetricsSink}. Inference, the backends, the runtime and the
+     * program layer record <b>through the seam</b>; formatting and I/O belong to the layer that
      * owns output.
      */
     @Test

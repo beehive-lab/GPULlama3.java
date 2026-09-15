@@ -3,19 +3,22 @@ package org.beehive.jllm.model.phi3;
 import org.beehive.jllm.model.Configuration;
 
 // @formatter:off
-public record Phi3Configuration(String quantization,
-                                int dim,
-                                int hiddenDim,
-                                int numberOfLayers,
-                                int numberOfHeads,
-                                int numberOfKeyValueHeads,
-                                int vocabularySize,
-                                int contextLength,
-                                float rmsNormEps,
-                                float ropeTheta) implements Configuration {
+public record Phi3Configuration(
+        String quantization,
+        int dim,
+        int hiddenDim,
+        int numberOfLayers,
+        int numberOfHeads,
+        int numberOfKeyValueHeads,
+        int vocabularySize,
+        int contextLength,
+        float rmsNormEps,
+        float ropeTheta)
+        implements Configuration {
 
-    @Override public String quantization() {
-    return quantization;
+    @Override
+    public String quantization() {
+        return quantization;
     }
 
     @Override

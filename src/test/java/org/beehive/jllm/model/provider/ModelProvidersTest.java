@@ -86,9 +86,7 @@ public class ModelProvidersTest {
 
                     @Override
                     public Model load(
-                            ModelSource s,
-                            org.beehive.jllm.runtime.backend.BackendId b,
-                            int c) {
+                            ModelSource s, org.beehive.jllm.runtime.backend.BackendId b, int c) {
                         throw new UnsupportedOperationException();
                     }
 
@@ -132,8 +130,7 @@ public class ModelProvidersTest {
                         .orElseThrow();
 
         assertEquals(3, load.getParameterCount());
-        assertEquals(
-                org.beehive.jllm.runtime.backend.BackendId.class, load.getParameterTypes()[1]);
+        assertEquals(org.beehive.jllm.runtime.backend.BackendId.class, load.getParameterTypes()[1]);
         assertEquals(
                 "a negative context length still means the model's own",
                 int.class,

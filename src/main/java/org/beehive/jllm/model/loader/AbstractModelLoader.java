@@ -141,8 +141,7 @@ public abstract class AbstractModelLoader<M extends Model, C extends Configurati
                                 fileChannel,
                                 gguf.getTensorDataOffset(),
                                 gguf.getTensorInfos(),
-                                org.beehive.jllm.backend.tornado.device.TornadoDevices
-                                        .current());
+                                org.beehive.jllm.backend.tornado.device.TornadoDevices.current());
             } else {
                 tensorEntries =
                         GGUF.loadTensorsStandard(

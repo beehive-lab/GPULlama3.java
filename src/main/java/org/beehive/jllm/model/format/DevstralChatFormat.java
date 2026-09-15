@@ -1,12 +1,11 @@
 package org.beehive.jllm.model.format;
 
-import org.beehive.jllm.tokenizer.DevstralTokenizer;
-
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.beehive.jllm.tokenizer.DevstralTokenizer;
 
 public class DevstralChatFormat implements ChatFormat {
 

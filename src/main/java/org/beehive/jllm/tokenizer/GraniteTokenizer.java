@@ -1,7 +1,5 @@
 package org.beehive.jllm.tokenizer;
 
-import org.beehive.jllm.auxiliary.Pair;
-
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -14,20 +12,26 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import org.beehive.jllm.auxiliary.Pair;
 
 /**
  * GPT-2-style BPE tokenizer for Granite models.
- * <p>
- * Supports both Granite 3.3 (refact pretokenizer, 49K vocab) and Granite 4.0 (dbrx pretokenizer, 100K vocab).
+ *
+ * <p>Supports both Granite 3.3 (refact pretokenizer, 49K vocab) and Granite 4.0 (dbrx pretokenizer,
+ * 100K vocab).
  */
 public class GraniteTokenizer implements Tokenizer {
     static final Map<Integer, Integer> BYTE_ENCODER = bytesToUnicode();
-    static final Map<Integer, Integer> BYTE_DECODER = BYTE_ENCODER.entrySet().stream().collect(Collectors.toMap(Map.Entry::getValue, Map.Entry::getKey));
+    static final Map<Integer, Integer> BYTE_DECODER =
+            BYTE_ENCODER.entrySet().stream()
+                    .collect(Collectors.toMap(Map.Entry::getValue, Map.Entry::getKey));
 
     // Pretokenizer patterns
-    private static final String REFACT_PATTERN = "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
+    private static final String REFACT_PATTERN =
+            "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
 
-    private static final String DBRX_PATTERN = "(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
+    private static final String DBRX_PATTERN =
+            "(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
 
     // Instance fields
     private final Pattern compiledPattern;
@@ -46,10 +50,11 @@ public class GraniteTokenizer implements Tokenizer {
 
         // Detect pretokenizer type and select pattern
         this.pretokenizerType = (String) metadata.getOrDefault("tokenizer.ggml.pre", "refact");
-        String pattern = switch (pretokenizerType) {
-            case "dbrx" -> DBRX_PATTERN;
-            default -> REFACT_PATTERN;
-        };
+        String pattern =
+                switch (pretokenizerType) {
+                    case "dbrx" -> DBRX_PATTERN;
+                    default -> REFACT_PATTERN;
+                };
         this.compiledPattern = Pattern.compile(pattern);
 
         // Read token IDs from metadata
@@ -59,8 +64,15 @@ public class GraniteTokenizer implements Tokenizer {
 
         // Load merges
         String[] mergeLines = (String[]) metadata.get("tokenizer.ggml.merges");
-        List<Pair<Integer, Integer>> mergeList = Arrays.stream(mergeLines).map(line -> line.split(" "))
-                .map(parts -> new Pair<>(vocabulary.getIndex(parts[0]).orElseThrow(), vocabulary.getIndex(parts[1]).orElseThrow())).toList();
+        List<Pair<Integer, Integer>> mergeList =
+                Arrays.stream(mergeLines)
+                        .map(line -> line.split(" "))
+                        .map(
+                                parts ->
+                                        new Pair<>(
+                                                vocabulary.getIndex(parts[0]).orElseThrow(),
+                                                vocabulary.getIndex(parts[1]).orElseThrow()))
+                        .toList();
 
         // Collect special tokens
         Map<String, Integer> specialTokens = new HashMap<>();
@@ -86,7 +98,8 @@ public class GraniteTokenizer implements Tokenizer {
         }
     }
 
-    private static int getIntFromMetadata(Map<String, Object> metadata, String key, int defaultValue) {
+    private static int getIntFromMetadata(
+            Map<String, Object> metadata, String key, int defaultValue) {
         Object value = metadata.get(key);
         if (value instanceof Number num) {
             return num.intValue();
@@ -108,7 +121,9 @@ public class GraniteTokenizer implements Tokenizer {
         List<Integer> newIds = new ArrayList<>();
         int i = 0;
         while (i < ids.size()) {
-            if (i < ids.size() - 1 && ids.get(i).equals(pair.first()) && ids.get(i + 1).equals(pair.second())) {
+            if (i < ids.size() - 1
+                    && ids.get(i).equals(pair.first())
+                    && ids.get(i + 1).equals(pair.second())) {
                 newIds.add(idx);
                 i += 2;
             } else {
@@ -203,7 +218,10 @@ public class GraniteTokenizer implements Tokenizer {
         }
 
         assert specialTokens.keySet().containsAll(allowedSpecial);
-        String specialPattern = allowedSpecial.stream().map(Pattern::quote).collect(Collectors.joining("|", "(", ")"));
+        String specialPattern =
+                allowedSpecial.stream()
+                        .map(Pattern::quote)
+                        .collect(Collectors.joining("|", "(", ")"));
         String[] specialChunks = text.split(specialPattern);
 
         List<Integer> ids = new ArrayList<>();
@@ -237,7 +255,12 @@ public class GraniteTokenizer implements Tokenizer {
 
         while (ids.size() >= 2) {
             Map<Pair<Integer, Integer>, Integer> stats = getStats(ids);
-            Pair<Integer, Integer> pair = stats.keySet().stream().min(Comparator.comparingInt(key -> merges.getOrDefault(key, Integer.MAX_VALUE))).orElseThrow();
+            Pair<Integer, Integer> pair =
+                    stats.keySet().stream()
+                            .min(
+                                    Comparator.comparingInt(
+                                            key -> merges.getOrDefault(key, Integer.MAX_VALUE)))
+                            .orElseThrow();
             if (!merges.containsKey(pair)) {
                 break;
             }
@@ -249,7 +272,8 @@ public class GraniteTokenizer implements Tokenizer {
     @Override
     public String decode(List<Integer> tokens) {
         String decoded = decodeImpl(tokens);
-        int[] decodedBytesAsInts = decoded.codePoints().map(cp -> BYTE_DECODER.getOrDefault(cp, cp)).toArray();
+        int[] decodedBytesAsInts =
+                decoded.codePoints().map(cp -> BYTE_DECODER.getOrDefault(cp, cp)).toArray();
         byte[] rawBytes = new byte[decodedBytesAsInts.length];
         for (int i = 0; i < decodedBytesAsInts.length; i++) {
             rawBytes[i] = (byte) decodedBytesAsInts[i];

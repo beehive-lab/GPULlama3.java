@@ -13,13 +13,17 @@ import java.util.stream.IntStream;
 
 /**
  * TikToken-style BPE tokenizer with byte fallback.
- * <p>
- * TikToken-style: A Byte Pair Encoding (BPE) strategy that converts text to UTF-8 bytes. Frequent pairs of bytes (or tokens) are merged according to a learned vocabulary. This reduces long words into
- * common subwords or whole-word tokens. If a word or character isn't found, it falls back to byte-level tokens.
- * <p>
- * Byte fallback: A fail-safe mechanism. It ensures every byte has a token, so any input (even unknown words, misspellings, foreign languages, emojis, or binary) can be tokenized. If a token is not
- * found in the merges or vocabulary, it will fall back to the individual byte. Each byte is wrapped as a special token like <0xF0> — these are part of the tokenizer’s extended vocabulary. This
- * guarantees reversibility: every string can be tokenized and decoded back exactly.
+ *
+ * <p>TikToken-style: A Byte Pair Encoding (BPE) strategy that converts text to UTF-8 bytes.
+ * Frequent pairs of bytes (or tokens) are merged according to a learned vocabulary. This reduces
+ * long words into common subwords or whole-word tokens. If a word or character isn't found, it
+ * falls back to byte-level tokens.
+ *
+ * <p>Byte fallback: A fail-safe mechanism. It ensures every byte has a token, so any input (even
+ * unknown words, misspellings, foreign languages, emojis, or binary) can be tokenized. If a token
+ * is not found in the merges or vocabulary, it will fall back to the individual byte. Each byte is
+ * wrapped as a special token like <0xF0> — these are part of the tokenizer’s extended vocabulary.
+ * This guarantees reversibility: every string can be tokenized and decoded back exactly.
  */
 public class MistralTokenizer implements Tokenizer {
     private static final String MISTRAL_PATTERN = "\\S+|\\s+";
@@ -35,14 +39,15 @@ public class MistralTokenizer implements Tokenizer {
     public MistralTokenizer(Map<String, Object> metadata, Vocabulary vocabulary) {
         // load from metadata
         int[] tokenTypes = (int[]) metadata.get("tokenizer.ggml.token_type");
-        List<Integer> specialTokensList = IntStream.range(0, vocabulary.size()).filter(t -> tokenTypes[t] != 1 && tokenTypes[t] != 6).boxed().toList();
+        List<Integer> specialTokensList =
+                IntStream.range(0, vocabulary.size())
+                        .filter(t -> tokenTypes[t] != 1 && tokenTypes[t] != 6)
+                        .boxed()
+                        .toList();
         Map<String, Integer> specialTokens =
                 IntStream.range(0, specialTokensList.size())
                         .boxed()
-                        .collect(Collectors.toMap(
-                                t -> vocabulary.get(t),
-                                t -> t)
-                        );
+                        .collect(Collectors.toMap(t -> vocabulary.get(t), t -> t));
         // init tokenizer object fields
         this.vocabulary = vocabulary;
         this.compiledPattern = null;
@@ -77,6 +82,7 @@ public class MistralTokenizer implements Tokenizer {
     public int getTokenType(int tokenIndex) {
         return tokenType[tokenIndex];
     }
+
     // @formatter:on
 
     private List<Integer> encodeImpl(String text) {
@@ -111,7 +117,8 @@ public class MistralTokenizer implements Tokenizer {
 
             for (int i = 0; i < tokens.size() - 1; ++i) {
                 // check if we can merge the pair (tokens[i], tokens[i+1])
-                String str_buffer = vocabulary.get(tokens.get(i)) + vocabulary.get(tokens.get(i + 1));
+                String str_buffer =
+                        vocabulary.get(tokens.get(i)) + vocabulary.get(tokens.get(i + 1));
                 int id = vocabulary.getIndex(str_buffer).orElse(-1);
                 if (id != -1 && vocabulary.getScore(id) > best_score) {
                     // this merge pair exists in vocab! record its score and position
@@ -133,9 +140,7 @@ public class MistralTokenizer implements Tokenizer {
         return tokens;
     }
 
-    /**
-     * Modified original signature from mistral.java: List<Integer> encode(String text);
-     */
+    /** Modified original signature from mistral.java: List<Integer> encode(String text); */
     @Override
     public List<Integer> encode(String text, Set<String> allowedSpecial) {
         return encodeImpl(text.replace(' ', '▁'));
@@ -156,14 +161,17 @@ public class MistralTokenizer implements Tokenizer {
                 // some tokens designate raw bytes e.g. '<0x10>'
                 String prefix = "<0x";
                 String suffix = ">";
-                if (tokenString.length() == 6 && tokenString.startsWith(prefix) && tokenString.endsWith(suffix)) {
-                    String code = tokenString.substring(prefix.length(), tokenString.length() - suffix.length());
+                if (tokenString.length() == 6
+                        && tokenString.startsWith(prefix)
+                        && tokenString.endsWith(suffix)) {
+                    String code =
+                            tokenString.substring(
+                                    prefix.length(), tokenString.length() - suffix.length());
                     int cp = Integer.parseInt(code, 16);
                     tokenString = Character.toString(cp);
                 }
             } else {
                 tokenString = tokenString.replace('▁', ' ');
-
             }
             sb.append(tokenString);
         }

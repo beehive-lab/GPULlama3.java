@@ -78,8 +78,7 @@ public abstract class FloatTensor {
     protected abstract FloatVector getFloatVector(VectorSpecies<Float> species, int offset);
 
     /**
-     * @deprecated Use {@link #dataType()}; see {@link
-     *     org.beehive.jllm.runtime.tensor.DataType}.
+     * @deprecated Use {@link #dataType()}; see {@link org.beehive.jllm.runtime.tensor.DataType}.
      */
     @Deprecated
     protected abstract GGMLType type();

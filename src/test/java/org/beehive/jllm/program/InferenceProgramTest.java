@@ -343,9 +343,7 @@ public class InferenceProgramTest {
     }
 
     private static ProgramComponent leaf(
-            String name,
-            org.beehive.jllm.program.op.Operation operation,
-            Set<PhaseId> phases) {
+            String name, org.beehive.jllm.program.op.Operation operation, Set<PhaseId> phases) {
         return new ProgramComponent.Leaf(name, operation, phases);
     }
 

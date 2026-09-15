@@ -15,12 +15,12 @@ public record GraniteConfiguration(
         float rmsNormEps,
         float ropeTheta,
         // Granite-specific scaling factors (µP parameterization)
-        float embeddingMultiplier,    // multiply embeddings after lookup
-        float residualMultiplier,     // multiply residual additions
-        float attentionMultiplier,    // replaces 1/sqrt(headDim)
-        float logitsScaling,          // DIVIDE logits by this value
-        boolean tieWordEmbeddings     // share input/output embeddings
-) implements Configuration {
+        float embeddingMultiplier, // multiply embeddings after lookup
+        float residualMultiplier, // multiply residual additions
+        float attentionMultiplier, // replaces 1/sqrt(headDim)
+        float logitsScaling, // DIVIDE logits by this value
+        boolean tieWordEmbeddings // share input/output embeddings
+        ) implements Configuration {
 
     @Override
     public String quantization() {
@@ -60,8 +60,8 @@ public record GraniteConfiguration(
      * Creates a new Configuration with a different context length.
      *
      * @param newContextLength The new context length to use
-     * @return A new Configuration instance with updated context length,
-     *         or the current instance if newContextLength is negative
+     * @return A new Configuration instance with updated context length, or the current instance if
+     *     newContextLength is negative
      */
     // @formatter:off
     public GraniteConfiguration withContextLength(int newContextLength) {
@@ -83,42 +83,34 @@ public record GraniteConfiguration(
                 this.residualMultiplier,
                 this.attentionMultiplier,
                 this.logitsScaling,
-                this.tieWordEmbeddings
-        );
+                this.tieWordEmbeddings);
     }
+
     // @formatter:on
 
-    /**
-     * Accessor for embedding scale (alias for embeddingMultiplier)
-     */
+    /** Accessor for embedding scale (alias for embeddingMultiplier) */
     public float embeddingScale() {
         return embeddingMultiplier;
     }
 
-    /**
-     * Accessor for residual scale (alias for residualMultiplier)
-     */
+    /** Accessor for residual scale (alias for residualMultiplier) */
     public float residualScale() {
         return residualMultiplier;
     }
 
-    /**
-     * Accessor for attention scale (alias for attentionMultiplier)
-     */
+    /** Accessor for attention scale (alias for attentionMultiplier) */
     public float attentionScale() {
         return attentionMultiplier;
     }
 
-    /**
-     * Accessor for logit scale (alias for logitsScaling)
-     */
+    /** Accessor for logit scale (alias for logitsScaling) */
     public float logitScale() {
         return logitsScaling;
     }
 
     /**
-     * Factory method to create GraniteConfiguration with default scaling values
-     * for Granite 3.x models.
+     * Factory method to create GraniteConfiguration with default scaling values for Granite 3.x
+     * models.
      */
     public static GraniteConfiguration createDefault(
             String quantization,
@@ -142,11 +134,11 @@ public record GraniteConfiguration(
                 contextLength,
                 rmsNormEps,
                 ropeTheta,
-                12.0f,      // embeddingMultiplier
-                0.22f,      // residualMultiplier
+                12.0f, // embeddingMultiplier
+                0.22f, // residualMultiplier
                 0.0078125f, // attentionMultiplier (1/128)
-                16.0f,      // logitsScaling (divisor)
-                true        // tieWordEmbeddings
-        );
+                16.0f, // logitsScaling (divisor)
+                true // tieWordEmbeddings
+                );
     }
 }

@@ -3,19 +3,22 @@ package org.beehive.jllm.model.mistral;
 import org.beehive.jllm.model.Configuration;
 
 // @formatter:off
-public record MistralConfiguration(String quantization,
-                                   int dim,
-                                   int hiddenDim,
-                                   int numberOfLayers,
-                                   int numberOfHeads,
-                                   int numberOfKeyValueHeads,
-                                   int vocabularySize,
-                                   int contextLength,
-                                   boolean sharedWeights,
-                                   float rmsNormEps,
-                                   float ropeTheta) implements Configuration {
+public record MistralConfiguration(
+        String quantization,
+        int dim,
+        int hiddenDim,
+        int numberOfLayers,
+        int numberOfHeads,
+        int numberOfKeyValueHeads,
+        int vocabularySize,
+        int contextLength,
+        boolean sharedWeights,
+        float rmsNormEps,
+        float ropeTheta)
+        implements Configuration {
 
-    @Override public String quantization() {
+    @Override
+    public String quantization() {
         return quantization;
     }
 
@@ -41,4 +44,3 @@ public record MistralConfiguration(String quantization,
         return dim / numberOfHeads;
     }
 }
-

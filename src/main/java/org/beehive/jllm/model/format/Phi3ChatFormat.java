@@ -1,22 +1,22 @@
 package org.beehive.jllm.model.format;
 
-import org.beehive.jllm.tokenizer.Tokenizer;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.beehive.jllm.tokenizer.Tokenizer;
 
 /**
- * Chat format implementation specifically designed for the Phi3 model. This class handles the specific prompt formatting and token management required for Phi3's conversational interface.
+ * Chat format implementation specifically designed for the Phi3 model. This class handles the
+ * specific prompt formatting and token management required for Phi3's conversational interface.
  *
  * <p>Phi3 uses a simpler chat format compared to other models:
+ *
  * <ul>
- *   <li>Role tokens: {@code <|system|>}, {@code <|user|>}, {@code <|assistant|>}</li>
- *   <li>End token: {@code <|end|>}</li>
- *   <li>No separate begin-of-text or header/content separation</li>
+ *   <li>Role tokens: {@code <|system|>}, {@code <|user|>}, {@code <|assistant|>}
+ *   <li>End token: {@code <|end|>}
+ *   <li>No separate begin-of-text or header/content separation
  * </ul>
- * </p>
  */
 public class Phi3ChatFormat implements ChatFormat {
 
@@ -94,4 +94,3 @@ public class Phi3ChatFormat implements ChatFormat {
         return tokens;
     }
 }
-

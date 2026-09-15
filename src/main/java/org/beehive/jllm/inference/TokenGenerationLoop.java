@@ -56,8 +56,7 @@ public final class TokenGenerationLoop {
      * change for a loaded model. Nothing here runs per token beyond a map lookup on a small map,
      * and the resolved pass is what the token loop calls.
      */
-    private static final java.util.Map<
-                    org.beehive.jllm.runtime.model.ArchitectureId, ForwardPass>
+    private static final java.util.Map<org.beehive.jllm.runtime.model.ArchitectureId, ForwardPass>
             HOST_FORWARD = new java.util.concurrent.ConcurrentHashMap<>();
 
     /** The loop's logits as a sampler sees them. */
@@ -153,8 +152,7 @@ public final class TokenGenerationLoop {
             boolean echo,
             IntConsumer onTokenGenerated) {
         if (state.executionPolicy().phaseStrategy()
-                == org.beehive.jllm.runtime.policy.ExecutionPolicy.PhaseStrategy
-                        .PREFILL_DECODE) {
+                == org.beehive.jllm.runtime.policy.ExecutionPolicy.PhaseStrategy.PREFILL_DECODE) {
             return state.executionPolicy().prefillBatchSize() > 1
                     ? generateLlamaCpuWithBatchPrefill(
                             model,
@@ -722,8 +720,7 @@ public final class TokenGenerationLoop {
             IntConsumer onTokenGenerated,
             TornadoVMMasterPlan tornadoVMPlan) {
         if (state.executionPolicy().phaseStrategy()
-                == org.beehive.jllm.runtime.policy.ExecutionPolicy.PhaseStrategy
-                        .PREFILL_DECODE) {
+                == org.beehive.jllm.runtime.policy.ExecutionPolicy.PhaseStrategy.PREFILL_DECODE) {
             return generateWithPrefill(
                     model,
                     state,
@@ -805,8 +802,7 @@ public final class TokenGenerationLoop {
             // Qwen2-MoE already had the right shape for its own reason — its seed repeats the
             // prompt's first token — so the two cases are one case, and `seedIsPromptHead` is the
             // condition both were expressing.
-            boolean qwen2MoE =
-                    model.getModelType() == org.beehive.jllm.model.ModelType.QWEN_2_MOE;
+            boolean qwen2MoE = model.getModelType() == org.beehive.jllm.model.ModelType.QWEN_2_MOE;
             boolean seedIsPromptHead = qwen2MoE || ingestion.firstIndex() == 1;
             int prefillTokenCount = seedIsPromptHead ? Math.max(0, promptSize - 1) : promptSize;
             int[] prefillSeq = new int[prefillTokenCount];
@@ -878,8 +874,7 @@ public final class TokenGenerationLoop {
         // ── Decode: one loop, whichever prefill ran ───────────────────────────
         boolean deviceSample =
                 state.executionPolicy().samplingResidency()
-                        == org.beehive.jllm.runtime.policy.ExecutionPolicy.SamplingResidency
-                                .DEVICE;
+                        == org.beehive.jllm.runtime.policy.ExecutionPolicy.SamplingResidency.DEVICE;
         while (pos < actualMaxTokens && generatedTokens.size() < generatedTokenBudget) {
             Logits logits =
                     batched
@@ -982,8 +977,7 @@ public final class TokenGenerationLoop {
         // the CLI clear the property before the layer class could load.
         boolean deviceSample =
                 state.executionPolicy().samplingResidency()
-                        == org.beehive.jllm.runtime.policy.ExecutionPolicy.SamplingResidency
-                                .DEVICE;
+                        == org.beehive.jllm.runtime.policy.ExecutionPolicy.SamplingResidency.DEVICE;
 
         // Main generation loop
         while (pos < actualMaxTokens) {
@@ -1121,8 +1115,7 @@ public final class TokenGenerationLoop {
         // Resolved once for the whole generation, never per token.
         boolean deviceSample =
                 state.executionPolicy().samplingResidency()
-                        == org.beehive.jllm.runtime.policy.ExecutionPolicy.SamplingResidency
-                                .DEVICE;
+                        == org.beehive.jllm.runtime.policy.ExecutionPolicy.SamplingResidency.DEVICE;
 
         for (int position = startPosition; position < maxTokens; ++position) {
 

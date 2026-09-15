@@ -12,8 +12,8 @@ import java.util.HexFormat;
  * Locates and verifies the pinned model fixtures for the golden and parity gates.
  *
  * <p>The GGUF files are far too large to commit, so only their SHA-256 is pinned here. The file
- * itself is resolved from {@code $JLLM_TEST_MODELS} or {@code ~/.jllm/test-models/}, and
- * an absent fixture produces a fetch instruction rather than a mysterious failure.
+ * itself is resolved from {@code $JLLM_TEST_MODELS} or {@code ~/.jllm/test-models/}, and an absent
+ * fixture produces a fetch instruction rather than a mysterious failure.
  *
  * <p>Per {@code verification-gates.md}, a missing fixture or absent accelerator causes the Class B
  * tests to <b>skip with an explicit marker</b> — never to pass.

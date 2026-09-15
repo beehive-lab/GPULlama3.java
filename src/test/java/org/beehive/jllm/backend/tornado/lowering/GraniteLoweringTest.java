@@ -195,10 +195,7 @@ public class GraniteLoweringTest {
         List<Integer> prefill = new ArrayList<>();
         List<Integer> decode = new ArrayList<>();
         for (int i = 0; i < components.size(); i++) {
-            if (components
-                    .get(i)
-                    .phases()
-                    .contains(org.beehive.jllm.program.PhaseId.PREFILL)) {
+            if (components.get(i).phases().contains(org.beehive.jllm.program.PhaseId.PREFILL)) {
                 prefill.add(i);
             }
             decode.add(i);

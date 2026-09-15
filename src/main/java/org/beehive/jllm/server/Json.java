@@ -40,9 +40,13 @@ public final class Json {
         final String s;
         int i;
 
-        Parser(String s) { this.s = s; }
+        Parser(String s) {
+            this.s = s;
+        }
 
-        boolean eof() { return i >= s.length(); }
+        boolean eof() {
+            return i >= s.length();
+        }
 
         void ws() {
             while (i < s.length()) {
@@ -78,7 +82,10 @@ public final class Json {
             Map<String, Object> m = new LinkedHashMap<>();
             i++; // {
             ws();
-            if (peek() == '}') { i++; return m; }
+            if (peek() == '}') {
+                i++;
+                return m;
+            }
             while (true) {
                 ws();
                 String key = string();
@@ -91,8 +98,14 @@ public final class Json {
                 m.put(key, value());
                 ws();
                 char c = peek();
-                if (c == ',') { i++; continue; }
-                if (c == '}') { i++; break; }
+                if (c == ',') {
+                    i++;
+                    continue;
+                }
+                if (c == '}') {
+                    i++;
+                    break;
+                }
                 throw new IllegalArgumentException("Expected ',' or '}' at " + i);
             }
             return m;
@@ -102,14 +115,23 @@ public final class Json {
             List<Object> a = new ArrayList<>();
             i++; // [
             ws();
-            if (peek() == ']') { i++; return a; }
+            if (peek() == ']') {
+                i++;
+                return a;
+            }
             while (true) {
                 ws();
                 a.add(value());
                 ws();
                 char c = peek();
-                if (c == ',') { i++; continue; }
-                if (c == ']') { i++; break; }
+                if (c == ',') {
+                    i++;
+                    continue;
+                }
+                if (c == ']') {
+                    i++;
+                    break;
+                }
                 throw new IllegalArgumentException("Expected ',' or ']' at " + i);
             }
             return a;
@@ -151,13 +173,22 @@ public final class Json {
         }
 
         Boolean bool() {
-            if (s.startsWith("true", i)) { i += 4; return Boolean.TRUE; }
-            if (s.startsWith("false", i)) { i += 5; return Boolean.FALSE; }
+            if (s.startsWith("true", i)) {
+                i += 4;
+                return Boolean.TRUE;
+            }
+            if (s.startsWith("false", i)) {
+                i += 5;
+                return Boolean.FALSE;
+            }
             throw new IllegalArgumentException("Bad literal at " + i);
         }
 
         Object nul() {
-            if (s.startsWith("null", i)) { i += 4; return null; }
+            if (s.startsWith("null", i)) {
+                i += 4;
+                return null;
+            }
             throw new IllegalArgumentException("Bad literal at " + i);
         }
 
@@ -165,7 +196,12 @@ public final class Json {
             int start = i;
             while (i < s.length()) {
                 char c = s.charAt(i);
-                if ((c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.' || c == 'e' || c == 'E') {
+                if ((c >= '0' && c <= '9')
+                        || c == '-'
+                        || c == '+'
+                        || c == '.'
+                        || c == 'e'
+                        || c == 'E') {
                     i++;
                 } else {
                     break;
@@ -201,7 +237,9 @@ public final class Json {
             sb.append('{');
             boolean first = true;
             for (var e : ((Map<String, Object>) m).entrySet()) {
-                if (!first) { sb.append(','); }
+                if (!first) {
+                    sb.append(',');
+                }
                 first = false;
                 writeString(sb, e.getKey());
                 sb.append(':');
@@ -211,7 +249,9 @@ public final class Json {
         } else if (v instanceof List<?> list) {
             sb.append('[');
             for (int k = 0; k < list.size(); k++) {
-                if (k > 0) { sb.append(','); }
+                if (k > 0) {
+                    sb.append(',');
+                }
                 writeValue(sb, list.get(k));
             }
             sb.append(']');
