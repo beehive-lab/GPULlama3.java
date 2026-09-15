@@ -313,7 +313,9 @@ public class Qwen35GraphTopologyAccelTest {
 
         WorkerGrid gated = scheduler.get(prefix + "ssm_gated_norm");
         assertEquals(
-                "ssm_gated_norm global work", valueHeads * valueDim, (int) gated.getGlobalWork()[0]);
+                "ssm_gated_norm global work",
+                valueHeads * valueDim,
+                (int) gated.getGlobalWork()[0]);
         assertEquals("ssm_gated_norm local work", valueDim, (int) gated.getLocalWork()[0]);
     }
 
@@ -380,7 +382,10 @@ public class Qwen35GraphTopologyAccelTest {
                 String slotPrefix = "l" + slot + "_";
                 boolean present = tasks.stream().anyMatch(t -> t.startsWith(slotPrefix));
                 assertEquals(
-                        name + " slot " + slot + " should be "
+                        name
+                                + " slot "
+                                + slot
+                                + " should be "
                                 + (slot < held ? "present" : "absent"),
                         slot < held,
                         present);
@@ -416,8 +421,7 @@ public class Qwen35GraphTopologyAccelTest {
         for (String key : scheduler.keySet()) {
             builtGraphNames.add(key.substring(0, key.indexOf('.')));
         }
-        assertEquals(
-                "one graph per group", (layers + group - 1) / group, builtGraphNames.size());
+        assertEquals("one graph per group", (layers + group - 1) / group, builtGraphNames.size());
 
         for (int layer = 0; layer < layers; layer++) {
             int slot = layer % group;
@@ -445,8 +449,13 @@ public class Qwen35GraphTopologyAccelTest {
                 // Checked against the graphs the family actually built, not against another
                 // computed string: a producer that names no graph is the failure mode.
                 assertTrue(
-                        "layer " + layer + " names a producer that was never built: " + producer
-                                + " (built: " + builtGraphNames + ")",
+                        "layer "
+                                + layer
+                                + " names a producer that was never built: "
+                                + producer
+                                + " (built: "
+                                + builtGraphNames
+                                + ")",
                         builtGraphNames.contains(producer));
             } else if (layer > 0) {
                 assertEquals(
@@ -461,9 +470,9 @@ public class Qwen35GraphTopologyAccelTest {
     /**
      * A trunk depth that does not divide by the group size leaves a smaller final graph.
      *
-     * <p>The production depth of 64 divides by four exactly, so the remainder path would
-     * otherwise never be built. Six layers at four to a graph gives one full graph and one
-     * holding two, and the second graph must still own its own inputs and outputs.
+     * <p>The production depth of 64 divides by four exactly, so the remainder path would otherwise
+     * never be built. Six layers at four to a graph gives one full graph and one holding two, and
+     * the second graph must still own its own inputs and outputs.
      */
     // @formatter:on
     @Test
@@ -473,7 +482,9 @@ public class Qwen35GraphTopologyAccelTest {
         int group = decode.layersPerGraph();
         assumeTrue("this case needs a remainder", 6 % group != 0);
 
-        assertEquals("a full graph and a remainder graph", 2,
+        assertEquals(
+                "a full graph and a remainder graph",
+                2,
                 decode.getFFNLayerImmutableTaskGraphs().size());
         assertEquals("layer_0", decode.layerGraphName(0));
         assertEquals("layer_4", decode.layerGraphName(4));
@@ -1083,13 +1094,8 @@ public class Qwen35GraphTopologyAccelTest {
         // packed Q5_K ssm_out projection. Only that layer kind has a readout.
         int ssmOutQuantize = quantize;
         assertEquals(
-                "a recurrent layer's tasks",
-                20 + ffnDownQuantize + ssmOutQuantize,
-                recurrentTasks);
-        assertEquals(
-                "an attention layer's tasks",
-                16 + ffnDownQuantize,
-                attentionTasks);
+                "a recurrent layer's tasks", 20 + ffnDownQuantize + ssmOutQuantize, recurrentTasks);
+        assertEquals("an attention layer's tasks", 16 + ffnDownQuantize, attentionTasks);
         assertEquals("the plan's layer tasks", 6 * recurrentTasks + 2 * attentionTasks, total);
     }
 

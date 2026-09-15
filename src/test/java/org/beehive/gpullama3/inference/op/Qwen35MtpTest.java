@@ -51,7 +51,15 @@ public class Qwen35MtpTest {
 
     private static Qwen35Configuration config() {
         return new Qwen35Configuration(
-                "Q8_0", DIM, HIDDEN, TRUNK, NEXTN, HEADS, KV_HEADS, HEAD_DIM, HEAD_DIM,
+                "Q8_0",
+                DIM,
+                HIDDEN,
+                TRUNK,
+                NEXTN,
+                HEADS,
+                KV_HEADS,
+                HEAD_DIM,
+                HEAD_DIM,
                 /* fullAttentionInterval */ 4,
                 /* ssmConvKernel */ 4,
                 /* ssmStateSize */ 4,
@@ -59,7 +67,11 @@ public class Qwen35MtpTest {
                 /* ssmTimeStepRank */ 4,
                 /* ssmInnerSize */ 16,
                 /* ropeDimensionCount */ 4,
-                VOCAB, CONTEXT, CONTEXT, EPS, THETA);
+                VOCAB,
+                CONTEXT,
+                CONTEXT,
+                EPS,
+                THETA);
     }
 
     private final Random random = new Random(77L);
@@ -193,11 +205,37 @@ public class Qwen35MtpTest {
         shn[BLOCK] = t(sharedHeadNorm);
 
         return new Qwen35StandardWeights(
-                blocks, t(tokenEmbd), blockAttnNorm, blockFfnNorm, blockGate, blockDown, blockUp,
-                t(outputNorm), t(output), t(freqReal), t(freqImag),
-                q, k, v, o, qn, kn,
-                ssmQkv, ssmGate, ssmConv, ssmAlpha, ssmBeta, ssmDt, ssmA, ssmNorm, ssmOut,
-                en, hn, eh, shn, DataType.F32);
+                blocks,
+                t(tokenEmbd),
+                blockAttnNorm,
+                blockFfnNorm,
+                blockGate,
+                blockDown,
+                blockUp,
+                t(outputNorm),
+                t(output),
+                t(freqReal),
+                t(freqImag),
+                q,
+                k,
+                v,
+                o,
+                qn,
+                kn,
+                ssmQkv,
+                ssmGate,
+                ssmConv,
+                ssmAlpha,
+                ssmBeta,
+                ssmDt,
+                ssmA,
+                ssmNorm,
+                ssmOut,
+                en,
+                hn,
+                eh,
+                shn,
+                DataType.F32);
     }
 
     // ---- reference ----------------------------------------------------------
@@ -356,9 +394,9 @@ public class Qwen35MtpTest {
                 state.hNextn.setFloat(i, hidden[i]);
             }
 
-            FloatTensor logits =
-                    Qwen35Forward.forwardMtp(c, w, state, tokens[position], position);
-            float[] expected = referenceMtp(hidden, tokens[position], position, keyCache, valueCache);
+            FloatTensor logits = Qwen35Forward.forwardMtp(c, w, state, tokens[position], position);
+            float[] expected =
+                    referenceMtp(hidden, tokens[position], position, keyCache, valueCache);
             for (int i = 0; i < VOCAB; i++) {
                 assertEquals(
                         "logit " + i + " at position " + position,

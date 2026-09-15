@@ -11,8 +11,8 @@ import org.junit.Test;
  *
  * <p>{@code Qwen35BatchPrefillLayers.TENSOR_CORES} is a static final read from {@code
  * llama.qwen35.tensorCores} at class initialization, so the ordinary parity classes — which never
- * set it — build the scalar batched plan and are not coverage of the MMA path. The property here
- * is set in a static initializer, before this JVM touches the layer class, and {@code
+ * set it — build the scalar batched plan and are not coverage of the MMA path. The property here is
+ * set in a static initializer, before this JVM touches the layer class, and {@code
  * reuseForks=false} gives the class its own process.
  *
  * <p>That selects the path. The check is {@link

@@ -53,8 +53,7 @@ public final class TornadoGraphTopology {
     /** Graphs each layer family contributes, in layout order, for {@code mode}. */
     public static int[] layerFamilyGraphCounts(ExecutionMode mode, int layers) {
         return switch (mode) {
-            case STANDARD ->
-                    new SingleTokenForwardTaskGraphLayout(layers).layerFamilyGraphCounts();
+            case STANDARD -> new SingleTokenForwardTaskGraphLayout(layers).layerFamilyGraphCounts();
             case PREFILL_DECODE ->
                     new PrefillDecodeForwardTaskGraphLayout(layers).layerFamilyGraphCounts();
             case BATCH_PREFILL_DECODE ->
@@ -91,8 +90,8 @@ public final class TornadoGraphTopology {
     /**
      * Whether every family of {@code mode} builds one graph per layer.
      *
-     * <p>True of every layout as laid out by default. A layout that groups layers into fewer
-     * graphs answers false, and {@link #verify} still holds for it.
+     * <p>True of every layout as laid out by default. A layout that groups layers into fewer graphs
+     * answers false, and {@link #verify} still holds for it.
      */
     public static boolean isUngrouped(ExecutionMode mode, int layers) {
         for (int count : layerFamilyGraphCounts(mode, layers)) {

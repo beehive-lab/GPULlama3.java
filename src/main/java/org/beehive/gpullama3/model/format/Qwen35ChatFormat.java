@@ -10,9 +10,9 @@ import org.beehive.gpullama3.tokenizer.Qwen35Tokenizer;
  *
  * <p>Everything about the turn structure is Qwen 3's and is inherited: ChatML headers, {@code
  * <|im_end|>}, the {@code <think>} control block, tool results delivered as a user turn wrapping
- * {@code <tool_response>}. What changed between the generations is <b>how a tool call is written</b>
- * — Qwen 3 put a JSON object inside {@code <tool_call>}, and Qwen 3.5 puts nested pseudo-XML there
- * instead:
+ * {@code <tool_response>}. What changed between the generations is <b>how a tool call is
+ * written</b> — Qwen 3 put a JSON object inside {@code <tool_call>}, and Qwen 3.5 puts nested
+ * pseudo-XML there instead:
  *
  * <pre>
  *   &lt;tool_call&gt;
@@ -35,8 +35,8 @@ import org.beehive.gpullama3.tokenizer.Qwen35Tokenizer;
  *
  * <h2>One deviation, stated</h2>
  *
- * <p>The template puts <b>consecutive</b> tool results in a single user turn, one
- * {@code <tool_response>} block after another. {@code ConversationEncoder} calls {@link
+ * <p>The template puts <b>consecutive</b> tool results in a single user turn, one {@code
+ * <tool_response>} block after another. {@code ConversationEncoder} calls {@link
  * #encodeToolResultTurn} once per result, so several results in a row become several user turns.
  * Identical for one result, which is the common case; merging them would mean giving the shared
  * encoder a batched entry point, and that changes every family rather than this one.

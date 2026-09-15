@@ -17,8 +17,8 @@ import org.beehive.gpullama3.tensor.standard.FloatTensor;
 import org.junit.Test;
 
 /**
- * Pins the {@code qwen35} forward pass against a second implementation of the same arithmetic,
- * over a synthetic model small enough to reason about — no GGUF, no device.
+ * Pins the {@code qwen35} forward pass against a second implementation of the same arithmetic, over
+ * a synthetic model small enough to reason about — no GGUF, no device.
  *
  * <p>The reference below is written from the architecture, in plain {@code float[]} loops, and
  * shares no code with the production path. That is the point: a test that re-called the same
@@ -29,14 +29,14 @@ import org.junit.Test;
  * <p>The fixture is deliberately hostile to the assumptions this architecture breaks:
  *
  * <ul>
- *   <li>{@code dim / heads} is 4 while the head width is 8, so anything deriving the head
- *       dimension mis-addresses every head.
+ *   <li>{@code dim / heads} is 4 while the head width is 8, so anything deriving the head dimension
+ *       mis-addresses every head.
  *   <li>{@code fullAttentionInterval = 4} over 4 layers puts three recurrent layers before one
  *       attention layer, so both branches run and the recurrent one runs first.
  *   <li>The rotary width is 4 against an 8-wide head, so half of every head must pass through
  *       unrotated.
- *   <li>There are twice as many value heads as key heads, so the delta rule must read each key
- *       head twice rather than walking off the end of the buffer.
+ *   <li>There are twice as many value heads as key heads, so the delta rule must read each key head
+ *       twice rather than walking off the end of the buffer.
  * </ul>
  */
 public class Qwen35CpuOperationEquivalenceTest {
@@ -540,9 +540,11 @@ public class Qwen35CpuOperationEquivalenceTest {
         Qwen35State state = new Qwen35State(config, -1);
 
         float[] first = new float[VOCAB];
-        Qwen35Forward.forward(config, w, state, 5, 0).copyTo(0, new ArrayFloatTensor(first), 0, VOCAB);
+        Qwen35Forward.forward(config, w, state, 5, 0)
+                .copyTo(0, new ArrayFloatTensor(first), 0, VOCAB);
         float[] second = new float[VOCAB];
-        Qwen35Forward.forward(config, w, state, 5, 1).copyTo(0, new ArrayFloatTensor(second), 0, VOCAB);
+        Qwen35Forward.forward(config, w, state, 5, 1)
+                .copyTo(0, new ArrayFloatTensor(second), 0, VOCAB);
 
         boolean anyDifferent = false;
         for (int i = 0; i < VOCAB; i++) {

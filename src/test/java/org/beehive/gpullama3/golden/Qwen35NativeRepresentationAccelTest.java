@@ -22,9 +22,9 @@ import org.junit.Test;
  *
  * <p>The claim this port rests on is that nothing is materialized: five block layouts and F32 live
  * on the device at once, and each is decoded by a kernel chosen from that tensor's own
- * representation. The memory prediction, the parity result and the throughput all depend on it,
- * and none of them would fail visibly if one role were quietly promoted to Q8_0 — it would cost
- * memory and change nothing else. So it is asserted here, per role, on the real file.
+ * representation. The memory prediction, the parity result and the throughput all depend on it, and
+ * none of them would fail visibly if one role were quietly promoted to Q8_0 — it would cost memory
+ * and change nothing else. So it is asserted here, per role, on the real file.
  *
  * <p>It also pins the direction: the only Q8_0 tensor in this model is the MTP projection the file
  * itself stores that way, which ordinary generation never reads.
@@ -55,12 +55,14 @@ public class Qwen35NativeRepresentationAccelTest {
         assertEquals(
                 "token embeddings", DataType.Q4_0, weights.getTokenEmbeddingTable().dataType());
         assertEquals("vocabulary projection", DataType.Q6_K, weights.wclsByteArray.dataType());
-        assertEquals(
-                "final norm", DataType.F32, weights.rms_final_weight_as_floatArray.dataType());
+        assertEquals("final norm", DataType.F32, weights.rms_final_weight_as_floatArray.dataType());
 
         Map<DataType, Integer> counted = new EnumMap<>(DataType.class);
         for (int l = 0; l < config.numberOfLayers(); l++) {
-            assertEquals("blk." + l + ".attn_norm", DataType.F32, type(weights.rms_att_weightLayered, l));
+            assertEquals(
+                    "blk." + l + ".attn_norm",
+                    DataType.F32,
+                    type(weights.rms_att_weightLayered, l));
             assertEquals(
                     "blk." + l + ".post_attention_norm",
                     DataType.F32,
@@ -87,7 +89,8 @@ public class Qwen35NativeRepresentationAccelTest {
                 assertEquals("blk." + l + ".attn_q", DataType.Q4_0, type(weights.wqLayered, l));
                 assertEquals("blk." + l + ".attn_k", DataType.Q4_0, type(weights.wkLayered, l));
                 assertEquals("blk." + l + ".attn_v", DataType.Q4_0, type(weights.wvLayered, l));
-                assertEquals("blk." + l + ".attn_output", DataType.Q4_0, type(weights.woLayered, l));
+                assertEquals(
+                        "blk." + l + ".attn_output", DataType.Q4_0, type(weights.woLayered, l));
                 assertEquals("blk." + l + ".attn_q_norm", DataType.F32, type(weights.attnQNorm, l));
                 assertEquals("blk." + l + ".attn_k_norm", DataType.F32, type(weights.attnKNorm, l));
             }

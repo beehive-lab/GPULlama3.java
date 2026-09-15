@@ -24,8 +24,8 @@ import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
  * Every quantized representation the engine retains on a device, decoded on both sides of the same
  * bytes.
  *
- * <p>One test for all six, because the property is the same one and the failure is the same one:
- * a decode that addresses a nibble, a high bit, a scale or a sub-block wrongly produces weights of
+ * <p>One test for all six, because the property is the same one and the failure is the same one: a
+ * decode that addresses a nibble, a high bit, a scale or a sub-block wrongly produces weights of
  * entirely plausible magnitude, and a model built on it generates fluent, wrong text at normal
  * throughput. Nothing downstream notices. A GPU-versus-GPU comparison cannot see it either, since
  * both sides would be equally wrong.
@@ -144,7 +144,8 @@ public class QuantizedDeviceDecodeParityTest {
         int blockBytes = type.getTypeSize();
         int blocks = 24;
         int elements = blocks * blockSize;
-        byte[] raw = adversarialBlocks(blocks, blockBytes, scaleOffsets, 20260908L + name.hashCode());
+        byte[] raw =
+                adversarialBlocks(blocks, blockBytes, scaleOffsets, 20260908L + name.hashCode());
 
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment segment = arena.allocate(raw.length);

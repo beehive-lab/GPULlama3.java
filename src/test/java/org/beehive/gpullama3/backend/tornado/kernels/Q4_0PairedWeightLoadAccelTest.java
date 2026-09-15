@@ -27,8 +27,8 @@ import uk.ac.manchester.tornado.api.types.arrays.IntArray;
  * subnormals, and bytes with the high bit set in every position.
  *
  * <p>Both {@code Q4_0} alignment classes are covered. A block is eighteen bytes with its quants at
- * {@code base + 2}, so quant runs land on {@code byteIndex % 4 == 2} for even blocks and {@code == 0}
- * for odd ones; the offsets walked here cross that boundary and the block boundary with it.
+ * {@code base + 2}, so quant runs land on {@code byteIndex % 4 == 2} for even blocks and {@code ==
+ * 0} for odd ones; the offsets walked here cross that boundary and the block boundary with it.
  */
 // @formatter:on
 public class Q4_0PairedWeightLoadAccelTest {

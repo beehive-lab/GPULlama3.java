@@ -185,8 +185,8 @@ public class Q5_KDp4aAccelTest {
                 int block = sb / 8;
                 int subInBlock = sb - block * 8;
                 int blockBase = (row * (n / QK_K) + block) * BLOCK_BYTES;
-                double scale = (double) blockHalf(raw, blockBase) * subScale(raw, blockBase,
-                        subInBlock);
+                double scale =
+                        (double) blockHalf(raw, blockBase) * subScale(raw, blockBase, subInBlock);
                 double minimum =
                         (double) blockHalf(raw, blockBase + 2) * subMin(raw, blockBase, subInBlock);
                 long dot = 0;
@@ -420,7 +420,9 @@ public class Q5_KDp4aAccelTest {
         }
     }
 
-    /** The generated code issues the packed instruction, rather than falling back to its Java body. */
+    /**
+     * The generated code issues the packed instruction, rather than falling back to its Java body.
+     */
     @Test
     public void theGeneratedCodeUsesDp4a() throws Exception {
         assumeTrue(

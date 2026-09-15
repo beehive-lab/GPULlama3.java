@@ -344,8 +344,7 @@ public class Qwen35FFNLayers
                     // changed representation.
                     graph.task(
                             tn(task),
-                            TransformerComputeKernelsQ4_1
-                                    ::matrixVectorGenericWithResidualQ4_1DP4A,
+                            TransformerComputeKernelsQ4_1::matrixVectorGenericWithResidualQ4_1DP4A,
                             context,
                             state.workspace.wrapXbQuants,
                             state.workspace.wrapXbScales,
@@ -411,8 +410,7 @@ public class Qwen35FFNLayers
                     // representation.
                     graph.task(
                             tn(task),
-                            TransformerComputeKernelsQ5_K
-                                    ::matrixVectorGenericWithResidualQ5_KDP4A,
+                            TransformerComputeKernelsQ5_K::matrixVectorGenericWithResidualQ5_KDP4A,
                             context,
                             state.workspace.wrapXbQuants,
                             state.workspace.wrapXbScales,
@@ -632,23 +630,28 @@ public class Qwen35FFNLayers
      * The prefix the tasks of {@code layerIndex} carry inside their graph.
      *
      * <p>Empty while a layer owns its graph, which is every family's default: the graph name
-     * already separates one layer's {@code attn_rms_reduce} from the next one's. A family that
-     * puts more than one layer in a graph must return something distinct per layer, because grid
-     * keys are {@code graphName.taskName} and two layers would otherwise collide on every task.
+     * already separates one layer's {@code attn_rms_reduce} from the next one's. A family that puts
+     * more than one layer in a graph must return something distinct per layer, because grid keys
+     * are {@code graphName.taskName} and two layers would otherwise collide on every task.
      */
     // @formatter:on
     protected String layerTaskPrefix(int layerIndex) {
         return "";
     }
 
-    /** The graph {@code layerIndex}'s tasks belong to. One per layer unless a family groups them. */
+    /**
+     * The graph {@code layerIndex}'s tasks belong to. One per layer unless a family groups them.
+     */
     protected String layerGraphName(int layerIndex) {
         return "layer_" + layerIndex;
     }
 
-    /** Whether {@code layerIndex} is the first layer of its graph, and so owns the graph's inputs. */
+    /**
+     * Whether {@code layerIndex} is the first layer of its graph, and so owns the graph's inputs.
+     */
     protected final boolean firstLayerOfGraph(int layerIndex) {
-        return layerIndex == 0 || !layerGraphName(layerIndex - 1).equals(layerGraphName(layerIndex));
+        return layerIndex == 0
+                || !layerGraphName(layerIndex - 1).equals(layerGraphName(layerIndex));
     }
 
     /** Whether {@code layerIndex} is the last layer of its graph, and so publishes its outputs. */
@@ -791,12 +794,11 @@ public class Qwen35FFNLayers
      * findOptimalLocalSize} would pick.
      *
      * <p><b>The boundary.</b> {@code SPLIT_KV_MAX_HEAD} is the width the wide-head kernel sizes
-     * {@code q_shared} and {@code accShared} for, and the launch is fixed at {@code
-     * SPLIT_KV_LOCAL} lanes, so any head at or below that width addresses
-     * {@code tid * headSize < SPLIT_KV_LOCAL * SPLIT_KV_MAX_HEAD} and stays inside both. This
-     * family ships a 256-wide head and the kernel gate covers it at that width and at 128; a
-     * narrower head is admitted by the same arithmetic rather than by measurement, and a wider one
-     * is refused outright.
+     * {@code q_shared} and {@code accShared} for, and the launch is fixed at {@code SPLIT_KV_LOCAL}
+     * lanes, so any head at or below that width addresses {@code tid * headSize < SPLIT_KV_LOCAL *
+     * SPLIT_KV_MAX_HEAD} and stays inside both. This family ships a 256-wide head and the kernel
+     * gate covers it at that width and at 128; a narrower head is admitted by the same arithmetic
+     * rather than by measurement, and a wider one is refused outright.
      *
      * <p>Restricted to <b>CUDA</b>, which is where this was measured and validated. FP16 key/value
      * storage is an option rather than a backend property, so the capability alone would have
@@ -837,9 +839,9 @@ public class Qwen35FFNLayers
      * Whether the gated norm takes a workgroup per head rather than a lane per head.
      *
      * <p>A property of the head's width, not a user choice and not a backend one: the wide kernel
-     * reduces through a shared tree, which halves a power-of-two width at every step, and its
-     * local work size is that width. Anything else keeps the per-head lane. This model's value
-     * head is 128 wide.
+     * reduces through a shared tree, which halves a power-of-two width at every step, and its local
+     * work size is that width. Anything else keeps the per-head lane. This model's value head is
+     * 128 wide.
      */
     // @formatter:on
     // @formatter:off
@@ -847,17 +849,17 @@ public class Qwen35FFNLayers
      * Whether the delta-net L2 norm takes a workgroup per head rather than a lane per head.
      *
      * <p>The same condition {@link #gatedNormIsWide} applies, read on the <b>key</b> head's width
-     * because that is what the L2 norm reduces over: the shared tree halves a power-of-two width
-     * at every step and its local work size is that width. This model's key head is 128 wide.
+     * because that is what the L2 norm reduces over: the shared tree halves a power-of-two width at
+     * every step and its local work size is that width. This model's key head is 128 wide.
      */
     // @formatter:on
     // @formatter:off
     /**
      * Whether the delta rule splits each column's reduction across two lanes.
      *
-     * <p>A property of the head's width: the split halves the row range, so the width must be
-     * even, and the workgroup it asks for is twice that width, which a device must accept. This
-     * family's value head is 128 wide, so the workgroup is 256.
+     * <p>A property of the head's width: the split halves the row range, so the width must be even,
+     * and the workgroup it asks for is twice that width, which a device must accept. This family's
+     * value head is 128 wide, so the workgroup is 256.
      *
      * <p>Not a user choice and not a tuning knob. A geometry that does not satisfy it keeps the
      * one-lane-per-column kernel.
@@ -896,9 +898,9 @@ public class Qwen35FFNLayers
      * <p>Only the <b>apply</b> is folded. It is elementwise, so the quantization's 32-lane
      * workgroup owns exactly the elements its own lanes would have normalized and nothing
      * synchronizes across a workgroup; the reduce, which does span the row, stays its own task
-     * because folding it would need exactly that. {@code wrapXb} is still written — the F32
-     * {@code ssm_alpha} and {@code ssm_beta} projections read it, and so does every non-packed
-     * projection — so what goes away is the second launch and the read-back, not the store.
+     * because folding it would need exactly that. {@code wrapXb} is still written — the F32 {@code
+     * ssm_alpha} and {@code ssm_beta} projections read it, and so does every non-packed projection
+     * — so what goes away is the second launch and the read-back, not the store.
      *
      * <p>The fused task takes the apply's name and the quantization's grid. A caller that folds
      * must not also emit a separate quantization task for the same activation.
@@ -1022,12 +1024,10 @@ public class Qwen35FFNLayers
     /**
      * Whether {@code wrapSsmOut} holds the activation {@code ssm_out_quantize} quantized.
      *
-     * <p>Separate from the two flags above for the same reason they are separate from each other:
-     * a different buffer holding a different activation, with exactly one reader.
+     * <p>Separate from the two flags above for the same reason they are separate from each other: a
+     * different buffer holding a different activation, with exactly one reader.
      */
     private boolean ssmActivationQuantized;
-
-
 
     /**
      * Whether the shared Q8-block scratch is long enough for an activation of {@code elements}.
@@ -1721,8 +1721,7 @@ public class Qwen35FFNLayers
         // the shared tree; otherwise the one-lane-per-head grid below is what is registered.
         WorkerGrid gatedNormWide =
                 WorkerGridFactory.genericWorker(
-                        config.numberOfValueHeads() * config.headValueDim(),
-                        config.headValueDim());
+                        config.numberOfValueHeads() * config.headValueDim(), config.headValueDim());
         // One workgroup per value head either way; the split form gives each column two lanes,
         // so the workgroup is twice the head's width rather than the elementwise default.
         WorkerGrid deltaRule =

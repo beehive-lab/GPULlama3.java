@@ -15,8 +15,8 @@ import org.junit.Test;
 /**
  * Q4_1 against the format it claims to decode.
  *
- * <p>The reconstruction is {@code d * q + m} with an <b>unsigned</b> nibble, where Q4_0 is {@code
- * d * (q - 8)}. Getting the recentering wrong is a plausible mistake that shifts every weight in a
+ * <p>The reconstruction is {@code d * q + m} with an <b>unsigned</b> nibble, where Q4_0 is {@code d
+ * * (q - 8)}. Getting the recentering wrong is a plausible mistake that shifts every weight in a
  * block by a constant — which a dot product against a mean-zero activation barely shows, and which
  * this test pins directly instead.
  */
@@ -31,14 +31,8 @@ public class Q4_1FloatTensorTest {
         MemorySegment segment = arena.allocate((long) blocks * TYPE);
         for (int b = 0; b < blocks; b++) {
             int base = b * TYPE;
-            segment.set(
-                    ValueLayout.JAVA_SHORT_UNALIGNED,
-                    base,
-                    Float.floatToFloat16(scales[b]));
-            segment.set(
-                    ValueLayout.JAVA_SHORT_UNALIGNED,
-                    base + 2,
-                    Float.floatToFloat16(mins[b]));
+            segment.set(ValueLayout.JAVA_SHORT_UNALIGNED, base, Float.floatToFloat16(scales[b]));
+            segment.set(ValueLayout.JAVA_SHORT_UNALIGNED, base + 2, Float.floatToFloat16(mins[b]));
             // Element i < 16 goes in the low nibble of byte i; element i >= 16 in the high nibble
             // of byte i - 16. Same packing as Q4_0.
             for (int i = 0; i < BLOCK / 2; i++) {
@@ -74,8 +68,8 @@ public class Q4_1FloatTensorTest {
     /**
      * The vectorized dot product must agree with reading the tensor element by element.
      *
-     * <p>Several blocks with different scales and minimums, and a length that is not a whole
-     * number of vector lanes, so the alignment prologue and the scalar tail both run.
+     * <p>Several blocks with different scales and minimums, and a length that is not a whole number
+     * of vector lanes, so the alignment prologue and the scalar tail both run.
      */
     @Test
     public void vectorizedDotAgreesWithElementwise() {

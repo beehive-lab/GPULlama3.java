@@ -74,8 +74,8 @@ public class Qwen35DeltaNetKernelParityTest {
      *
      * <p>Used only where the two sides genuinely evaluate the same expression at different
      * precisions — the host through {@code Math.sqrt} and {@code Math.exp}, which are double, and
-     * the device through {@code TornadoMath}, which is float. Everywhere else this test asserts
-     * bit equality, because everywhere else the operations and their order are identical and a
+     * the device through {@code TornadoMath}, which is float. Everywhere else this test asserts bit
+     * equality, because everywhere else the operations and their order are identical and a
      * tolerance would hide a real difference.
      */
     private static void assertSameToRounding(String what, FloatTensor host, FloatArray device) {
@@ -257,8 +257,8 @@ public class Qwen35DeltaNetKernelParityTest {
      *
      * <p>Every recurrent layer's state lives in one allocation, addressed by an offset, so a lane
      * that dropped the offset — or applied it to one of its two passes and not the other — would
-     * read layer 0's state while writing layer 1's. Nothing about the output would look wrong for
-     * a while.
+     * read layer 0's state while writing layer 1's. Nothing about the output would look wrong for a
+     * while.
      *
      * <p>The check is that a layer at a non-zero offset produces exactly what the same layer
      * produces alone at offset zero, and that its neighbour is untouched.
@@ -287,8 +287,17 @@ public class Qwen35DeltaNetKernelParityTest {
         FloatArray aloneOut = new FloatArray(heads * dim);
         for (int lane = 0; lane < heads * dim; lane++) {
             Qwen35DeltaNetKernels.deltaRuleLane(
-                    toDevice(q), toDevice(k), toDevice(v), toDevice(decay), toDevice(beta),
-                    alone, aloneOut, keyHeads, dim, 0, lane);
+                    toDevice(q),
+                    toDevice(k),
+                    toDevice(v),
+                    toDevice(decay),
+                    toDevice(beta),
+                    alone,
+                    aloneOut,
+                    keyHeads,
+                    dim,
+                    0,
+                    lane);
         }
 
         // The same layer as the second of two, with a neighbour in front of it.
@@ -299,8 +308,17 @@ public class Qwen35DeltaNetKernelParityTest {
         FloatArray sharedOut = new FloatArray(heads * dim);
         for (int lane = 0; lane < heads * dim; lane++) {
             Qwen35DeltaNetKernels.deltaRuleLane(
-                    toDevice(q), toDevice(k), toDevice(v), toDevice(decay), toDevice(beta),
-                    shared, sharedOut, keyHeads, dim, perLayer, lane);
+                    toDevice(q),
+                    toDevice(k),
+                    toDevice(v),
+                    toDevice(decay),
+                    toDevice(beta),
+                    shared,
+                    sharedOut,
+                    keyHeads,
+                    dim,
+                    perLayer,
+                    lane);
         }
 
         for (int i = 0; i < heads * dim; i++) {
@@ -338,7 +356,13 @@ public class Qwen35DeltaNetKernelParityTest {
         FloatArray sharedOut = new FloatArray(channels);
         for (int channel = 0; channel < channels; channel++) {
             Qwen35DeltaNetKernels.causalConv1dLane(
-                    toDevice(input), toDevice(weight), shared, sharedOut, kernel, perLayer, channel);
+                    toDevice(input),
+                    toDevice(weight),
+                    shared,
+                    sharedOut,
+                    kernel,
+                    perLayer,
+                    channel);
         }
 
         for (int i = 0; i < channels; i++) {

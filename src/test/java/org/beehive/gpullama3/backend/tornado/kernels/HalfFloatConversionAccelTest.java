@@ -212,7 +212,11 @@ public class HalfFloatConversionAccelTest {
             for (int i = 0; i < encodings; i++) {
                 short bits = pattern[i];
                 assertEquals(
-                        "stride " + stride + " offset " + offset + " encoding 0x"
+                        "stride "
+                                + stride
+                                + " offset "
+                                + offset
+                                + " encoding 0x"
                                 + Integer.toHexString(bits & 0xFFFF),
                         Float.floatToRawIntBits(Float.float16ToFloat(bits)),
                         Float.floatToRawIntBits(out.get(i)));

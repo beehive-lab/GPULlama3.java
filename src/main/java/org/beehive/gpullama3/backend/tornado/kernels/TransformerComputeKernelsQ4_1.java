@@ -1,10 +1,10 @@
 package org.beehive.gpullama3.backend.tornado.kernels;
 
 import uk.ac.manchester.tornado.api.KernelContext;
-import uk.ac.manchester.tornado.api.utils.QuantizationUtils;
 import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
+import uk.ac.manchester.tornado.api.utils.QuantizationUtils;
 
 /**
  * Device kernels that read {@code Q4_1} weights in the file's own representation.
@@ -138,9 +138,9 @@ public final class TransformerComputeKernelsQ4_1 {
      * {@code out[row] += w[row]·x} with the activation in packed integers and the weights left in
      * native {@code Q4_1}.
      *
-     * <p><b>The algebra, which is where this differs from Q4_0.</b> A Q4_1 weight is
-     * {@code d * q + m} with {@code q} in 0..15 and no recentring, so against an activation
-     * quantized as {@code x_i = sx * xq_i} a block's contribution is
+     * <p><b>The algebra, which is where this differs from Q4_0.</b> A Q4_1 weight is {@code d * q +
+     * m} with {@code q} in 0..15 and no recentring, so against an activation quantized as {@code
+     * x_i = sx * xq_i} a block's contribution is
      *
      * <pre>
      *   Σ (d·q_i + m)(sx·xq_i) = sx · ( d · Σ q_i·xq_i  +  m · Σ xq_i )
@@ -215,8 +215,7 @@ public final class TransformerComputeKernelsQ4_1 {
                                 xQuants.get(quantBase + 4 + g),
                                 dot);
             }
-            partialSum +=
-                    xScales.get(block) * (weightScale * dot + weightMin * xSums.get(block));
+            partialSum += xScales.get(block) * (weightScale * dot + weightMin * xSums.get(block));
         }
 
         partialSum += context.simdShuffleDown(partialSum, 16);

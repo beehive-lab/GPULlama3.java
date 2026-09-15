@@ -180,6 +180,7 @@ public class LlamaModelLoader extends AbstractModelLoader<Llama, LlamaConfigurat
                 loadTornadoTensor(outputWeight),
                 weightType);
     }
+
     // @formatter:on
 
     /**
@@ -204,9 +205,7 @@ public class LlamaModelLoader extends AbstractModelLoader<Llama, LlamaConfigurat
      * model.
      */
     private static org.beehive.gpullama3.backend.tornado.tensor.TornadoTensor[] perLayerQuantized(
-            boolean retainQ4_0,
-            int layers,
-            java.util.function.IntFunction<GGMLTensorEntry> entry) {
+            boolean retainQ4_0, int layers, java.util.function.IntFunction<GGMLTensorEntry> entry) {
         return retainQ4_0
                 ? loadArrayOfTornadoTensorsRetainingQ4_0(layers, entry)
                 : loadArrayOfTornadoTensors(layers, entry);

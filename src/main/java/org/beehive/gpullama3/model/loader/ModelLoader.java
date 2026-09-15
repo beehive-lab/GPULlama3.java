@@ -227,8 +227,8 @@ public abstract class ModelLoader {
      * Q8_0 and F32 materialize as themselves, so every tuple measured on CUDA is predicted
      * byte-for-byte as before.
      */
-    public static org.beehive.gpullama3.runtime.memory.WeightFootprint weightFootprint(Path ggufPath)
-            throws IOException {
+    public static org.beehive.gpullama3.runtime.memory.WeightFootprint weightFootprint(
+            Path ggufPath) throws IOException {
         return weightFootprint(
                 ggufPath, org.beehive.gpullama3.runtime.memory.DeviceRetention.converting());
     }

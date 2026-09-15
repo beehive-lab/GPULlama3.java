@@ -201,10 +201,9 @@ public final class TransformerComputeKernelsQ6_K {
      * return is on {@code rowId}, which is uniform across the workgroup, and {@code
      * localWorkGroupSize} must be a multiple of 32. Shuffles are correct on CUDA and miscompile on
      * OpenCL, which is already why this kernel rides on {@code
-     * DeviceCapability.PACKED_INTEGER_DOT}.
-     * The order of summation differs from the tree's, so the floating-point total may round
-     * differently; the integer dot products are exact either way, and nothing about the mapping,
-     * the packing or the scale algebra changes.
+     * DeviceCapability.PACKED_INTEGER_DOT}. The order of summation differs from the tree's, so the
+     * floating-point total may round differently; the integer dot products are exact either way,
+     * and nothing about the mapping, the packing or the scale algebra changes.
      */
     // @formatter:on
     public static void matrixVectorGenericQ6_KDP4A(

@@ -21,8 +21,8 @@ import org.beehive.gpullama3.runtime.tensor.DataType;
  *       and it is what the loader insists the projections agree on.
  *   <li>{@link #nativeTensorTypes()} is what the layer, activation and logits graphs decode <b>per
  *       tensor</b>, without materializing anything. The 27B needs five of them at once, and the
- *       memory prediction has to count each tensor at its own size or it refuses a model that
- *       fits: 14.944 GiB retained against roughly 27 GiB converted, on a 24 GiB device.
+ *       memory prediction has to count each tensor at its own size or it refuses a model that fits:
+ *       14.944 GiB retained against roughly 27 GiB converted, on a 24 GiB device.
  * </ul>
  *
  * <p>All three modes. Sequential prefill is the same layer computation with the logits graph
@@ -63,8 +63,7 @@ public final class Qwen35PlanProvider implements TornadoPlanProvider {
     }
 
     @Override
-    public SingleTokenForwardPlanComponents components(
-            DataType weights, State state, Model model) {
+    public SingleTokenForwardPlanComponents components(DataType weights, State state, Model model) {
         Qwen35State typed = PlanStates.expect(Qwen35State.class, state, ID);
         return new Qwen35PlanComponents(typed, model);
     }

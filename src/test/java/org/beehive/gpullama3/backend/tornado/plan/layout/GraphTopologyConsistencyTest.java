@@ -22,8 +22,8 @@ import org.junit.Test;
  *   <li>{@code totalGraphs == sum(layerFamilyGraphCounts) + nonLayerGraphs}, together with one
  *       count per declared family, is checked — so a layout cannot grow a family without either
  *       stating its graphs or failing here. A family need not build one graph per layer: grouping
- *       layers changes that term without changing the family count, which is what the memory
- *       model multiplies by;
+ *       layers changes that term without changing the family count, which is what the memory model
+ *       multiplies by;
  *   <li>{@link TornadoGraphTopology}'s switches have no {@code default}, so a new {@link
  *       ExecutionMode} does not compile until it answers.
  * </ol>
@@ -104,9 +104,9 @@ public class GraphTopologyConsistencyTest {
      *
      * <p>The decode family may hold more than one layer per graph, which costs one submission
      * instead of several. That breaks the old {@code families x N + nonLayerGraphs} identity — the
-     * decode family no longer contributes {@code N} graphs — so the check is now against the
-     * graphs each family says it contributes. This pins that the new form still catches a layout
-     * whose totals do not add up, rather than having been weakened to accept anything.
+     * decode family no longer contributes {@code N} graphs — so the check is now against the graphs
+     * each family says it contributes. This pins that the new form still catches a layout whose
+     * totals do not add up, rather than having been weakened to accept anything.
      */
     // @formatter:on
     @Test
@@ -180,14 +180,13 @@ public class GraphTopologyConsistencyTest {
      * Grouping changes graphs, not weight memory.
      *
      * <p>The family count is what the memory model multiplies by, and it counts <b>families</b>,
-     * not graphs. Grouping the decode family into half as many graphs must leave it at two, so
-     * that a grouped plan is not predicted to hold less of the model than it does.
+     * not graphs. Grouping the decode family into half as many graphs must leave it at two, so that
+     * a grouped plan is not predicted to hold less of the model than it does.
      */
     // @formatter:on
     @Test
     public void groupingDoesNotChangeTheFamilyCount() {
-        assertEquals(
-                2, new BatchPrefillDecodeForwardTaskGraphLayout(64, 64).layerGraphFamilies());
+        assertEquals(2, new BatchPrefillDecodeForwardTaskGraphLayout(64, 64).layerGraphFamilies());
         assertEquals(
                 "half as many decode graphs is still two families",
                 2,

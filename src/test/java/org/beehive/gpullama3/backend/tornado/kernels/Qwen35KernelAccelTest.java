@@ -26,8 +26,8 @@ import uk.ac.manchester.tornado.api.types.arrays.IntArray;
  * the addressing and says nothing about whether TornadoVM can compile the kernel — a distinction
  * that is not academic here. Q5_K's matrix-vector kernel passed its host parity test and then
  * failed to compile in seven successive formulations, the cause being one method call inlined into
- * a loop. These kernels use nested loops, a retained state array written in place, and
- * {@code TornadoMath} transcendentals, none of which the host tests exercise as device code.
+ * a loop. These kernels use nested loops, a retained state array written in place, and {@code
+ * TornadoMath} transcendentals, none of which the host tests exercise as device code.
  *
  * <p>Dimensions are the 27B's own where it matters — a 128-wide delta-net head, 48 value heads
  * against 16 key heads — and small in the ways that do not, so the test stays quick.
@@ -123,8 +123,7 @@ public class Qwen35KernelAccelTest {
                                 CONV_DIM,
                                 CONV_KERNEL,
                                 0)
-                        .transferToHost(
-                                DataTransferMode.EVERY_EXECUTION, deviceOut, deviceWindow);
+                        .transferToHost(DataTransferMode.EVERY_EXECUTION, deviceOut, deviceWindow);
         run(graph, "k", CONV_DIM, 128);
 
         assertClose("conv out", hostOut, deviceOut);
@@ -170,12 +169,24 @@ public class Qwen35KernelAccelTest {
                 new TaskGraph("delta")
                         .transferToDevice(
                                 DataTransferMode.EVERY_EXECUTION,
-                                dq, dk, dv, ddecay, dbeta, dstate, dout)
+                                dq,
+                                dk,
+                                dv,
+                                ddecay,
+                                dbeta,
+                                dstate,
+                                dout)
                         .task(
                                 "k",
                                 Qwen35DeltaNetKernels::deltaRule,
                                 context,
-                                dq, dk, dv, ddecay, dbeta, dstate, dout,
+                                dq,
+                                dk,
+                                dv,
+                                ddecay,
+                                dbeta,
+                                dstate,
+                                dout,
                                 VALUE_HEADS,
                                 KEY_HEADS,
                                 STATE_DIM,
@@ -252,12 +263,24 @@ public class Qwen35KernelAccelTest {
                 new TaskGraph("deltaSplit")
                         .transferToDevice(
                                 DataTransferMode.EVERY_EXECUTION,
-                                dq, dk, dv, ddecay, dbeta, dstate, dout)
+                                dq,
+                                dk,
+                                dv,
+                                ddecay,
+                                dbeta,
+                                dstate,
+                                dout)
                         .task(
                                 "k",
                                 Qwen35DeltaNetKernels::deltaRuleSplit,
                                 new KernelContext(),
-                                dq, dk, dv, ddecay, dbeta, dstate, dout,
+                                dq,
+                                dk,
+                                dv,
+                                ddecay,
+                                dbeta,
+                                dstate,
+                                dout,
                                 KEY_HEADS,
                                 STATE_DIM,
                                 0)
@@ -292,8 +315,7 @@ public class Qwen35KernelAccelTest {
         KernelContext context = new KernelContext();
         TaskGraph graph =
                 new TaskGraph("gated")
-                        .transferToDevice(
-                                DataTransferMode.EVERY_EXECUTION, dvalues, dgate, dweight)
+                        .transferToDevice(DataTransferMode.EVERY_EXECUTION, dvalues, dgate, dweight)
                         .task(
                                 "k",
                                 Qwen35DeltaNetKernels::gatedNormPerHead,
@@ -336,30 +358,30 @@ public class Qwen35KernelAccelTest {
      * The wide L2 norm — a workgroup per key head, a lane per element — against the same CPU
      * reference the per-head lane is held to, at the production geometry of 16 heads of 128.
      *
-     * <p>It is the dispatched kernel wherever the key head's width is a power of two, which is
-     * this family's case, so the per-head lane no longer covers what decode runs. The sum of
-     * squares is a shared tree here rather than a left fold, so this is checked against the
-     * reference and not against the other kernel's bits.
+     * <p>It is the dispatched kernel wherever the key head's width is a power of two, which is this
+     * family's case, so the per-head lane no longer covers what decode runs. The sum of squares is
+     * a shared tree here rather than a left fold, so this is checked against the reference and not
+     * against the other kernel's bits.
      *
      * <p>The epsilon clamps the norm — {@code 1 / max(sqrt(ss), eps)} — rather than sitting under
-     * the root, which is not the gated norm's convention, so the inputs cover what that
-     * distinction makes reachable: a head of exact zeros, a head far below the clamp, a head
-     * sitting on it, a head whose elements cancel in sum but not in square, a single nonzero
-     * element, and a head spanning twelve decades.
+     * the root, which is not the gated norm's convention, so the inputs cover what that distinction
+     * makes reachable: a head of exact zeros, a head far below the clamp, a head sitting on it, a
+     * head whose elements cancel in sum but not in square, a single nonzero element, and a head
+     * spanning twelve decades.
      */
     // @formatter:on
     @Test
     public void theWideL2NormRunsOnTheDevice() throws Exception {
         float[] keys = noise(KEY_DIM, 1.0f);
         for (int i = 0; i < STATE_DIM; i++) {
-            keys[i] = 0.0f;                                              // head 0: exact zeros
-            keys[STATE_DIM + i] = (i % 2 == 0 ? 1 : -1) * 1.0e-24f;      // head 1: below the clamp
-            keys[2 * STATE_DIM + i] = 8.8e-8f;                           // head 2: on the clamp
-            keys[3 * STATE_DIM + i] = (i % 2 == 0) ? 1.0f : -1.0f;       // head 3: cancellation
-            keys[4 * STATE_DIM + i] = i == 77 ? 3.0e4f : 1.0e-7f;        // head 4: one large
+            keys[i] = 0.0f; // head 0: exact zeros
+            keys[STATE_DIM + i] = (i % 2 == 0 ? 1 : -1) * 1.0e-24f; // head 1: below the clamp
+            keys[2 * STATE_DIM + i] = 8.8e-8f; // head 2: on the clamp
+            keys[3 * STATE_DIM + i] = (i % 2 == 0) ? 1.0f : -1.0f; // head 3: cancellation
+            keys[4 * STATE_DIM + i] = i == 77 ? 3.0e4f : 1.0e-7f; // head 4: one large
             keys[5 * STATE_DIM + i] =
                     (float) ((i % 2 == 0 ? 1 : -1) * Math.pow(10.0, (i % 13) - 6));
-            keys[6 * STATE_DIM + i] = i == 0 ? 2.5f : 0.0f;              // head 6: one nonzero
+            keys[6 * STATE_DIM + i] = i == 0 ? 2.5f : 0.0f; // head 6: one nonzero
         }
 
         FloatTensor host = new ArrayFloatTensor(keys.clone());
@@ -395,14 +417,14 @@ public class Qwen35KernelAccelTest {
      * reference the per-head lane is held to, at the production geometry of 48 heads of 128.
      *
      * <p>It is the dispatched kernel wherever the value head's width is a power of two, which is
-     * this family's case, so the per-head lane above no longer covers what decode runs. The sum
-     * of squares is a shared tree here rather than a left fold, so this is deliberately checked
+     * this family's case, so the per-head lane above no longer covers what decode runs. The sum of
+     * squares is a shared tree here rather than a left fold, so this is deliberately checked
      * against the reference and not against the other kernel's bits.
      *
-     * <p>The inputs carry what the mapping could get wrong and the ordinary noise above would
-     * not reach: a head of exact zeros, so the reduction bottoms out at the epsilon; a head whose
-     * values are near the bottom of the float range; a head with one large element among tiny
-     * ones; and gate values saturating the logistic at both ends, plus an exact zero.
+     * <p>The inputs carry what the mapping could get wrong and the ordinary noise above would not
+     * reach: a head of exact zeros, so the reduction bottoms out at the epsilon; a head whose
+     * values are near the bottom of the float range; a head with one large element among tiny ones;
+     * and gate values saturating the logistic at both ends, plus an exact zero.
      */
     // @formatter:on
     @Test
@@ -411,9 +433,9 @@ public class Qwen35KernelAccelTest {
         float[] gate = noise(VALUE_DIM, 1.0f);
         float[] weight = noise(STATE_DIM, 1.0f);
         for (int i = 0; i < STATE_DIM; i++) {
-            values[i] = 0.0f;                                  // head 0: all zero
-            values[STATE_DIM + i] = (i % 2 == 0 ? 1 : -1) * 1.0e-21f;  // head 1: near zero
-            values[2 * STATE_DIM + i] = i == 63 ? 3.0e4f : 1.0e-7f;    // head 2: one large
+            values[i] = 0.0f; // head 0: all zero
+            values[STATE_DIM + i] = (i % 2 == 0 ? 1 : -1) * 1.0e-21f; // head 1: near zero
+            values[2 * STATE_DIM + i] = i == 63 ? 3.0e4f : 1.0e-7f; // head 2: one large
         }
         for (int i = 0; i < VALUE_DIM; i++) {
             int mode = i % 5;
@@ -440,8 +462,7 @@ public class Qwen35KernelAccelTest {
         FloatArray dweight = toDevice(weight);
         TaskGraph graph =
                 new TaskGraph("gatedWide")
-                        .transferToDevice(
-                                DataTransferMode.EVERY_EXECUTION, dvalues, dgate, dweight)
+                        .transferToDevice(DataTransferMode.EVERY_EXECUTION, dvalues, dgate, dweight)
                         .task(
                                 "k",
                                 Qwen35DeltaNetKernels::gatedNormPerHeadWide,
@@ -484,8 +505,7 @@ public class Qwen35KernelAccelTest {
         KernelContext context = new KernelContext();
         TaskGraph graph =
                 new TaskGraph("decay")
-                        .transferToDevice(
-                                DataTransferMode.EVERY_EXECUTION, dalpha, dbeta, ddt, da)
+                        .transferToDevice(DataTransferMode.EVERY_EXECUTION, dalpha, dbeta, ddt, da)
                         .task(
                                 "k",
                                 Qwen35DeltaNetKernels::decayAndBeta,
@@ -521,8 +541,7 @@ public class Qwen35KernelAccelTest {
         KernelContext splitContext = new KernelContext();
         TaskGraph split =
                 new TaskGraph("split")
-                        .transferToDevice(
-                                DataTransferMode.EVERY_EXECUTION, dfused, dquery, dgate)
+                        .transferToDevice(DataTransferMode.EVERY_EXECUTION, dfused, dquery, dgate)
                         .task(
                                 "k",
                                 Qwen35AttentionKernels::splitQueryGate,
@@ -582,7 +601,11 @@ public class Qwen35KernelAccelTest {
                 new TaskGraph("rope")
                         .transferToDevice(
                                 DataTransferMode.EVERY_EXECUTION,
-                                positionHolder, dq, dk, dreal, dimag)
+                                positionHolder,
+                                dq,
+                                dk,
+                                dreal,
+                                dimag)
                         .task(
                                 "k",
                                 Qwen35AttentionKernels::ropeNeoxPartial,
@@ -609,8 +632,7 @@ public class Qwen35KernelAccelTest {
         KernelContext gateContext = new KernelContext();
         TaskGraph gate =
                 new TaskGraph("gate")
-                        .transferToDevice(
-                                DataTransferMode.EVERY_EXECUTION, dvalues, dgateValues)
+                        .transferToDevice(DataTransferMode.EVERY_EXECUTION, dvalues, dgateValues)
                         .task(
                                 "k",
                                 Qwen35AttentionKernels::applyOutputGate,
@@ -624,7 +646,8 @@ public class Qwen35KernelAccelTest {
             float expected = values[i] * CpuOperations.logistic(gateValues[i]);
             assertTrue(
                     "gated[" + i + "] " + expected + " vs " + dvalues.get(i),
-                    Math.abs(expected - dvalues.get(i)) <= Math.max(1e-5f, Math.abs(expected) * 1e-5f));
+                    Math.abs(expected - dvalues.get(i))
+                            <= Math.max(1e-5f, Math.abs(expected) * 1e-5f));
         }
     }
 }

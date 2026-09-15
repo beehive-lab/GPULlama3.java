@@ -852,16 +852,16 @@ public class TransformerPagedKvKernels {
      * shared memory; what it costs is half the lanes per workgroup, which the splits give back many
      * times over.
      *
-     * <p><b>The workgroup must therefore be launched with at most 32 lanes</b>, because
-     * {@code mShared}, {@code lShared} and {@code corrShared} are indexed by {@code localIdx} and
-     * both block reductions run to {@code localGroupSizeX}. Everything else — the strided query
-     * stage, the position scan, the running max and sum, and the strided partial write — is written
+     * <p><b>The workgroup must therefore be launched with at most 32 lanes</b>, because {@code
+     * mShared}, {@code lShared} and {@code corrShared} are indexed by {@code localIdx} and both
+     * block reductions run to {@code localGroupSizeX}. Everything else — the strided query stage,
+     * the position scan, the running max and sum, and the strided partial write — is written
      * against {@code headSize} and {@code localSize} and needs no change.
      *
-     * <p>The partial layout is the one {@code combineSplitKVAttention} expects, unchanged: per
-     * head {@code nSplits * headSize} numerators, then {@code nSplits} maxima, then {@code nSplits}
-     * sums. That combine is already generic in {@code headSize} and already treats a
-     * split whose chunk was empty as a zero contribution.
+     * <p>The partial layout is the one {@code combineSplitKVAttention} expects, unchanged: per head
+     * {@code nSplits * headSize} numerators, then {@code nSplits} maxima, then {@code nSplits}
+     * sums. That combine is already generic in {@code headSize} and already treats a split whose
+     * chunk was empty as a zero contribution.
      */
     // @formatter:on
     public static void processHeadsFlashAttentionSplitKVFP16PagedWideHead(

@@ -404,9 +404,9 @@ public final class CpuOperations {
      * @param values the buffer holding the slice
      * @param offset where the slice starts
      * @param size how many elements it spans
-     * @param eps a floor on the divisor, so an all-zero slice yields zeros rather than NaN. A
-     *     floor rather than a term added under the root: that is what {@code ggml_l2_norm} does,
-     *     and the two differ by more than rounding once the norm approaches {@code eps}.
+     * @param eps a floor on the divisor, so an all-zero slice yields zeros rather than NaN. A floor
+     *     rather than a term added under the root: that is what {@code ggml_l2_norm} does, and the
+     *     two differ by more than rounding once the norm approaches {@code eps}.
      */
     public static void l2Norm(FloatTensor values, int offset, int size, float eps) {
         float ss = values.reduce(offset, size, 0f, (acc, xi) -> acc + xi * xi);
@@ -490,10 +490,10 @@ public final class CpuOperations {
      *
      * <p>Query and key heads may be fewer than value heads — this model has 16 of each against 48
      * value heads — so value head {@code h} reads key head {@code h % keyHeads}. <b>Modulo, not
-     * division.</b> The reference repeats the key heads with a tiling repeat, which cycles
-     * {@code 0,1,…,15,0,1,…} rather than blocking {@code 0,0,0,1,1,1,…}; the fused kernel states
-     * the same mapping directly. Both orderings produce well-formed output, and the wrong one
-     * degrades slowly with sequence length rather than failing outright.
+     * division.</b> The reference repeats the key heads with a tiling repeat, which cycles {@code
+     * 0,1,…,15,0,1,…} rather than blocking {@code 0,0,0,1,1,1,…}; the fused kernel states the same
+     * mapping directly. Both orderings produce well-formed output, and the wrong one degrades
+     * slowly with sequence length rather than failing outright.
      *
      * <p>State layout is {@code (h * stateDim + i) * stateDim + j}: row {@code i} indexes the key
      * dimension and column {@code j} the value dimension.
@@ -570,8 +570,8 @@ public final class CpuOperations {
      * {@code GatedNorm} — {@code rms_norm(x, weight) * silu(gate)}, per head.
      *
      * <p>Neither {@link #rmsNorm} nor {@link #swiGLU} alone: the normalization is per head over
-     * {@code headDim} elements against a weight of that width shared by every head, and the gate
-     * is applied to the normalized result rather than to a parallel projection.
+     * {@code headDim} elements against a weight of that width shared by every head, and the gate is
+     * applied to the normalized result rather than to a parallel projection.
      *
      * @param values the branch output, {@code heads * headDim}, normalized and gated in place
      * @param gate the {@code z} branch, the same shape, read through a SiLU
@@ -595,7 +595,8 @@ public final class CpuOperations {
             for (int i = 0; i < headDim; i++) {
                 float z = gate.getFloat(base + i);
                 float silu = z / (float) (1.0 + Math.exp(-z));
-                values.setFloat(base + i, weight.getFloat(i) * (inv * values.getFloat(base + i)) * silu);
+                values.setFloat(
+                        base + i, weight.getFloat(i) * (inv * values.getFloat(base + i)) * silu);
             }
         }
     }

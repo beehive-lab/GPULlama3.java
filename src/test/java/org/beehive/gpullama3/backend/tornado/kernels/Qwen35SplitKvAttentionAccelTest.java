@@ -1,6 +1,5 @@
 package org.beehive.gpullama3.backend.tornado.kernels;
 
-import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
 
@@ -111,10 +110,30 @@ public class Qwen35SplitKvAttentionAccelTest {
             position.set(0, seqLen - 1); // pos; the kernels read seqLen = pos + 1
             position.set(1, 0); // slot
 
-            FloatArray reference = runPerHead(query, keyCache, valueCache, position, blockTable,
-                    blockCfg, blockStride, seqLen, HEAD_SIZE, KV_DIM);
-            FloatArray candidate = runSplit(query, keyCache, valueCache, position, blockTable,
-                    blockCfg, blockStride, seqLen, HEAD_SIZE, KV_DIM);
+            FloatArray reference =
+                    runPerHead(
+                            query,
+                            keyCache,
+                            valueCache,
+                            position,
+                            blockTable,
+                            blockCfg,
+                            blockStride,
+                            seqLen,
+                            HEAD_SIZE,
+                            KV_DIM);
+            FloatArray candidate =
+                    runSplit(
+                            query,
+                            keyCache,
+                            valueCache,
+                            position,
+                            blockTable,
+                            blockCfg,
+                            blockStride,
+                            seqLen,
+                            HEAD_SIZE,
+                            KV_DIM);
 
             double largest = 0;
             double worst = 0;
@@ -122,10 +141,10 @@ public class Qwen35SplitKvAttentionAccelTest {
             for (int i = 0; i < HEADS * HEAD_SIZE; i++) {
                 float ref = reference.get(i);
                 float got = candidate.get(i);
-                assertTrue("seqLen " + seqLen + ": reference not finite at " + i,
-                        Float.isFinite(ref));
-                assertTrue("seqLen " + seqLen + ": candidate not finite at " + i,
-                        Float.isFinite(got));
+                assertTrue(
+                        "seqLen " + seqLen + ": reference not finite at " + i, Float.isFinite(ref));
+                assertTrue(
+                        "seqLen " + seqLen + ": candidate not finite at " + i, Float.isFinite(got));
                 largest = Math.max(largest, Math.abs(ref));
                 if (Math.abs(ref - got) > worst) {
                     worst = Math.abs(ref - got);
@@ -142,19 +161,49 @@ public class Qwen35SplitKvAttentionAccelTest {
         }
     }
 
-    private static FloatArray runPerHead(FloatArray query, HalfFloatArray keyCache,
-            HalfFloatArray valueCache, IntArray position, IntArray blockTable, int blockCfg,
-            int blockStride, int seqLen, int HEAD_SIZE, int KV_DIM) throws Exception {
+    private static FloatArray runPerHead(
+            FloatArray query,
+            HalfFloatArray keyCache,
+            HalfFloatArray valueCache,
+            IntArray position,
+            IntArray blockTable,
+            int blockCfg,
+            int blockStride,
+            int seqLen,
+            int HEAD_SIZE,
+            int KV_DIM)
+            throws Exception {
         FloatArray xb = new FloatArray(HEADS * HEAD_SIZE);
         xb.init(Float.NaN);
         String name = "perhead" + HEAD_SIZE + "_" + seqLen;
-        TaskGraph graph = new TaskGraph(name)
-                .transferToDevice(DataTransferMode.EVERY_EXECUTION, query, keyCache, valueCache,
-                        position, blockTable, xb)
-                .task(name, TransformerPagedKvKernels::processHeadsFlashAttentionFP16Paged,
-                        new KernelContext(), query, keyCache, valueCache, xb, HEADS, HEAD_SIZE,
-                        KV_DIM, KV_MUL, position, 0, blockTable, blockCfg, blockStride)
-                .transferToHost(DataTransferMode.EVERY_EXECUTION, xb);
+        TaskGraph graph =
+                new TaskGraph(name)
+                        .transferToDevice(
+                                DataTransferMode.EVERY_EXECUTION,
+                                query,
+                                keyCache,
+                                valueCache,
+                                position,
+                                blockTable,
+                                xb)
+                        .task(
+                                name,
+                                TransformerPagedKvKernels::processHeadsFlashAttentionFP16Paged,
+                                new KernelContext(),
+                                query,
+                                keyCache,
+                                valueCache,
+                                xb,
+                                HEADS,
+                                HEAD_SIZE,
+                                KV_DIM,
+                                KV_MUL,
+                                position,
+                                0,
+                                blockTable,
+                                blockCfg,
+                                blockStride)
+                        .transferToHost(DataTransferMode.EVERY_EXECUTION, xb);
         WorkerGrid1D worker = new WorkerGrid1D(HEADS * 64);
         worker.setLocalWork(64, 1, 1);
         GridScheduler scheduler = new GridScheduler();
@@ -165,26 +214,63 @@ public class Qwen35SplitKvAttentionAccelTest {
         return xb;
     }
 
-    private static FloatArray runSplit(FloatArray query, HalfFloatArray keyCache,
-            HalfFloatArray valueCache, IntArray position, IntArray blockTable, int blockCfg,
-            int blockStride, int seqLen, int HEAD_SIZE, int KV_DIM) throws Exception {
+    private static FloatArray runSplit(
+            FloatArray query,
+            HalfFloatArray keyCache,
+            HalfFloatArray valueCache,
+            IntArray position,
+            IntArray blockTable,
+            int blockCfg,
+            int blockStride,
+            int seqLen,
+            int HEAD_SIZE,
+            int KV_DIM)
+            throws Exception {
         FloatArray xb = new FloatArray(HEADS * HEAD_SIZE);
         xb.init(Float.NaN);
         FloatArray att = new FloatArray(HEADS * SPLITS * (HEAD_SIZE + 2));
         att.init(Float.NaN);
         String name = "split" + HEAD_SIZE + "_" + seqLen;
-        TaskGraph graph = new TaskGraph(name)
-                .transferToDevice(DataTransferMode.EVERY_EXECUTION, query, keyCache, valueCache,
-                        position, blockTable, att, xb)
-                .task(
-                        name + "s",
-                        TransformerPagedKvKernels
-                                ::processHeadsFlashAttentionSplitKVFP16PagedWideHead,
-                        new KernelContext(), query, keyCache, valueCache, att, HEADS, HEAD_SIZE,
-                        KV_DIM, KV_MUL, position, 0, blockTable, blockCfg, blockStride, SPLITS)
-                .task(name + "c", TransformerComputeKernelsLayered::combineSplitKVAttention,
-                        new KernelContext(), att, xb, HEADS, HEAD_SIZE, SPLITS)
-                .transferToHost(DataTransferMode.EVERY_EXECUTION, xb);
+        TaskGraph graph =
+                new TaskGraph(name)
+                        .transferToDevice(
+                                DataTransferMode.EVERY_EXECUTION,
+                                query,
+                                keyCache,
+                                valueCache,
+                                position,
+                                blockTable,
+                                att,
+                                xb)
+                        .task(
+                                name + "s",
+                                TransformerPagedKvKernels
+                                        ::processHeadsFlashAttentionSplitKVFP16PagedWideHead,
+                                new KernelContext(),
+                                query,
+                                keyCache,
+                                valueCache,
+                                att,
+                                HEADS,
+                                HEAD_SIZE,
+                                KV_DIM,
+                                KV_MUL,
+                                position,
+                                0,
+                                blockTable,
+                                blockCfg,
+                                blockStride,
+                                SPLITS)
+                        .task(
+                                name + "c",
+                                TransformerComputeKernelsLayered::combineSplitKVAttention,
+                                new KernelContext(),
+                                att,
+                                xb,
+                                HEADS,
+                                HEAD_SIZE,
+                                SPLITS)
+                        .transferToHost(DataTransferMode.EVERY_EXECUTION, xb);
         WorkerGrid1D splitWorker = new WorkerGrid1D(HEADS * SPLITS * SPLIT_LOCAL);
         splitWorker.setLocalWork(SPLIT_LOCAL, 1, 1);
         WorkerGrid1D combineWorker = new WorkerGrid1D(HEADS * 64);

@@ -46,10 +46,9 @@ public interface Configuration {
      * How many layers hold key/value entries.
      *
      * <p>Every layer, for a stack that is attention throughout — which is every family but one.
-     * {@code qwen35} attends in one layer of four and mixes the rest with a recurrence that
-     * retains nothing per position, so its key/value store is sized by this rather than by the
-     * layer count, and a memory prediction built from {@link #numberOfLayers()} over-predicts it
-     * fourfold.
+     * {@code qwen35} attends in one layer of four and mixes the rest with a recurrence that retains
+     * nothing per position, so its key/value store is sized by this rather than by the layer count,
+     * and a memory prediction built from {@link #numberOfLayers()} over-predicts it fourfold.
      */
     // @formatter:on
     default int keyValueLayerCount() {
@@ -62,8 +61,8 @@ public interface Configuration {
      *
      * <p>The layout says how many families of per-layer graphs a mode builds; the Tornado runtime
      * allocates a device buffer per graph that binds an array, so that count is the multiplier on
-     * per-layer weight memory — <i>unless</i> a family consumes the copy another uploaded. A
-     * family that consumes costs graphs, not gigabytes.
+     * per-layer weight memory — <i>unless</i> a family consumes the copy another uploaded. A family
+     * that consumes costs graphs, not gigabytes.
      *
      * <p>Defaults to the layout's own count, which is what a family whose graphs each upload their
      * own weights should report. Over-predicting here is not the safe direction it usually is: this

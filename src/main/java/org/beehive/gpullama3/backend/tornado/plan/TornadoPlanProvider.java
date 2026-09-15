@@ -49,8 +49,8 @@ public interface TornadoPlanProvider {
      * Q6_K vocabulary projection and F32 recurrent parameters.
      *
      * <p>Listing a representation here is a claim that some task decodes it natively. It is not a
-     * claim that every operation can: an operation with no kernel for a representation must fail
-     * by name at plan construction, not be repaired by conversion.
+     * claim that every operation can: an operation with no kernel for a representation must fail by
+     * name at plan construction, not be repaired by conversion.
      */
     default Set<DataType> nativeTensorTypes() {
         return supportedDataTypes();

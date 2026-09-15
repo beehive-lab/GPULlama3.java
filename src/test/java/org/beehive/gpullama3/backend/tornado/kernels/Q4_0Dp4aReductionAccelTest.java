@@ -172,11 +172,7 @@ public class Q4_0Dp4aReductionAccelTest {
     }
 
     private static float[] run(
-            String name,
-            float[] host,
-            byte[] raw,
-            int n,
-            ProgramIdentity.SourceRecorder recorder)
+            String name, float[] host, byte[] raw, int n, ProgramIdentity.SourceRecorder recorder)
             throws Exception {
         FloatArray x = new FloatArray(n);
         for (int i = 0; i < n; i++) {
@@ -416,8 +412,8 @@ public class Q4_0Dp4aReductionAccelTest {
 
         int shuffles = count(matvec, "shfl");
         int barriers = count(matvec, "__syncthreads") + count(matvec, "barrier(");
-        System.out.printf("[DP4A warp] generated code: %d shuffles, %d barriers%n",
-                shuffles, barriers);
+        System.out.printf(
+                "[DP4A warp] generated code: %d shuffles, %d barriers%n", shuffles, barriers);
         assertEquals("one shuffle per butterfly step", 5, shuffles);
         assertEquals("one barrier, between the warp writes and the combine", 1, barriers);
     }
@@ -435,8 +431,8 @@ public class Q4_0Dp4aReductionAccelTest {
     // ------------------------------------------------- the residual and fused forms
 
     /** Runs one of the residual kernels over a pre-filled destination. */
-    private static float[] runResidual(String name, float[] host, byte[] raw, int n,
-            float[] destination) throws Exception {
+    private static float[] runResidual(
+            String name, float[] host, byte[] raw, int n, float[] destination) throws Exception {
         FloatArray x = new FloatArray(n);
         for (int i = 0; i < n; i++) {
             x.set(i, host[i]);
@@ -471,7 +467,15 @@ public class Q4_0Dp4aReductionAccelTest {
         graph.task(
                 "matvec",
                 TransformerComputeKernelsQ4_0::matrixVectorGenericWithResidualQ4_0DP4A,
-                new KernelContext(), quants, scales, sums, hb, w, n, D, LOCAL);
+                new KernelContext(),
+                quants,
+                scales,
+                sums,
+                hb,
+                w,
+                n,
+                D,
+                LOCAL);
         graph.transferToHost(DataTransferMode.EVERY_EXECUTION, hb);
 
         GridScheduler scheduler = new GridScheduler();
@@ -516,7 +520,13 @@ public class Q4_0Dp4aReductionAccelTest {
         TaskGraph graph =
                 new TaskGraph(name)
                         .transferToDevice(
-                                DataTransferMode.EVERY_EXECUTION, x, w1, w3, quants, scales, sums,
+                                DataTransferMode.EVERY_EXECUTION,
+                                x,
+                                w1,
+                                w3,
+                                quants,
+                                scales,
+                                sums,
                                 hb)
                         .task(
                                 "quantize",
@@ -529,7 +539,16 @@ public class Q4_0Dp4aReductionAccelTest {
         graph.task(
                 "fused",
                 TransformerComputeKernelsQ4_0::fusedFFNGateUpSiLUQ4_0DP4A,
-                new KernelContext(), quants, scales, sums, hb, w1, w3, n, D, LOCAL);
+                new KernelContext(),
+                quants,
+                scales,
+                sums,
+                hb,
+                w1,
+                w3,
+                n,
+                D,
+                LOCAL);
         graph.transferToHost(DataTransferMode.EVERY_EXECUTION, hb);
 
         GridScheduler scheduler = new GridScheduler();
@@ -620,8 +639,8 @@ public class Q4_0Dp4aReductionAccelTest {
             double silu = gate / (1.0 + Math.exp(-gate));
             double expected = silu * up;
             assertTrue("row " + row + " is " + got[row], Float.isFinite(got[row]));
-            assertEquals("row " + row, expected, got[row],
-                    Math.max(1e-3, 1e-5 * Math.abs(expected)));
+            assertEquals(
+                    "row " + row, expected, got[row], Math.max(1e-3, 1e-5 * Math.abs(expected)));
         }
     }
 }

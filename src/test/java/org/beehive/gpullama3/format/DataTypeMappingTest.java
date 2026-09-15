@@ -111,10 +111,10 @@ public class DataTypeMappingTest {
      * The converting device path promotes every block quantization to Q8_0, and says so.
      *
      * <p>This replaces a test asserting that no target materializes a "format-decoded" type. That
-     * framing is gone: the quantizations are kept in the file's own layout by
-     * {@code ModelLoader.loadTornadoTensorNative}, and what {@link DataTypeMapping#materializedType}
-     * still describes is the older loading path some families remain on. Naming it is the point —
-     * the conversion is a declared decision that reaches the memory plan, not a silent one.
+     * framing is gone: the quantizations are kept in the file's own layout by {@code
+     * ModelLoader.loadTornadoTensorNative}, and what {@link DataTypeMapping#materializedType} still
+     * describes is the older loading path some families remain on. Naming it is the point — the
+     * conversion is a declared decision that reaches the memory plan, not a silent one.
      */
     @Test
     public void theConvertingDevicePathPromotesToQ8_0() {

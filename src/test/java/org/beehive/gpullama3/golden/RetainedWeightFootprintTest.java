@@ -19,8 +19,8 @@ import org.junit.Test;
  * that predicts every 4-bit weight at 8.5 bits per weight refuses a configuration that would have
  * run, and a refusal is not something the caller can overrule.
  *
- * <p>Reads descriptors only, so it is fast and touches no tensor data. It skips with a named
- * reason when the fixture is absent, per the Class B rule: a missing fixture must never pass.
+ * <p>Reads descriptors only, so it is fast and touches no tensor data. It skips with a named reason
+ * when the fixture is absent, per the Class B rule: a missing fixture must never pass.
  */
 public class RetainedWeightFootprintTest {
 

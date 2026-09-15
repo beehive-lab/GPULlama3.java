@@ -66,10 +66,7 @@ public class Q4_0DecodeTest {
                 if (Float.isNaN(expected)) {
                     // A random scale can be NaN; the two must still agree that it is.
                     assertEquals(
-                            "element " + i + ": host NaN, device " + actual,
-                            Float.NaN,
-                            actual,
-                            0f);
+                            "element " + i + ": host NaN, device " + actual, Float.NaN, actual, 0f);
                     continue;
                 }
                 assertEquals(

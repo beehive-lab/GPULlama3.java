@@ -174,7 +174,9 @@ public class Qwen35ToolCallsTest {
                 }) {
             ToolCallExtract original = new ToolCallExtract("f", arguments);
             String wire =
-                    "<tool_call>\n" + Qwen35ToolCalls.renderFunctionBlock(original) + "\n</tool_call>";
+                    "<tool_call>\n"
+                            + Qwen35ToolCalls.renderFunctionBlock(original)
+                            + "\n</tool_call>";
             ToolCallExtract parsed = Qwen35ToolCalls.parseFirst(wire).orElseThrow();
             assertEquals("name for " + arguments, "f", parsed.name());
             assertEquals("arguments for " + arguments, arguments, parsed.argumentsJson());

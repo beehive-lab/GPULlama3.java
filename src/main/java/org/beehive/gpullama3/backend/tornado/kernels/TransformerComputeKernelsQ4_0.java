@@ -229,21 +229,21 @@ public final class TransformerComputeKernelsQ4_0 {
      *
      * <p>{@code TransformerComputeKernelsLayered.reductionOneBlock2WithLayer} followed by {@link
      * #quantizeActivationQ8Blocks} over the same activation, which is what every decode layer
-     * dispatches twice — once for the attention norm's output and once for the feed-forward's.
-     * The apply is <b>elementwise</b> despite its name ({@code xb[i] = weight[i] * (ss * x[i])},
-     * with {@code ss} the scale the reduce already wrote), and the quantization's workgroup owns
-     * exactly the 32 consecutive elements its own lanes would have normalized. So each lane
-     * computes its element instead of reading it back, and <b>no synchronization crosses a
-     * workgroup</b> — the reduce that does span the row stays the separate task it was.
+     * dispatches twice — once for the attention norm's output and once for the feed-forward's. The
+     * apply is <b>elementwise</b> despite its name ({@code xb[i] = weight[i] * (ss * x[i])}, with
+     * {@code ss} the scale the reduce already wrote), and the quantization's workgroup owns exactly
+     * the 32 consecutive elements its own lanes would have normalized. So each lane computes its
+     * element instead of reading it back, and <b>no synchronization crosses a workgroup</b> — the
+     * reduce that does span the row stays the separate task it was.
      *
      * <p>{@code xb} is still written. It is not dead: the F32 {@code ssm_alpha} and {@code
-     * ssm_beta} projections read it directly, as does every non-packed projection. What the
-     * fusion removes is the second launch and the read-back of {@code xb}, not the store.
+     * ssm_beta} projections read it directly, as does every non-packed projection. What the fusion
+     * removes is the second launch and the read-back of {@code xb}, not the store.
      *
      * <p>Same arithmetic, in the same order, so the result is bit-identical: {@code weight * (ss *
      * x)} is a product of products with no addition, so there is no fused multiply-add for the
-     * compiler to contract differently, and the value a lane computes is the one the separate
-     * apply would have stored and the quantization read back.
+     * compiler to contract differently, and the value a lane computes is the one the separate apply
+     * would have stored and the quantization read back.
      *
      * @param xb the normalized activation, still written for its other readers
      * @param x the residual stream
@@ -342,8 +342,8 @@ public final class TransformerComputeKernelsQ4_0 {
      * and {@code localWorkGroupSize} must be a multiple of 32. Shuffles are correct on CUDA and
      * miscompile on OpenCL, which is why every packed kernel rides on {@code
      * DeviceCapability.PACKED_INTEGER_DOT}, granted on CUDA alone. Interleaved whole-model A/B,
-     * tg128 b32, FP16 KV and CUDA graphs, RTX 5090 Laptop: 24.16 to 24.67 t/s against the tree,
-     * and 17.19 to 17.37 at depth 381. The order of summation differs from the tree's, so the
+     * tg128 b32, FP16 KV and CUDA graphs, RTX 5090 Laptop: 24.16 to 24.67 t/s against the tree, and
+     * 17.19 to 17.37 at depth 381. The order of summation differs from the tree's, so the
      * floating-point total may round differently; the integer dot products are exact either way.
      */
     // @formatter:on
@@ -752,14 +752,11 @@ public final class TransformerComputeKernelsQ4_0 {
                 int high = xQuants.get(quantBase + 4 + g);
                 // The same four operands the byte-wise packing produced: the low nibble of each of
                 // the four bytes, then the high nibble of each, in the same DP4A pairing and order.
+                gateDot = QuantizationUtils.dp4a_packed(gateWord & 0x0F0F0F0F, low, gateDot);
                 gateDot =
-                        QuantizationUtils.dp4a_packed(gateWord & 0x0F0F0F0F, low, gateDot);
-                gateDot =
-                        QuantizationUtils.dp4a_packed(
-                                (gateWord >>> 4) & 0x0F0F0F0F, high, gateDot);
+                        QuantizationUtils.dp4a_packed((gateWord >>> 4) & 0x0F0F0F0F, high, gateDot);
                 upDot = QuantizationUtils.dp4a_packed(upWord & 0x0F0F0F0F, low, upDot);
-                upDot =
-                        QuantizationUtils.dp4a_packed((upWord >>> 4) & 0x0F0F0F0F, high, upDot);
+                upDot = QuantizationUtils.dp4a_packed((upWord >>> 4) & 0x0F0F0F0F, high, upDot);
             }
             gate += gateScale * activationScale * (gateDot - correction);
             up += upScale * activationScale * (upDot - correction);

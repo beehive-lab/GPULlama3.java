@@ -49,9 +49,8 @@ public class TransformerComputeKernels {
      *
      * <p>The widths are stated separately rather than as {@code (q, kv, kv)}. {@code splitQKV} in
      * {@code TransformerComputeKernelsLayered} assumes a key and a value of equal width, which is
-     * true of attention and false of a delta-net mixer: its fused projection is {@code 2048 |
-     * 2048 | 6144}, and splitting it on equal halves would take the value slice from inside the
-     * keys.
+     * true of attention and false of a delta-net mixer: its fused projection is {@code 2048 | 2048
+     * | 6144}, and splitting it on equal halves would take the value slice from inside the keys.
      *
      * <p>Source and destinations are distinct buffers, so no lane overwrites an element another
      * lane has yet to read.

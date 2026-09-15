@@ -23,8 +23,8 @@ import org.junit.Test;
  * model-wide dtype is wrong for every tensor that is not that dtype, and the error runs to
  * gigabytes.
  *
- * <p>The expectations here are computed from block arithmetic per representation rather than
- * copied from a run, so this validates each dtype's accounting rather than being tuned to one file.
+ * <p>The expectations here are computed from block arithmetic per representation rather than copied
+ * from a run, so this validates each dtype's accounting rather than being tuned to one file.
  */
 public class Qwen35WeightFootprintTest {
 
@@ -115,7 +115,8 @@ public class Qwen35WeightFootprintTest {
 
         for (DataType type :
                 new DataType[] {DataType.Q4_0, DataType.Q4_1, DataType.Q5_K, DataType.Q6_K}) {
-            WeightFootprint one = ModelLoader.weightFootprint(model, DeviceRetention.retaining(Set.of(type)));
+            WeightFootprint one =
+                    ModelLoader.weightFootprint(model, DeviceRetention.retaining(Set.of(type)));
             long total = one.perLayerBytes() + one.globalBytes();
             long saved = convertingTotal - total;
             assertTrue(
@@ -136,7 +137,8 @@ public class Qwen35WeightFootprintTest {
         // Q8_0 and F32 are never converted, so retaining them changes nothing.
         for (DataType unchanged : new DataType[] {DataType.Q8_0, DataType.F32}) {
             WeightFootprint one =
-                    ModelLoader.weightFootprint(model, DeviceRetention.retaining(Set.of(unchanged)));
+                    ModelLoader.weightFootprint(
+                            model, DeviceRetention.retaining(Set.of(unchanged)));
             assertEquals(
                     unchanged + " is not converted either way",
                     convertingTotal,

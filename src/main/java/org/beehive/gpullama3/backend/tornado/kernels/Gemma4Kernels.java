@@ -44,8 +44,7 @@ public class Gemma4Kernels {
 
     /**
      * {@code x[i] *= scaleTensor[0]} -- like {@link TransformerComputeKernels#scaleInPlace}, but
-     * the (learned, per-layer)
-     * scale is read from a 1-element tensor at kernel time.
+     * the (learned, per-layer) scale is read from a 1-element tensor at kernel time.
      */
     public static void scaleInPlaceFromTensor(
             KernelContext context, FloatArray x, FloatArray scaleTensor, int size) {

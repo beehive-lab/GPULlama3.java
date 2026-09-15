@@ -50,8 +50,7 @@ public class Qwen35ModelLoader extends AbstractModelLoader<Qwen35, Qwen35Configu
      */
     private static final int DEFAULT_CONTEXT_LENGTH = 8192;
 
-    private static final System.Logger LOGGER =
-            System.getLogger(Qwen35ModelLoader.class.getName());
+    private static final System.Logger LOGGER = System.getLogger(Qwen35ModelLoader.class.getName());
 
     public Qwen35ModelLoader(
             FileChannel fileChannel, GGUF gguf, int contextLength, boolean useTornadovm) {
@@ -108,6 +107,7 @@ public class Qwen35ModelLoader extends AbstractModelLoader<Qwen35, Qwen35Configu
         validate(config);
         return config;
     }
+
     // @formatter:on
 
     /**
@@ -223,15 +223,21 @@ public class Qwen35ModelLoader extends AbstractModelLoader<Qwen35, Qwen35Configu
     @Override
     protected Pair<float[], float[]> precomputeRopeFrequencies(Qwen35Configuration config) {
         return RopeFrequencies.precomputeFreqsCis(
-                config.contextLength(), config.ropeDimensionCount(), config.ropeTheta(),
-                false, 0, 0, 0, 0);
+                config.contextLength(),
+                config.ropeDimensionCount(),
+                config.ropeTheta(),
+                false,
+                0,
+                0,
+                0,
+                0);
     }
 
     @Override
-    protected Qwen35 createModel(
-            Qwen35Configuration config, Tokenizer tokenizer, Weights weights) {
+    protected Qwen35 createModel(Qwen35Configuration config, Tokenizer tokenizer, Weights weights) {
         ChatTokens chatTokens =
-                new ChatTokens("<|im_start|>", "<|im_end|>", "", "<|end_of_text|>", "<|endoftext|>");
+                new ChatTokens(
+                        "<|im_start|>", "<|im_end|>", "", "<|end_of_text|>", "<|endoftext|>");
         return new Qwen35(
                 config,
                 tokenizer,
@@ -252,11 +258,17 @@ public class Qwen35ModelLoader extends AbstractModelLoader<Qwen35, Qwen35Configu
         final int trunk = config.numberOfLayers();
 
         // Present at every block, of either kind.
-        FloatTensor[] attnNorm = perBlock(blocks, l -> tensorEntries.get("blk." + l + ".attn_norm.weight"));
-        FloatTensor[] ffnNorm = perBlock(blocks, l -> tensorEntries.get("blk." + l + ".post_attention_norm.weight"));
-        FloatTensor[] ffnGate = perBlock(blocks, l -> tensorEntries.get("blk." + l + ".ffn_gate.weight"));
-        FloatTensor[] ffnDown = perBlock(blocks, l -> tensorEntries.get("blk." + l + ".ffn_down.weight"));
-        FloatTensor[] ffnUp = perBlock(blocks, l -> tensorEntries.get("blk." + l + ".ffn_up.weight"));
+        FloatTensor[] attnNorm =
+                perBlock(blocks, l -> tensorEntries.get("blk." + l + ".attn_norm.weight"));
+        FloatTensor[] ffnNorm =
+                perBlock(
+                        blocks, l -> tensorEntries.get("blk." + l + ".post_attention_norm.weight"));
+        FloatTensor[] ffnGate =
+                perBlock(blocks, l -> tensorEntries.get("blk." + l + ".ffn_gate.weight"));
+        FloatTensor[] ffnDown =
+                perBlock(blocks, l -> tensorEntries.get("blk." + l + ".ffn_down.weight"));
+        FloatTensor[] ffnUp =
+                perBlock(blocks, l -> tensorEntries.get("blk." + l + ".ffn_up.weight"));
 
         // Attention blocks: every trunk layer that does not recur, plus every MTP block.
         FloatTensor[] wq = new FloatTensor[blocks];
@@ -346,6 +358,7 @@ public class Qwen35ModelLoader extends AbstractModelLoader<Qwen35, Qwen35Configu
                 nextnSharedHeadNorm,
                 DataTypeMapping.sourceType(outputWeight.ggmlType()));
     }
+
     // @formatter:on
 
     private static FloatTensor[] perBlock(int blocks, IntFunction<GGMLTensorEntry> entry) {
@@ -392,9 +405,9 @@ public class Qwen35ModelLoader extends AbstractModelLoader<Qwen35, Qwen35Configu
      * against a device that has 24; retained, they are the file's own 14.944 GiB of weight bytes.
      *
      * <p>Every task in this family's layer graphs is selected by the representation of the tensor
-     * it reads, so a tensor's own layout is what a kernel decodes. Where several operands are
-     * fused into one task, the graph validates their combination and refuses a mixture it was not
-     * written for; it never reads one block layout as another and never converts the odd operand.
+     * it reads, so a tensor's own layout is what a kernel decodes. Where several operands are fused
+     * into one task, the graph validates their combination and refuses a mixture it was not written
+     * for; it never reads one block layout as another and never converts the odd operand.
      */
     // @formatter:on
     @Override
@@ -408,8 +421,11 @@ public class Qwen35ModelLoader extends AbstractModelLoader<Qwen35, Qwen35Configu
         final int blocks = config.numberOfBlocks();
         final int trunk = config.numberOfLayers();
 
-        TornadoTensor[] attnNorm = perBlockDevice(blocks, l -> tensorEntries.get("blk." + l + ".attn_norm.weight"));
-        TornadoTensor[] ffnNorm = perBlockDevice(blocks, l -> tensorEntries.get("blk." + l + ".post_attention_norm.weight"));
+        TornadoTensor[] attnNorm =
+                perBlockDevice(blocks, l -> tensorEntries.get("blk." + l + ".attn_norm.weight"));
+        TornadoTensor[] ffnNorm =
+                perBlockDevice(
+                        blocks, l -> tensorEntries.get("blk." + l + ".post_attention_norm.weight"));
         TornadoTensor[] ffnGate = new TornadoTensor[blocks];
         TornadoTensor[] ffnDown = new TornadoTensor[blocks];
         TornadoTensor[] ffnUp = new TornadoTensor[blocks];
@@ -503,8 +519,7 @@ public class Qwen35ModelLoader extends AbstractModelLoader<Qwen35, Qwen35Configu
         return ModelLoader.loadTornadoTensorNative(entry);
     }
 
-    private static TornadoTensor[] perBlockDevice(
-            int blocks, IntFunction<GGMLTensorEntry> entry) {
+    private static TornadoTensor[] perBlockDevice(int blocks, IntFunction<GGMLTensorEntry> entry) {
         TornadoTensor[] tensors = new TornadoTensor[blocks];
         for (int l = 0; l < blocks; l++) {
             GGMLTensorEntry found = entry.apply(l);
@@ -530,8 +545,8 @@ public class Qwen35ModelLoader extends AbstractModelLoader<Qwen35, Qwen35Configu
      * feed-forward inputs, of either layer kind. They share one representation in every file this
      * quantizer produces, and this insists on it rather than assuming it.
      *
-     * <p>What is deliberately excluded: {@code ffn_down}, which the 27B holds as Q4_1 for its
-     * first eight blocks and Q4_0 thereafter; {@code ssm_out}, Q5_K; {@code output}, Q6_K; the MTP
+     * <p>What is deliberately excluded: {@code ffn_down}, which the 27B holds as Q4_1 for its first
+     * eight blocks and Q4_0 thereafter; {@code ssm_out}, Q5_K; {@code output}, Q6_K; the MTP
      * projection, Q8_0; and every F32 norm and SSM parameter. Each of those is read by a task
      * chosen from its own representation, so none of them needs to agree with anything.
      *

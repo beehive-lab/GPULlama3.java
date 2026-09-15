@@ -85,9 +85,9 @@ public final class TornadoPlanRegistry {
      * materialization.
      *
      * <p>The provider's own {@code nativeTensorTypes}, which is the declaration that answers this
-     * per tensor. It is separate from {@code supportedDataTypes} because that one admits a plan
-     * for a model-wide representation, and a mixed model holds several: reading admission as
-     * retention under-predicts every tensor whose representation is not the model's.
+     * per tensor. It is separate from {@code supportedDataTypes} because that one admits a plan for
+     * a model-wide representation, and a mixed model holds several: reading admission as retention
+     * under-predicts every tensor whose representation is not the model's.
      *
      * <p>Read by the memory preflight, which would otherwise predict every quantized weight at its
      * Q8_0 size and refuse a configuration that fits. An architecture with no provider retains

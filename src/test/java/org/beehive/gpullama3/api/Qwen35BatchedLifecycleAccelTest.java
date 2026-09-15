@@ -29,8 +29,8 @@ import org.junit.Test;
  *
  * <p>Its own class, and therefore its own JVM: a 15.5 GiB plan cannot be built twice in a process.
  *
- * <p>Greedy at a fixed seed throughout, which is what makes token identity a property rather than
- * a hope.
+ * <p>Greedy at a fixed seed throughout, which is what makes token identity a property rather than a
+ * hope.
  */
 // @formatter:on
 public class Qwen35BatchedLifecycleAccelTest {
@@ -66,8 +66,7 @@ public class Qwen35BatchedLifecycleAccelTest {
                 // Proved, not assumed. A silent host fallback produces fluent text at a plausible
                 // rate, and every assertion below would pass on it.
                 var snapshot = org.beehive.gpullama3.auxiliary.RunMetrics.snapshot();
-                assertEquals(
-                        "the plan that ran", "legacy", snapshot.executionPath());
+                assertEquals("the plan that ran", "legacy", snapshot.executionPath());
                 assertEquals(
                         "the tuple that ran",
                         "qwen35/Q4_0/BATCH_PREFILL_DECODE",

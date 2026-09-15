@@ -1,11 +1,11 @@
 package org.beehive.gpullama3.backend.tornado.layers;
 
+import java.util.ArrayList;
+import java.util.List;
 import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerType;
 import org.beehive.gpullama3.inference.state.Qwen35State;
 import org.beehive.gpullama3.inference.weights.tornado.Qwen35TornadoWeights;
 import org.beehive.gpullama3.model.qwen35.Qwen35Configuration;
-import java.util.ArrayList;
-import java.util.List;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
@@ -24,11 +24,11 @@ import uk.ac.manchester.tornado.api.enums.DataTransferMode;
  * transfer in both families, a plan would hold the whole model twice.
  *
  * <p><b>Several layers to a graph.</b> Decode submits one graph at a time and the host cost of a
- * submission does not scale with what the graph contains, so adjacent layers share a graph and
- * the number of submissions falls by that factor. The layers are still built in order and still
+ * submission does not scale with what the graph contains, so adjacent layers share a graph and the
+ * number of submissions falls by that factor. The layers are still built in order and still
  * separate: each consumes its own weights from its own {@code batchLayer_} producer, and only the
- * graph's own edges — the activation it consumes and the state it persists — are taken once, by
- * the first and last layer in it. A final group with fewer layers left takes a smaller graph.
+ * graph's own edges — the activation it consumes and the state it persists — are taken once, by the
+ * first and last layer in it. A final group with fewer layers left takes a smaller graph.
  */
 // @formatter:on
 public class Qwen35FFNLayersBatchDecode extends Qwen35FFNLayers {
@@ -45,9 +45,9 @@ public class Qwen35FFNLayersBatchDecode extends Qwen35FFNLayers {
     /**
      * Adjacent layers to a graph.
      *
-     * <p>Four: decode submissions fall to a quarter without building one graph for the whole
-     * trunk. Not a tuning knob and not user-settable — the grouping is a property of this
-     * family's plan, and changing it is an experiment with its own measurement.
+     * <p>Four: decode submissions fall to a quarter without building one graph for the whole trunk.
+     * Not a tuning knob and not user-settable — the grouping is a property of this family's plan,
+     * and changing it is an experiment with its own measurement.
      */
     private static final int LAYERS_PER_GRAPH = 4;
 

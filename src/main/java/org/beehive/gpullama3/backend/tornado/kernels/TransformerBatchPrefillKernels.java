@@ -2505,7 +2505,8 @@ public final class TransformerBatchPrefillKernels {
 
     // @formatter:off
     /**
-     * {@code out[b][row] = w[row]·x[b]} for <b>F32</b> weights, one workgroup per (row, output row).
+     * {@code out[b][row] = w[row]·x[b]} for <b>F32</b> weights, one workgroup per (row, output
+     * row).
      *
      * <p>The batched counterpart of {@code TransformerComputeKernelsLayered.matrixVectorGeneric}
      * over a float weight matrix — what an SSM projection needs, whose weights are F32 in every

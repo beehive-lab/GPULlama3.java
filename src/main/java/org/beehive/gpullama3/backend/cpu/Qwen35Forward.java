@@ -17,13 +17,13 @@ import org.beehive.gpullama3.tensor.standard.FloatTensor;
  * delta-net rather than with attention, and the two branches are long enough that reading either
  * one inside a thousand-line switch of families would be worse than reading them here.
  *
- * <p>Everything it does is a call into {@code CpuOperations}. The operations it needs that no
- * other family did — {@code l2Norm}, {@code causalConv1d}, {@code deltaRuleUpdate}, {@code
- * gatedNorm}, and RoPE over part of a head — are in the shared vocabulary rather than private
- * here, because the arithmetic is not this family's: every recurrent architecture uses it.
+ * <p>Everything it does is a call into {@code CpuOperations}. The operations it needs that no other
+ * family did — {@code l2Norm}, {@code causalConv1d}, {@code deltaRuleUpdate}, {@code gatedNorm},
+ * and RoPE over part of a head — are in the shared vocabulary rather than private here, because the
+ * arithmetic is not this family's: every recurrent architecture uses it.
  *
- * <p>Verified against llama.cpp's {@code llama_model_qwen35::graph} and
- * {@code llm_build_delta_net_base::build_delta_net_autoregressive}.
+ * <p>Verified against llama.cpp's {@code llama_model_qwen35::graph} and {@code
+ * llm_build_delta_net_base::build_delta_net_autoregressive}.
  */
 public final class Qwen35Forward {
 
@@ -43,12 +43,12 @@ public final class Qwen35Forward {
      * One decode step through the trunk.
      *
      * <p>Every block, of either kind, has the same outer shape — normalize, mix, add back,
-     * normalize, feed forward, add back — and only the mixer differs. The MTP blocks past the
-     * trunk are not executed here; they are a draft head, driven separately.
+     * normalize, feed forward, add back — and only the mixer differs. The MTP blocks past the trunk
+     * are not executed here; they are a draft head, driven separately.
      *
      * <p>{@link Qwen35State#hNextn} is written before the vocabulary projection because the MTP
-     * block consumes exactly that vector. Written unconditionally: it costs one copy of {@code
-     * dim} floats, and a forward pass whose behaviour depends on whether speculation happens to be
+     * block consumes exactly that vector. Written unconditionally: it costs one copy of {@code dim}
+     * floats, and a forward pass whose behaviour depends on whether speculation happens to be
      * running is a forward pass that cannot be compared against itself.
      */
     // @formatter:on
@@ -125,8 +125,7 @@ public final class Qwen35Forward {
         final float eps = config.rmsNormEps();
 
         // [ enorm(embedding of the drafted token) | hnorm(the trunk's hidden state) ]
-        CpuOperations.embeddingLookup(
-                weights.tokenEmbeddingTable, drafted, state.nextnConcat, dim);
+        CpuOperations.embeddingLookup(weights.tokenEmbeddingTable, drafted, state.nextnConcat, dim);
         CpuOperations.rmsNorm(
                 state.nextnConcat, state.nextnConcat, weights.nextnENorm[block], 0, dim, eps);
         state.hNextn.copyTo(0, state.nextnConcat, dim, dim);
@@ -156,10 +155,7 @@ public final class Qwen35Forward {
 
     /** The dense SwiGLU feed-forward both layer kinds share, from {@code xb} into {@code xb2}. */
     private static void feedForward(
-            Qwen35Configuration config,
-            Qwen35StandardWeights weights,
-            Qwen35State state,
-            int l) {
+            Qwen35Configuration config, Qwen35StandardWeights weights, Qwen35State state, int l) {
         final int dim = config.dim();
         final int hidden = config.hiddenDim();
         CpuOperations.matVec(weights.ffnGate[l], state.xb, state.hb, hidden, dim);
@@ -291,10 +287,7 @@ public final class Qwen35Forward {
      */
     // @formatter:on
     private static void deltaNetBranch(
-            Qwen35Configuration config,
-            Qwen35StandardWeights weights,
-            Qwen35State state,
-            int l) {
+            Qwen35Configuration config, Qwen35StandardWeights weights, Qwen35State state, int l) {
 
         final int dim = config.dim();
         final int convDim = config.deltaNetConvDim();
@@ -319,8 +312,7 @@ public final class Qwen35Forward {
             float a =
                     CpuOperations.softplus(
                             state.ssmAlpha.getFloat(h) + weights.ssmDtBias[l].getFloat(h));
-            state.ssmAlpha.setFloat(
-                    h, (float) Math.exp(weights.ssmA[l].getFloat(h) * a));
+            state.ssmAlpha.setFloat(h, (float) Math.exp(weights.ssmA[l].getFloat(h) * a));
         }
 
         CpuOperations.causalConv1d(

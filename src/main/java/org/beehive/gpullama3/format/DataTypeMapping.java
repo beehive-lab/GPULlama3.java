@@ -23,8 +23,8 @@ public final class DataTypeMapping {
     /**
      * What the file holds, in the runtime's vocabulary — before any conversion.
      *
-     * <p>May be a block-encoded quantization: that is the honest
-     * answer for a K-quant file, and it is what the CPU path goes on to execute.
+     * <p>May be a block-encoded quantization: that is the honest answer for a K-quant file, and it
+     * is what the CPU path goes on to execute.
      *
      * @throws UnsupportedOperationException naming the type, for a format nothing here executes
      */

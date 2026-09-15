@@ -126,10 +126,10 @@ public final class Qwen35DeltaNetKernels {
     /**
      * One head scaled to unit length.
      *
-     * <p>A lane per head rather than a workgroup per head with a reduction: a head is 128 wide
-     * here and there are 16 of them, so the reduction would cost more in barriers than the serial
-     * loop costs in arithmetic. Epsilon floors the divisor rather than being added under the root,
-     * which is what {@code ggml_l2_norm} does and what the host path was written against.
+     * <p>A lane per head rather than a workgroup per head with a reduction: a head is 128 wide here
+     * and there are 16 of them, so the reduction would cost more in barriers than the serial loop
+     * costs in arithmetic. Epsilon floors the divisor rather than being added under the root, which
+     * is what {@code ggml_l2_norm} does and what the host path was written against.
      *
      * @param head the lane
      */
@@ -150,17 +150,17 @@ public final class Qwen35DeltaNetKernels {
     /**
      * The L2 norm with a workgroup per head and a lane per element.
      *
-     * <p>{@link #l2NormPerHead} gives one <b>thread</b> a whole head, so at this model's geometry
-     * — 16 key heads of 128 — the whole kernel is sixteen threads, half a warp, and each walks its
-     * head's 128 elements twice in series. This owns a head per workgroup instead: a lane loads
-     * its element once and keeps it, the sum of squares is a shared tree, and lane zero turns it
-     * into the reciprocal once for the others to read back.
+     * <p>{@link #l2NormPerHead} gives one <b>thread</b> a whole head, so at this model's geometry —
+     * 16 key heads of 128 — the whole kernel is sixteen threads, half a warp, and each walks its
+     * head's 128 elements twice in series. This owns a head per workgroup instead: a lane loads its
+     * element once and keeps it, the sum of squares is a shared tree, and lane zero turns it into
+     * the reciprocal once for the others to read back.
      *
-     * <p><b>The equation is the lane version's, including where the epsilon sits.</b> It is
-     * {@code 1 / max(sqrt(ss), eps)} — the epsilon clamps the norm itself and is not added under
-     * the root, and there is no division by the head width. That is not the gated norm's
-     * convention and the two must not be made to look alike. A head of exact zeros therefore
-     * takes {@code inv = 1/eps} and stays zero, as it does today.
+     * <p><b>The equation is the lane version's, including where the epsilon sits.</b> It is {@code
+     * 1 / max(sqrt(ss), eps)} — the epsilon clamps the norm itself and is not added under the root,
+     * and there is no division by the head width. That is not the gated norm's convention and the
+     * two must not be made to look alike. A head of exact zeros therefore takes {@code inv = 1/eps}
+     * and stays zero, as it does today.
      *
      * <p>What changes is the <b>order of the sum of squares</b>, a tree instead of a left fold, so
      * this is not bit-identical to {@link #l2NormPerHead} and is not claimed to be.
@@ -262,14 +262,14 @@ public final class Qwen35DeltaNetKernels {
      *   out[j]  = Σ S[i][j]·q[i]         // read it back
      * </pre>
      *
-     * <p>Two passes over the column rather than one, because the readout must see the updated
-     * state and the update needs the whole prediction first. Both passes are over the same 128
-     * values, so the second finds them in cache.
+     * <p>Two passes over the column rather than one, because the readout must see the updated state
+     * and the update needs the whole prediction first. Both passes are over the same 128 values, so
+     * the second finds them in cache.
      *
      * <p><b>A value head reads key head {@code h % keyHeads}.</b> Modulo, not division: the
-     * reference repeats the key heads by tiling. Dividing pairs every value head with the wrong
-     * key and produces fluent, slowly degrading output — the defect this port already made once on
-     * the host, which is why it is stated here rather than left to the caller.
+     * reference repeats the key heads by tiling. Dividing pairs every value head with the wrong key
+     * and produces fluent, slowly degrading output — the defect this port already made once on the
+     * host, which is why it is stated here rather than left to the caller.
      *
      * <p>{@code stateOffset} is where this layer's state starts, for the reason the convolution's
      * window offset exists: every recurrent layer's state lives in one array, and 48 separate
@@ -335,24 +335,24 @@ public final class Qwen35DeltaNetKernels {
      * forty-eight, and reaching the rest would mean splitting a column across workgroups, which is
      * a reduction across workgroups and is not done here.
      *
-     * <p><b>Ownership.</b> Lane {@code (half, column)} owns rows {@code [half*rows,
-     * (half+1)*rows)} of that column, in both sweeps, so every state element has exactly one
-     * writer and is written once per sweep. {@code out} is written by the {@code half == 0} lane
-     * alone. Each lane writes only its own slot of the shared array.
+     * <p><b>Ownership.</b> Lane {@code (half, column)} owns rows {@code [half*rows, (half+1)*rows)}
+     * of that column, in both sweeps, so every state element has exactly one writer and is written
+     * once per sweep. {@code out} is written by the {@code half == 0} lane alone. Each lane writes
+     * only its own slot of the shared array.
      *
      * <p><b>Synchronisation.</b> Three barriers. The first publishes both partial predictions
      * before any lane forms the correction. The second separates every lane's read of those
      * partials from the reuse of the shared array, so a fast lane cannot overwrite a value a slow
-     * lane has not read. The third publishes both partial readouts before the output is written.
-     * No barrier crosses a workgroup and no state is added.
+     * lane has not read. The third publishes both partial readouts before the output is written. No
+     * barrier crosses a workgroup and no state is added.
      *
      * <p><b>Arithmetic.</b> Per element it is the accepted kernel's, expression for expression:
      * {@code state * g} is stored before it is used, and {@code state + k * correction} is formed
      * the same way, so the intermediate rounding the accepted kernel produces is preserved and the
-     * fused multiply-add the compiler may form is the same one. What changes is the
-     * <b>association of the two reductions</b>: a sum of two half-length folds rather than one
-     * full-length fold. Both lanes of a column combine the two partials in the same order, so they
-     * form bit-identical corrections and cannot diverge from each other.
+     * fused multiply-add the compiler may form is the same one. What changes is the <b>association
+     * of the two reductions</b>: a sum of two half-length folds rather than one full-length fold.
+     * Both lanes of a column combine the two partials in the same order, so they form bit-identical
+     * corrections and cannot diverge from each other.
      */
     // @formatter:on
     public static void deltaRuleSplit(
@@ -478,17 +478,17 @@ public final class Qwen35DeltaNetKernels {
      * than the source:
      *
      * <ul>
-     *   <li>the apply loop <b>re-loads</b> {@code values}, which the summing loop has already
-     *       read, so the activation is read twice;
+     *   <li>the apply loop <b>re-loads</b> {@code values}, which the summing loop has already read,
+     *       so the activation is read twice;
      *   <li>{@code inv} is written above the loop in the source and the backend <b>sinks it back
      *       in</b>, so the divide, the add and the {@code rsqrt} run once per element rather than
      *       once per head — 6144 reciprocal square roots a call where 48 are needed.
      * </ul>
      *
      * <p>Both disappear with the mapping rather than with a rewrite of the arithmetic. A lane owns
-     * one element: it loads its value <b>once</b> and keeps it, the sum of squares is a shared
-     * tree over the workgroup, lane zero turns that into {@code inv} — once per head — and every
-     * lane reads it back through the same shared cell.
+     * one element: it loads its value <b>once</b> and keeps it, the sum of squares is a shared tree
+     * over the workgroup, lane zero turns that into {@code inv} — once per head — and every lane
+     * reads it back through the same shared cell.
      *
      * <p>The equation, the gate's position in it, the epsilon and the in-place layout are
      * unchanged: {@code weight[i] * (inv * v) * silu(z)}, associated exactly as before. What moves

@@ -1,7 +1,5 @@
 package org.beehive.gpullama3.backend.tornado;
 
-import static org.junit.Assert.fail;
-
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -29,9 +27,9 @@ import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 /**
  * A {@code qwen35} model small enough to build in a test and shaped like the real one.
  *
- * <p>Every weight is generated once and wrapped twice — as the host tensor and as the device
- * tensor for that representation, over the same bytes — so a disagreement between the two paths is
- * the engine's and not the fixture's.
+ * <p>Every weight is generated once and wrapped twice — as the host tensor and as the device tensor
+ * for that representation, over the same bytes — so a disagreement between the two paths is the
+ * engine's and not the fixture's.
  *
  * <p>The dimensions are the 27B's own wherever a shape decides whether a kernel is correct: a
  * 256-wide attention head, a 128-wide delta-net head, 48 value heads against 16 key heads, a
@@ -166,17 +164,13 @@ final class Qwen35SyntheticModel {
 
         return switch (type) {
             case Q4_0 ->
-                    new Pair(
-                            new Q4_0FloatTensor(elements, segment), new Q4_0TornadoTensor(bytes));
+                    new Pair(new Q4_0FloatTensor(elements, segment), new Q4_0TornadoTensor(bytes));
             case Q4_1 ->
-                    new Pair(
-                            new Q4_1FloatTensor(elements, segment), new Q4_1TornadoTensor(bytes));
+                    new Pair(new Q4_1FloatTensor(elements, segment), new Q4_1TornadoTensor(bytes));
             case Q5_K ->
-                    new Pair(
-                            new Q5_KFloatTensor(elements, segment), new Q5_KTornadoTensor(bytes));
+                    new Pair(new Q5_KFloatTensor(elements, segment), new Q5_KTornadoTensor(bytes));
             case Q6_K ->
-                    new Pair(
-                            new Q6_KFloatTensor(elements, segment), new Q6_KTornadoTensor(bytes));
+                    new Pair(new Q6_KFloatTensor(elements, segment), new Q6_KTornadoTensor(bytes));
             default -> throw new IllegalArgumentException(type.toString());
         };
     }
@@ -388,5 +382,4 @@ final class Qwen35SyntheticModel {
 
         return new Weights(host, device);
     }
-
 }

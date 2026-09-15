@@ -395,7 +395,8 @@ public final class TransformerComputeKernelsQ5_K {
      * <p>A Q5_K weight is {@code d * sc(sub) * q - dmin * m(sub)}, so a sub-block's contribution
      * splits into a term over the quantized weights and a term over the activation alone:
      *
-     * <pre>  sum (d*sc*q_w - dmin*m) * x  =  d*sc * sum q_w*q_x * dx  -  dmin*m * sum q_x * dx</pre>
+     * <pre>  sum (d*sc*q_w - dmin*m) * x  =  d*sc * sum q_w*q_x * dx  -  dmin*m * sum q_x * dx
+     * </pre>
      *
      * <p>The first sum is what {@code dp4a} computes; the second is the plain <b>sum of the
      * activation's quants</b>, which {@code quantizeActivationQ8Blocks} already stores. This is the

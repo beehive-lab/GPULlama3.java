@@ -29,7 +29,10 @@ public record BatchPrefillDecodeForwardTaskGraphLayout(int N, int decodeLayerGra
     public BatchPrefillDecodeForwardTaskGraphLayout {
         if (decodeLayerGraphs < 1 || decodeLayerGraphs > N) {
             throw new IllegalArgumentException(
-                    "decode layer graphs must be between 1 and " + N + ", got " + decodeLayerGraphs);
+                    "decode layer graphs must be between 1 and "
+                            + N
+                            + ", got "
+                            + decodeLayerGraphs);
         }
     }
 
@@ -81,8 +84,8 @@ public record BatchPrefillDecodeForwardTaskGraphLayout(int N, int decodeLayerGra
     /**
      * Graphs each family contributes, in layout order.
      *
-     * <p>{@code TornadoGraphTopology} checks this against both the family count and the total, so
-     * a family added without a term here fails rather than under-predicting silently.
+     * <p>{@code TornadoGraphTopology} checks this against both the family count and the total, so a
+     * family added without a term here fails rather than under-predicting silently.
      */
     public int[] layerFamilyGraphCounts() {
         return new int[] {batchLayerGraphs(), decodeLayerGraphs};

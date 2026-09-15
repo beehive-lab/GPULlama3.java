@@ -42,8 +42,7 @@ public record GatedNorm(
             throw new IllegalArgumentException("groups must be at least 1: " + groups);
         }
         if (groupLength < 1) {
-            throw new IllegalArgumentException(
-                    "groupLength must be at least 1: " + groupLength);
+            throw new IllegalArgumentException("groupLength must be at least 1: " + groupLength);
         }
     }
 

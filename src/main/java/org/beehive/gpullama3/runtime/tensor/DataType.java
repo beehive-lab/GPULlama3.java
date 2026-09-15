@@ -45,11 +45,10 @@ public enum DataType {
      * 16-bit brain float: the same exponent range as {@link #F32} with fewer mantissa bits.
      *
      * <p>Not block-encoded: the CPU materializes a tensor in this representation and reads it
-     * directly. The GPU does not execute it, and converts to {@link
-     * #F16} at load instead — a narrowing that loses exponent range, which is why the conversion is
-     * stated in {@link #materializedFallback()} rather than left implicit. The device type exists
-     * (TornadoVM's {@code BFloat16Array}, 5.2.0), so this is today's behaviour and not a permanent
-     * limit.
+     * directly. The GPU does not execute it, and converts to {@link #F16} at load instead — a
+     * narrowing that loses exponent range, which is why the conversion is stated in {@link
+     * #materializedFallback()} rather than left implicit. The device type exists (TornadoVM's
+     * {@code BFloat16Array}, 5.2.0), so this is today's behaviour and not a permanent limit.
      */
     BF16(false),
 

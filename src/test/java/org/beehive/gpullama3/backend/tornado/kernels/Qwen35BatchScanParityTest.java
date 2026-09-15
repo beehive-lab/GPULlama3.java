@@ -160,17 +160,8 @@ public class Qwen35BatchScanParityTest {
                 FloatArray rowOut = new FloatArray(valueDim);
                 for (int lane = 0; lane < VALUE_HEADS * STATE_DIM; lane++) {
                     Qwen35DeltaNetKernels.deltaRuleLane(
-                            rowQ,
-                            rowK,
-                            rowV,
-                            rowDecay,
-                            rowBeta,
-                            stepState,
-                            rowOut,
-                            KEY_HEADS,
-                            STATE_DIM,
-                            0,
-                            lane);
+                            rowQ, rowK, rowV, rowDecay, rowBeta, stepState, rowOut, KEY_HEADS,
+                            STATE_DIM, 0, lane);
                 }
                 for (int i = 0; i < valueDim; i++) {
                     stepOut.set(row * valueDim + i, rowOut.get(i));

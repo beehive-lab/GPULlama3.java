@@ -19,8 +19,9 @@ import org.beehive.gpullama3.format.GGMLType;
  * and reconstructs {@code d * nibble + m}, so the nibble is never biased and the block need not be
  * symmetric about zero.
  *
- * <p>Present because the `qwen35` architecture mixes it in: `Qwen3.8-27B-Q4_0.gguf` is Q4_0 throughout except for
- * the first eight layers' {@code ffn_down}, which the quantizer emitted as Q4_1.
+ * <p>Present because the `qwen35` architecture mixes it in: `Qwen3.8-27B-Q4_0.gguf` is Q4_0
+ * throughout except for the first eight layers' {@code ffn_down}, which the quantizer emitted as
+ * Q4_1.
  *
  * <p>The dot product distributes over the affine form — {@code Σ xᵢ(d·qᵢ + m) = d·Σ xᵢqᵢ + m·Σ xᵢ}
  * — which is why the vectorized loop carries the running products and the running activations and
@@ -81,9 +82,12 @@ public final class Q4_1FloatTensor extends FloatTensor {
         } else {
             nibble =
                     (readByte(
-                                    memorySegment,
-                                    blockOffset + NIBBLES_OFFSET + modIndex - BLOCK_SIZE / 2)
-                            >>> 4)
+                                            memorySegment,
+                                            blockOffset
+                                                    + NIBBLES_OFFSET
+                                                    + modIndex
+                                                    - BLOCK_SIZE / 2)
+                                    >>> 4)
                             & 0x0F;
         }
         return nibble * scale + min;

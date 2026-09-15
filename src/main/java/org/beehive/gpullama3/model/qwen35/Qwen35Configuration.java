@@ -16,9 +16,9 @@ import org.beehive.gpullama3.model.Configuration;
  * 27B's 64 trunk layers. {@link #isRecurrentLayer(int)} is the single place that decision is made.
  *
  * <p>{@link #numberOfLayers()} counts the trunk only. The MTP/NextN blocks that follow it are
- * {@link #numberOfNextnLayers()}, addressed at indices {@code numberOfLayers() ..
- * numberOfLayers() + numberOfNextnLayers() - 1}; they are loaded and driven by speculative
- * decoding, never by the trunk's own forward pass.
+ * {@link #numberOfNextnLayers()}, addressed at indices {@code numberOfLayers() .. numberOfLayers()
+ * + numberOfNextnLayers() - 1}; they are loaded and driven by speculative decoding, never by the
+ * trunk's own forward pass.
  *
  * <h2>Dimensions that are stated, not derived</h2>
  *
@@ -28,34 +28,38 @@ import org.beehive.gpullama3.model.Configuration;
  * #headKeyDim()} and friends do once so no caller repeats the arithmetic.
  */
 // @formatter:off
-public record Qwen35Configuration(String quantization,
-                                  int dim,
-                                  int hiddenDim,
-                                  int numberOfLayers,
-                                  int numberOfNextnLayers,
-                                  int numberOfHeads,
-                                  int numberOfKeyValueHeads,
-                                  int numberOfHeadsKey,
-                                  int numberOfHeadsValue,
-                                  int fullAttentionInterval,
-                                  int ssmConvKernel,
-                                  int ssmStateSize,
-                                  int ssmGroupCount,
-                                  int ssmTimeStepRank,
-                                  int ssmInnerSize,
-                                  int ropeDimensionCount,
-                                  int vocabularySize,
-                                  int contextLengthModel,
-                                  int contextLength,
-                                  float rmsNormEps,
-                                  float ropeTheta) implements Configuration {
+public record Qwen35Configuration(
+        String quantization,
+        int dim,
+        int hiddenDim,
+        int numberOfLayers,
+        int numberOfNextnLayers,
+        int numberOfHeads,
+        int numberOfKeyValueHeads,
+        int numberOfHeadsKey,
+        int numberOfHeadsValue,
+        int fullAttentionInterval,
+        int ssmConvKernel,
+        int ssmStateSize,
+        int ssmGroupCount,
+        int ssmTimeStepRank,
+        int ssmInnerSize,
+        int ropeDimensionCount,
+        int vocabularySize,
+        int contextLengthModel,
+        int contextLength,
+        float rmsNormEps,
+        float ropeTheta)
+        implements Configuration {
 
     @Override
     public String quantization() {
         return quantization;
     }
 
-    /** The attention head dimension, stated by the file; {@code dim / heads} is a different number. */
+    /**
+     * The attention head dimension, stated by the file; {@code dim / heads} is a different number.
+     */
     @Override
     public int headSize() {
         return numberOfHeadsKey;
@@ -206,7 +210,10 @@ public record Qwen35Configuration(String quantization,
         return ssmInnerSize;
     }
 
-    /** Channels the depthwise convolution runs over: {@code q ‖ k ‖ v}, and {@code attn_qkv}'s width. */
+    /**
+     * Channels the depthwise convolution runs over: {@code q ‖ k ‖ v}, and {@code attn_qkv}'s
+     * width.
+     */
     public int deltaNetConvDim() {
         return 2 * deltaNetKeyDim() + deltaNetValueDim();
     }
@@ -227,25 +234,27 @@ public record Qwen35Configuration(String quantization,
         return numberOfValueHeads() * headValueDim() * headValueDim();
     }
 
-    /** Elements of convolution history one layer holds, per sequence: the kernel minus this step. */
+    /**
+     * Elements of convolution history one layer holds, per sequence: the kernel minus this step.
+     */
     public int convStateSize() {
         return (ssmConvKernel - 1) * deltaNetConvDim();
     }
+
     /** The convolution windows and delta-net matrices, one set per recurrent layer. */
     @Override
     public long recurrentStateBytes() {
-        return (long) recurrentLayerCount()
-                * (convStateSize() + deltaNetStateSize())
-                * Float.BYTES;
+        return (long) recurrentLayerCount() * (convStateSize() + deltaNetStateSize()) * Float.BYTES;
     }
+
     // @formatter:off
     /**
      * One, whatever the layout says.
      *
-     * <p>This family's batched decode graphs consume the weights the batch-prefill graphs
-     * uploaded, so a plan holds the model once however many families it lays out. At 14.944 GiB of
-     * weights the difference is not a refinement: predicted twice, the 27B is refused on a device
-     * it runs on.
+     * <p>This family's batched decode graphs consume the weights the batch-prefill graphs uploaded,
+     * so a plan holds the model once however many families it lays out. At 14.944 GiB of weights
+     * the difference is not a refinement: predicted twice, the 27B is refused on a device it runs
+     * on.
      */
     // @formatter:on
     @Override
@@ -260,14 +269,14 @@ public record Qwen35Configuration(String quantization,
             return 0L;
         }
         long perRow =
-                (long) dim()                       // the normalized activation
-                        + queryGateDim()           // the fused query/gate projection
-                        + 2L * attentionOutputInputDim()  // its two halves
-                        + 2L * deltaNetConvDim()   // the fused qkv and its convolution
-                        + 2L * deltaNetValueDim()  // the z gate and the readout
-                        + 2L * numberOfValueHeads()// decay and beta
-                        + 2L * deltaNetKeyDim()    // the split queries and keys
-                        + deltaNetValueDim();      // the split values
+                (long) dim() // the normalized activation
+                        + queryGateDim() // the fused query/gate projection
+                        + 2L * attentionOutputInputDim() // its two halves
+                        + 2L * deltaNetConvDim() // the fused qkv and its convolution
+                        + 2L * deltaNetValueDim() // the z gate and the readout
+                        + 2L * numberOfValueHeads() // decay and beta
+                        + 2L * deltaNetKeyDim() // the split queries and keys
+                        + deltaNetValueDim(); // the split values
         return perRow * batchSize * Float.BYTES;
     }
 }

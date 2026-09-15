@@ -117,15 +117,12 @@ public class Qwen35AttentionKernelParityTest {
         FloatArray query = new FloatArray(QUERY_DIM);
         FloatArray gate = new FloatArray(QUERY_DIM);
         for (int lane = 0; lane < QUERY_DIM; lane++) {
-            Qwen35AttentionKernels.splitQueryGateLane(
-                    toDevice(fused), query, gate, HEAD_DIM, lane);
+            Qwen35AttentionKernels.splitQueryGateLane(toDevice(fused), query, gate, HEAD_DIM, lane);
         }
 
         for (int head = 0; head < HEADS; head++) {
-            assertEquals(
-                    "query head " + head, head, query.get(head * HEAD_DIM + 7), EXACT);
-            assertEquals(
-                    "gate head " + head, -head - 1, gate.get(head * HEAD_DIM + 7), EXACT);
+            assertEquals("query head " + head, head, query.get(head * HEAD_DIM + 7), EXACT);
+            assertEquals("gate head " + head, -head - 1, gate.get(head * HEAD_DIM + 7), EXACT);
         }
     }
 
@@ -209,7 +206,8 @@ public class Qwen35AttentionKernelParityTest {
         for (int head = 0; head < HEADS; head++) {
             for (int i = ROTARY_DIM; i < HEAD_DIM; i++) {
                 int index = head * HEAD_DIM + i;
-                assertEquals("query untouched at " + index, query[index], deviceQuery.get(index), EXACT);
+                assertEquals(
+                        "query untouched at " + index, query[index], deviceQuery.get(index), EXACT);
             }
         }
         // The key buffer holds only KV_HEADS heads. A lane for a query head past that must not

@@ -8,9 +8,9 @@ import org.beehive.gpullama3.backend.tornado.layers.Qwen35BatchDecodeActivation;
 import org.beehive.gpullama3.backend.tornado.layers.Qwen35BatchPrefillLayers;
 import org.beehive.gpullama3.backend.tornado.layers.Qwen35FFNLayers;
 import org.beehive.gpullama3.backend.tornado.layers.Qwen35FFNLayersBatchDecode;
-import org.beehive.gpullama3.backend.tornado.plan.components.activation.BatchPrefillActivation;
 import org.beehive.gpullama3.backend.tornado.layers.TransformerLayerTaskGraphs;
 import org.beehive.gpullama3.backend.tornado.layers.type.q8_0.LogitsQ8_0Layer;
+import org.beehive.gpullama3.backend.tornado.plan.components.activation.BatchPrefillActivation;
 import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerDetectionService;
 import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerType;
 import org.beehive.gpullama3.inference.state.Qwen35State;
@@ -90,8 +90,8 @@ public class Qwen35PlanComponents implements BatchPrefillDecodeForwardPlanCompon
      *
      * <p>The host decodes the chunk's embedding rows straight into the FP32 batch carrier — a Q4_0
      * row is 18 bytes per 32 weights and there is no batched device conversion for it — so this
-     * graph transfers that carrier and runs the shared pass-through, which exists to give
-     * TornadoVM a task to attach the transfer to.
+     * graph transfers that carrier and runs the shared pass-through, which exists to give TornadoVM
+     * a task to attach the transfer to.
      */
     @Override
     public ActivationTaskGraph batchPrefillActivation(int batchSize) {

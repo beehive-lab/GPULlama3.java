@@ -154,7 +154,6 @@ public class Qwen35MMAProjectionAccelTest {
         }
     }
 
-
     /** The Q4_1 form — this model's ffn_down on the first eight blocks. */
     @Test
     public void theTensorCoreQ4_1ProjectionMatchesTheHost() throws Exception {

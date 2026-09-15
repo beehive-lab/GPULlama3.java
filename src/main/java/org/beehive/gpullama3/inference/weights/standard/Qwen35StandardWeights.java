@@ -12,10 +12,10 @@ import org.beehive.gpullama3.tensor.standard.FloatTensor;
  * four have none: they mix with a delta-net recurrence and carry an entirely different weight set.
  * Extending it would mean 48 nulls per array and a base class whose fields lie about the model.
  *
- * <p>Every per-layer array is nonetheless indexed by <b>absolute block index</b>, not by a
- * per-kind counter. An entry is {@code null} where the layer is of the other kind. That keeps the
- * forward pass reading {@code wq[l]} with the same {@code l} it uses everywhere else — a second,
- * compacted indexing is exactly the sort of off-by-one that produces fluent, wrong text.
+ * <p>Every per-layer array is nonetheless indexed by <b>absolute block index</b>, not by a per-kind
+ * counter. An entry is {@code null} where the layer is of the other kind. That keeps the forward
+ * pass reading {@code wq[l]} with the same {@code l} it uses everywhere else — a second, compacted
+ * indexing is exactly the sort of off-by-one that produces fluent, wrong text.
  *
  * <p>The arrays are sized for {@link #blockCount} blocks: the trunk plus its MTP blocks, so an MTP
  * block's attention and feed-forward weights sit at their own index alongside the trunk's.
@@ -171,6 +171,7 @@ public final class Qwen35StandardWeights implements Weights {
         this.nextnSharedHeadNorm = nextnSharedHeadNorm;
         this.weightType = weightType;
     }
+
     // @formatter:on
 
     @Override

@@ -21,9 +21,9 @@ import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
  * {@link #asByteArray()} just as they do for Q8_0, and only the kernel that reads it differs.
  *
  * <p><b>Why this exists</b>: materializing Q4_0 as Q8_0 at load nearly doubles a model's device
- * footprint. That is what kept Devstral's Q4_K off a 24 GiB machine until {@link
- * Q4_KTornadoTensor} retained it, and it is the same arithmetic here — a Q4_0 file costs its own
- * size on the device rather than twice it.
+ * footprint. That is what kept Devstral's Q4_K off a 24 GiB machine until {@link Q4_KTornadoTensor}
+ * retained it, and it is the same arithmetic here — a Q4_0 file costs its own size on the device
+ * rather than twice it.
  */
 public class Q4_0TornadoTensor extends TornadoTensor {
 

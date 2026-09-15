@@ -25,9 +25,9 @@ import org.beehive.gpullama3.runtime.tensor.DataType;
  * neither, and would leave a backend nothing to fuse.
  *
  * <p><b>Key heads may be fewer than value heads, and value head {@code h} reads key head {@code h %
- * keyHeads}</b> — the reference repeats the key heads by tiling, not by blocking. Stating
- * {@code keyHeads} rather than a ratio is deliberate: a ratio invites the division that produces
- * the wrong pairing.
+ * keyHeads}</b> — the reference repeats the key heads by tiling, not by blocking. Stating {@code
+ * keyHeads} rather than a ratio is deliberate: a ratio invites the division that produces the wrong
+ * pairing.
  *
  * @param query queries, {@code keyHeads * stateDim}, already normalized and scaled
  * @param key keys, {@code keyHeads * stateDim}, already normalized
@@ -70,7 +70,10 @@ public record DeltaRuleUpdate(
         }
         if (valueHeads % keyHeads != 0) {
             throw new IllegalArgumentException(
-                    valueHeads + " value heads do not divide evenly among " + keyHeads + " key heads");
+                    valueHeads
+                            + " value heads do not divide evenly among "
+                            + keyHeads
+                            + " key heads");
         }
         if (stateDim < 1) {
             throw new IllegalArgumentException("stateDim must be at least 1: " + stateDim);

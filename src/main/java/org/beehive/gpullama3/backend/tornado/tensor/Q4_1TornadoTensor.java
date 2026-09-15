@@ -19,8 +19,8 @@ import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
  * is the whole difference from Q4_0 and the one that stays plausible when it is wrong.
  *
  * <p>Present because Qwen3.8-27B holds its first eight {@code ffn_down} tensors this way and every
- * other one as Q4_0. Materializing just those eight would be a silent conversion of 0.4 GB, and
- * the point of retention is that it does not happen.
+ * other one as Q4_0. Materializing just those eight would be a silent conversion of 0.4 GB, and the
+ * point of retention is that it does not happen.
  */
 public class Q4_1TornadoTensor extends TornadoTensor {
 

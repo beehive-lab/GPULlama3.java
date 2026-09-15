@@ -50,7 +50,9 @@ import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
  */
 public class NativeQuantizedKernelAccelTest {
 
-    /** Rows and columns of the probe matrix. Columns are a whole number of Q4_K/Q5_K/Q6_K blocks. */
+    /**
+     * Rows and columns of the probe matrix. Columns are a whole number of Q4_K/Q5_K/Q6_K blocks.
+     */
     private static final int N = 512;
 
     private static final int D = 37;
@@ -61,12 +63,7 @@ public class NativeQuantizedKernelAccelTest {
 
     /** A device kernel that computes {@code out[row] = w[row]·x}. */
     private interface Probe {
-        void run(
-                TaskGraph graph,
-                KernelContext context,
-                FloatArray x,
-                FloatArray out,
-                ByteArray w);
+        void run(TaskGraph graph, KernelContext context, FloatArray x, FloatArray out, ByteArray w);
     }
 
     private static byte[] randomBlocks(GGMLType type, long seed) {
@@ -268,6 +265,7 @@ public class NativeQuantizedKernelAccelTest {
                                 D,
                                 LOCAL));
     }
+
     // @formatter:off
     /**
      * The fused gate/up projection with SwiGLU, which is the feed-forward every {@code qwen35}

@@ -454,11 +454,7 @@ public abstract class State {
      * @param kvLayers how many layers hold key/value entries; the dense index space they address
      */
     protected boolean fillKvFields(
-            StateFields fields,
-            Configuration config,
-            int kvDim,
-            int kvLayers,
-            boolean useFp16) {
+            StateFields fields, Configuration config, int kvDim, int kvLayers, boolean useFp16) {
         // The caller says whether this family has FP16 kernels at all; the storage options say
         // whether they were asked for. Both must hold.
         useFp16 = useFp16 && storageOptions.usesFp16KeyValueCache();

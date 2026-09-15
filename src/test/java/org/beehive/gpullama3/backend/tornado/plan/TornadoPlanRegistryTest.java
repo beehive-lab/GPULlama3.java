@@ -112,10 +112,10 @@ public class TornadoPlanRegistryTest {
     /**
      * Admission and per-tensor native support are separate declarations.
      *
-     * <p>For a family whose model is one representation throughout they agree, and the default
-     * says so. They stop agreeing the moment a model is mixed: it reports one representation and
-     * holds several, so a memory prediction built from the admission set counts every tensor that
-     * is not the model's representation at the wrong size. This pins that the preflight reads the
+     * <p>For a family whose model is one representation throughout they agree, and the default says
+     * so. They stop agreeing the moment a model is mixed: it reports one representation and holds
+     * several, so a memory prediction built from the admission set counts every tensor that is not
+     * the model's representation at the wrong size. This pins that the preflight reads the
      * per-tensor declaration and not the admission one.
      */
     @Test

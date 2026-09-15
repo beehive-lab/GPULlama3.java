@@ -78,8 +78,7 @@ public class DataTypeTest {
                 methods.add(method.getName());
             }
         }
-        assertEquals(
-                Set.of("values", "valueOf", "isQuantized", "narrowedFallback"), methods);
+        assertEquals(Set.of("values", "valueOf", "isQuantized", "narrowedFallback"), methods);
     }
 
     /**
