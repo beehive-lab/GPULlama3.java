@@ -56,7 +56,7 @@ public final class DivergenceRate {
             int pos = prompt.size();
             int tok = sink.get(0);
 
-            // Warm-up forward, discarded. Under -Dgpullama3.diag.transfers the host copies are
+            // Warm-up forward, discarded. Under -Djllm.diag.transfers the host copies are
             // taken at the end of layer N's graph, so the parts of wrapKeyCache belonging to layers
             // beyond N are one forward behind. Capturing the reference straight after the first
             // forward would freeze that lag into the reference and report every later iteration as

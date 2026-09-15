@@ -8,7 +8,7 @@ import java.util.Map;
 /**
  * Tiny dependency-free JSON reader/writer — just enough for the OpenAI-compatible request/response
  * bodies. Parses into {@code Map<String,Object>} / {@code List<Object>} / String / Double / Boolean
- * / null; serializes the same. Reusable and self-contained (GPULlama3 pulls in no JSON library).
+ * / null; serializes the same. Reusable and self-contained (jllm pulls in no JSON library).
  */
 public final class Json {
 

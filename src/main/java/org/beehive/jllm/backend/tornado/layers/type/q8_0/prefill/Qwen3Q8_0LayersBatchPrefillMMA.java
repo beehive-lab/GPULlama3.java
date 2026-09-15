@@ -82,7 +82,7 @@ public class Qwen3Q8_0LayersBatchPrefillMMA implements BatchPrefillTransformerLa
         this.paddedBatch = (batchSize + 127) & ~127;
         if (batchSize % 128 != 0) {
             System.out.printf(
-                    "[GPULlama3] prefill batch %d padded to %d for tensor-core tiles; "
+                    "[jllm] prefill batch %d padded to %d for tensor-core tiles; "
                             + "GEMM efficiency is %d/%d — use a multiple of 128 for best throughput.%n",
                     batchSize, paddedBatch, batchSize, paddedBatch);
         }

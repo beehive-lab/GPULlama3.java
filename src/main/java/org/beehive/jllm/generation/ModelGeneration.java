@@ -186,7 +186,7 @@ public final class ModelGeneration {
                 }
                 if (stopToken == null) {
                     System.err.println(
-                            "\n Ran out of context length...\n Increase context length with by passing to llama-tornado --max-tokens XXX");
+                            "\n Ran out of context length...\n Increase context length with by passing to jllm --max-tokens XXX");
                     break;
                 }
                 System.out.print("\n");

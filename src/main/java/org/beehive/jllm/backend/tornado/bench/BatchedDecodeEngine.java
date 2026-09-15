@@ -63,7 +63,7 @@ import uk.ac.manchester.tornado.api.types.arrays.IntArray;
  *       BACKEND=cuda}); tested on TornadoVM 5.0.1-jdk21-dev, JDK 21.
  *   <li>Build this project: {@code mvn -Pjdk21 -Dtornadovm.base.version=5.0.1
  *       -Djdk.version.suffix=-jdk21-dev clean package -DskipTests}
- *   <li>Take {@code llama-tornado --show-command.}, swap the main class to this harness, and pass
+ *   <li>Take {@code jllm --show-command.}, swap the main class to this harness, and pass
  *       the configuration below as a {@link BatchDecodeOptions}. Keep {@code
  *       -Djllm.prefillBatchSize} equal to its batch size.
  * </ol>

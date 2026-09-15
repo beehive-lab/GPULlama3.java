@@ -290,7 +290,7 @@ for temperature sampling (which still needs logits on the host).
 ### Qwen3 quick start (copy-paste)
 
 After building TornadoVM (CUDA backend) and this project (steps 1–3 below), take
-`llama-tornado --show-command …`, swap the main class to
+`jllm --show-command …`, swap the main class to
 `org.beehive.jllm.bench.BatchedDecodeEngine`, and prepend the flags. Keep
 `-Djllm.prefillBatchSize` equal to `-Dbatch.decode.B`.
 
@@ -327,7 +327,7 @@ rows regardless of B, so batching is effectively free until B=128.
 
 Requires a TornadoVM with the **CUDA backend** and the **MMA `KernelContext`** API
 (`mmaFragment` / `mmaLoadA` / `mmaMultiply`, `HalfFloatArray`) — the same TornadoVM the
-`feat/mma_cuda` GPULlama3 branch already needs. Tested against **TornadoVM
+`feat/mma_cuda` jllm branch already needs. Tested against **TornadoVM
 5.0.1-jdk21-dev**, CUDA backend, **JDK 21**. (All numbers here are from the CUDA
 backend.)
 
@@ -339,7 +339,7 @@ make BACKEND=cuda
 export TORNADOVM_HOME=$PWD/dist/tornadovm-*-cuda
 ```
 
-### 2. GPULlama3 (this branch)
+### 2. jllm (this branch)
 
 ```bash
 # JDK 21
@@ -351,7 +351,7 @@ mvn -Pjdk21 -Dtornadovm.base.version=5.0.1 -Djdk.version.suffix=-jdk21-dev \
 
 `-Djllm.prefillBatchSize` MUST equal `-Dbatch.decode.B` (it sizes the batch
 activation buffers). Launch `org.beehive.jllm.bench.BatchedDecodeEngine` on the
-standard TornadoVM module path (easiest: take `llama-tornado --show-command …`,
+standard TornadoVM module path (easiest: take `jllm --show-command …`,
 swap the main class to the engine, and prepend the `-D` flags):
 
 ```

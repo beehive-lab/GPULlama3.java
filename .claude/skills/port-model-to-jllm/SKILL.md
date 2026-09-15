@@ -1,10 +1,10 @@
 ---
-name: port-model-to-gpullama
-description: Port a new model architecture to GPULlama3.java. Use when a GGUF file is not recognized, when a family needs its own program description or lowering, or when deciding whether an existing family's implementation can be reused for a new one.
+name: port-model-to-jllm
+description: Port a new model architecture to jllm. Use when a GGUF file is not recognized, when a family needs its own program description or lowering, or when deciding whether an existing family's implementation can be reused for a new one.
 license: MIT
 ---
 
-# Port a model architecture to GPULlama3.java
+# Port a model architecture to jllm
 
 A port is: recognize the file, describe the computation once in the neutral operation
 vocabulary, implement it on the CPU as the reference, let each backend lower it, and prove
@@ -63,7 +63,7 @@ A useful first command, on a real file:
 
 ```bash
 JAVA_TOOL_OPTIONS="-Djllm.metrics.format=json -Djllm.metrics.output=stdout" \
-  ./llama-tornado --model <model.gguf> --prompt hi -n 1 --verbose-init
+  ./jllm --model <model.gguf> --prompt hi -n 1 --verbose-init
 ```
 
 An unrecognized file fails with `[GPUL-MOD-002]` and prints the declared architecture and
@@ -217,7 +217,7 @@ A family may reuse another's computation. It may not borrow its identity.
   and the known limitations in
   [`docs/architecture/verification.md`](../../../docs/architecture/verification.md).
 - Register every provider in `META-INF/services/`, and check the shaded jar carries them:
-  `jar tf target/gpu-llama3-*.jar | grep META-INF/services/org.beehive.` — CI asserts the
+  `jar tf target/jllm-*.jar | grep META-INF/services/org.beehive.` — CI asserts the
   count, because a missing entry loses the family silently at runtime.
 - Run the architecture rules and the addition-workflow tests: `./mvnw test`.
 - Add the model's rows to `.github/workflows/standalone-inference.yml`, and add an entry to

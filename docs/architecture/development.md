@@ -10,13 +10,13 @@ line.
 
 | Build JDK | This project publishes | It compiles against | `--enable-preview` |
 | --- | --- | --- | --- |
-| 21 | `gpu-llama3:<version>-jdk21` | `tornado-api`/`tornado-runtime` `<tvm>-jdk21` | yes — `java.lang.foreign` is a preview API on 21 |
-| 25 | `gpu-llama3:<version>-jdk25` | `tornado-api`/`tornado-runtime` `<tvm>-jdk22plus` | no |
+| 21 | `jllm:<version>-jdk21` | `tornado-api`/`tornado-runtime` `<tvm>-jdk21` | yes — `java.lang.foreign` is a preview API on 21 |
+| 25 | `jllm:<version>-jdk25` | `tornado-api`/`tornado-runtime` `<tvm>-jdk22plus` | no |
 
 TornadoVM 6.0.0 collapsed its per-version `jdk25`/`jdk26`/`jdk27` profiles into one
 `jdk22plus` profile and publishes only `-jdk21` and `-jdk22plus`, so `6.0.0-jdk25` does not
 exist. This project's own suffix stays `-jdk25`; the two are separate Maven properties on
-purpose, because tying them together would silently rename `gpu-llama3`'s coordinates.
+purpose, because tying them together would silently rename `jllm`'s coordinates.
 
 Profile activation is `[21,22)` and `[25,26)`, and `maven-enforcer-plugin` rejects any
 other JDK at `validate` with a message naming both lines. Nothing between or beyond the two
@@ -83,10 +83,10 @@ Always `clean` when switching JDKs: a `target/` left by the other line fails wit
 ## Running
 
 ```bash
-./llama-tornado --gpu --model model.gguf --prompt "..."
+./jllm --gpu --model model.gguf --prompt "..."
 ```
 
-Both launchers — `llama-tornado` (Python) and `llamaTornado` (a single-file Java program,
+Both launchers — `jllm` (Python) and `jllm4j` (a single-file Java program,
 which needs JDK 25 to run itself) — start the JVM from `$TORNADOVM_HOME/tornado-argfile`.
 That file is the SDK's own record of how to launch it: module path, Graal and JVMCI
 arrangement, per-backend export lists, and the preview flag where the line needs one. All

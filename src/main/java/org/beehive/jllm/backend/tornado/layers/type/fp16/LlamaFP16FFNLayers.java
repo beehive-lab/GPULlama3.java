@@ -447,8 +447,8 @@ public class LlamaFP16FFNLayers
 
         // Diagnostic, default off: pulls the per-layer intermediates back so an FP16
         // divergence can be localized. The shipped task graph is unchanged.
-        if (Boolean.getBoolean("gpullama3.diag.transfers")
-                && layerIndex == Integer.getInteger("gpullama3.diag.layer", 0)) {
+        if (Boolean.getBoolean("jllm.diag.transfers")
+                && layerIndex == Integer.getInteger("jllm.diag.layer", 0)) {
             unifiedLayer.transferToHost(
                     uk.ac.manchester.tornado.api.enums.DataTransferMode.EVERY_EXECUTION,
                     state.workspace.wrapKeyCache,

@@ -9,11 +9,11 @@
  * <p>Run one with the launcher's classpath, passing a model file:
  *
  * <pre>
- *   java -cp target/gpu-llama3-1.0.0-jdk21.jar \
+ *   java -cp target/jllm-1.0.0-jdk21.jar \
  *        org.beehive.jllm.examples.HelloGeneration model.gguf
  * </pre>
  *
- * <p>To run on an accelerator, launch through {@code llama-tornado}, which sets the JVM flags and
+ * <p>To run on an accelerator, launch through {@code jllm}, which sets the JVM flags and
  * {@code -Duse.tornadovm=true} that {@link org.beehive.jllm.api.ModelOptions} reads.
  */
 package org.beehive.jllm.examples;

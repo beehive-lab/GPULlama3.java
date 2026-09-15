@@ -124,7 +124,7 @@ public class JllmApp {
 
             if (result.finishReason() == FinishReason.CONTEXT_FULL) {
                 System.err.println(
-                        "\n Ran out of context length...\n Increase context length with by passing to llama-tornado --max-tokens XXX");
+                        "\n Ran out of context length...\n Increase context length with by passing to jllm --max-tokens XXX");
                 break;
             }
             if (SHOW_PERF_INTERACTIVE) {

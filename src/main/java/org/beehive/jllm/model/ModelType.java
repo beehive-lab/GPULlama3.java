@@ -13,7 +13,7 @@ import org.beehive.jllm.model.loader.Qwen2ModelLoader;
 import org.beehive.jllm.model.loader.Qwen3ModelLoader;
 
 /**
- * Enumerates the different types of models supported by GPULlama3.java. This enum helps in
+ * Enumerates the different types of models supported by jllm. This enum helps in
  * categorizing and handling model-specific logic based on the type of model being used.
  *
  * <p><b>Usage:</b> Use {@code ModelType} to specify or retrieve the type of large language model
@@ -21,7 +21,7 @@ import org.beehive.jllm.model.loader.Qwen3ModelLoader;
  * configurations by dispatching calls to the appropriate model loader for each model type.
  *
  * <p>Each enum value represents a distinct model type, which might be used for conditional logic,
- * initialization, or resource allocation within GPULlama3.java.
+ * initialization, or resource allocation within jllm.
  */
 public enum ModelType {
     LLAMA_3 {

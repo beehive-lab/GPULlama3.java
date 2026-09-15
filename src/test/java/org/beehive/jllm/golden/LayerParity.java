@@ -20,7 +20,7 @@ import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 /**
  * The full-model parity test can only say the paths disagree by ~3.5 at the logits. This compares,
  * at layer 0 of the first generated position, each intermediate the GPU exposes under {@code
- * -Dgpullama3.diag.transfers} against the same quantity recomputed on the CPU:
+ * -Djllm.diag.transfers} against the same quantity recomputed on the CPU:
  *
  * <ol>
  *   <li>the RMS scale ({@code state.workspace.temp[0]}) — a pure FP32 reduction, so a difference
@@ -33,13 +33,13 @@ import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
  *       its input: if it matches, the projection is faithful and the error was inherited.
  * </ol>
  *
- * <p>Run with {@code -Dgpullama3.diag.transfers=true -Dgpullama3.diag.layer=0}.
+ * <p>Run with {@code -Djllm.diag.transfers=true -Djllm.diag.layer=0}.
  */
 public final class LayerParity {
 
     public static void main(String[] args) throws Exception {
-        if (!Boolean.getBoolean("gpullama3.diag.transfers")) {
-            throw new IllegalStateException("run with -Dgpullama3.diag.transfers=true");
+        if (!Boolean.getBoolean("jllm.diag.transfers")) {
+            throw new IllegalStateException("run with -Djllm.diag.transfers=true");
         }
         Path modelPath = Path.of(System.getProperty("parity.model"));
 

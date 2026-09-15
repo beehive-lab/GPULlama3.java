@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -ne 1 || ! $1 =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-    echo "Usage: $0 <GPULlama3-base-version>" >&2
+    echo "Usage: $0 <jllm-base-version>" >&2
     exit 2
 fi
 
@@ -16,7 +16,7 @@ done
 version=$1
 repository_url=${MAVEN_REPOSITORY_URL:-https://repo.maven.apache.org/maven2}
 group_path=io/github/beehive-lab
-artifact=gpu-llama3
+artifact=jllm
 inspection_dir=$(mktemp -d)
 trap 'rm -rf "$inspection_dir"' EXIT
 

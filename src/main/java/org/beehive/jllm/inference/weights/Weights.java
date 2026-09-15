@@ -3,7 +3,7 @@ package org.beehive.jllm.inference.weights;
 import org.beehive.jllm.runtime.tensor.DataType;
 
 /**
- * The GPULlama3.java utilizes two distinct weight types:
+ * jllm utilizes two distinct weight types:
  *
  * <ul>
  *   <li><b>StandardWeights:</b> Designed for standard Java-based inference on the CPU.

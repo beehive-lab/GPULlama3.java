@@ -20,7 +20,7 @@ import org.beehive.jllm.inference.state.State;
 import org.beehive.jllm.model.Model;
 
 /**
- * llama-bench-style performance benchmark for GPULlama3 (GPU forward path).
+ * llama-bench-style performance benchmark for jllm (GPU forward path).
  *
  * <p>Mirrors llama.cpp's {@code llama-bench}: a cartesian matrix of tests over one or more models —
  * prompt processing ({@code pp N}: N sequential forwards from position 0), token generation ({@code
@@ -30,7 +30,7 @@ import org.beehive.jllm.model.Model;
  * sampling, no host argmax (llama-bench parity).
  *
  * <pre>
- * gpullama3-bench (via llama-tornado --bench):
+ * jllm-bench (via jllm --bench):
  *   -m  model.gguf[,model2.gguf]   models (repeatable / comma-separated)
  *   -p  512[,1024]                 prompt-processing sizes       (default 512)
  *   -n  128[,256]                  generation lengths            (default 128)

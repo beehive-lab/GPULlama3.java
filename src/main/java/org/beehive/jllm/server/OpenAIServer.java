@@ -26,7 +26,7 @@ import org.beehive.jllm.model.Model;
 import org.beehive.jllm.runtime.backend.BackendId;
 
 /**
- * OpenAI-compatible HTTP server for GPULlama3, built on the JDK {@link HttpServer} (no external
+ * OpenAI-compatible HTTP server for jllm, built on the JDK {@link HttpServer} (no external
  * dependencies). Exposes the loaded model behind the endpoints an OpenAI client already speaks:
  *
  * <ul>
@@ -224,7 +224,7 @@ public final class OpenAIServer {
             <html lang="en">
             <head>
             <meta charset="utf-8">
-            <title>GPULlama3.java server</title>
+            <title>jllm server</title>
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <style>
               body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
@@ -245,7 +245,7 @@ public final class OpenAIServer {
             </style>
             </head>
             <body>
-              <h1>GPULlama3.java</h1>
+              <h1>jllm</h1>
               <div class="sub">Local OpenAI-compatible inference server</div>
 
               <table>
@@ -256,7 +256,7 @@ public final class OpenAIServer {
 
               <p>
                 This is a local instance of
-                <a href="https://github.com/beehive-lab/GPULlama3.java" target="_blank">GPULlama3.java</a>,
+                <a href="https://github.com/beehive-lab/jllm" target="_blank">jllm</a>,
                 a Llama3-family inference engine written in native Java and automatically accelerated on
                 GPUs with <a href="https://github.com/beehive-lab/TornadoVM" target="_blank">TornadoVM</a>.
                 It supports Llama3, Mistral, Devstral 2, Qwen2.5, Qwen3, Phi-3, IBM Granite 3.2+, and
@@ -302,7 +302,7 @@ public final class OpenAIServer {
         entry.put("id", servedModel);
         entry.put("object", "model");
         entry.put("created", 0);
-        entry.put("owned_by", "gpullama3");
+        entry.put("owned_by", "jllm");
         sendJson(ex, 200, Map.of("object", "list", "data", List.of(entry)));
     }
 
