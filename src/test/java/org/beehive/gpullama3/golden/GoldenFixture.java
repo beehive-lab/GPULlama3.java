@@ -37,6 +37,20 @@ public final class GoldenFixture {
          * a fixture is not the same thing, and conflating them would have made this slice wait on a
          * decision it does not need.
          */
+        /**
+         * Quantized locally from {@link #LLAMA_3_2_1B_F16} with llama.cpp's {@code llama-quantize},
+         * because the corpus had no Q4_0 file that any family could run on a device — and Q4_0
+         * device residency could not be verified without one.
+         *
+         * <p>Its {@code blk.*} weights are all Q4_0; {@code token_embd}, which is also the output
+         * projection here, is Q6_K. That mix is the normal shape of a Q4_0 file and is why the
+         * layers read Q4_0 while the logits layer reads a Q8_0 materialization.
+         */
+        LLAMA_3_2_1B_Q4_0(
+                "Llama-3.2-1B-Instruct-Q4_0.gguf",
+                "Q4_0",
+                "4b90b1d7ae7324676194755a6dfce11cb6e457982c4c01a1db2857be1ed064ad"),
+
         QWEN2_5_0_5B_F16(
                 "Qwen2.5-0.5B-Instruct-f16.gguf",
                 "F16",
@@ -85,7 +99,22 @@ public final class GoldenFixture {
                 "Phi-3-mini-4k-instruct-Q8_0.gguf",
                 "Q8_0",
                 "0ac8ee48aeebf7d1b354691fd1e29e91c32ad88bbad10ad45ac880dcd4372a47",
-                "phi3-mini-4k");
+                "phi3-mini-4k"),
+
+        /**
+         * The {@code qwen35} hybrid architecture, and the only fixture here that is not a small
+         * model: 27B in 16 GB. Host-only, because no accelerator claims the architecture and the
+         * device would need roughly 28 GB once its Q4_0 weights were materialized as Q8_0.
+         *
+         * <p>Quantization is recorded as the file's own {@code Q4_0} rather than the {@code Q8_0}
+         * every quantized model reports for its activations, because what distinguishes this
+         * fixture is what the weights are, and it also mixes Q4_1, Q5_K, Q6_K and Q8_0 tensors.
+         */
+        QWEN3_8_27B_Q4_0(
+                "Qwen3.8-27B-Q4_0.gguf",
+                "Q4_0",
+                "ede16c7b36e578ca87a8c70e011e4b4633a32c831c0ce76d0f474582384e671d",
+                "qwen3.8-27b");
 
         public final String fileName;
         public final String quantization;

@@ -106,6 +106,15 @@ final class DelegatingSession implements GenerationSession {
         return executionPolicy;
     }
 
+    /**
+     * The plan this session has been generating with, or {@code null} if it has not built one.
+     * Package-private: not facade v1 surface, and never builds one, because asking {@link
+     * SessionRuntime#plan()} would construct a plan on a session that never executed.
+     */
+    org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan planIfBuilt() {
+        return runtime.hasPlan() ? runtime.plan() : null;
+    }
+
     @Override
     public GenerationResult generate(GenerationRequest request) {
         ensureUsable();

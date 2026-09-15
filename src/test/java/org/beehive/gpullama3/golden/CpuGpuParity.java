@@ -81,6 +81,101 @@ abstract class CpuGpuParity {
     static final Bounds FP16 = new Bounds(5e-3, 1e-2, 8e-3, 2e-3, 0.99999, 1e-4, 0.5);
     static final Bounds Q8_0 = new Bounds(1.7e-4, 1e-2, 3.4e-4, 1e-4, 0.999999, 1e-4, 0.5);
 
+    // @formatter:off
+    /**
+     * For a family whose Q4_0 projections read an <b>eight-bit activation</b>.
+     *
+     * <p>These bounds are much wider than {@link #Q8_0}'s and they are meant to be: the device is
+     * no longer computing the same thing as the host reference to within rounding. It quantizes the
+     * normalized activation to eight bits per block of 32 and does the dot product in packed
+     * integers, which is what llama.cpp's decode does and what makes {@code dp4a} available at all.
+     *
+     * <p><b>Sized from measurement, on the 27B, teacher-forced over 63 rows.</b> What it costs:
+     * elementwise violations 22.81%, largest absolute difference 0.5227 against a reference RMS of
+     * 0.111, relative L2 2.45e-2, cosine 0.99970. What it did not cost, measured at the same time:
+     * <b>zero</b> argmax disagreements across those 63 rows, top-5 4.984/5 and top-10 9.968/10, and
+     * greedy generation that was token-identical over 120 tokens against the floating-point path.
+     *
+     * <p>So the bounds below carry roughly a factor of two over the measured magnitudes: the
+     * absolute ceiling goes from 3.4e-4 of the reference RMS to 0.32 of it, the relative L2 from
+     * 1e-4 to 5e-2, and the elementwise budget from 0.01% of logits to half of them. Those three
+     * are weak by construction now, and saying so is the point — they no longer distinguish a
+     * defect from the arithmetic, and {@code atol} and {@code rtol} are left where they were so the
+     * printed violation count stays a comparable number rather than a redefined one.
+     *
+     * <p>What still has teeth is the pair that speaks to decisions: {@code minCosine} moves from
+     * 0.999999 to 0.9994 — a real weakening, not a formality, and the number to watch — while
+     * {@code decisionGap} does not move at all, because an argmax reversal where the reference was
+     * not close would still be a defect.
+     *
+     * <p>The top-k figures say plainly that this path can reorder near-ties. Greedy decoding did
+     * not notice; sampling with top-k or top-p can.
+     */
+    // @formatter:on
+    static final Bounds Q8_0_PACKED_ACTIVATION =
+            new Bounds(1.7e-4, 1e-2, 0.32, 5e-2, 0.9994, 0.5, 0.5);
+
+    // @formatter:off
+    /**
+     * For the <b>batched</b> path, whose decode rows carry every packed projection while its prompt
+     * goes through the prefill kernels.
+     *
+     * <p>A third envelope rather than a wider shared one. {@link #Q8_0_PACKED_ACTIVATION} is what
+     * the batched path met when its decode rows carried two packed projections; they now carry
+     * more, and widening the shared constant would weaken whatever else uses it in order to admit
+     * this. {@link #Q8_0_FULLY_PACKED} is a different amount of quantization again -- every
+     * position rather than only the decoded ones -- so it is not this.
+     *
+     * <p><b>Engineering regression limits for an accepted arithmetic, not calibrated quality
+     * thresholds.</b> They say "this path still computes what it computed yesterday"; they say
+     * nothing about whether what it computes is good. A future failure here is something to
+     * investigate, not to widen: the envelope has now been set three times, once per change in what
+     * is packed, and each time the numbers were measured first and the limits written after.
+     *
+     * <p>Measured on the 63-row trace with the packed branch projections, gate/up and ffn_down:
+     * largest absolute difference 1.54620 against a reference RMS of 3.272, relative L2 0.0797096,
+     * cosine 0.99682787, elementwise 33.13%, argmax 0/63, top-5 4.952/5, top-10 9.952/10.
+     */
+    // @formatter:on
+    static final Bounds Q8_0_PACKED_DECODE = new Bounds(1.7e-4, 1e-2, 0.70, 0.12, 0.9955, 0.5, 0.5);
+
+    // @formatter:off
+    /**
+     * The same, for the paths that pack the <b>feed-forward</b> activation as well.
+     *
+     * <p>{@code STANDARD} and sequential prefill quantize the feed-forward's activation at every
+     * position, prompt included; the batched path packs only its decode rows and stays inside
+     * {@link #Q8_0_PACKED_ACTIVATION}. Two different amounts of quantization are two different
+     * envelopes, and widening the shared one to cover this would weaken a path that passes in order
+     * to admit a path that does not. Only the two fully-packed cases take this, and each names the
+     * mode it runs.
+     *
+     * <p><b>A fixture-specific regression envelope for an accepted precision tradeoff.</b> Not a
+     * quality guarantee, and not a statistically calibrated threshold: it is one 63-row trace of
+     * one fixture, and the headroom below is an engineering allowance rather than a measured bound
+     * on variability, which has not been established.
+     *
+     * <p>Measured on that trace, reference RMS 3.272, against the allowance chosen for each:
+     *
+     * <ul>
+     *   <li>largest absolute difference 0.457 of the RMS against {@code 0.70} — about 1.5x, on a
+     *       single worst logit out of 15.6 million;
+     *   <li>relative L2 0.0571 against {@code 0.075} — about 1.3x, and the most informative of the
+     *       three, being an aggregate over a quarter of a million logits per row;
+     *   <li>cosine 0.99837 against {@code 0.9975} — about 1.53x the <i>deficit</i> from one, which
+     *       is the quantity that matters rather than the ratio of the similarities.
+     * </ul>
+     *
+     * <p>Everything else is {@link #Q8_0_PACKED_ACTIVATION}'s, unchanged: the elementwise budget
+     * passes at 33.13% of 50%, and the decision gap does not move, because an argmax reversal where
+     * the reference was not close would still be a defect. On this trace there were none — 0/63 —
+     * with top-5 4.984/5 and top-10 9.873/10.
+     *
+     * <p>These limits are not to be loosened again for the next optimization.
+     */
+    // @formatter:on
+    static final Bounds Q8_0_FULLY_PACKED = new Bounds(1.7e-4, 1e-2, 0.70, 0.075, 0.9975, 0.5, 0.5);
+
     /** The CPU reference against the accelerator running its default single-token path. */
     void assertParity(Fixture fixture, Bounds bounds) throws Exception {
         assertParity(fixture, bounds, 1);
@@ -98,12 +193,33 @@ abstract class CpuGpuParity {
      * <p>The bounds are the same. A mode that needs looser bounds to pass is a mode that computes
      * something different, and that is the finding, not the configuration.
      */
-    void assertParityBatched(Fixture fixture, Bounds bounds, int prefillBatchSize)
+    GoldenCapture.Result assertParityBatched(Fixture fixture, Bounds bounds, int prefillBatchSize)
             throws Exception {
-        assertParity(fixture, bounds, prefillBatchSize);
+        return assertParity(fixture, bounds, prefillBatchSize, true);
+    }
+
+    /**
+     * The same comparison with the accelerator ingesting the prompt as its own sequential phase.
+     *
+     * <p>{@code PREFILL_DECODE} at a batch of one. It runs the same layer graphs as {@code
+     * STANDARD} with the logits graph skipped for prompt positions, so what it can disagree about
+     * is the boundary rather than the arithmetic: where decode resumes, and whether anything the
+     * prompt left behind — a key/value entry, a convolution window, a recurrent matrix — carried.
+     */
+    void assertParityPrefillDecode(Fixture fixture, Bounds bounds) throws Exception {
+        assertParity(fixture, bounds, 1, true);
     }
 
     private void assertParity(Fixture fixture, Bounds bounds, int prefillBatchSize)
+            throws Exception {
+        assertParity(fixture, bounds, prefillBatchSize, false);
+    }
+
+    /**
+     * @return the accelerator capture, so a caller can assert what its plan was built to dispatch
+     */
+    private GoldenCapture.Result assertParity(
+            Fixture fixture, Bounds bounds, int prefillBatchSize, boolean separatePrefillPhase)
             throws Exception {
         Path model = GoldenFixture.locate(fixture);
         if (model == null) {
@@ -118,9 +234,13 @@ abstract class CpuGpuParity {
 
         GoldenCapture.Result cpu = GoldenCapture.capture(model, false);
         GoldenCapture.Result gpu =
-                GoldenCapture.capture(model, true, cpu.tokenIds, prefillBatchSize);
-        if (prefillBatchSize > 1) {
-            System.out.printf("  batched prefill, batch %d%n", prefillBatchSize);
+                GoldenCapture.capture(
+                        model, true, cpu.tokenIds, prefillBatchSize, separatePrefillPhase);
+        if (separatePrefillPhase) {
+            System.out.printf(
+                    "  %s, batch %d%n",
+                    prefillBatchSize > 1 ? "batched prefill" : "sequential prefill",
+                    prefillBatchSize);
         }
 
         assertEquals("compared row count", cpu.rows.size(), gpu.rows.size());
@@ -273,6 +393,7 @@ abstract class CpuGpuParity {
                                 + " (gap > %.3g): %s",
                         fixture.quantization, bounds.decisionGap(), wideReversals),
                 wideReversals.isEmpty());
+        return gpu;
     }
 
     /** Number of shared entries between the two top-k sets. */

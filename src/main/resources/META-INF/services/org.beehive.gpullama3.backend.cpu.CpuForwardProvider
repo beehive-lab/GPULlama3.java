@@ -8,3 +8,4 @@ org.beehive.gpullama3.backend.cpu.Phi3CpuForwardProvider
 org.beehive.gpullama3.backend.cpu.Gemma4CpuForwardProvider
 org.beehive.gpullama3.backend.cpu.GraniteCpuForwardProvider
 org.beehive.gpullama3.backend.cpu.DevstralCpuForwardProvider
+org.beehive.gpullama3.backend.cpu.Qwen35CpuForwardProvider

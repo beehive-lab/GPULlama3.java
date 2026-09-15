@@ -206,19 +206,25 @@ public abstract class AbstractModelLoader<M extends Model, C extends Configurati
 
         // Delegate to specific implementation
         if (useTornadovm) {
-            GGMLType gpuType = effectiveGpuWeightType(outputWeight.ggmlType());
+            Weights weights =
+                    createTornadoVMWeights(
+                            tensorEntries, config, ropeFreqs, tokenEmbeddings, outputWeight);
+            // Reported after loading, from the weights themselves. It used to be a prediction made
+            // before them, from the output tensor's type — which said "Q4_0 -> Q8_0" for a family
+            // that materializes nothing, and would have to guess again for every tensor of a mixed
+            // model. The representation named here is the model's own; tensors whose role differs
+            // keep theirs, and the memory plan reports those per tensor.
             if (TornadoVMMasterPlan.ENABLE_TORNADOVM_INIT_TIME) {
                 int fileType = (int) gguf.getMetadata().get("general.file_type");
                 LOGGER.log(
                         System.Logger.Level.INFO,
-                        "Loading model weights in TornadoVM format ("
+                        "Loaded model weights in TornadoVM format ("
                                 + fileTypeName(fileType)
                                 + " -> "
-                                + gpuType
+                                + weights.dataType()
                                 + ")");
             }
-            return createTornadoVMWeights(
-                    tensorEntries, config, ropeFreqs, tokenEmbeddings, outputWeight);
+            return weights;
         } else {
             return createStandardWeights(
                     tensorEntries, config, ropeFreqs, tokenEmbeddings, outputWeight);
