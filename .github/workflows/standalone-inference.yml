@@ -30,7 +30,7 @@ jobs:
     timeout-minutes: ${{ inputs.timeout_minutes }}
 
     steps:
-      - name: Checkout GPULlama3
+      - name: Checkout jllm
         uses: actions/checkout@v4
         with:
           clean: false
@@ -52,7 +52,7 @@ jobs:
       # compiles both JDK lines on the same self-hosted runner, so whatever is left in
       # target/ belongs to whichever cell finished last -- and a JDK 25 target/ under a
       # JDK 21 run fails with UnsupportedClassVersionError halfway through the matrix.
-      - name: Build GPULlama3
+      - name: Build jllm
         run: ./mvnw -q clean install -DskipTests
 
       # RUNNER_TEMP survives between runs on a self-hosted runner, so the results file and the
