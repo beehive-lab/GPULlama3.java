@@ -6,7 +6,7 @@ import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
-import org.beehive.jllm.LlamaApp;
+import org.beehive.jllm.JllmApp;
 import org.beehive.jllm.format.Float16;
 import org.beehive.jllm.format.GGMLType;
 
@@ -80,7 +80,7 @@ public final class Q4_0FloatTensor extends FloatTensor {
 
     @Override
     public float dot(int thisOffset, FloatTensor that, int thatOffset, int size) {
-        if (LlamaApp.USE_VECTOR_API) {
+        if (JllmApp.USE_VECTOR_API) {
             return vectorDot(this, thisOffset, (ArrayFloatTensor) that, thatOffset, size);
         } else {
             return FloatTensor.scalarDot(this, thisOffset, that, thatOffset, size);

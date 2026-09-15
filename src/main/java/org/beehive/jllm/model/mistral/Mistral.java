@@ -108,7 +108,7 @@ public class Mistral extends AbstractModel {
             throw new UnsupportedOperationException(
                     "Prefill/decode on GPU not yet implemented for Mistral");
         }
-        return TokenGenerationLoop.generateTokensGPULlama(
+        return TokenGenerationLoop.generateTokensGpu(
                 this,
                 state,
                 startPosition,

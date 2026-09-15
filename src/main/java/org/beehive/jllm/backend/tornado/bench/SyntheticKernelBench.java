@@ -24,7 +24,7 @@ import uk.ac.manchester.tornado.api.types.arrays.IntArray;
  * into a compute-bound win.
  *
  * <p>Both use synthetic data at Llama-3.2-1B geometry and load no model, so they measure the
- * kernels rather than an end-to-end pipeline. They are reported through {@code LlamaBench} ({@code
+ * kernels rather than an end-to-end pipeline. They are reported through {@code JllmBench} ({@code
  * --synthetic}); this class only measures and returns, so that console I/O and CLI types stay out
  * of the backend.
  *

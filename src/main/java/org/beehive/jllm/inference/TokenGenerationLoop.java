@@ -38,7 +38,7 @@ import org.beehive.jllm.tokenizer.Tokenizer;
  *
  * <ul>
  *   <li>{@link #generateTokensLlama} – for LLaMA and Mistral models running on CPU
- *   <li>{@link #generateTokensGPULlama} – for LLaMA and Mistral models executed on GPU
+ *   <li>{@link #generateTokensGpu} – for LLaMA and Mistral models executed on GPU
  *   <li>{@link #generateTokensQwen3} – for Qwen3 models running on CPU
  *   <li>{@link #generateTokensGPUQwen3} – for Qwen3 models executed on GPU
  * </ul>
@@ -677,7 +677,7 @@ public final class TokenGenerationLoop {
      * seed is not repeated in the prompt — they depend on the seed being whatever {@code
      * createNewState} put in the state, and {@link GenerationCursor#forState} is exactly that.
      */
-    public static List<Integer> generateTokensGPULlama(
+    public static List<Integer> generateTokensGpu(
             Model model,
             State state,
             int startPosition,
@@ -688,7 +688,7 @@ public final class TokenGenerationLoop {
             boolean echo,
             IntConsumer onTokenGenerated,
             TornadoVMMasterPlan tornadoVMPlan) {
-        return generateTokensGPULlama(
+        return generateTokensGpu(
                 model,
                 state,
                 GenerationCursor.forState(state),
@@ -709,7 +709,7 @@ public final class TokenGenerationLoop {
      * <p>That is what lets a session execute in a workspace it shares: its conversation history
      * travels with it instead of living in storage the next session overwrites.
      */
-    public static List<Integer> generateTokensGPULlama(
+    public static List<Integer> generateTokensGpu(
             Model model,
             State state,
             GenerationCursor cursor,
@@ -1391,7 +1391,7 @@ public final class TokenGenerationLoop {
 
     /**
      * Generates tokens using the Granite model with GPU (TornadoVM) inference. Identical pattern to
-     * generateTokensGPULlama.
+     * generateTokensGpu.
      */
     public static List<Integer> generateTokensGPUGranite(
             Model model,

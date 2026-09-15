@@ -52,7 +52,7 @@ import org.beehive.jllm.model.Model;
  *   --synthetic-seq N              sequence length each slot attends for --synthetic
  * </pre>
  */
-public class LlamaBench {
+public class JllmBench {
 
     record TestSpec(int nPrompt, int nGen, int depth) {
         String name() {
@@ -160,8 +160,8 @@ public class LlamaBench {
         }
         if (models.isEmpty()) {
             System.err.println(
-                    "usage: LlamaBench -m model.gguf [-m model2.gguf] [-p 512] [-n 128] [-pg 512,128] [-d 0] [-r 5] [--cpu] [-o md|csv|json|jsonl|sql] [-oe fmt] [--delay s] [--no-warmup]"
-                            + " | LlamaBench --synthetic [-b B] [--synthetic-seq N] [-o md|csv]");
+                    "usage: JllmBench -m model.gguf [-m model2.gguf] [-p 512] [-n 128] [-pg 512,128] [-d 0] [-r 5] [--cpu] [-o md|csv|json|jsonl|sql] [-oe fmt] [--delay s] [--no-warmup]"
+                            + " | JllmBench --synthetic [-b B] [--synthetic-seq N] [-o md|csv]");
             System.exit(1);
         }
         if (pps.isEmpty() && tgs.isEmpty() && pgs.isEmpty()) {

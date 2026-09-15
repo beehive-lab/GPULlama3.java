@@ -107,7 +107,7 @@ public class Qwen3 extends AbstractModel {
             IntConsumer onTokenGenerated,
             TornadoVMMasterPlan tornadoVMPlan) {
         if (state.executionPolicy().phaseStrategy() == PhaseStrategy.PREFILL_DECODE) {
-            return TokenGenerationLoop.generateTokensGPULlama(
+            return TokenGenerationLoop.generateTokensGpu(
                     this,
                     state,
                     startPosition,

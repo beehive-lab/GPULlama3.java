@@ -78,7 +78,7 @@ public final class Allowlists {
      */
     public static final Set<String> RULE_8A =
             frozen(
-                    "org.beehive.jllm.bench.LlamaBench",
+                    "org.beehive.jllm.bench.JllmBench",
                     "org.beehive.jllm.inference.sampler.Sampler",
                     "org.beehive.jllm.model.loader.ModelLoader",
                     "org.beehive.jllm.tensor.standard.Q4_0FloatTensor");
@@ -97,7 +97,7 @@ public final class Allowlists {
     /**
      * Rule 16 — console I/O in library code.
      *
-     * <p>{@code LlamaApp} and {@code Options} are today's CLI integration and are excluded by the
+     * <p>{@code JllmApp} and {@code Options} are today's CLI integration and are excluded by the
      * rule rather than listed here: printing is the CLI's job. The rule document counts 20 printing
      * files; the two CLI types account for the difference.
      */
@@ -105,7 +105,7 @@ public final class Allowlists {
             frozen(
                     "org.beehive.jllm.auxiliary.RunMetrics",
                     "org.beehive.jllm.auxiliary.Timer$1",
-                    "org.beehive.jllm.bench.LlamaBench",
+                    "org.beehive.jllm.bench.JllmBench",
                     "org.beehive.jllm.inference.TokenGenerationLoop",
                     "org.beehive.jllm.backend.tornado.layers.type.fp16.prefill.LlamaFP16LayersBatchPrefillMMA",
                     "org.beehive.jllm.backend.tornado.layers.type.fp16.prefill.Qwen3FP16LayersBatchPrefillMMA",

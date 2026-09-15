@@ -1,6 +1,6 @@
 package org.beehive.jllm.generation;
 
-import static org.beehive.jllm.LlamaApp.SHOW_PERF_INTERACTIVE;
+import static org.beehive.jllm.JllmApp.SHOW_PERF_INTERACTIVE;
 
 import java.util.ArrayList;
 import java.util.List;

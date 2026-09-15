@@ -109,7 +109,7 @@ public class Qwen2MoE extends AbstractModel {
             TornadoVMMasterPlan tornadoVMPlan) {
         if (state.executionPolicy().phaseStrategy() == PhaseStrategy.PREFILL_DECODE
                 && state.executionPolicy().prefillBatchSize() > 1) {
-            return TokenGenerationLoop.generateTokensGPULlama(
+            return TokenGenerationLoop.generateTokensGpu(
                     this,
                     state,
                     startPosition,

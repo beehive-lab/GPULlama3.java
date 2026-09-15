@@ -381,8 +381,8 @@ List<String> buildCommand(Config cfg, String javaHome, String tornadoSdk, String
     }
 
     String mainClass = cfg.bench()
-        ? "org.beehive.jllm.bench.LlamaBench"
-        : "org.beehive.jllm.LlamaApp";
+        ? "org.beehive.jllm.bench.JllmBench"
+        : "org.beehive.jllm.JllmApp";
     cmd.addAll(List.of("-cp", findLlamaJar(llamaRoot), mainClass));
 
     if (cfg.bench()) {

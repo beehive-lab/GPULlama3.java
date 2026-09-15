@@ -80,7 +80,7 @@ final class LoweredSessionRuntime implements SessionRuntime {
             int budget,
             org.beehive.jllm.inference.sampler.Sampler sampler,
             java.util.function.IntConsumer onToken) {
-        return org.beehive.jllm.inference.TokenGenerationLoop.generateTokensGPULlama(
+        return org.beehive.jllm.inference.TokenGenerationLoop.generateTokensGpu(
                 model,
                 workspace,
                 logical,

@@ -236,9 +236,9 @@ class LlamaRunner:
         if getattr(args, "server", False):
             main_class = "org.beehive.jllm.server.OpenAIServer"
         elif getattr(args, "bench", False):
-            main_class = "org.beehive.jllm.bench.LlamaBench"
+            main_class = "org.beehive.jllm.bench.JllmBench"
         else:
-            main_class = "org.beehive.jllm.LlamaApp"
+            main_class = "org.beehive.jllm.JllmApp"
 
         module_config.extend(
             [
@@ -490,12 +490,12 @@ def create_parser() -> argparse.ArgumentParser:
     bench_group.add_argument(
         "--bench",
         action="store_true",
-        help="Run the llama-bench-style benchmark (bench.LlamaBench) instead of inference",
+        help="Run the llama-bench-style benchmark (bench.JllmBench) instead of inference",
     )
     bench_group.add_argument(
         "--bench-args",
         default="",
-        help='Extra benchmark options (use --bench-args="..."), e.g. "-p 512 -n 128 -d 0,4096 -r 5 -o md" (see LlamaBench)',
+        help='Extra benchmark options (use --bench-args="..."), e.g. "-p 512 -n 128 -d 0,4096 -r 5 -o md" (see JllmBench)',
     )
 
     # Hardware configuration

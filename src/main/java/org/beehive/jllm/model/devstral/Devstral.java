@@ -89,7 +89,7 @@ public class Devstral extends AbstractModel {
             boolean echo,
             IntConsumer onTokenGenerated,
             TornadoVMMasterPlan tornadoVMPlan) {
-        return TokenGenerationLoop.generateTokensGPULlama(
+        return TokenGenerationLoop.generateTokensGpu(
                 this,
                 state,
                 startPosition,

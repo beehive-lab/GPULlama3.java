@@ -21,7 +21,7 @@ import org.beehive.jllm.runtime.policy.ExecutionPolicy;
  * history, the stop tokens and the streaming decode all belong to the session, so what is left here
  * is what a CLI is actually for — parsing arguments and writing to the console.
  */
-public class LlamaApp {
+public class JllmApp {
     // Configuration flags for hardware acceleration and optimizations
     public static final boolean USE_VECTOR_API =
             Boolean.parseBoolean(

@@ -210,7 +210,7 @@ public final class ArchRules {
      * CLI is identified by type rather than package.
      */
     public static final Set<String> CLI_TYPES =
-            Set.of("org.beehive.jllm.LlamaApp", "org.beehive.jllm.Options");
+            Set.of("org.beehive.jllm.JllmApp", "org.beehive.jllm.Options");
 
     public static final String SERVER = "org.beehive.jllm.server";
 
