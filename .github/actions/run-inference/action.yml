@@ -91,8 +91,15 @@ runs:
           -n ${{ inputs.max_tokens }} \
           --seed ${{ inputs.seed }} \
           ${{ inputs.flags }} <<'RUNNER'
-        import os, signal, subprocess, sys
+        import os, signal, subprocess, sys, threading
         log, minutes, cmd = sys.argv[1], float(sys.argv[2]), sys.argv[3:]
+        # The log is capped. A row that fails inside the device driver emits one line per queued
+        # command -- the OpenCL Mistral-7B row wrote hundreds of thousands of
+        # CL_MEM_OBJECT_ALLOCATION_FAILURE lines -- and an uncapped log fills the runner's temp
+        # disk. The step then died on the first write that followed, before it could record the
+        # row, so the job reported a bare exit code and every row after it went unrun. The cause
+        # is always in the first megabytes; a flood never is.
+        CAP = 32 * 1024 * 1024
         with open(log, "wb") as out:
             # start_new_session, and the kill below goes to the process GROUP. llama-tornado is a
             # Python wrapper that starts java with subprocess.run, so java is this runner's
@@ -101,9 +108,32 @@ runs:
             # starved every row that followed on a 16 GiB machine. Run 33996905843 ended with
             # "Terminate orphan process: pid (7972) (java)" twice, one per timed-out row, which is
             # the leak this closes.
-            p = subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
+            p = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+
+            def pump():
+                # Drain the pipe whatever happens: a child whose output nobody reads blocks on a
+                # full pipe and never reaches its own exit, which would turn a fast failure into
+                # a timeout.
+                written = 0
+                noted = False
+                for chunk in iter(lambda: p.stdout.read(65536), b""):
+                    if written < CAP:
+                        take = chunk[: CAP - written]
+                        out.write(take)
+                        written += len(take)
+                    elif not noted:
+                        out.write(b"\n... further output discarded after 32 MiB ...\n")
+                        noted = True
+                out.flush()
+
+            reader = threading.Thread(target=pump, daemon=True)
+            reader.start()
             try:
-                sys.exit(p.wait(timeout=minutes * 60))
+                rc = p.wait(timeout=minutes * 60)
+                reader.join(timeout=30)
+                out.flush()
+                sys.exit(rc)
             except subprocess.TimeoutExpired:
                 group = os.getpgid(p.pid)
                 # SIGTERM first so the JVM can release its device buffers, SIGKILL if it will not.
@@ -117,12 +147,27 @@ runs:
                         break
                     except subprocess.TimeoutExpired:
                         continue
+                reader.join(timeout=30)
                 out.write(("\nrow timed out after %s minutes\n" % sys.argv[2]).encode())
+                out.flush()
                 sys.exit(124)
         RUNNER
         RC=$?
         set -e
-        cat "$RUN_LOG"
+        # Bounded. A row that fails inside the device driver can emit one line per queued
+        # command: the OpenCL Mistral-7B row printed hundreds of thousands of
+        # CL_MEM_OBJECT_ALLOCATION_FAILURE lines, and echoing them whole killed this step
+        # before it could record the row, so the job died with an unexplained exit code and
+        # every row after it went unrun. Head and tail are where the cause is; the middle of
+        # a flood never is.
+        LOG_LINES=$(wc -l < "$RUN_LOG")
+        if [ "$LOG_LINES" -gt 400 ]; then
+          head -n 200 "$RUN_LOG"
+          echo "... $((LOG_LINES - 400)) lines elided ..."
+          tail -n 200 "$RUN_LOG"
+        else
+          cat "$RUN_LOG"
+        fi
 
         record() {  # status  detail
           printf '%s\t%s\t%s\n' "$ROW_LABEL" "$1" "$2" >> "$RESULTS"
@@ -135,7 +180,7 @@ runs:
           # `|| true`: with no matching line grep returns 1, `pipefail` propagates it and
           # `bash -e` kills the step before the row is recorded -- so a failure with no
           # recognizable exception line, such as a timeout, produced no row at all.
-          SIGNATURE=$(grep -m1 -E "Exception in thread|Unable to build sketch|TornadoInternalError|OutOfMemory" "$RUN_LOG" \
+          SIGNATURE=$(grep -m1 -aE "Exception in thread|Unable to build sketch|TornadoInternalError|OutOfMemory|CL_MEM_OBJECT_ALLOCATION_FAILURE|cuMemAlloc" "$RUN_LOG" \
             | tr -d '\000' | cut -c1-400 || true)
           if [ "$RC" -eq 124 ]; then
             SIGNATURE="timed out after ${{ inputs.timeout_minutes }} minutes"
@@ -145,6 +190,18 @@ runs:
           fi
           echo "::warning::$ROW_LABEL failed: $SIGNATURE"
           record "FAIL" "$SIGNATURE"
+          exit 0
+        fi
+
+        # A TornadoVM asynchronous error is a device failure that never reaches the exit code:
+        # the enqueue fails once per queued command, the JVM still exits 0, and the row would
+        # otherwise be judged on whatever text came out of a computation that did not run. That
+        # is a failed row, not a wrong-numbers row, and it is recorded as one so the
+        # expectations table can name its cause.
+        if grep -qa "asynchronous error" "$RUN_LOG"; then
+          ASYNC_SIGNATURE=$(grep -m1 -a "asynchronous error" "$RUN_LOG" | tr -d '\000' | cut -c1-400 || true)
+          echo "::warning::$ROW_LABEL failed: $ASYNC_SIGNATURE"
+          record "FAIL" "$ASYNC_SIGNATURE"
           exit 0
         fi
 
@@ -180,7 +237,11 @@ runs:
         EXPECT='${{ inputs.expect_substring }}'
         if [ -n "$EXPECT" ]; then
           if ! grep -qiF "$EXPECT" "$RUN_LOG"; then
-            SNIPPET=$(tr -d '\000' < "$RUN_LOG" | grep -vE "Detected TornadoVM|achieved tok/s|Tokens:|^====|^$|WARNING" | head -c 200)
+            # `|| true`: head -c closes the pipe as soon as it has its 200 bytes, so grep and
+            # tr die of SIGPIPE, `pipefail` takes their status and `bash -e` killed the step
+            # right here -- before record ran, so the row vanished and the job reported a bare
+            # exit code. Every other pipeline in this file is already guarded for this.
+            SNIPPET=$(tr -d '\000' < "$RUN_LOG" | grep -vE "Detected TornadoVM|achieved tok/s|Tokens:|^====|^$|WARNING" | head -c 200 || true)
             echo "::error::$ROW_LABEL ran but its output does not contain '$EXPECT' — the accelerator produced wrong numbers. Got: $SNIPPET"
             record "WRONG-OUTPUT" "expected '$EXPECT'; got: $SNIPPET"
             exit 0
