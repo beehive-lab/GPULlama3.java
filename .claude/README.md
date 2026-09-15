@@ -1,10 +1,10 @@
-# Claude Agents And Skills For GPULlama3
+# Claude Agents And Skills For jllm
 
-This directory contains project-local Claude Code agents and skills for GPULlama3.java work, including benchmarking, profiling, correctness debugging, and TornadoVM integration.
+This directory contains project-local Claude Code agents and skills for jllm work, including benchmarking, profiling, correctness debugging, and TornadoVM integration.
 
 The scope is broad enough to support future repo work:
 
-- GPULlama3 benchmarking and profiling
+- jllm benchmarking and profiling
 - TornadoVM backend/codegen investigation
 - correctness debugging for precision and kernel changes
 - accelerator feature validation
@@ -23,17 +23,17 @@ After adding or editing files here, restart Claude Code from the repository root
 
 | Agent | Use For |
 |---|---|
-| `gpullama-perf-profiling-specialist` | Running GPULlama3 benchmarks, collecting metrics, nsys/ncu profiling, bottleneck classification |
+| `jllm-perf-profiling-specialist` | Running jllm benchmarks, collecting metrics, nsys/ncu profiling, bottleneck classification |
 | `tornado-backend-specialist` | TornadoVM backend changes, generated kernel codegen, native accelerator library integration |
-| `gpullama-correctness-debug-agent` | Output/accuracy regressions after TornadoVM or GPULlama3 performance changes |
+| `jllm-correctness-debug-agent` | Output/accuracy regressions after TornadoVM or jllm performance changes |
 
 ## Skill Boundaries
 
 | Skill | Use For |
 |---|---|
-| `gpullama-benchmarking` | Reproducible GPULlama3 benchmark runs using local scripts |
-| `gpullama-nsys-analysis` | Nsight Systems trace collection and system-level analysis |
-| `gpullama-ncu-analysis` | Nsight Compute analysis of a specific hot CUDA kernel |
+| `jllm-benchmarking` | Reproducible jllm benchmark runs using local scripts |
+| `jllm-nsys-analysis` | Nsight Systems trace collection and system-level analysis |
+| `jllm-ncu-analysis` | Nsight Compute analysis of a specific hot CUDA kernel |
 | `tornado-codegen-validation` | TornadoVM API/codegen/correctness validation for generated accelerator kernels |
 
 ## Operating Rules

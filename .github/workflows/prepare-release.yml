@@ -1,4 +1,4 @@
-name: Prepare GPULlama3 Release
+name: Prepare jllm Release
 
 on:
   workflow_dispatch:
@@ -24,7 +24,7 @@ env:
 
 jobs:
   prepare-release:
-    if: github.repository == 'beehive-lab/GPULlama3.java'
+    if: github.repository == 'beehive-lab/jllm'
     runs-on: [self-hosted, Linux, x64]
     permissions:
       contents: write
@@ -96,7 +96,7 @@ jobs:
           \`\`\`xml
           <dependency>
               <groupId>io.github.beehive-lab</groupId>
-              <artifactId>gpu-llama3</artifactId>
+              <artifactId>jllm</artifactId>
               <version>${VERSION}-jdk21</version>
           </dependency>
           \`\`\`
@@ -105,7 +105,7 @@ jobs:
           \`\`\`xml
           <dependency>
               <groupId>io.github.beehive-lab</groupId>
-              <artifactId>gpu-llama3</artifactId>
+              <artifactId>jllm</artifactId>
               <version>${VERSION}-jdk25</version>
           </dependency>
           \`\`\`
@@ -114,12 +114,12 @@ jobs:
 
           **JDK 21**:
           \`\`\`groovy
-          implementation 'io.github.beehive-lab:gpu-llama3:${VERSION}-jdk21'
+          implementation 'io.github.beehive-lab:jllm:${VERSION}-jdk21'
           \`\`\`
 
           **JDK 25**:
           \`\`\`groovy
-          implementation 'io.github.beehive-lab:gpu-llama3:${VERSION}-jdk25'
+          implementation 'io.github.beehive-lab:jllm:${VERSION}-jdk25'
           \`\`\`
           EOF
 
@@ -252,7 +252,7 @@ jobs:
           if [ ! -f "$CHANGELOG_FILE" ]; then
             echo "# Changelog" > "$CHANGELOG_FILE"
             echo "" >> "$CHANGELOG_FILE"
-            echo "All notable changes to GPULlama3.java will be documented in this file." >> "$CHANGELOG_FILE"
+            echo "All notable changes to jllm will be documented in this file." >> "$CHANGELOG_FILE"
             echo "" >> "$CHANGELOG_FILE"
           fi
           

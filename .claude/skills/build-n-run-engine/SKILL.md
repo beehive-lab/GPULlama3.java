@@ -1,12 +1,12 @@
 ---
 name: build-n-run-engine
-description: Build GPULlama3.java with Maven and run it on an accelerator. Use when target/ is missing or stale, after pulling changes, or when switching JDK line or backend.
+description: Build jllm with Maven and run it on an accelerator. Use when target/ is missing or stale, after pulling changes, or when switching JDK line or backend.
 license: Apache-2.0
 metadata:
   author: TornadoVM Team
 ---
 
-# Build and run GPULlama3.java
+# Build and run jllm
 
 ## When to use
 
@@ -24,8 +24,8 @@ else at `validate`, naming both.
 
 | Build JDK | Artifact | TornadoVM SDK it must run against |
 | --- | --- | --- |
-| 21 | `gpu-llama3:<version>-jdk21` | a TornadoVM SDK built with `make BACKEND=...` (the jdk21 target) |
-| 25 | `gpu-llama3:<version>-jdk25` | a TornadoVM SDK built with `make jdk22plus BACKEND=...` |
+| 21 | `jllm:<version>-jdk21` | a TornadoVM SDK built with `make BACKEND=...` (the jdk21 target) |
+| 25 | `jllm:<version>-jdk25` | a TornadoVM SDK built with `make jdk22plus BACKEND=...` |
 
 There is no flag: the JDK on `JAVA_HOME` selects the profile.
 
@@ -55,7 +55,7 @@ through with `UnsupportedClassVersionError`, and the message names a test class 
 the cause.
 
 Accelerator gates are opt-in and need a device, an SDK and the pinned fixtures under
-`$GPULLAMA_TEST_MODELS` or `~/.gpullama3/test-models/`:
+`$JLLM_TEST_MODELS` or `~/.jllm/test-models/`:
 
 ```bash
 ./mvnw clean verify -Paccel-tests
@@ -65,23 +65,23 @@ Accelerator gates are opt-in and need a device, an SDK and the pinned fixtures u
 
 ```bash
 ./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout   # must end -jdk21 or -jdk25
-./llama-tornado --help
+./jllm --help
 ```
 
 ## Run
 
 ```bash
-./llama-tornado --gpu --model <model.gguf> --prompt "..." -n 128 --seed 42
+./jllm --gpu --model <model.gguf> --prompt "..." -n 128 --seed 42
 ```
 
-The backend comes from `$TORNADOVM_HOME/etc/tornado.backend`. `--opencl`, `--ptx`,
-`--cuda` and `--metal` force one when the SDK has several; they error out if the SDK does
+The backend comes from `$TORNADOVM_HOME/etc/tornado.backend`. `--opencl`, `--cuda`
+and `--metal` force one when the SDK has several; they error out if the SDK does
 not contain the requested backend, and are redundant on a single-backend SDK.
 
 Both launchers take their JVM flags from `$TORNADOVM_HOME/tornado-argfile`. If it is
 missing, run `tornado --devices` once to regenerate it from the template. Never add JVMCI,
 module-path or preview flags by hand — they differ by TornadoVM version, JDK and backend,
-and the SDK is what knows them. `llamaTornado`, the single-file Java launcher, needs JDK 25
+and the SDK is what knows them. `jllm4j`, the single-file Java launcher, needs JDK 25
 to run itself.
 
 ### Prove what actually ran
@@ -92,8 +92,8 @@ result, establish all three:
 ```bash
 # The launcher parses its own flags, so engine properties go through JAVA_TOOL_OPTIONS,
 # which is what CI does too.
-JAVA_TOOL_OPTIONS="-Dllama.metrics.format=json -Dllama.metrics.output=file -Dllama.metrics.file=$PWD/run.json" \
-  ./llama-tornado --gpu --model <model.gguf> \
+JAVA_TOOL_OPTIONS="-Djllm.metrics.format=json -Djllm.metrics.output=file -Djllm.metrics.file=$PWD/run.json" \
+  ./jllm --gpu --model <model.gguf> \
     --prompt "What is the capital of France?" -n 64 --seed 42
 ```
 

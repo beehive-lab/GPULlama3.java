@@ -1,4 +1,4 @@
-name: GPULlama3 Build & Run
+name: jllm Build & Run
 
 on:
   push:
@@ -12,22 +12,22 @@ env:
   JAVA_VERSION_25: 25.0.2-open
   MODELS_DIR: /opt/models
   QUARKUS_PORT: 8081
-  # The Quarkus extension that consumes this project. Its GPULlama3 module tracks the public
+  # The Quarkus extension that consumes this project. Its jllm module tracks the public
   # facade, so it is pinned to the branch matching this repository's surface rather than to
   # quarkiverse's default branch, which lags it.
   QUARKUS_LANGCHAIN4J_REPO: https://github.com/orionpapadakis/quarkus-langchain4j.git
-  QUARKUS_LANGCHAIN4J_REF: gpu-llama3/facade-1.0.0
+  QUARKUS_LANGCHAIN4J_REF: jllm/facade-1.0.0
   # History file committed back to the repo on push to main
   PERF_HISTORY_FILE: docs/perf-history.jsonl
 
 jobs:
   code-quality:
-    if: github.repository == 'beehive-lab/GPULlama3.java'
+    if: github.repository == 'beehive-lab/jllm'
     runs-on: [self-hosted, Linux]
     timeout-minutes: 30
 
     steps:
-      - name: Checkout GPULlama3
+      - name: Checkout jllm
         uses: actions/checkout@v4
 
       - name: Set up Java
@@ -49,7 +49,7 @@ jobs:
   # depend on jobs, not on matrix cells, so with one `build` job an unavailable Mac runner
   # leaves every Linux consumer queued behind it.
   build-linux:
-    if: github.repository == 'beehive-lab/GPULlama3.java'
+    if: github.repository == 'beehive-lab/jllm'
     runs-on: [self-hosted, Linux]
     needs: code-quality
     timeout-minutes: 45
@@ -60,7 +60,7 @@ jobs:
         jdk: ['21', '25']
 
     steps:
-      - name: Checkout GPULlama3
+      - name: Checkout jllm
         uses: actions/checkout@v4
         with:
           clean: false
@@ -78,50 +78,50 @@ jobs:
           backend: ${{ matrix.backend }}
           jdk: ${{ matrix.jdk }}
 
-      - name: Build and unit-test GPULlama3.java
+      - name: Build and unit-test jllm
         run: |
           # No `versions:set` and no `-Dtornadovm.version`: both would overwrite what the JDK
           # profile resolved, which is the mechanism being tested. The version is read back
           # afterwards so downstream steps name the artifact the build actually produced.
           ./mvnw clean install
-          GPULLAMA3_VERSION=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout)
-          echo "GPULlama3 version: $GPULLAMA3_VERSION"
-          echo "GPULLAMA3_VERSION=$GPULLAMA3_VERSION" >> $GITHUB_ENV
+          JLLM_VERSION=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout)
+          echo "jllm version: $JLLM_VERSION"
+          echo "JLLM_VERSION=$JLLM_VERSION" >> $GITHUB_ENV
 
       - name: Check the artifact matches the JDK that built it
         run: |
           set -euo pipefail
           EXPECTED_SUFFIX="-jdk${{ matrix.jdk }}"
-          case "$GPULLAMA3_VERSION" in
+          case "$JLLM_VERSION" in
             *"$EXPECTED_SUFFIX") ;;
-            *) echo "::error::JDK ${{ matrix.jdk }} produced $GPULLAMA3_VERSION, which does not end in $EXPECTED_SUFFIX"; exit 1 ;;
+            *) echo "::error::JDK ${{ matrix.jdk }} produced $JLLM_VERSION, which does not end in $EXPECTED_SUFFIX"; exit 1 ;;
           esac
           # 21 -> class major 65, 25 -> 69.
           EXPECTED_MAJOR=$(( 44 + ${{ matrix.jdk }} ))
-          JAR="target/gpu-llama3-${GPULLAMA3_VERSION}.jar"
+          JAR="target/jllm-${JLLM_VERSION}.jar"
           MAJOR=$("$JAVA_HOME/bin/javap" -verbose -classpath "$JAR" \
-            org.beehive.gpullama3.model.Model | awk '/major version:/ { print $3; exit }')
+            org.beehive.jllm.model.Model | awk '/major version:/ { print $3; exit }')
           if [ "$MAJOR" != "$EXPECTED_MAJOR" ]; then
             echo "::error::$JAR has class major $MAJOR, expected $EXPECTED_MAJOR"; exit 1
           fi
           # The seven provider/architecture SPIs. A missing one loses a model family at runtime
           # and nothing else notices until a load fails.
-          SERVICES=$("$JAVA_HOME/bin/jar" tf "$JAR" | grep -c '^META-INF/services/org\.beehive\.' || true)
+          SERVICES=$("$JAVA_HOME/bin/jar" tf "$JAR" | grep -c '^META-INF/services/org\.beehive\.jllm\.' || true)
           if [ "$SERVICES" != "7" ]; then
             echo "::error::$JAR declares $SERVICES project service files, expected 7"
             "$JAVA_HOME/bin/jar" tf "$JAR" | grep '^META-INF/services/' || true
             exit 1
           fi
-          echo "$JAR: version $GPULLAMA3_VERSION, class major $MAJOR, $SERVICES service files"
+          echo "$JAR: version $JLLM_VERSION, class major $MAJOR, $SERVICES service files"
 
       - name: Launcher smoke test
         run: |
           set -euo pipefail
-          export LLAMA_ROOT="${{ github.workspace }}"
-          ./llama-tornado --help > /dev/null
+          export JLLM_ROOT="${{ github.workspace }}"
+          ./jllm --help > /dev/null
           # --show-command without --execute-after-show builds the whole JVM command line,
           # which is what proves the SDK argfile was found and read.
-          ./llama-tornado --show-command --gpu \
+          ./jllm --show-command --gpu \
             --model "$MODELS_DIR/Llama-3.2-1B-Instruct-F16.gguf" --prompt hi \
             | tee /tmp/llama-command.txt > /dev/null
           # `if` blocks, not AND/OR lists: under `bash -e` a list whose final status is
@@ -139,13 +139,13 @@ jobs:
           echo "launcher command built from the SDK argfile"
 
   build-macos:
-    if: github.repository == 'beehive-lab/GPULlama3.java'
+    if: github.repository == 'beehive-lab/jllm'
     runs-on: [self-hosted, macOS]
     needs: code-quality
     timeout-minutes: 45
 
     steps:
-      - name: Checkout GPULlama3
+      - name: Checkout jllm
         uses: actions/checkout@v4
         with:
           clean: false
@@ -163,11 +163,11 @@ jobs:
           backend: metal
           jdk: '21'
 
-      - name: Build and unit-test GPULlama3.java
+      - name: Build and unit-test jllm
         run: ./mvnw clean install
 
   standalone-inference-linux:
-    if: github.repository == 'beehive-lab/GPULlama3.java'
+    if: github.repository == 'beehive-lab/jllm'
     needs: build-linux
     strategy:
       fail-fast: false
@@ -179,7 +179,7 @@ jobs:
       runner_os: Linux
 
   standalone-inference-macos:
-    if: github.repository == 'beehive-lab/GPULlama3.java'
+    if: github.repository == 'beehive-lab/jllm'
     needs: build-macos
     uses: ./.github/workflows/standalone-inference.yml
     with:
@@ -192,7 +192,7 @@ jobs:
 
   # Test integration with Quarkus-langchain4j
   quarkus-langchain4j-integration:
-    if: github.repository == 'beehive-lab/GPULlama3.java'
+    if: github.repository == 'beehive-lab/jllm'
     runs-on: [self-hosted, Linux]
     needs: build-linux
     timeout-minutes: 45
@@ -204,7 +204,7 @@ jobs:
         backend: [opencl, cuda]
 
     steps:
-      - name: Checkout GPULlama3
+      - name: Checkout jllm
         uses: actions/checkout@v4
         with:
           clean: false
@@ -222,10 +222,10 @@ jobs:
           backend: ${{ matrix.backend }}
           jdk: '21'
 
-      - name: Build GPULlama3 for this leg
+      - name: Build jllm for this leg
         run: |
           ./mvnw -q clean install -DskipTests
-          echo "GPULLAMA3_VERSION=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout)" >> $GITHUB_ENV
+          echo "JLLM_VERSION=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout)" >> $GITHUB_ENV
 
       - name: Clone the Quarkus LangChain4j extension
         run: |
@@ -238,17 +238,17 @@ jobs:
           cd ${{ github.workspace }}/quarkus-langchain4j
           # -i.bak (extension glued to the flag) is the portable form: GNU sed accepts it and
           # BSD sed requires it — a bare `-i ''` is parsed as the script on BSD sed.
-          sed -i.bak 's/<gpu-llama3\.version>.*<\/gpu-llama3\.version>/<gpu-llama3.version>'$GPULLAMA3_VERSION'<\/gpu-llama3.version>/' pom.xml
+          sed -i.bak 's/<gpu-llama3\.version>.*<\/gpu-llama3\.version>/<gpu-llama3.version>'$JLLM_VERSION'<\/gpu-llama3.version>/' pom.xml
           rm -f pom.xml.bak
           # -Dtornado activates the TornadoVM profile; -am builds only the gpu-llama3 module + deps
           mvn -q clean install -pl integration-tests/gpu-llama3 -am -DskipTests -Dtornado
 
-      - name: Verify GPULlama3 Dependency
+      - name: Verify jllm Dependency
         run: |
           cd ${{ github.workspace }}/quarkus-langchain4j/integration-tests/gpu-llama3
-          mvn dependency:tree | grep "io.github.beehive-lab:gpu-llama3:jar:$GPULLAMA3_VERSION"
+          mvn dependency:tree | grep "io.github.beehive-lab:jllm:jar:$JLLM_VERSION"
 
-      - name: Seed GPULlama3 model cache (avoid HuggingFace download on cold runners)
+      - name: Seed jllm model cache (avoid HuggingFace download on cold runners)
         shell: bash
         run: |
           set -euo pipefail
@@ -395,7 +395,7 @@ jobs:
   # (or record-only status) is declared.
   performance-gate:
     if: >-
-      github.repository == 'beehive-lab/GPULlama3.java' &&
+      github.repository == 'beehive-lab/jllm' &&
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main'
 
@@ -404,7 +404,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Checkout GPULlama3
+      - name: Checkout jllm
         uses: actions/checkout@v4
         with:
           clean: false
@@ -463,7 +463,7 @@ jobs:
     # Guard: only commit history on real pushes to main, not on PRs or forks.
     # Prevents duplicate entries from PR runs and avoids push-permission errors on forks.
     if: >-
-      github.repository == 'beehive-lab/GPULlama3.java' &&
+      github.repository == 'beehive-lab/jllm' &&
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main'
 
@@ -472,7 +472,7 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - name: Checkout GPULlama3
+      - name: Checkout jllm
         uses: actions/checkout@v4
 
       - name: Download metrics artifacts

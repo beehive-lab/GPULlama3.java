@@ -1,5 +1,5 @@
 name: Run Inference
-description: Run one llama-tornado inference pass, assert the backend that actually executed, and record the row's outcome against its declared expectation.
+description: Run one jllm inference pass, assert the backend that actually executed, and record the row's outcome against its declared expectation.
 
 inputs:
   backend:
@@ -18,7 +18,7 @@ inputs:
     description: 'Configuration key for the sidecar (e.g. standard, prefill-decode)'
     required: true
   flags:
-    description: 'Extra CLI flags passed to llama-tornado (omit for standard run)'
+    description: 'Extra CLI flags passed to jllm (omit for standard run)'
     required: false
     default: ''
   timeout_minutes:
@@ -68,9 +68,9 @@ runs:
       working-directory: ${{ github.workspace }}
       env:
         JAVA_TOOL_OPTIONS: >-
-          -Dllama.metrics.format=json
-          -Dllama.metrics.output=file
-          -Dllama.metrics.file=${{ inputs.metrics_file }}
+          -Djllm.metrics.format=json
+          -Djllm.metrics.output=file
+          -Djllm.metrics.file=${{ inputs.metrics_file }}
         METRICS_FILE: ${{ inputs.metrics_file }}
         ROW_LABEL: '${{ inputs.backend }} | ${{ inputs.model }} | ${{ inputs.quantization }} | ${{ inputs.configuration }}'
       run: |
@@ -85,7 +85,7 @@ runs:
         # exit code for a timeout.
         set +e
         python3 - "$RUN_LOG" ${{ inputs.timeout_minutes }} \
-          ./llama-tornado --gpu \
+          ./jllm --gpu \
           --model $MODELS_DIR/${{ inputs.model_file }} \
           --prompt "${{ inputs.prompt }}" \
           -n ${{ inputs.max_tokens }} \
@@ -94,7 +94,7 @@ runs:
         import os, signal, subprocess, sys
         log, minutes, cmd = sys.argv[1], float(sys.argv[2]), sys.argv[3:]
         with open(log, "wb") as out:
-            # start_new_session, and the kill below goes to the process GROUP. llama-tornado is a
+            # start_new_session, and the kill below goes to the process GROUP. jllm is a
             # Python wrapper that starts java with subprocess.run, so java is this runner's
             # grandchild. p.kill() reached the wrapper only: the JVM survived its own row, kept
             # holding its unified-memory buffers -- ~9.5 GiB for Phi-3-mini-Q8_0, measured -- and
@@ -149,7 +149,7 @@ runs:
         fi
 
         # The requested backend is a matrix label, not evidence. Assert what actually executed:
-        # llama-tornado prints the backend it resolved from $TORNADOVM_HOME/etc/tornado.backend,
+        # jllm prints the backend it resolved from $TORNADOVM_HOME/etc/tornado.backend,
         # and RunMetrics records the execution path the run itself took.
         if ! grep -qE "Detected TornadoVM backend: ${{ inputs.backend }}\b" "$RUN_LOG"; then
           echo "::error::$ROW_LABEL requested backend '${{ inputs.backend }}' but the run did not report resolving it"

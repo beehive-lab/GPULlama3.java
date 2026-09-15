@@ -34,8 +34,8 @@ for model in "${models[@]}"; do
 
   cmd=(
     java @argfile
-    -cp /home/devoxx2025-demo/java-ai-demos/GPULlama3.java/target/gpu-llama3-0.2.2.jar
-    org.beehive.gpullama3.LlamaApp
+    -cp /home/devoxx2025-demo/java-ai-demos/jllm/target/jllm-1.0.0-jdk21.jar
+    org.beehive.jllm.JllmApp
     --model "$model"
     --stream true
     --echo false
@@ -44,13 +44,13 @@ for model in "${models[@]}"; do
   )
 
   # Pretty print the command (one-liner)
-  echo -e "java @argfile -cp /home/devoxx2025-demo/java-ai-demos/GPULlama3.java/target/gpu-llama3-0.2.2.jar org.beehive.gpullama3.LlamaApp --model \"$model\" --stream true --echo false -p \"Who are you?\" --instruct \n"
+  echo -e "java @argfile -cp /home/devoxx2025-demo/java-ai-demos/jllm/target/jllm-1.0.0-jdk21.jar org.beehive.jllm.JllmApp --model \"$model\" --stream true --echo false -p \"Who are you?\" --instruct \n"
 
   # Execute it
   "${cmd[@]}"
 
-  #java @argfile -cp /home/devoxx2025-demo/java-ai-demos/GPULlama3.java/target/gpu-llama3-0.2.2.jar org.beehive.gpullama3.LlamaApp --model "$model"  --stream true --echo false -p "Who are you?" --instruct
+  #java @argfile -cp /home/devoxx2025-demo/java-ai-demos/jllm/target/jllm-1.0.0-jdk21.jar org.beehive.jllm.JllmApp --model "$model"  --stream true --echo false -p "Who are you?" --instruct
 
-   #./llama-tornado --gpu --model "$model" --prompt "Who are you?"
+   #./jllm --gpu --model "$model" --prompt "Who are you?"
 done
 

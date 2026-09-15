@@ -5,10 +5,10 @@ source "$HOME/.sdkman/bin/sdkman-init.sh" >/dev/null 2>&1
 sdk use java 21.0.2-open >/dev/null
 source "$HOME/TornadoVM/setvars.sh" >/dev/null
 
-export LLAMA_ROOT=/home/orion/GPULlama3.java
-cd "$LLAMA_ROOT" || exit 1
+export JLLM_ROOT=/home/orion/jllm
+cd "$JLLM_ROOT" || exit 1
 
-RESULTS_DIR="${RESULTS_DIR:-$LLAMA_ROOT/perf-results/manual-cuda-half2-$(date +%Y%m%d-%H%M%S)}"
+RESULTS_DIR="${RESULTS_DIR:-$JLLM_ROOT/perf-results/manual-cuda-half2-$(date +%Y%m%d-%H%M%S)}"
 PROMPT="write a matmul in java"
 MAX_TOKENS=2048
 GPU_MEMORY=20GB
@@ -52,10 +52,10 @@ for entry in "${models[@]}"; do
       continue
     fi
 
-    export JAVA_TOOL_OPTIONS="-Dllama.metrics.format=json -Dllama.metrics.output=file -Dllama.metrics.file=$metrics"
+    export JAVA_TOOL_OPTIONS="-Djllm.metrics.format=json -Djllm.metrics.output=file -Djllm.metrics.file=$metrics"
     start_ms=$(date +%s%3N)
     # shellcheck disable=SC2086
-    ./llama-tornado --gpu --cuda \
+    ./jllm --gpu --cuda \
       --model "$path" \
       --prompt "$PROMPT" \
       --max-tokens "$MAX_TOKENS" \

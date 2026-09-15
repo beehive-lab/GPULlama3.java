@@ -50,8 +50,8 @@ as a numerical result nobody can attribute.
 ## Backends
 
 `BackendId` is `CPU`, `CUDA`, `OPENCL` or `METAL`. CUDA, OpenCL and Metal are
-*TornadoVM* backends: capabilities of one GPULlama backend, selected by which SDK is
-installed, not separate GPULlama backends.
+*TornadoVM* backends: capabilities of one jllm backend, selected by which SDK is
+installed, not separate jllm backends.
 
 The launcher detects installed backends from `$TORNADOVM_HOME/etc/tornado.backend`. On a
 multi-backend SDK, `--cuda`/`--opencl`/`--metal` force one and set TornadoVM's own

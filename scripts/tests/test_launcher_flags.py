@@ -18,11 +18,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _load_launcher():
-    """Import `llama-tornado` by path -- its name is not a valid module identifier."""
+    """Import `jllm` by path -- its name is not a valid module identifier."""
     spec = importlib.util.spec_from_loader(
         "llama_tornado_launcher",
         importlib.machinery.SourceFileLoader(
-            "llama_tornado_launcher", str(REPO_ROOT / "llama-tornado")
+            "llama_tornado_launcher", str(REPO_ROOT / "jllm")
         ),
     )
     module = importlib.util.module_from_spec(spec)

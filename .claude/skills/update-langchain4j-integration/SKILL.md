@@ -1,9 +1,9 @@
 ---
 name: update-langchain4j-integration
-description: Update the LangChain4j GPULlama3 integration to a new GPULlama3.java release. Use when bumping io.github.beehive-lab:gpu-llama3, adapting the adapter to API or capability changes, enabling inherited integration tests, validating JDK/TornadoVM combinations and demos, or updating the module documentation.
+description: Update the LangChain4j jllm integration to a new jllm release. Use when bumping io.github.beehive-lab:jllm, adapting the adapter to API or capability changes, enabling inherited integration tests, validating JDK/TornadoVM combinations and demos, or updating the module documentation.
 ---
 
-# Update the LangChain4j GPULlama3 integration
+# Update the LangChain4j jllm integration
 
 Treat a version bump as an integration migration. Discover current repository state and preserve
 unrelated changes.
@@ -12,8 +12,8 @@ unrelated changes.
 
 Determine or ask for:
 
-- GPULlama3 base version
-- GPULlama3.java, LangChain4j, and demo checkout paths
+- jllm base version
+- jllm, LangChain4j, and demo checkout paths
 - exact GGUF paths for chat and capability-specific tests
 - supported JDK/TornadoVM backend combinations
 
@@ -21,15 +21,15 @@ Never guess paths, versions, models, flags, or backends.
 
 ## 1. Inspect the release
 
-Read the GPULlama3 changelog, release diff, POM, and changed public APIs. Confirm both artifacts:
+Read the jllm changelog, release diff, POM, and changed public APIs. Confirm both artifacts:
 
-- `gpu-llama3:<version>-jdk21`
-- `gpu-llama3:<version>-jdk25`
+- `jllm:<version>-jdk21`
+- `jllm:<version>-jdk25`
 
 For a published release:
 
 ```bash
-/path/to/GPULlama3.java/.claude/skills/update-langchain4j-integration/scripts/inspect-release.sh <version>
+/path/to/jllm/.claude/skills/update-langchain4j-integration/scripts/inspect-release.sh <version>
 ```
 
 Otherwise build and inspect both JARs locally. Among others check model loading/generation, metrics,
@@ -77,7 +77,7 @@ sync/streaming callbacks separately.
 ## 3. Validate
 
 Use focused tests while iterating, preferably in fresh TornadoVM processes when diagnosing shared
-device state. Classify failures as adapter, model behavior, GPULlama3, TornadoVM, or test harness.
+device state. Classify failures as adapter, model behavior, jllm, TornadoVM, or test harness.
 
 Completion requires the entire sequence in
 [whole-chain-validation.md](references/whole-chain-validation.md) for every claimed JDK/backend:
