@@ -851,6 +851,23 @@ public class Qwen35FFNLayers
      * at every step and its local work size is that width. This model's key head is 128 wide.
      */
     // @formatter:on
+    // @formatter:off
+    /**
+     * Whether the delta rule splits each column's reduction across two lanes.
+     *
+     * <p>A property of the head's width: the split halves the row range, so the width must be
+     * even, and the workgroup it asks for is twice that width, which a device must accept. This
+     * family's value head is 128 wide, so the workgroup is 256.
+     *
+     * <p>Not a user choice and not a tuning knob. A geometry that does not satisfy it keeps the
+     * one-lane-per-column kernel.
+     */
+    // @formatter:on
+    private boolean deltaRuleIsSplit() {
+        int headDim = config.headValueDim();
+        return headDim % 2 == 0 && 2 * headDim <= 1024;
+    }
+
     private boolean l2NormIsWide() {
         int headDim = config.headKeyDim();
         return headDim > 0 && (headDim & (headDim - 1)) == 0;
@@ -1396,21 +1413,40 @@ public class Qwen35FFNLayers
                 (float) (1.0 / Math.sqrt(headK)),
                 keyDim);
 
-        layer.task(
-                tn("ssm_delta_rule"),
-                Qwen35DeltaNetKernels::deltaRule,
-                context,
-                qwen35State.workspace.wrapSsmQ,
-                qwen35State.workspace.wrapSsmK,
-                qwen35State.workspace.wrapSsmV,
-                qwen35State.workspace.wrapSsmAlpha,
-                qwen35State.workspace.wrapSsmBeta,
-                qwen35State.workspace.wrapDeltaState,
-                qwen35State.workspace.wrapSsmOut,
-                valueHeads,
-                config.numberOfKeyHeads(),
-                headV,
-                recurrent * config.deltaNetStateSize());
+        if (deltaRuleIsSplit()) {
+            // Two lanes a column, each taking half the rows. Same per-element arithmetic; the two
+            // reductions are a sum of two half folds, so this is not bit-identical.
+            layer.task(
+                    tn("ssm_delta_rule"),
+                    Qwen35DeltaNetKernels::deltaRuleSplit,
+                    context,
+                    qwen35State.workspace.wrapSsmQ,
+                    qwen35State.workspace.wrapSsmK,
+                    qwen35State.workspace.wrapSsmV,
+                    qwen35State.workspace.wrapSsmAlpha,
+                    qwen35State.workspace.wrapSsmBeta,
+                    qwen35State.workspace.wrapDeltaState,
+                    qwen35State.workspace.wrapSsmOut,
+                    config.numberOfKeyHeads(),
+                    headV,
+                    recurrent * config.deltaNetStateSize());
+        } else {
+            layer.task(
+                    tn("ssm_delta_rule"),
+                    Qwen35DeltaNetKernels::deltaRule,
+                    context,
+                    qwen35State.workspace.wrapSsmQ,
+                    qwen35State.workspace.wrapSsmK,
+                    qwen35State.workspace.wrapSsmV,
+                    qwen35State.workspace.wrapSsmAlpha,
+                    qwen35State.workspace.wrapSsmBeta,
+                    qwen35State.workspace.wrapDeltaState,
+                    qwen35State.workspace.wrapSsmOut,
+                    valueHeads,
+                    config.numberOfKeyHeads(),
+                    headV,
+                    recurrent * config.deltaNetStateSize());
+        }
 
         if (gatedNormIsWide()) {
             // A workgroup per head and a lane per element. Same equation, same gate position,
@@ -1687,9 +1723,16 @@ public class Qwen35FFNLayers
                 WorkerGridFactory.genericWorker(
                         config.numberOfValueHeads() * config.headValueDim(),
                         config.headValueDim());
+        // One workgroup per value head either way; the split form gives each column two lanes,
+        // so the workgroup is twice the head's width rather than the elementwise default.
         WorkerGrid deltaRule =
-                WorkerGridFactory.genericWorker(
-                        config.numberOfValueHeads() * config.headValueDim(), ELEMENTWISE_LOCAL);
+                deltaRuleIsSplit()
+                        ? WorkerGridFactory.genericWorker(
+                                config.numberOfValueHeads() * 2 * config.headValueDim(),
+                                2 * config.headValueDim())
+                        : WorkerGridFactory.genericWorker(
+                                config.numberOfValueHeads() * config.headValueDim(),
+                                ELEMENTWISE_LOCAL);
 
         for (int layer = 0; layer < config.numberOfLayers(); layer++) {
             // The same graph and the same task qualification the tasks were built with; a

@@ -298,6 +298,19 @@ public class Qwen35GraphTopologyAccelTest {
             assertEquals(task + " global work", keyHeads * keyDim, (int) grid.getGlobalWork()[0]);
             assertEquals(task + " local work", keyDim, (int) grid.getLocalWork()[0]);
         }
+        // The delta rule's dispatch: two lanes a column is twice the value head's width, one lane
+        // a column is the elementwise default. Asserted on the grid because the task name is the
+        // same either way.
+        WorkerGrid delta = scheduler.get(prefix + "ssm_delta_rule");
+        assertEquals(
+                "ssm_delta_rule global work",
+                valueHeads * 2 * valueDim,
+                (int) delta.getGlobalWork()[0]);
+        assertEquals(
+                "ssm_delta_rule local work is two lanes a column",
+                2 * valueDim,
+                (int) delta.getLocalWork()[0]);
+
         WorkerGrid gated = scheduler.get(prefix + "ssm_gated_norm");
         assertEquals(
                 "ssm_gated_norm global work", valueHeads * valueDim, (int) gated.getGlobalWork()[0]);

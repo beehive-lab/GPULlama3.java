@@ -187,6 +187,90 @@ public class Qwen35KernelAccelTest {
         assertClose("delta state", hostState, dstate);
     }
 
+    // @formatter:off
+    /**
+     * The split delta rule — two lanes a column — against the same CPU reference.
+     *
+     * <p>It is the dispatched kernel wherever the value head's width is even, which is this
+     * family's case, so the one-lane form above no longer covers what decode runs. Each column's
+     * two reductions become a sum of two half-length folds, so this is checked against the
+     * reference rather than against the other kernel's bits.
+     *
+     * <p><b>Ownership is what the state comparison pins.</b> Every state element is written once a
+     * sweep by the lane owning its row range; an element left unwritten, or written twice, moves
+     * away from the reference and fails here. The inputs carry the cases the ordinary noise above
+     * does not reach: a head whose value is exactly zero, a head with beta zero so the correction
+     * vanishes and the state only decays, a head whose keys and queries alternate exactly plus and
+     * minus one so its dot products cancel term by term, and a decay of exactly one, which the
+     * model's {@code exp(a * softplus(.))} can reach by rounding.
+     */
+    // @formatter:on
+    @Test
+    public void theSplitDeltaRuleRunsOnTheDevice() throws Exception {
+        float[] q = noise(KEY_DIM, 0.1f);
+        float[] k = noise(KEY_DIM, 0.1f);
+        float[] v = noise(VALUE_DIM, 1.0f);
+        float[] state = noise(VALUE_HEADS * STATE_DIM * STATE_DIM, 0.05f);
+        float[] decay = new float[VALUE_HEADS];
+        float[] beta = new float[VALUE_HEADS];
+        for (int h = 0; h < VALUE_HEADS; h++) {
+            decay[h] = 0.5f + 0.5f * random.nextFloat();
+            beta[h] = random.nextFloat();
+        }
+        // Head 0's keys and queries cancel term by term; head 1 has no value; head 2 does not
+        // update at all; head 3 sits on the decay boundary.
+        for (int i = 0; i < STATE_DIM; i++) {
+            k[i] = (i % 2 == 0) ? 1.0f : -1.0f;
+            q[i] = (i % 2 == 0) ? 1.0f : -1.0f;
+            v[STATE_DIM + i] = 0.0f;
+        }
+        beta[2] = 0.0f;
+        decay[3] = 1.0f;
+
+        FloatTensor hostState = new ArrayFloatTensor(state.clone());
+        FloatTensor hostOut = ArrayFloatTensor.allocate(VALUE_DIM);
+        CpuOperations.deltaRuleUpdate(
+                new ArrayFloatTensor(q.clone()),
+                new ArrayFloatTensor(k.clone()),
+                new ArrayFloatTensor(v.clone()),
+                new ArrayFloatTensor(decay.clone()),
+                new ArrayFloatTensor(beta.clone()),
+                hostState,
+                hostOut,
+                VALUE_HEADS,
+                KEY_HEADS,
+                STATE_DIM);
+
+        FloatArray dq = toDevice(q);
+        FloatArray dk = toDevice(k);
+        FloatArray dv = toDevice(v);
+        FloatArray ddecay = toDevice(decay);
+        FloatArray dbeta = toDevice(beta);
+        FloatArray dstate = toDevice(state);
+        FloatArray dout = new FloatArray(VALUE_DIM);
+        TaskGraph graph =
+                new TaskGraph("deltaSplit")
+                        .transferToDevice(
+                                DataTransferMode.EVERY_EXECUTION,
+                                dq, dk, dv, ddecay, dbeta, dstate, dout)
+                        .task(
+                                "k",
+                                Qwen35DeltaNetKernels::deltaRuleSplit,
+                                new KernelContext(),
+                                dq, dk, dv, ddecay, dbeta, dstate, dout,
+                                KEY_HEADS,
+                                STATE_DIM,
+                                0)
+                        .transferToHost(DataTransferMode.EVERY_EXECUTION, dout, dstate);
+        run(graph, "k", VALUE_HEADS * 2 * STATE_DIM, 2 * STATE_DIM);
+
+        assertClose("split delta readout", hostOut, dout);
+        assertClose("split delta state", hostState, dstate);
+        for (int i = 0; i < VALUE_DIM; i++) {
+            assertTrue("readout " + i + " is not finite", Float.isFinite(dout.get(i)));
+        }
+    }
+
     @Test
     public void theGatedNormAndL2NormRunOnTheDevice() throws Exception {
         float[] values = noise(VALUE_DIM, 1.0f);

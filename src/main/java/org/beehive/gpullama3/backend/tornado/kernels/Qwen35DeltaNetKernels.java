@@ -319,6 +319,103 @@ public final class Qwen35DeltaNetKernels {
         out.set(valueBase + column, readout);
     }
 
+    // @formatter:off
+    /**
+     * The delta rule with each column's reduction split across two lanes.
+     *
+     * <p>{@link #deltaRule} gives one lane a whole column: it walks the column's {@code stateDim}
+     * rows twice, and each walk is a dependent accumulation, which the generated code shows as an
+     * unrolled but strictly serial chain of {@code FFMA}. The grid is one workgroup per value head
+     * — forty-eight of them at 128 lanes — so a multiprocessor holds four warps and there is very
+     * little to hide that chain behind.
+     *
+     * <p>This widens the workgroup to {@code 2 * stateDim} and gives a column two lanes, each
+     * taking half the rows. It halves the chain and doubles the warps per workgroup. It does
+     * <b>not</b> help the multiprocessors that get no workgroup at all: there are still
+     * forty-eight, and reaching the rest would mean splitting a column across workgroups, which is
+     * a reduction across workgroups and is not done here.
+     *
+     * <p><b>Ownership.</b> Lane {@code (half, column)} owns rows {@code [half*rows,
+     * (half+1)*rows)} of that column, in both sweeps, so every state element has exactly one
+     * writer and is written once per sweep. {@code out} is written by the {@code half == 0} lane
+     * alone. Each lane writes only its own slot of the shared array.
+     *
+     * <p><b>Synchronisation.</b> Three barriers. The first publishes both partial predictions
+     * before any lane forms the correction. The second separates every lane's read of those
+     * partials from the reuse of the shared array, so a fast lane cannot overwrite a value a slow
+     * lane has not read. The third publishes both partial readouts before the output is written.
+     * No barrier crosses a workgroup and no state is added.
+     *
+     * <p><b>Arithmetic.</b> Per element it is the accepted kernel's, expression for expression:
+     * {@code state * g} is stored before it is used, and {@code state + k * correction} is formed
+     * the same way, so the intermediate rounding the accepted kernel produces is preserved and the
+     * fused multiply-add the compiler may form is the same one. What changes is the
+     * <b>association of the two reductions</b>: a sum of two half-length folds rather than one
+     * full-length fold. Both lanes of a column combine the two partials in the same order, so they
+     * form bit-identical corrections and cannot diverge from each other.
+     */
+    // @formatter:on
+    public static void deltaRuleSplit(
+            KernelContext context,
+            FloatArray q,
+            FloatArray k,
+            FloatArray v,
+            FloatArray decay,
+            FloatArray beta,
+            FloatArray state,
+            FloatArray out,
+            int keyHeads,
+            int stateDim,
+            int stateOffset) {
+        int head = context.groupIdx;
+        int tid = context.localIdx;
+        int column = tid % stateDim;
+        int half = tid / stateDim;
+
+        float[] shared = context.allocateFloatLocalArray(2 * stateDim);
+
+        int stateBase = stateOffset + head * stateDim * stateDim;
+        int kvBase = (head % keyHeads) * stateDim;
+        int valueBase = head * stateDim;
+
+        float g = decay.get(head);
+        float b = beta.get(head);
+
+        int rows = stateDim / 2;
+        int rowStart = half * rows;
+        int rowEnd = rowStart + rows;
+
+        float partial = 0.0f;
+        for (int i = rowStart; i < rowEnd; i++) {
+            int index = stateBase + i * stateDim + column;
+            float decayed = state.get(index) * g;
+            state.set(index, decayed);
+            partial += decayed * k.get(kvBase + i);
+        }
+        shared[tid] = partial;
+        context.localBarrier();
+
+        // Both lanes of a column read the same two partials in the same order.
+        float prediction = shared[column] + shared[stateDim + column];
+        float correction = (v.get(valueBase + column) - prediction) * b;
+        // Every lane has read the partials; the shared array may now be reused.
+        context.localBarrier();
+
+        float partialReadout = 0.0f;
+        for (int i = rowStart; i < rowEnd; i++) {
+            int index = stateBase + i * stateDim + column;
+            float updated = state.get(index) + k.get(kvBase + i) * correction;
+            state.set(index, updated);
+            partialReadout += updated * q.get(kvBase + i);
+        }
+        shared[tid] = partialReadout;
+        context.localBarrier();
+
+        if (half == 0) {
+            out.set(valueBase + column, shared[column] + shared[stateDim + column]);
+        }
+    }
+
     /** One lane per (value head, value column) — {@code valueHeads * stateDim} of them. */
     public static void deltaRule(
             KernelContext context,

@@ -150,6 +150,10 @@ public class Qwen35NllScreenAccelTest {
                                     .qwen35MmaBatchedTasks(grids)
                                     .size())
                     .append('\n');
+            // Which delta-rule kernel this plan dispatches, read from its own grid: two lanes a
+            // column registers twice the value head's width, one lane a column the elementwise
+            // default. Recorded so a screen's report says what it scored.
+            report.append("deltaRuleLocalWork=").append(deltaRuleLocalWork(grids)).append('\n');
             report.append("executionCombination=")
                     .append(
                             org.beehive.gpullama3.auxiliary.RunMetrics.snapshot()
@@ -284,6 +288,19 @@ public class Qwen35NllScreenAccelTest {
      * What this screen's own plan must be built with for its numbers to describe the path claimed.
      * Nothing here; the tensor-core subclass overrides it.
      */
+    /** Local work size of the plan's {@code ssm_delta_rule} task, or {@code -1} if it has none. */
+    private static long deltaRuleLocalWork(uk.ac.manchester.tornado.api.GridScheduler grids) {
+        if (grids == null) {
+            return -1;
+        }
+        for (String key : grids.keySet()) {
+            if (key.endsWith(".ssm_delta_rule")) {
+                return grids.get(key).getLocalWork()[0];
+            }
+        }
+        return -1;
+    }
+
     protected void verifyDispatch(
             uk.ac.manchester.tornado.api.GridScheduler grids, int batch, int dim) {}
 
