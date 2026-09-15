@@ -46,7 +46,8 @@ rg -n "gpu-llama3" pom.xml model-providers/gpu-llama3
 The module lives at `model-providers/gpu-llama3/{runtime,deployment}`, and the version comes from
 the `gpu-llama3.version` property in the root `pom.xml`: the default picks `-jdk21`, and the
 `jdk25` profile overrides it to `-jdk25`. The branch this project validates against is
-`gpu-llama3/facade-1.0.0` on the maintainer's fork, which is what jllm's own CI clones.
+`jllm/facade-1.0.0` on the maintainer's fork, which is what jllm's own CI clones (see
+QUARKUS_LANGCHAIN4J_REF in .github/workflows/build-and-run.yml).
 Re-read the current root `pom.xml` before editing it — do not assume this layout is unchanged.
 
 Read the module POMs, `GPULlama3BaseModel`/`GPULlama3ChatModel`/`GPULlama3StreamingChatModel`,

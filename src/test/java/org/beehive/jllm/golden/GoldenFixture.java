@@ -12,8 +12,9 @@ import java.util.HexFormat;
  * Locates and verifies the pinned model fixtures for the golden and parity gates.
  *
  * <p>The GGUF files are far too large to commit, so only their SHA-256 is pinned here. The file
- * itself is resolved from {@code $JLLM_TEST_MODELS} or {@code ~/.jllm/test-models/}, and an absent
- * fixture produces a fetch instruction rather than a mysterious failure.
+ * itself is resolved from {@code $JLLM_TEST_MODELS} or {@code ~/.jllm/test-models/} (falling back
+ * to the pre-rename cache, see {@link #modelsRoot()}), and an absent fixture produces a fetch
+ * instruction rather than a mysterious failure.
  *
  * <p>Per {@code verification-gates.md}, a missing fixture or absent accelerator causes the Class B
  * tests to <b>skip with an explicit marker</b> — never to pass.
@@ -117,13 +118,32 @@ public final class GoldenFixture {
 
     private GoldenFixture() {}
 
-    /** Root of the local fixture cache. */
+    /**
+     * Root of the local fixture cache.
+     *
+     * <p>The rename from GPULlama3.java moved this from {@code $GPULLAMA_TEST_MODELS} / {@code
+     * ~/.gpullama3/test-models} to {@code $JLLM_TEST_MODELS} / {@code ~/.jllm/test-models}. Falling
+     * back to the old location matters more than it looks: an unresolved fixture makes the Class B
+     * gates <b>skip</b>, not fail, so a developer or runner that still has the old cache would
+     * silently stop running every golden and accelerator correctness check while the build stayed
+     * green. The fallback closes that window; it can go once no machine has the old cache.
+     */
     public static Path modelsRoot() {
         String env = System.getenv("JLLM_TEST_MODELS");
         if (env != null && !env.isBlank()) {
             return Paths.get(env);
         }
-        return Paths.get(System.getProperty("user.home"), ".jllm", "test-models");
+        String legacyEnv = System.getenv("GPULLAMA_TEST_MODELS");
+        if (legacyEnv != null && !legacyEnv.isBlank()) {
+            return Paths.get(legacyEnv);
+        }
+        Path home = Paths.get(System.getProperty("user.home"));
+        Path current = home.resolve(".jllm").resolve("test-models");
+        if (Files.isDirectory(current)) {
+            return current;
+        }
+        Path legacy = home.resolve(".gpullama3").resolve("test-models");
+        return Files.isDirectory(legacy) ? legacy : current;
     }
 
     /**

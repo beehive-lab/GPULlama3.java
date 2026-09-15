@@ -84,7 +84,7 @@ unset JAVA_TOOL_OPTIONS
 a specific backend, either point `TORNADOVM_HOME` at an SDK built for that backend (e.g. via
 `scripts/benchmark_backends.sh`, which rebuilds TornadoVM per backend and re-sources its env
 before each `jllm` call), or, if the current SDK has more than one backend installed,
-pass `--opencl`/`--ptx`/`--cuda`/`--metal` to pin one without a separate SDK/rebuild.
+pass `--opencl`/`--cuda`/`--metal` to pin one without a separate SDK/rebuild.
 
 When testing a feature flag, change one variable at a time and keep the baseline command
 structurally identical to the treatment command — differences beyond the flag under test

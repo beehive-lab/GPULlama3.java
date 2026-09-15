@@ -5,12 +5,12 @@ import module java.logging;
 String name = MethodHandles.lookup().lookupClass().getName();
 String version = "2026-04-11.1";
 
-enum Backend { OPENCL, PTX, CUDA, METAL }
+enum Backend { OPENCL, CUDA, METAL }
 
 // When an SDK is built with more than one backend, prefer in this order. Also
 // determines which backend becomes TornadoVM's default device (driver 0) - see
 // BACKEND_PRIORITY_PROPERTY below.
-List<Backend> BACKEND_PRIORITY = List.of(Backend.CUDA, Backend.PTX, Backend.OPENCL, Backend.METAL);
+List<Backend> BACKEND_PRIORITY = List.of(Backend.CUDA, Backend.OPENCL, Backend.METAL);
 
 // TornadoVM system property that ranks each backend for "driver 0" (default
 // device) selection when more than one backend is loaded - see
@@ -19,7 +19,6 @@ List<Backend> BACKEND_PRIORITY = List.of(Backend.CUDA, Backend.PTX, Backend.OPEN
 // these explicitly whenever more than one backend is installed.
 Map<Backend, String> BACKEND_PRIORITY_PROPERTY = Map.of(
     Backend.OPENCL, "tornado.opencl.priority",
-    Backend.PTX, "tornado.ptx.priority",
     Backend.CUDA, "tornado.cuda.priority",
     Backend.METAL, "tornado.metal.priority"
 );
@@ -87,7 +86,6 @@ Config parseArgs(String[] args, List<Backend> installedBackends) {
             case "--instruct" -> instruct = true;
             case "--gpu" -> useGpu = true;
             case "--opencl" -> backendOverride = Backend.OPENCL;
-            case "--ptx" -> backendOverride = Backend.PTX;
             case "--cuda" -> backendOverride = Backend.CUDA;
             case "--metal" -> backendOverride = Backend.METAL;
             case "--gpu-memory" -> gpuMemory = args[++i];
@@ -191,7 +189,6 @@ void printUsage() {
               --gpu                   Enable GPU acceleration
                                        (backend is auto-detected from TORNADOVM_HOME/etc/tornado.backend)
               --opencl                Force the OpenCL backend if the SDK has more than one
-              --ptx                   Force the PTX backend if the SDK has more than one
               --cuda                  Force the CUDA backend if the SDK has more than one
               --metal                 Force the Metal backend if the SDK has more than one
               --gpu-memory <val>      GPU memory allocation (default: 14GB)
@@ -269,7 +266,6 @@ List<Backend> detectInstalledBackends(String tornadoSdk) {
 
     var nameMap = Map.of(
         "opencl-backend", Backend.OPENCL,
-        "ptx-backend", Backend.PTX,
         "cuda-backend", Backend.CUDA,
         "metal-backend", Backend.METAL
     );
@@ -363,8 +359,8 @@ List<String> buildCommand(Config cfg, String javaHome, String tornadoSdk, String
         // More than one backend is loaded, so pin TornadoVM's own driver-0
         // (default device) selection to match cfg.backend() - otherwise it
         // falls back to its own defaults (OpenCL beats everything else).
-        // cfg.backend() goes first (whether auto-picked or --opencl/--ptx/
-        // --cuda/--metal override), then the rest of BACKEND_PRIORITY as a
+        // cfg.backend() goes first (whether auto-picked or --opencl/--cuda/
+        // --metal override), then the rest of BACKEND_PRIORITY as a
         // tiebreak.
         var effectivePriority = new ArrayList<Backend>();
         effectivePriority.add(cfg.backend());

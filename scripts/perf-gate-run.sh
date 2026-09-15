@@ -88,10 +88,13 @@ log "results    $RESULTS_DIR"
 # run. --gpu alone silently runs on the CPU.
 case "$BACKEND" in
     cuda)   BACKEND_FLAG="--cuda" ;;
-    ptx)    BACKEND_FLAG="--ptx" ;;
     opencl) BACKEND_FLAG="--opencl" ;;
     metal)  BACKEND_FLAG="--metal" ;;
-    *)      die "unknown backend: $BACKEND (expected cuda, ptx, opencl or metal)" ;;
+    # TornadoVM folded its PTX backend into CUDA, and the launcher has no --ptx flag.
+    # Rejected rather than aliased to --cuda: history holds backend=ptx rows, and silently
+    # recording a cuda run under that tuple is the mislabelling the note above warns about.
+    ptx)    die "backend ptx no longer exists: TornadoVM folded PTX into CUDA — use cuda" ;;
+    *)      die "unknown backend: $BACKEND (expected cuda, opencl or metal)" ;;
 esac
 
 run_inference() {

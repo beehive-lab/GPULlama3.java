@@ -105,8 +105,8 @@ and `--metal` force one on a multi-backend SDK and error out if it is not instal
 
 The full workflow — inventory, the decision about whether the existing abstractions express
 the model, when to stop and write a design proposal, the implementation order, and the
-verification a port must pass — is the `port-model-to-gpullama` skill in
-`.claude/skills/port-model-to-gpullama/`. It carries the checklist and the traps previous
+verification a port must pass — is the `port-model-to-jllm` skill in
+`.claude/skills/port-model-to-jllm/`. It carries the checklist and the traps previous
 families have hit. What follows is the shape of the work.
 
 1. Add a `ModelProvider` that recognizes the GGUF and loads configuration, weights,

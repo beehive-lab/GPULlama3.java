@@ -74,8 +74,8 @@ Accelerator gates are opt-in and need a device, an SDK and the pinned fixtures u
 ./jllm --gpu --model <model.gguf> --prompt "..." -n 128 --seed 42
 ```
 
-The backend comes from `$TORNADOVM_HOME/etc/tornado.backend`. `--opencl`, `--ptx`,
-`--cuda` and `--metal` force one when the SDK has several; they error out if the SDK does
+The backend comes from `$TORNADOVM_HOME/etc/tornado.backend`. `--opencl`, `--cuda`
+and `--metal` force one when the SDK has several; they error out if the SDK does
 not contain the requested backend, and are redundant on a single-backend SDK.
 
 Both launchers take their JVM flags from `$TORNADOVM_HOME/tornado-argfile`. If it is
