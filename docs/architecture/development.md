@@ -98,8 +98,8 @@ sizes, `jdk.incubator.vector`, the interpreter bytecode buffer size, the `tornad
 If `tornado-argfile` is missing, run `$TORNADOVM_HOME/bin/tornado --devices` once — the
 launcher regenerates it from `tornado-argfile.template`.
 
-The backend is detected from `$TORNADOVM_HOME/etc/tornado.backend`. `--cuda`, `--opencl`,
-`--ptx` and `--metal` force one on a multi-backend SDK and error out if it is not installed.
+The backend is detected from `$TORNADOVM_HOME/etc/tornado.backend`. `--cuda`, `--opencl`
+and `--metal` force one on a multi-backend SDK and error out if it is not installed.
 
 ## Adding a model family
 
