@@ -1,13 +1,13 @@
-package org.beehive.gpullama3.backend.tornado.plan;
+package org.beehive.jllm.backend.tornado.plan;
 
 import java.util.ArrayList;
 import java.util.List;
-import org.beehive.gpullama3.backend.tornado.layers.AbstractLogitsTaskGraph;
-import org.beehive.gpullama3.backend.tornado.layers.ActivationTaskGraph;
-import org.beehive.gpullama3.backend.tornado.layers.TransformerLayerTaskGraphs;
-import org.beehive.gpullama3.backend.tornado.plan.components.SingleTokenForwardPlanComponents;
-import org.beehive.gpullama3.backend.tornado.plan.layout.SingleTokenForwardTaskGraphLayout;
-import org.beehive.gpullama3.model.Model;
+import org.beehive.jllm.backend.tornado.layers.AbstractLogitsTaskGraph;
+import org.beehive.jllm.backend.tornado.layers.ActivationTaskGraph;
+import org.beehive.jllm.backend.tornado.layers.TransformerLayerTaskGraphs;
+import org.beehive.jllm.backend.tornado.plan.components.SingleTokenForwardPlanComponents;
+import org.beehive.jllm.backend.tornado.plan.layout.SingleTokenForwardTaskGraphLayout;
+import org.beehive.jllm.model.Model;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 

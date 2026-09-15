@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.tensor.standard;
+package org.beehive.jllm.tensor.standard;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteOrder;
@@ -6,9 +6,9 @@ import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
-import org.beehive.gpullama3.LlamaApp;
-import org.beehive.gpullama3.format.Float16;
-import org.beehive.gpullama3.format.GGMLType;
+import org.beehive.jllm.LlamaApp;
+import org.beehive.jllm.format.Float16;
+import org.beehive.jllm.format.GGMLType;
 
 /**
  * {@link FloatTensor} quantized in the {@link GGMLType#Q4_0} format.

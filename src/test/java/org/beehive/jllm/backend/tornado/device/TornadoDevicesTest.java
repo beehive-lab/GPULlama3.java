@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.backend.tornado.device;
+package org.beehive.jllm.backend.tornado.device;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -6,10 +6,10 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
-import org.beehive.gpullama3.backend.tornado.TensorCoreSupport;
-import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerDetectionService;
-import org.beehive.gpullama3.runtime.backend.Device;
-import org.beehive.gpullama3.runtime.backend.DeviceCapability;
+import org.beehive.jllm.backend.tornado.TensorCoreSupport;
+import org.beehive.jllm.backend.tornado.scheduling.SchedulerDetectionService;
+import org.beehive.jllm.runtime.backend.Device;
+import org.beehive.jllm.runtime.backend.DeviceCapability;
 import org.junit.Test;
 
 /**

@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.golden;
+package org.beehive.jllm.golden;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -6,7 +6,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import org.beehive.gpullama3.golden.GoldenFixture.Fixture;
+import org.beehive.jllm.golden.GoldenFixture.Fixture;
 
 /**
  * Writes the committed goldens. Invoked only by {@code scripts/regenerate-goldens.sh}, never by a

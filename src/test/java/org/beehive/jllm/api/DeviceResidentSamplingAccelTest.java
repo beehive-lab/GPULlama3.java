@@ -1,12 +1,12 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
 
 import java.nio.file.Path;
-import org.beehive.gpullama3.golden.GoldenFixture;
-import org.beehive.gpullama3.golden.GoldenFixture.Fixture;
+import org.beehive.jllm.golden.GoldenFixture;
+import org.beehive.jllm.golden.GoldenFixture.Fixture;
 import org.junit.Test;
 
 /**
@@ -14,7 +14,7 @@ import org.junit.Test;
  * policy reaches the task graph (the {@code logits.argmax_sample} task is present only when
  * requested). What it cannot prove is that the on-device argmax computes the right token and that
  * {@code state.workspace.deviceSampledToken()} correctly carries it back to the host across a full
- * multi-step generation — {@link org.beehive.gpullama3.golden.GoldenCapture} deliberately forbids
+ * multi-step generation — {@link org.beehive.jllm.golden.GoldenCapture} deliberately forbids
  * {@code deviceSample=true} ({@code assertHostLogitsAvailable()}) because its capture hook needs
  * the host-visible logits row, so this is the only place that exercises it end to end.
  */

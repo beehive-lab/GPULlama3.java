@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.model.phi3;
+package org.beehive.jllm.model.phi3;
 
-import org.beehive.gpullama3.model.Configuration;
+import org.beehive.jllm.model.Configuration;
 
 // @formatter:off
 public record Phi3Configuration(String quantization,

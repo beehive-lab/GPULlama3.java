@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.runtime.batch;
+package org.beehive.jllm.runtime.batch;
 
 /**
  * The one thing a scheduler needs from a backend: advance every active slot by one token.

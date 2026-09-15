@@ -1,17 +1,17 @@
-package org.beehive.gpullama3.backend.tornado;
+package org.beehive.jllm.backend.tornado;
 
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
 
 import java.nio.file.Path;
-import org.beehive.gpullama3.golden.GoldenFixture;
-import org.beehive.gpullama3.golden.GoldenFixture.Fixture;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.loader.ModelLoader;
-import org.beehive.gpullama3.runtime.metrics.MetricsSink;
-import org.beehive.gpullama3.runtime.policy.ExecutionPolicy;
-import org.beehive.gpullama3.runtime.policy.ExecutionPolicy.PhaseStrategy;
+import org.beehive.jllm.golden.GoldenFixture;
+import org.beehive.jllm.golden.GoldenFixture.Fixture;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.loader.ModelLoader;
+import org.beehive.jllm.runtime.metrics.MetricsSink;
+import org.beehive.jllm.runtime.policy.ExecutionPolicy;
+import org.beehive.jllm.runtime.policy.ExecutionPolicy.PhaseStrategy;
 import org.junit.Test;
 
 /**

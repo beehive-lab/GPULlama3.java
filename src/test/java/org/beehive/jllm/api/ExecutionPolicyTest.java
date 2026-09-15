@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
@@ -7,10 +7,10 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import java.util.OptionalInt;
-import org.beehive.gpullama3.runtime.policy.ExecutionPolicy;
-import org.beehive.gpullama3.runtime.policy.ExecutionPolicy.Overrides;
-import org.beehive.gpullama3.runtime.policy.ExecutionPolicy.PhaseStrategy;
-import org.beehive.gpullama3.runtime.policy.ExecutionPolicy.SamplingResidency;
+import org.beehive.jllm.runtime.policy.ExecutionPolicy;
+import org.beehive.jllm.runtime.policy.ExecutionPolicy.Overrides;
+import org.beehive.jllm.runtime.policy.ExecutionPolicy.PhaseStrategy;
+import org.beehive.jllm.runtime.policy.ExecutionPolicy.SamplingResidency;
 import org.junit.Test;
 
 public class ExecutionPolicyTest {

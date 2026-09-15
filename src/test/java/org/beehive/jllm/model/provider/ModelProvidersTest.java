@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.model.provider;
+package org.beehive.jllm.model.provider;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -8,9 +8,9 @@ import static org.junit.Assert.assertTrue;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
-import org.beehive.gpullama3.format.ModelSource;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.runtime.model.ArchitectureId;
+import org.beehive.jllm.format.ModelSource;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.runtime.model.ArchitectureId;
 import org.junit.Test;
 
 public class ModelProvidersTest {
@@ -87,7 +87,7 @@ public class ModelProvidersTest {
                     @Override
                     public Model load(
                             ModelSource s,
-                            org.beehive.gpullama3.runtime.backend.BackendId b,
+                            org.beehive.jllm.runtime.backend.BackendId b,
                             int c) {
                         throw new UnsupportedOperationException();
                     }
@@ -133,7 +133,7 @@ public class ModelProvidersTest {
 
         assertEquals(3, load.getParameterCount());
         assertEquals(
-                org.beehive.gpullama3.runtime.backend.BackendId.class, load.getParameterTypes()[1]);
+                org.beehive.jllm.runtime.backend.BackendId.class, load.getParameterTypes()[1]);
         assertEquals(
                 "a negative context length still means the model's own",
                 int.class,

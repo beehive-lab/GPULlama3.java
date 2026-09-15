@@ -1,13 +1,13 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.format.ChatFormat;
-import org.beehive.gpullama3.model.format.ToolCallExtract;
-import org.beehive.gpullama3.runtime.diagnostics.DiagnosticCode;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.format.ChatFormat;
+import org.beehive.jllm.model.format.ToolCallExtract;
+import org.beehive.jllm.runtime.diagnostics.DiagnosticCode;
 
 /**
  * Turns a facade conversation into the tokens the model sees.

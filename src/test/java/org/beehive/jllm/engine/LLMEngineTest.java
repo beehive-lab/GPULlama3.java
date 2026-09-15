@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.engine;
+package org.beehive.jllm.engine;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
@@ -10,10 +10,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.runtime.batch.BatchExecutor;
-import org.beehive.gpullama3.runtime.kv.BlockPool;
-import org.beehive.gpullama3.runtime.kv.KvCacheManager;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.runtime.batch.BatchExecutor;
+import org.beehive.jllm.runtime.kv.BlockPool;
+import org.beehive.jllm.runtime.kv.KvCacheManager;
 import org.junit.Test;
 
 /**

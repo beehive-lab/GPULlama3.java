@@ -1,7 +1,7 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
-import org.beehive.gpullama3.runtime.diagnostics.DiagnosticCode;
-import org.beehive.gpullama3.runtime.memory.MemoryPlan;
+import org.beehive.jllm.runtime.diagnostics.DiagnosticCode;
+import org.beehive.jllm.runtime.memory.MemoryPlan;
 
 /**
  * A load refused because the configuration is predicted not to fit the configured device budget.

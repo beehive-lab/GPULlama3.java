@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.model.loader;
+package org.beehive.jllm.model.loader;
 
 /**
  * Exception thrown when model loading fails.

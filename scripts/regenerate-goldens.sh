@@ -54,7 +54,7 @@ java "@$TORNADOVM_HOME/tornado-argfile" \
   -Dtornado.opencl.priority=0 \
   -Dgolden.commit="$COMMIT" \
   -cp "$CLASSPATH" \
-  org.beehive.gpullama3.golden.GenerateGoldens
+  org.beehive.jllm.golden.GenerateGoldens
 
 echo
 echo "Goldens written. Review the diff, then commit them on their own:"

@@ -1,8 +1,8 @@
-package org.beehive.gpullama3.runtime.backend;
+package org.beehive.jllm.runtime.backend;
 
 import java.util.Locale;
 import java.util.Objects;
-import org.beehive.gpullama3.api.Experimental;
+import org.beehive.jllm.api.Experimental;
 
 /**
  * Which execution implementation — the CPU, or one of TornadoVM's accelerator backends.

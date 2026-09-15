@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.program;
+package org.beehive.jllm.program;
 
 /**
  * Something the caller may read once an invocation completes.

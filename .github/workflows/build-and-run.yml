@@ -100,7 +100,7 @@ jobs:
           EXPECTED_MAJOR=$(( 44 + ${{ matrix.jdk }} ))
           JAR="target/gpu-llama3-${GPULLAMA3_VERSION}.jar"
           MAJOR=$("$JAVA_HOME/bin/javap" -verbose -classpath "$JAR" \
-            org.beehive.gpullama3.model.Model | awk '/major version:/ { print $3; exit }')
+            org.beehive.jllm.model.Model | awk '/major version:/ { print $3; exit }')
           if [ "$MAJOR" != "$EXPECTED_MAJOR" ]; then
             echo "::error::$JAR has class major $MAJOR, expected $EXPECTED_MAJOR"; exit 1
           fi

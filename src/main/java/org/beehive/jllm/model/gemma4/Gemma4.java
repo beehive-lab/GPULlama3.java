@@ -1,20 +1,20 @@
-package org.beehive.gpullama3.model.gemma4;
+package org.beehive.jllm.model.gemma4;
 
 import java.util.List;
 import java.util.Set;
 import java.util.function.IntConsumer;
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
-import org.beehive.gpullama3.inference.TokenGenerationLoop;
-import org.beehive.gpullama3.inference.sampler.Sampler;
-import org.beehive.gpullama3.inference.state.Gemma4State;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.inference.weights.Weights;
-import org.beehive.gpullama3.inference.weights.tornado.Gemma4TornadoWeights;
-import org.beehive.gpullama3.model.AbstractModel;
-import org.beehive.gpullama3.model.ModelType;
-import org.beehive.gpullama3.model.format.ChatFormat;
-import org.beehive.gpullama3.tokenizer.Gemma4Tokenizer;
-import org.beehive.gpullama3.tokenizer.Tokenizer;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlan;
+import org.beehive.jllm.inference.TokenGenerationLoop;
+import org.beehive.jllm.inference.sampler.Sampler;
+import org.beehive.jllm.inference.state.Gemma4State;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.inference.weights.Weights;
+import org.beehive.jllm.inference.weights.tornado.Gemma4TornadoWeights;
+import org.beehive.jllm.model.AbstractModel;
+import org.beehive.jllm.model.ModelType;
+import org.beehive.jllm.model.format.ChatFormat;
+import org.beehive.jllm.tokenizer.Gemma4Tokenizer;
+import org.beehive.jllm.tokenizer.Tokenizer;
 
 public class Gemma4 extends AbstractModel {
 
@@ -71,7 +71,7 @@ public class Gemma4 extends AbstractModel {
         int nEmbdPerLayer = configuration.embeddingLengthPerLayer();
         int perLayerTotal = configuration.numberOfLayers() * nEmbdPerLayer;
         float scale = (float) Math.sqrt(nEmbdPerLayer);
-        org.beehive.gpullama3.backend.tornado.tensor.TornadoTensorLoader
+        org.beehive.jllm.backend.tornado.tensor.TornadoTensorLoader
                 .copyEmbeddingRowToFloatArray(
                         gemma4Weights.perLayerTokenEmbd,
                         token,
@@ -128,7 +128,7 @@ public class Gemma4 extends AbstractModel {
 
     /** Its own identity, stated rather than derived. */
     @Override
-    public org.beehive.gpullama3.runtime.model.ArchitectureId architectureId() {
-        return org.beehive.gpullama3.runtime.model.ArchitectureId.of("gemma4");
+    public org.beehive.jllm.runtime.model.ArchitectureId architectureId() {
+        return org.beehive.jllm.runtime.model.ArchitectureId.of("gemma4");
     }
 }

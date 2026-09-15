@@ -1,8 +1,8 @@
-package org.beehive.gpullama3.backend.tornado;
+package org.beehive.jllm.backend.tornado;
 
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.runtime.metrics.MetricsSink;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.runtime.metrics.MetricsSink;
 import uk.ac.manchester.tornado.api.TornadoExecutionPlan;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
@@ -100,20 +100,20 @@ public interface TornadoVMMasterPlan {
         // ran the legacy path however the flag was set: a paired A/B taken through the script was
         // measuring legacy against legacy. `handles` answers false unless the opt-in is set and the
         // tuple is the one the slice implements, so this costs a boolean read otherwise.
-        if (org.beehive.gpullama3.backend.tornado.lowering.LoweredPlanSelection.handles(
+        if (org.beehive.jllm.backend.tornado.lowering.LoweredPlanSelection.handles(
                 model, state)) {
-            reportPath(org.beehive.gpullama3.runtime.backend.ExecutionPath.LOWERED, model, state);
-            return org.beehive.gpullama3.backend.tornado.lowering.LoweredPlanSelection.lower(
+            reportPath(org.beehive.jllm.runtime.backend.ExecutionPath.LOWERED, model, state);
+            return org.beehive.jllm.backend.tornado.lowering.LoweredPlanSelection.lower(
                     model, state, sink);
         }
-        reportPath(org.beehive.gpullama3.runtime.backend.ExecutionPath.LEGACY, model, state);
+        reportPath(org.beehive.jllm.runtime.backend.ExecutionPath.LEGACY, model, state);
 
         // Resolved from the session's policy, once, here — not from a class constant read at
         // initialization.
         var policy = state.executionPolicy();
         boolean prefillDecode =
                 policy.phaseStrategy()
-                        == org.beehive.gpullama3.runtime.policy.ExecutionPolicy.PhaseStrategy
+                        == org.beehive.jllm.runtime.policy.ExecutionPolicy.PhaseStrategy
                                 .PREFILL_DECODE;
         if (prefillDecode && policy.prefillBatchSize() > 1) {
             // GPU path with batched prefill/decode
@@ -156,20 +156,20 @@ public interface TornadoVMMasterPlan {
      * emitted anywhere else would have the same hole.
      */
     private static void reportPath(
-            org.beehive.gpullama3.runtime.backend.ExecutionPath path,
-            org.beehive.gpullama3.model.Model model,
-            org.beehive.gpullama3.inference.state.State state) {
+            org.beehive.jllm.runtime.backend.ExecutionPath path,
+            org.beehive.jllm.model.Model model,
+            org.beehive.jllm.inference.state.State state) {
         var combination =
-                org.beehive.gpullama3.backend.tornado.lowering.LoweredPlanSelection.combinationOf(
+                org.beehive.jllm.backend.tornado.lowering.LoweredPlanSelection.combinationOf(
                         model, state);
         boolean qualified =
-                org.beehive.gpullama3.backend.tornado.lowering.LoweringQualification.isQualified(
+                org.beehive.jllm.backend.tornado.lowering.LoweringQualification.isQualified(
                         combination.architecture(), combination.dtype(), combination.mode());
-        org.beehive.gpullama3.auxiliary.RunMetrics.setExecutionPath(
+        org.beehive.jllm.auxiliary.RunMetrics.setExecutionPath(
                 path.reportName(),
                 combination.toString(),
                 qualified,
-                org.beehive.gpullama3.backend.tornado.lowering.LoweredPlanSelection.mode()
+                org.beehive.jllm.backend.tornado.lowering.LoweredPlanSelection.mode()
                         .name()
                         .toLowerCase(java.util.Locale.ROOT));
     }
@@ -189,8 +189,8 @@ public interface TornadoVMMasterPlan {
      * this run take") is a property of the run, not of the compile.
      */
     public static void reportLoweredPath(
-            org.beehive.gpullama3.model.Model model,
-            org.beehive.gpullama3.inference.state.State state) {
-        reportPath(org.beehive.gpullama3.runtime.backend.ExecutionPath.LOWERED, model, state);
+            org.beehive.jllm.model.Model model,
+            org.beehive.jllm.inference.state.State state) {
+        reportPath(org.beehive.jllm.runtime.backend.ExecutionPath.LOWERED, model, state);
     }
 }

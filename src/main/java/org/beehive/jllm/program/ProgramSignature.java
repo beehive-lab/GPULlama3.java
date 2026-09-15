@@ -1,8 +1,8 @@
-package org.beehive.gpullama3.program;
+package org.beehive.jllm.program;
 
 import java.util.List;
 import java.util.Objects;
-import org.beehive.gpullama3.runtime.model.ArchitectureId;
+import org.beehive.jllm.runtime.model.ArchitectureId;
 
 /**
  * What a program is, as a value — and therefore what makes two compiled programs the same one.

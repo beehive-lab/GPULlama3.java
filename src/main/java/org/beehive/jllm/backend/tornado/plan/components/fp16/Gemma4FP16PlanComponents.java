@@ -1,18 +1,18 @@
-package org.beehive.gpullama3.backend.tornado.plan.components.fp16;
+package org.beehive.jllm.backend.tornado.plan.components.fp16;
 
-import org.beehive.gpullama3.backend.tornado.layers.AbstractLogitsTaskGraph;
-import org.beehive.gpullama3.backend.tornado.layers.Activation;
-import org.beehive.gpullama3.backend.tornado.layers.ActivationTaskGraph;
-import org.beehive.gpullama3.backend.tornado.layers.TransformerLayerTaskGraphs;
-import org.beehive.gpullama3.backend.tornado.layers.type.fp16.Gemma4FP16FFNLayers;
-import org.beehive.gpullama3.backend.tornado.layers.type.fp16.Gemma4LogitsFP16Layer;
-import org.beehive.gpullama3.backend.tornado.plan.components.SingleTokenForwardPlanComponents;
-import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerDetectionService;
-import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerType;
-import org.beehive.gpullama3.inference.state.Gemma4State;
-import org.beehive.gpullama3.inference.weights.tornado.Gemma4TornadoWeights;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.gemma4.Gemma4Configuration;
+import org.beehive.jllm.backend.tornado.layers.AbstractLogitsTaskGraph;
+import org.beehive.jllm.backend.tornado.layers.Activation;
+import org.beehive.jllm.backend.tornado.layers.ActivationTaskGraph;
+import org.beehive.jllm.backend.tornado.layers.TransformerLayerTaskGraphs;
+import org.beehive.jllm.backend.tornado.layers.type.fp16.Gemma4FP16FFNLayers;
+import org.beehive.jllm.backend.tornado.layers.type.fp16.Gemma4LogitsFP16Layer;
+import org.beehive.jllm.backend.tornado.plan.components.SingleTokenForwardPlanComponents;
+import org.beehive.jllm.backend.tornado.scheduling.SchedulerDetectionService;
+import org.beehive.jllm.backend.tornado.scheduling.SchedulerType;
+import org.beehive.jllm.inference.state.Gemma4State;
+import org.beehive.jllm.inference.weights.tornado.Gemma4TornadoWeights;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.gemma4.Gemma4Configuration;
 
 /**
  * FP16 single-token plan components for the Gemma 4 architecture.

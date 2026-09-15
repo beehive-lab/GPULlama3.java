@@ -1,7 +1,7 @@
-package org.beehive.gpullama3.program.op;
+package org.beehive.jllm.program.op;
 
 import java.util.List;
-import org.beehive.gpullama3.runtime.tensor.DataType;
+import org.beehive.jllm.runtime.tensor.DataType;
 
 /**
  * One unit of work in a forward pass, described independently of backend and model family.

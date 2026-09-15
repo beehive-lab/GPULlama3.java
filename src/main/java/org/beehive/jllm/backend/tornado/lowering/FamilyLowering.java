@@ -1,10 +1,10 @@
-package org.beehive.gpullama3.backend.tornado.lowering;
+package org.beehive.jllm.backend.tornado.lowering;
 
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.program.InferenceProgram;
-import org.beehive.gpullama3.runtime.metrics.MetricsSink;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlan;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.program.InferenceProgram;
+import org.beehive.jllm.runtime.metrics.MetricsSink;
 
 /**
  * One family's lowering: it validates the programs it claims and builds their compiled form.
@@ -21,7 +21,7 @@ import org.beehive.gpullama3.runtime.metrics.MetricsSink;
 interface FamilyLowering {
 
     /** The architecture identity this lowering's programs carry. */
-    org.beehive.gpullama3.runtime.model.ArchitectureId architecture();
+    org.beehive.jllm.runtime.model.ArchitectureId architecture();
 
     /** Whether this lowering can handle {@code program}, without throwing. */
     default boolean supports(InferenceProgram program) {

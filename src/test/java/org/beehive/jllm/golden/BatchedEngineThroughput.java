@@ -1,19 +1,19 @@
-package org.beehive.gpullama3.golden;
+package org.beehive.jllm.golden;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import org.beehive.gpullama3.backend.tornado.batch.TornadoBatchExecutor;
-import org.beehive.gpullama3.engine.LLMEngine;
-import org.beehive.gpullama3.engine.RequestHandle;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.loader.ModelLoader;
-import org.beehive.gpullama3.runtime.kv.KvCacheManager;
-import org.beehive.gpullama3.runtime.kv.KvLease;
-import org.beehive.gpullama3.runtime.kv.KvStorage;
-import org.beehive.gpullama3.runtime.kv.KvStorageFactories;
-import org.beehive.gpullama3.runtime.kv.KvStorageRequest;
+import org.beehive.jllm.backend.tornado.batch.TornadoBatchExecutor;
+import org.beehive.jllm.engine.LLMEngine;
+import org.beehive.jllm.engine.RequestHandle;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.loader.ModelLoader;
+import org.beehive.jllm.runtime.kv.KvCacheManager;
+import org.beehive.jllm.runtime.kv.KvLease;
+import org.beehive.jllm.runtime.kv.KvStorage;
+import org.beehive.jllm.runtime.kv.KvStorageFactories;
+import org.beehive.jllm.runtime.kv.KvStorageRequest;
 
 /**
  * Aggregate throughput through the engine at several batch widths.

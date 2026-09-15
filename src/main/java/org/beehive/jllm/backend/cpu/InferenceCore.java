@@ -1,23 +1,23 @@
-package org.beehive.gpullama3.backend.cpu;
+package org.beehive.jllm.backend.cpu;
 
-import org.beehive.gpullama3.auxiliary.Parallel;
-import org.beehive.gpullama3.inference.op.AttentionShape;
-import org.beehive.gpullama3.inference.op.CpuOperations;
-import org.beehive.gpullama3.inference.state.Gemma4State;
-import org.beehive.gpullama3.inference.state.Phi3State;
-import org.beehive.gpullama3.inference.state.Qwen2MoEState;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.inference.weights.standard.*;
-import org.beehive.gpullama3.model.Configuration;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.devstral.DevstralConfiguration;
-import org.beehive.gpullama3.model.gemma4.Gemma4Configuration;
-import org.beehive.gpullama3.model.granite.GraniteConfiguration;
-import org.beehive.gpullama3.model.phi3.Phi3Configuration;
-import org.beehive.gpullama3.model.qwen2.Qwen2Configuration;
-import org.beehive.gpullama3.model.qwen2.Qwen2MoEConfiguration;
-import org.beehive.gpullama3.model.qwen3.Qwen3Configuration;
-import org.beehive.gpullama3.tensor.standard.FloatTensor;
+import org.beehive.jllm.auxiliary.Parallel;
+import org.beehive.jllm.inference.op.AttentionShape;
+import org.beehive.jllm.inference.op.CpuOperations;
+import org.beehive.jllm.inference.state.Gemma4State;
+import org.beehive.jllm.inference.state.Phi3State;
+import org.beehive.jllm.inference.state.Qwen2MoEState;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.inference.weights.standard.*;
+import org.beehive.jllm.model.Configuration;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.devstral.DevstralConfiguration;
+import org.beehive.jllm.model.gemma4.Gemma4Configuration;
+import org.beehive.jllm.model.granite.GraniteConfiguration;
+import org.beehive.jllm.model.phi3.Phi3Configuration;
+import org.beehive.jllm.model.qwen2.Qwen2Configuration;
+import org.beehive.jllm.model.qwen2.Qwen2MoEConfiguration;
+import org.beehive.jllm.model.qwen3.Qwen3Configuration;
+import org.beehive.jllm.tensor.standard.FloatTensor;
 
 /**
  * Low-level operations for model inference.

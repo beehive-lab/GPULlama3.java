@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.arch;
+package org.beehive.jllm.arch;
 
 import java.util.LinkedHashSet;
 import java.util.Set;
@@ -35,39 +35,39 @@ public final class Allowlists {
      */
     public static final Set<String> RULE_2 =
             frozen(
-                    "org.beehive.gpullama3.model.Model",
-                    "org.beehive.gpullama3.model.devstral.Devstral",
-                    "org.beehive.gpullama3.model.gemma4.Gemma4",
-                    "org.beehive.gpullama3.model.granite.Granite",
-                    "org.beehive.gpullama3.model.llama.Llama",
-                    "org.beehive.gpullama3.model.mistral.Mistral",
-                    "org.beehive.gpullama3.model.phi3.Phi3",
-                    "org.beehive.gpullama3.model.qwen2.Qwen2",
-                    "org.beehive.gpullama3.model.qwen2.Qwen2MoE",
-                    "org.beehive.gpullama3.model.qwen3.Qwen3",
-                    "org.beehive.gpullama3.model.loader.AbstractModelLoader",
-                    "org.beehive.gpullama3.model.loader.DevstralModelLoader",
-                    "org.beehive.gpullama3.model.loader.Gemma4ModelLoader",
-                    "org.beehive.gpullama3.model.loader.GraniteLoader",
-                    "org.beehive.gpullama3.model.loader.LlamaModelLoader",
-                    "org.beehive.gpullama3.model.loader.MistralModelLoader",
-                    "org.beehive.gpullama3.model.loader.ModelLoader",
-                    "org.beehive.gpullama3.model.loader.Phi3ModelLoader",
-                    "org.beehive.gpullama3.model.loader.Qwen2ModelLoader",
-                    "org.beehive.gpullama3.model.loader.Qwen2MoEModelLoader",
-                    "org.beehive.gpullama3.model.loader.Qwen3ModelLoader");
+                    "org.beehive.jllm.model.Model",
+                    "org.beehive.jllm.model.devstral.Devstral",
+                    "org.beehive.jllm.model.gemma4.Gemma4",
+                    "org.beehive.jllm.model.granite.Granite",
+                    "org.beehive.jllm.model.llama.Llama",
+                    "org.beehive.jllm.model.mistral.Mistral",
+                    "org.beehive.jllm.model.phi3.Phi3",
+                    "org.beehive.jllm.model.qwen2.Qwen2",
+                    "org.beehive.jllm.model.qwen2.Qwen2MoE",
+                    "org.beehive.jllm.model.qwen3.Qwen3",
+                    "org.beehive.jllm.model.loader.AbstractModelLoader",
+                    "org.beehive.jllm.model.loader.DevstralModelLoader",
+                    "org.beehive.jllm.model.loader.Gemma4ModelLoader",
+                    "org.beehive.jllm.model.loader.GraniteLoader",
+                    "org.beehive.jllm.model.loader.LlamaModelLoader",
+                    "org.beehive.jllm.model.loader.MistralModelLoader",
+                    "org.beehive.jllm.model.loader.ModelLoader",
+                    "org.beehive.jllm.model.loader.Phi3ModelLoader",
+                    "org.beehive.jllm.model.loader.Qwen2ModelLoader",
+                    "org.beehive.jllm.model.loader.Qwen2MoEModelLoader",
+                    "org.beehive.jllm.model.loader.Qwen3ModelLoader");
 
     /** Rule 5 — loaded-model types with non-final fields. */
     public static final Set<String> RULE_5 =
             frozen(
-                    "org.beehive.gpullama3.model.devstral.Devstral",
-                    "org.beehive.gpullama3.model.gemma4.Gemma4",
-                    "org.beehive.gpullama3.model.llama.Llama",
-                    "org.beehive.gpullama3.model.mistral.Mistral",
-                    "org.beehive.gpullama3.model.phi3.Phi3",
-                    "org.beehive.gpullama3.model.qwen2.Qwen2",
-                    "org.beehive.gpullama3.model.qwen2.Qwen2MoE",
-                    "org.beehive.gpullama3.model.qwen3.Qwen3");
+                    "org.beehive.jllm.model.devstral.Devstral",
+                    "org.beehive.jllm.model.gemma4.Gemma4",
+                    "org.beehive.jllm.model.llama.Llama",
+                    "org.beehive.jllm.model.mistral.Mistral",
+                    "org.beehive.jllm.model.phi3.Phi3",
+                    "org.beehive.jllm.model.qwen2.Qwen2",
+                    "org.beehive.jllm.model.qwen2.Qwen2MoE",
+                    "org.beehive.jllm.model.qwen3.Qwen3");
 
     /**
      * Rule 8a — lower layers reaching generation policy (the CLI, the options record, the server).
@@ -78,10 +78,10 @@ public final class Allowlists {
      */
     public static final Set<String> RULE_8A =
             frozen(
-                    "org.beehive.gpullama3.bench.LlamaBench",
-                    "org.beehive.gpullama3.inference.sampler.Sampler",
-                    "org.beehive.gpullama3.model.loader.ModelLoader",
-                    "org.beehive.gpullama3.tensor.standard.Q4_0FloatTensor");
+                    "org.beehive.jllm.bench.LlamaBench",
+                    "org.beehive.jllm.inference.sampler.Sampler",
+                    "org.beehive.jllm.model.loader.ModelLoader",
+                    "org.beehive.jllm.tensor.standard.Q4_0FloatTensor");
 
     /**
      * Rule 15 — classes outside the provider package that still dispatch on {@code ModelType}.
@@ -92,7 +92,7 @@ public final class Allowlists {
      * reads {@code ModelInfo.architecture()} rather than naming a {@code ModelType}.
      */
     public static final Set<String> RULE_15 =
-            frozen("org.beehive.gpullama3.model.loader.ModelLoader");
+            frozen("org.beehive.jllm.model.loader.ModelLoader");
 
     /**
      * Rule 16 — console I/O in library code.
@@ -103,14 +103,14 @@ public final class Allowlists {
      */
     public static final Set<String> RULE_16 =
             frozen(
-                    "org.beehive.gpullama3.auxiliary.RunMetrics",
-                    "org.beehive.gpullama3.auxiliary.Timer$1",
-                    "org.beehive.gpullama3.bench.LlamaBench",
-                    "org.beehive.gpullama3.inference.TokenGenerationLoop",
-                    "org.beehive.gpullama3.backend.tornado.layers.type.fp16.prefill.LlamaFP16LayersBatchPrefillMMA",
-                    "org.beehive.gpullama3.backend.tornado.layers.type.fp16.prefill.Qwen3FP16LayersBatchPrefillMMA",
-                    "org.beehive.gpullama3.backend.tornado.layers.type.q8_0.prefill.LlamaQ8_0LayersBatchPrefillMMA",
-                    "org.beehive.gpullama3.backend.tornado.layers.type.q8_0.prefill.Qwen3Q8_0LayersBatchPrefillMMA");
+                    "org.beehive.jllm.auxiliary.RunMetrics",
+                    "org.beehive.jllm.auxiliary.Timer$1",
+                    "org.beehive.jllm.bench.LlamaBench",
+                    "org.beehive.jllm.inference.TokenGenerationLoop",
+                    "org.beehive.jllm.backend.tornado.layers.type.fp16.prefill.LlamaFP16LayersBatchPrefillMMA",
+                    "org.beehive.jllm.backend.tornado.layers.type.fp16.prefill.Qwen3FP16LayersBatchPrefillMMA",
+                    "org.beehive.jllm.backend.tornado.layers.type.q8_0.prefill.LlamaQ8_0LayersBatchPrefillMMA",
+                    "org.beehive.jllm.backend.tornado.layers.type.q8_0.prefill.Qwen3Q8_0LayersBatchPrefillMMA");
 
     /**
      * Rule 4 — classes outside the format layer and the loaders that still name GGUF's types.
@@ -122,34 +122,34 @@ public final class Allowlists {
      */
     public static final Set<String> RULE_4 =
             frozen(
-                    "org.beehive.gpullama3.model.ModelType",
-                    "org.beehive.gpullama3.model.ModelType$1",
-                    "org.beehive.gpullama3.model.ModelType$2",
-                    "org.beehive.gpullama3.model.ModelType$3",
-                    "org.beehive.gpullama3.model.ModelType$4",
-                    "org.beehive.gpullama3.model.ModelType$5",
-                    "org.beehive.gpullama3.model.ModelType$6",
-                    "org.beehive.gpullama3.model.ModelType$7",
-                    "org.beehive.gpullama3.model.ModelType$8",
-                    "org.beehive.gpullama3.model.ModelType$9",
-                    "org.beehive.gpullama3.model.ModelType$10",
-                    "org.beehive.gpullama3.model.ModelType$11",
-                    "org.beehive.gpullama3.tensor.standard.ArrayFloatTensor",
-                    "org.beehive.gpullama3.tensor.standard.BF16FloatTensor",
-                    "org.beehive.gpullama3.tensor.standard.FloatTensor",
-                    "org.beehive.gpullama3.tensor.standard.FP16FloatTensor",
-                    "org.beehive.gpullama3.tensor.standard.FP32FloatTensor",
-                    "org.beehive.gpullama3.tensor.standard.Q4_0FloatTensor",
-                    "org.beehive.gpullama3.tensor.standard.Q4_KFloatTensor",
-                    "org.beehive.gpullama3.tensor.standard.Q5_KFloatTensor",
-                    "org.beehive.gpullama3.tensor.standard.Q6_KFloatTensor",
-                    "org.beehive.gpullama3.tensor.standard.Q8_0FloatTensor",
-                    "org.beehive.gpullama3.backend.tornado.tensor.TornadoTensor",
-                    "org.beehive.gpullama3.backend.tornado.tensor.FP16TornadoTensor",
-                    "org.beehive.gpullama3.backend.tornado.tensor.FP32TornadoTensor",
-                    "org.beehive.gpullama3.backend.tornado.tensor.Q8_0TornadoTensor",
-                    "org.beehive.gpullama3.backend.tornado.tensor.Q4_KTornadoTensor",
-                    "org.beehive.gpullama3.backend.tornado.tensor.Q6_KTornadoTensor");
+                    "org.beehive.jllm.model.ModelType",
+                    "org.beehive.jllm.model.ModelType$1",
+                    "org.beehive.jllm.model.ModelType$2",
+                    "org.beehive.jllm.model.ModelType$3",
+                    "org.beehive.jllm.model.ModelType$4",
+                    "org.beehive.jllm.model.ModelType$5",
+                    "org.beehive.jllm.model.ModelType$6",
+                    "org.beehive.jllm.model.ModelType$7",
+                    "org.beehive.jllm.model.ModelType$8",
+                    "org.beehive.jllm.model.ModelType$9",
+                    "org.beehive.jllm.model.ModelType$10",
+                    "org.beehive.jllm.model.ModelType$11",
+                    "org.beehive.jllm.tensor.standard.ArrayFloatTensor",
+                    "org.beehive.jllm.tensor.standard.BF16FloatTensor",
+                    "org.beehive.jllm.tensor.standard.FloatTensor",
+                    "org.beehive.jllm.tensor.standard.FP16FloatTensor",
+                    "org.beehive.jllm.tensor.standard.FP32FloatTensor",
+                    "org.beehive.jllm.tensor.standard.Q4_0FloatTensor",
+                    "org.beehive.jllm.tensor.standard.Q4_KFloatTensor",
+                    "org.beehive.jllm.tensor.standard.Q5_KFloatTensor",
+                    "org.beehive.jllm.tensor.standard.Q6_KFloatTensor",
+                    "org.beehive.jllm.tensor.standard.Q8_0FloatTensor",
+                    "org.beehive.jllm.backend.tornado.tensor.TornadoTensor",
+                    "org.beehive.jllm.backend.tornado.tensor.FP16TornadoTensor",
+                    "org.beehive.jllm.backend.tornado.tensor.FP32TornadoTensor",
+                    "org.beehive.jllm.backend.tornado.tensor.Q8_0TornadoTensor",
+                    "org.beehive.jllm.backend.tornado.tensor.Q4_KTornadoTensor",
+                    "org.beehive.jllm.backend.tornado.tensor.Q6_KTornadoTensor");
 
     // Rule 7 and Rule 11 have no allowlist: they pass on today's code (policy item 4).
 

@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.golden;
+package org.beehive.jllm.golden;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -6,8 +6,8 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
 
 import java.nio.file.Path;
-import org.beehive.gpullama3.backend.tornado.TensorCoreSupport;
-import org.beehive.gpullama3.golden.GoldenFixture.Fixture;
+import org.beehive.jllm.backend.tornado.TensorCoreSupport;
+import org.beehive.jllm.golden.GoldenFixture.Fixture;
 import org.junit.Test;
 
 /**

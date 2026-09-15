@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.inference.op;
+package org.beehive.jllm.inference.op;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
@@ -7,14 +7,14 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import java.util.Random;
-import org.beehive.gpullama3.auxiliary.Parallel;
-import org.beehive.gpullama3.backend.cpu.InferenceCore;
-import org.beehive.gpullama3.inference.state.Qwen2MoEState;
-import org.beehive.gpullama3.inference.weights.standard.Qwen2MoEStandardWeights;
-import org.beehive.gpullama3.model.qwen2.Qwen2MoEConfiguration;
-import org.beehive.gpullama3.runtime.tensor.DataType;
-import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
-import org.beehive.gpullama3.tensor.standard.FloatTensor;
+import org.beehive.jllm.auxiliary.Parallel;
+import org.beehive.jllm.backend.cpu.InferenceCore;
+import org.beehive.jllm.inference.state.Qwen2MoEState;
+import org.beehive.jllm.inference.weights.standard.Qwen2MoEStandardWeights;
+import org.beehive.jllm.model.qwen2.Qwen2MoEConfiguration;
+import org.beehive.jllm.runtime.tensor.DataType;
+import org.beehive.jllm.tensor.standard.ArrayFloatTensor;
+import org.beehive.jllm.tensor.standard.FloatTensor;
 import org.junit.Test;
 
 public class Qwen2MoeCpuOperationEquivalenceTest {

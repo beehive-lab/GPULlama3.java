@@ -1,9 +1,9 @@
-package org.beehive.gpullama3.runtime.memory;
+package org.beehive.jllm.runtime.memory;
 
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
-import org.beehive.gpullama3.api.Experimental;
+import org.beehive.jllm.api.Experimental;
 
 /**
  * What a configuration is predicted to need on the device, computed <b>before any allocation</b>.

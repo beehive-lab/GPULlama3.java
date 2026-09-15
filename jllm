@@ -234,11 +234,11 @@ class LlamaRunner:
         module_config: List[str] = []
 
         if getattr(args, "server", False):
-            main_class = "org.beehive.gpullama3.server.OpenAIServer"
+            main_class = "org.beehive.jllm.server.OpenAIServer"
         elif getattr(args, "bench", False):
-            main_class = "org.beehive.gpullama3.bench.LlamaBench"
+            main_class = "org.beehive.jllm.bench.LlamaBench"
         else:
-            main_class = "org.beehive.gpullama3.LlamaApp"
+            main_class = "org.beehive.jllm.LlamaApp"
 
         module_config.extend(
             [

@@ -1,12 +1,12 @@
-package org.beehive.gpullama3.auxiliary.metrics;
+package org.beehive.jllm.auxiliary.metrics;
 
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.Map;
-import org.beehive.gpullama3.auxiliary.RunMetrics;
-import org.beehive.gpullama3.runtime.metrics.MetricKey;
-import org.beehive.gpullama3.runtime.metrics.MetricsReport;
-import org.beehive.gpullama3.runtime.metrics.MetricsSink;
+import org.beehive.jllm.auxiliary.RunMetrics;
+import org.beehive.jllm.runtime.metrics.MetricKey;
+import org.beehive.jllm.runtime.metrics.MetricsReport;
+import org.beehive.jllm.runtime.metrics.MetricsSink;
 
 /**
  * The sink behind the CLI's metrics report — {@link RunMetrics} seen through the Rule 17 seam.

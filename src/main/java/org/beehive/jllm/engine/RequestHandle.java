@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.engine;
+package org.beehive.jllm.engine;
 
 import java.util.ArrayList;
 import java.util.List;

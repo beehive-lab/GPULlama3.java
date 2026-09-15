@@ -1,8 +1,8 @@
-package org.beehive.gpullama3.backend.tornado.tensor;
+package org.beehive.jllm.backend.tornado.tensor;
 
-import org.beehive.gpullama3.format.DataTypeMapping;
-import org.beehive.gpullama3.format.GGMLType;
-import org.beehive.gpullama3.runtime.tensor.DataType;
+import org.beehive.jllm.format.DataTypeMapping;
+import org.beehive.jllm.format.GGMLType;
+import org.beehive.jllm.runtime.tensor.DataType;
 import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;

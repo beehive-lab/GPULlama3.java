@@ -1,18 +1,18 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
 import java.nio.file.Path;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.Set;
 import java.util.stream.Collectors;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.runtime.diagnostics.DiagnosticCode;
-import org.beehive.gpullama3.runtime.kv.KvCacheManager;
-import org.beehive.gpullama3.runtime.kv.KvLease;
-import org.beehive.gpullama3.runtime.kv.KvStorageFactories;
-import org.beehive.gpullama3.runtime.kv.KvStorageFactory;
-import org.beehive.gpullama3.runtime.kv.KvStorageRequest;
-import org.beehive.gpullama3.runtime.policy.ExecutionPolicy;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.runtime.diagnostics.DiagnosticCode;
+import org.beehive.jllm.runtime.kv.KvCacheManager;
+import org.beehive.jllm.runtime.kv.KvLease;
+import org.beehive.jllm.runtime.kv.KvStorageFactories;
+import org.beehive.jllm.runtime.kv.KvStorageFactory;
+import org.beehive.jllm.runtime.kv.KvStorageRequest;
+import org.beehive.jllm.runtime.policy.ExecutionPolicy;
 
 /**
  * The facade over today's {@code Model}: everything a user holds, nothing a user should not.
@@ -44,7 +44,7 @@ final class DelegatingModel implements TextGenerationModel {
      * <p>Not policy: it types and sizes the pool every session addresses, so no session overrides
      * it.
      */
-    private final org.beehive.gpullama3.runtime.policy.StorageOptions storageOptions;
+    private final org.beehive.jllm.runtime.policy.StorageOptions storageOptions;
 
     private final KvCacheManager sessions;
 
@@ -55,8 +55,8 @@ final class DelegatingModel implements TextGenerationModel {
      * <p>Internal in v1: nothing about it reaches a public signature. Released at model close, when
      * guarantees no session is live.
      */
-    private final org.beehive.gpullama3.backend.tornado.lowering.CompiledProgramCache programs =
-            new org.beehive.gpullama3.backend.tornado.lowering.CompiledProgramCache();
+    private final org.beehive.jllm.backend.tornado.lowering.CompiledProgramCache programs =
+            new org.beehive.jllm.backend.tornado.lowering.CompiledProgramCache();
 
     private final ModelConfiguration configuration;
     private final boolean gpu;
@@ -81,7 +81,7 @@ final class DelegatingModel implements TextGenerationModel {
                 source,
                 gpu,
                 ExecutionPolicy.fromSystemProperties(),
-                org.beehive.gpullama3.runtime.policy.StorageOptions.fromSystemProperties(),
+                org.beehive.jllm.runtime.policy.StorageOptions.fromSystemProperties(),
                 ThinkingMode.DEFAULT);
     }
 
@@ -90,7 +90,7 @@ final class DelegatingModel implements TextGenerationModel {
             Path source,
             boolean gpu,
             ExecutionPolicy executionPolicy,
-            org.beehive.gpullama3.runtime.policy.StorageOptions storageOptions) {
+            org.beehive.jllm.runtime.policy.StorageOptions storageOptions) {
         this(delegate, source, gpu, executionPolicy, storageOptions, ThinkingMode.DEFAULT);
     }
 
@@ -99,7 +99,7 @@ final class DelegatingModel implements TextGenerationModel {
             Path source,
             boolean gpu,
             ExecutionPolicy executionPolicy,
-            org.beehive.gpullama3.runtime.policy.StorageOptions storageOptions,
+            org.beehive.jllm.runtime.policy.StorageOptions storageOptions,
             ThinkingMode thinkingMode) {
         this.delegate = delegate;
         this.gpu = gpu;
@@ -146,7 +146,7 @@ final class DelegatingModel implements TextGenerationModel {
         // session-private key/value arrays is the combination that silently gives one session
         // another's cache (option 1).
         boolean requiredByLowering =
-                org.beehive.gpullama3.backend.tornado.lowering.LoweredPlanSelection.enabled();
+                org.beehive.jllm.backend.tornado.lowering.LoweredPlanSelection.enabled();
         if ((!storageOptions.sharedKeyValuePool() && !requiredByLowering)
                 || !gpu
                 || !delegate.supportsSharedKvStorage()) {
@@ -221,7 +221,7 @@ final class DelegatingModel implements TextGenerationModel {
      * {@code kvDim} values per token, {@code BLOCK_SIZE_TOKENS} tokens, every layer.
      */
     private static long bytesPerBlock(
-            Model model, org.beehive.gpullama3.runtime.policy.StorageOptions storage) {
+            Model model, org.beehive.jllm.runtime.policy.StorageOptions storage) {
         var config = model.configuration();
         long kvDim = (long) config.dim() * config.numberOfKeyValueHeads() / config.numberOfHeads();
         // Taken from the resolved storage options rather than assumed FP32: the accounting a
@@ -332,11 +332,11 @@ final class DelegatingModel implements TextGenerationModel {
      * for when the remaining families migrate, and making it a prerequisite would mean redesigning
      * nine states to prove one vertical slice.
      */
-    private org.beehive.gpullama3.backend.tornado.lowering.BindingDomain loweredDomain;
+    private org.beehive.jllm.backend.tornado.lowering.BindingDomain loweredDomain;
 
-    private org.beehive.gpullama3.inference.state.State loweredWorkspace;
+    private org.beehive.jllm.inference.state.State loweredWorkspace;
 
-    private org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan loweredProgram;
+    private org.beehive.jllm.backend.tornado.TornadoVMMasterPlan loweredProgram;
 
     /**
      * Builds this session's runtime: legacy when it owns its state, lowered when it borrows the
@@ -347,11 +347,11 @@ final class DelegatingModel implements TextGenerationModel {
      * session executes against another's cache.
      */
     synchronized SessionRuntime newRuntime(
-            org.beehive.gpullama3.model.Model delegate,
-            org.beehive.gpullama3.runtime.kv.KvLease lease,
+            org.beehive.jllm.model.Model delegate,
+            org.beehive.jllm.runtime.kv.KvLease lease,
             ExecutionPolicy policy) {
         if (!gpu
-                || !org.beehive.gpullama3.backend.tornado.lowering.LoweredPlanSelection.enabled()) {
+                || !org.beehive.jllm.backend.tornado.lowering.LoweredPlanSelection.enabled()) {
             return new LegacySessionRuntime(delegate, lease, policy, storageOptions);
         }
         if (!policy.equals(executionPolicy)) {
@@ -375,53 +375,53 @@ final class DelegatingModel implements TextGenerationModel {
             }
             // Allocated once per domain. A second lowered session reaches neither of these lines.
             loweredWorkspace =
-                    org.beehive.gpullama3.inference.state.State.withStorageOptions(
+                    org.beehive.jllm.inference.state.State.withStorageOptions(
                             storageOptions, () -> delegate.createNewState(lease));
             // The domain's workspace carries the model's policy: every session that shares it
             // shares that policy, which is why a session that overrode it took the legacy path
             // above rather than reaching this line.
             loweredWorkspace.resolveExecutionPolicy(executionPolicy);
             loweredDomain =
-                    org.beehive.gpullama3.backend.tornado.lowering.BindingDomain.shareable(
+                    org.beehive.jllm.backend.tornado.lowering.BindingDomain.shareable(
                             "runtime@" + Integer.toHexString(System.identityHashCode(this)),
                             loweredWorkspace);
         }
-        if (!org.beehive.gpullama3.backend.tornado.lowering.LoweredPlanSelection.handles(
+        if (!org.beehive.jllm.backend.tornado.lowering.LoweredPlanSelection.handles(
                 delegate, loweredWorkspace)) {
             return new LegacySessionRuntime(delegate, lease, policy, storageOptions);
         }
         var key =
-                org.beehive.gpullama3.backend.tornado.lowering.LoweredPlanSelection.key(
+                org.beehive.jllm.backend.tornado.lowering.LoweredPlanSelection.key(
                         delegate,
                         loweredDomain,
                         loweredWorkspace.executionPolicy(),
                         loweredWorkspace.usesFp16KeyValueCache()
-                                ? org.beehive.gpullama3.runtime.tensor.DataType.F16
-                                : org.beehive.gpullama3.runtime.tensor.DataType.F32);
+                                ? org.beehive.jllm.runtime.tensor.DataType.F16
+                                : org.beehive.jllm.runtime.tensor.DataType.F32);
         loweredProgram =
                 programs.acquire(
                         key,
                         () ->
-                                org.beehive.gpullama3.backend.tornado.lowering.LoweredPlanSelection
+                                org.beehive.jllm.backend.tornado.lowering.LoweredPlanSelection
                                         .lower(
                                                 delegate,
                                                 loweredWorkspace,
-                                                org.beehive.gpullama3.auxiliary.metrics
+                                                org.beehive.jllm.auxiliary.metrics
                                                         .RunMetricsSink.installedOrDisabled()));
         // After the acquire, not inside the supplier: on a cache hit the supplier never runs, and
         // this session took the lowered path just the same. Without it a run through the facade
         // reports no execution_path at all.
-        org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan.reportLoweredPath(
+        org.beehive.jllm.backend.tornado.TornadoVMMasterPlan.reportLoweredPath(
                 delegate, loweredWorkspace);
         var perSession =
-                new org.beehive.gpullama3.backend.tornado.lowering.SharedWorkspacePlan(
+                new org.beehive.jllm.backend.tornado.lowering.SharedWorkspacePlan(
                         loweredProgram,
                         loweredDomain.invocationLock(),
                         loweredWorkspace.workspace.positionHolder,
                         lease.slot(),
                         delegate.configuration().vocabularySize(),
                         token ->
-                                org.beehive.gpullama3.backend.tornado.lowering.EmbeddingStaging
+                                org.beehive.jllm.backend.tornado.lowering.EmbeddingStaging
                                         .stage(delegate, loweredWorkspace, token),
                         false,
                         null);
@@ -434,17 +434,17 @@ final class DelegatingModel implements TextGenerationModel {
     /**
      * The domain's workspace, or {@code null} before the first lowered session. Internal; tests.
      */
-    org.beehive.gpullama3.inference.state.State loweredWorkspace() {
+    org.beehive.jllm.inference.state.State loweredWorkspace() {
         return loweredWorkspace;
     }
 
     /** The domain, or {@code null} before the first lowered session. Internal; tests. */
-    org.beehive.gpullama3.backend.tornado.lowering.BindingDomain loweredDomain() {
+    org.beehive.jllm.backend.tornado.lowering.BindingDomain loweredDomain() {
         return loweredDomain;
     }
 
     /** The shared compiled program, or {@code null} before the first lowered session. Internal. */
-    org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan loweredProgram() {
+    org.beehive.jllm.backend.tornado.TornadoVMMasterPlan loweredProgram() {
         return loweredProgram;
     }
 

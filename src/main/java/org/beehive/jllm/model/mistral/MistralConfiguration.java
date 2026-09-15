@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.model.mistral;
+package org.beehive.jllm.model.mistral;
 
-import org.beehive.gpullama3.model.Configuration;
+import org.beehive.jllm.model.Configuration;
 
 // @formatter:off
 public record MistralConfiguration(String quantization,

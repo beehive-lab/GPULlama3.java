@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.model.format;
+package org.beehive.jllm.model.format;
 
-import org.beehive.gpullama3.tokenizer.Tokenizer;
+import org.beehive.jllm.tokenizer.Tokenizer;
 
 import java.util.ArrayList;
 import java.util.List;

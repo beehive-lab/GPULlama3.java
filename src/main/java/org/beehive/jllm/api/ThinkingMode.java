@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
 /**
  * Whether a model that has a reasoning phase should use it.

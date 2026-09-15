@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.auxiliary;
+package org.beehive.jllm.auxiliary;
 
 public record Pair<First, Second>(First first, Second second) {
 }

@@ -1,9 +1,9 @@
-package org.beehive.gpullama3.program;
+package org.beehive.jllm.program;
 
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-import org.beehive.gpullama3.program.op.Operation;
+import org.beehive.jllm.program.op.Operation;
 
 /**
  * One named unit of a program's work.

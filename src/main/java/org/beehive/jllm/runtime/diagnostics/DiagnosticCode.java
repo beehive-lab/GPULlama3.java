@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.runtime.diagnostics;
+package org.beehive.jllm.runtime.diagnostics;
 
-import org.beehive.gpullama3.api.Experimental;
+import org.beehive.jllm.api.Experimental;
 
 /**
  * A stable identifier for a user-reachable failure.

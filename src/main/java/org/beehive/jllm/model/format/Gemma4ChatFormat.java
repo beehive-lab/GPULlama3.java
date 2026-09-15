@@ -1,10 +1,10 @@
-package org.beehive.gpullama3.model.format;
+package org.beehive.jllm.model.format;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import org.beehive.gpullama3.tokenizer.Gemma4Tokenizer;
+import org.beehive.jllm.tokenizer.Gemma4Tokenizer;
 
 /**
  * Chat format for Gemma 4 models.

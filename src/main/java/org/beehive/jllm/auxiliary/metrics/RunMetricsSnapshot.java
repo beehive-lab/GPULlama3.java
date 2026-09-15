@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.auxiliary.metrics;
+package org.beehive.jllm.auxiliary.metrics;
 
 /**
  * Immutable snapshot of all performance metrics for a single inference run.

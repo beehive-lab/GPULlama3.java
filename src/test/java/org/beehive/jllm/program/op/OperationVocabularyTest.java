@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.program.op;
+package org.beehive.jllm.program.op;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -14,8 +14,8 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
 import java.util.TreeSet;
-import org.beehive.gpullama3.runtime.tensor.DataType;
-import org.beehive.gpullama3.runtime.tensor.TensorRole;
+import org.beehive.jllm.runtime.tensor.DataType;
+import org.beehive.jllm.runtime.tensor.TensorRole;
 import org.junit.Test;
 
 /**

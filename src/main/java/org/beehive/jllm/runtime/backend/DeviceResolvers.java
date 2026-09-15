@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.runtime.backend;
+package org.beehive.jllm.runtime.backend;
 
 import java.util.ArrayList;
 import java.util.Comparator;

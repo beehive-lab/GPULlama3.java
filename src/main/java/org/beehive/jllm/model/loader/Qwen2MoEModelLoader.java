@@ -1,27 +1,27 @@
-package org.beehive.gpullama3.model.loader;
+package org.beehive.jllm.model.loader;
 
-import static org.beehive.gpullama3.model.loader.ModelLoader.*;
+import static org.beehive.jllm.model.loader.ModelLoader.*;
 
 import java.nio.channels.FileChannel;
 import java.util.Map;
-import org.beehive.gpullama3.auxiliary.Pair;
-import org.beehive.gpullama3.backend.tornado.tensor.TornadoTensorLoader;
-import org.beehive.gpullama3.format.DataTypeMapping;
-import org.beehive.gpullama3.format.GGMLTensorEntry;
-import org.beehive.gpullama3.format.GGUF;
-import org.beehive.gpullama3.inference.weights.Weights;
-import org.beehive.gpullama3.inference.weights.standard.Qwen2MoEStandardWeights;
-import org.beehive.gpullama3.inference.weights.tornado.Qwen2MoETornadoWeights;
-import org.beehive.gpullama3.model.format.ChatFormat;
-import org.beehive.gpullama3.model.format.Qwen3ChatFormat;
-import org.beehive.gpullama3.model.qwen2.Qwen2MoE;
-import org.beehive.gpullama3.model.qwen2.Qwen2MoEConfiguration;
-import org.beehive.gpullama3.runtime.tensor.DataType;
-import org.beehive.gpullama3.runtime.tensor.ExecutionTarget;
-import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
-import org.beehive.gpullama3.tokenizer.Qwen3Tokenizer;
-import org.beehive.gpullama3.tokenizer.Tokenizer;
-import org.beehive.gpullama3.tokenizer.Vocabulary;
+import org.beehive.jllm.auxiliary.Pair;
+import org.beehive.jllm.backend.tornado.tensor.TornadoTensorLoader;
+import org.beehive.jllm.format.DataTypeMapping;
+import org.beehive.jllm.format.GGMLTensorEntry;
+import org.beehive.jllm.format.GGUF;
+import org.beehive.jllm.inference.weights.Weights;
+import org.beehive.jllm.inference.weights.standard.Qwen2MoEStandardWeights;
+import org.beehive.jllm.inference.weights.tornado.Qwen2MoETornadoWeights;
+import org.beehive.jllm.model.format.ChatFormat;
+import org.beehive.jllm.model.format.Qwen3ChatFormat;
+import org.beehive.jllm.model.qwen2.Qwen2MoE;
+import org.beehive.jllm.model.qwen2.Qwen2MoEConfiguration;
+import org.beehive.jllm.runtime.tensor.DataType;
+import org.beehive.jllm.runtime.tensor.ExecutionTarget;
+import org.beehive.jllm.tensor.standard.ArrayFloatTensor;
+import org.beehive.jllm.tokenizer.Qwen3Tokenizer;
+import org.beehive.jllm.tokenizer.Tokenizer;
+import org.beehive.jllm.tokenizer.Vocabulary;
 
 public class Qwen2MoEModelLoader extends AbstractModelLoader<Qwen2MoE, Qwen2MoEConfiguration> {
     public Qwen2MoEModelLoader(

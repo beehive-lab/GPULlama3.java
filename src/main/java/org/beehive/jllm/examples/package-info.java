@@ -10,10 +10,10 @@
  *
  * <pre>
  *   java -cp target/gpu-llama3-1.0.0-jdk21.jar \
- *        org.beehive.gpullama3.examples.HelloGeneration model.gguf
+ *        org.beehive.jllm.examples.HelloGeneration model.gguf
  * </pre>
  *
  * <p>To run on an accelerator, launch through {@code llama-tornado}, which sets the JVM flags and
- * {@code -Duse.tornadovm=true} that {@link org.beehive.gpullama3.api.ModelOptions} reads.
+ * {@code -Duse.tornadovm=true} that {@link org.beehive.jllm.api.ModelOptions} reads.
  */
-package org.beehive.gpullama3.examples;
+package org.beehive.jllm.examples;

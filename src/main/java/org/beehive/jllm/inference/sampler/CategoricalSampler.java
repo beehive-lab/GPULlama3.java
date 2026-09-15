@@ -1,7 +1,7 @@
-package org.beehive.gpullama3.inference.sampler;
+package org.beehive.jllm.inference.sampler;
 
 import java.util.random.RandomGenerator;
-import org.beehive.gpullama3.inference.Logits;
+import org.beehive.jllm.inference.Logits;
 
 /**
  * A sampler that samples from a categorical distribution. Supports both FloatTensor and FloatArray

@@ -1,9 +1,9 @@
-package org.beehive.gpullama3.model.provider;
+package org.beehive.jllm.model.provider;
 
-import org.beehive.gpullama3.format.ModelSource;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.loader.Gemma4ModelLoader;
-import org.beehive.gpullama3.runtime.backend.BackendId;
+import org.beehive.jllm.format.ModelSource;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.loader.Gemma4ModelLoader;
+import org.beehive.jllm.runtime.backend.BackendId;
 
 /**
  * Gemma-4. Declares {@code gemma4} in {@code general.architecture} (verified against

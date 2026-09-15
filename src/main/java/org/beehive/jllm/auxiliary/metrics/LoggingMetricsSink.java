@@ -1,10 +1,10 @@
-package org.beehive.gpullama3.auxiliary.metrics;
+package org.beehive.jllm.auxiliary.metrics;
 
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.util.Objects;
-import org.beehive.gpullama3.runtime.metrics.MetricKey;
-import org.beehive.gpullama3.runtime.metrics.MetricsSink;
+import org.beehive.jllm.runtime.metrics.MetricKey;
+import org.beehive.jllm.runtime.metrics.MetricsSink;
 
 /**
  * A sink that writes each measurement to the platform logger — the alternative to library code

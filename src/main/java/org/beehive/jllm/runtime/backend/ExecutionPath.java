@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.runtime.backend;
+package org.beehive.jllm.runtime.backend;
 
 /**
  * Which implementation actually executed a session — the lowered program, or the legacy plan.

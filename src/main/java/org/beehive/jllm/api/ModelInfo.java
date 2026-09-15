@@ -1,10 +1,10 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
 import java.nio.file.Path;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import org.beehive.gpullama3.runtime.tensor.DataType;
+import org.beehive.jllm.runtime.tensor.DataType;
 
 /**
  * What a loaded model is: enough to identify it and to size a request against it.

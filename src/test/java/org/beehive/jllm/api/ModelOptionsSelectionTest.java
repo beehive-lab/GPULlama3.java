@@ -1,13 +1,13 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
-import org.beehive.gpullama3.runtime.backend.BackendId;
-import org.beehive.gpullama3.runtime.backend.DeviceCapability;
-import org.beehive.gpullama3.runtime.backend.DeviceSelector;
+import org.beehive.jllm.runtime.backend.BackendId;
+import org.beehive.jllm.runtime.backend.DeviceCapability;
+import org.beehive.jllm.runtime.backend.DeviceSelector;
 import org.junit.Test;
 
 public class ModelOptionsSelectionTest {

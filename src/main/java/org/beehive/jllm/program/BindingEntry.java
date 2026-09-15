@@ -1,8 +1,8 @@
-package org.beehive.gpullama3.program;
+package org.beehive.jllm.program;
 
 import java.util.Objects;
-import org.beehive.gpullama3.runtime.tensor.DataType;
-import org.beehive.gpullama3.runtime.tensor.Shape;
+import org.beehive.jllm.runtime.tensor.DataType;
+import org.beehive.jllm.runtime.tensor.Shape;
 
 /**
  * One entry in a program's binding surface.

@@ -1,20 +1,20 @@
-package org.beehive.gpullama3.golden;
+package org.beehive.jllm.golden;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
-import org.beehive.gpullama3.backend.tornado.batch.TornadoBatchExecutor;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.format.ChatFormat;
-import org.beehive.gpullama3.model.loader.ModelLoader;
-import org.beehive.gpullama3.runtime.batch.BatchSlots;
-import org.beehive.gpullama3.runtime.kv.KvCacheManager;
-import org.beehive.gpullama3.runtime.kv.KvLease;
-import org.beehive.gpullama3.runtime.kv.KvStorage;
-import org.beehive.gpullama3.runtime.kv.KvStorageFactories;
-import org.beehive.gpullama3.runtime.kv.KvStorageRequest;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlan;
+import org.beehive.jllm.backend.tornado.batch.TornadoBatchExecutor;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.format.ChatFormat;
+import org.beehive.jllm.model.loader.ModelLoader;
+import org.beehive.jllm.runtime.batch.BatchSlots;
+import org.beehive.jllm.runtime.kv.KvCacheManager;
+import org.beehive.jllm.runtime.kv.KvLease;
+import org.beehive.jllm.runtime.kv.KvStorage;
+import org.beehive.jllm.runtime.kv.KvStorageFactories;
+import org.beehive.jllm.runtime.kv.KvStorageRequest;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
 /**
@@ -54,8 +54,8 @@ public final class BatchedVsSingleTokenProbe {
             try {
                 int token = prompt.get(0);
                 for (int position = 0; position < prompt.size() + howMany; position++) {
-                    org.beehive.gpullama3.inference.Logits logits =
-                            org.beehive.gpullama3.backend.tornado.TornadoForwardPass.forward(
+                    org.beehive.jllm.inference.Logits logits =
+                            org.beehive.jllm.backend.tornado.TornadoForwardPass.forward(
                                     model, state, token, position, plan);
                     int next = argmax(logits);
                     if (position + 1 < prompt.size()) {
@@ -132,7 +132,7 @@ public final class BatchedVsSingleTokenProbe {
         System.out.println("[PROBE] byte-identical: " + singleTokenOutput.equals(batchedOutput));
     }
 
-    private static int argmax(org.beehive.gpullama3.inference.Logits logits) {
+    private static int argmax(org.beehive.jllm.inference.Logits logits) {
         int best = 0;
         float bestValue = logits.get(0);
         for (int i = 1; i < logits.size(); i++) {

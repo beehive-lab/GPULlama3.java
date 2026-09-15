@@ -1,8 +1,8 @@
-package org.beehive.gpullama3.runtime.policy;
+package org.beehive.jllm.runtime.policy;
 
 import java.util.Objects;
-import org.beehive.gpullama3.api.Experimental;
-import org.beehive.gpullama3.runtime.tensor.DataType;
+import org.beehive.jllm.api.Experimental;
+import org.beehive.jllm.runtime.tensor.DataType;
 
 /**
  * How a model's key/value storage is shaped: the choices that are <b>not</b> execution policy.

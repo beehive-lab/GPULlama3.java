@@ -1,7 +1,7 @@
-package org.beehive.gpullama3.runtime.backend;
+package org.beehive.jllm.runtime.backend;
 
 import java.util.Objects;
-import org.beehive.gpullama3.api.Experimental;
+import org.beehive.jllm.api.Experimental;
 
 /**
  * The stable, opaque identity of a resolved device — what equality and the compiled-program cache

@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
@@ -6,8 +6,8 @@ import static org.junit.Assume.assumeTrue;
 
 import java.nio.file.Path;
 import java.util.List;
-import org.beehive.gpullama3.golden.GoldenFixture;
-import org.beehive.gpullama3.golden.GoldenFixture.Fixture;
+import org.beehive.jllm.golden.GoldenFixture;
+import org.beehive.jllm.golden.GoldenFixture.Fixture;
 import org.junit.Test;
 
 /**

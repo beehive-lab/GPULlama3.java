@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.golden;
+package org.beehive.jllm.golden;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
@@ -7,16 +7,16 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
 
 import java.nio.file.Path;
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
-import org.beehive.gpullama3.golden.GoldenFixture.Fixture;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.loader.ModelLoader;
-import org.beehive.gpullama3.runtime.kv.KvCacheManager;
-import org.beehive.gpullama3.runtime.kv.KvLease;
-import org.beehive.gpullama3.runtime.kv.KvStorage;
-import org.beehive.gpullama3.runtime.kv.KvStorageFactories;
-import org.beehive.gpullama3.runtime.kv.KvStorageRequest;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlan;
+import org.beehive.jllm.golden.GoldenFixture.Fixture;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.loader.ModelLoader;
+import org.beehive.jllm.runtime.kv.KvCacheManager;
+import org.beehive.jllm.runtime.kv.KvLease;
+import org.beehive.jllm.runtime.kv.KvStorage;
+import org.beehive.jllm.runtime.kv.KvStorageFactories;
+import org.beehive.jllm.runtime.kv.KvStorageRequest;
 import org.junit.Test;
 
 /**
@@ -82,9 +82,9 @@ public class PagedPoolEvictionAccelTest {
         try {
             int token = beginToken(model);
             // Two positions, so there is KV history for a mapping change to matter to.
-            org.beehive.gpullama3.backend.tornado.TornadoForwardPass.forward(
+            org.beehive.jllm.backend.tornado.TornadoForwardPass.forward(
                     model, state, token, 0, plan);
-            org.beehive.gpullama3.backend.tornado.TornadoForwardPass.forward(
+            org.beehive.jllm.backend.tornado.TornadoForwardPass.forward(
                     model, state, token, 1, plan);
             float[] before = firstLogits(state);
 
@@ -115,7 +115,7 @@ public class PagedPoolEvictionAccelTest {
             table[lease.slot() * blocksPerSlot] = other;
             store.publishBlockTable(table);
 
-            org.beehive.gpullama3.backend.tornado.TornadoForwardPass.forward(
+            org.beehive.jllm.backend.tornado.TornadoForwardPass.forward(
                     model, state, token, 1, plan);
             float[] after = firstLogits(state);
 

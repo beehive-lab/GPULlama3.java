@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.format;
+package org.beehive.jllm.format;
 
 public enum GGMLType {
     // Floating point types

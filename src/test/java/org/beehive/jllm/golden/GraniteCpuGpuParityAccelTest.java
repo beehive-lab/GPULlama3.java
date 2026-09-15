@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.golden;
+package org.beehive.jllm.golden;
 
-import org.beehive.gpullama3.golden.GoldenFixture.Fixture;
+import org.beehive.jllm.golden.GoldenFixture.Fixture;
 import org.junit.Test;
 
 /** Granite's logits against the CPU reference. See {@link CpuGpuParity}. */

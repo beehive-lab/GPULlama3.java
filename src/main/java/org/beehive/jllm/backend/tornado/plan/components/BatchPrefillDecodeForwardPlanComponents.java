@@ -1,10 +1,10 @@
-package org.beehive.gpullama3.backend.tornado.plan.components;
+package org.beehive.jllm.backend.tornado.plan.components;
 
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlanBatchPrefillDecode;
-import org.beehive.gpullama3.backend.tornado.layers.ActivationTaskGraph;
-import org.beehive.gpullama3.backend.tornado.layers.BatchPrefillTransformerLayerTaskGraphs;
-import org.beehive.gpullama3.backend.tornado.layers.TransformerLayerTaskGraphs;
-import org.beehive.gpullama3.backend.tornado.plan.BatchPrefillDecodeForwardPlan;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlanBatchPrefillDecode;
+import org.beehive.jllm.backend.tornado.layers.ActivationTaskGraph;
+import org.beehive.jllm.backend.tornado.layers.BatchPrefillTransformerLayerTaskGraphs;
+import org.beehive.jllm.backend.tornado.layers.TransformerLayerTaskGraphs;
+import org.beehive.jllm.backend.tornado.plan.BatchPrefillDecodeForwardPlan;
 
 // @formatter:off
 /**
@@ -28,7 +28,7 @@ import org.beehive.gpullama3.backend.tornado.plan.BatchPrefillDecodeForwardPlan;
  * </ul>
  *
  * Note: Consult also the {@link
- * org.beehive.gpullama3.backend.tornado.plan.layout.BatchPrefillDecodeForwardTaskGraphLayout}
+ * org.beehive.jllm.backend.tornado.plan.layout.BatchPrefillDecodeForwardTaskGraphLayout}
  */
 // @formatter:on
 public interface BatchPrefillDecodeForwardPlanComponents

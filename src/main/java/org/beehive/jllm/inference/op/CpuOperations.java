@@ -1,8 +1,8 @@
-package org.beehive.gpullama3.inference.op;
+package org.beehive.jllm.inference.op;
 
-import org.beehive.gpullama3.auxiliary.Parallel;
-import org.beehive.gpullama3.runtime.tensor.LongIndexedTensor;
-import org.beehive.gpullama3.tensor.standard.FloatTensor;
+import org.beehive.jllm.auxiliary.Parallel;
+import org.beehive.jllm.runtime.tensor.LongIndexedTensor;
+import org.beehive.jllm.tensor.standard.FloatTensor;
 
 /**
  * The host's implementations of the operation vocabulary.

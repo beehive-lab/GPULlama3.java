@@ -1,11 +1,11 @@
-package org.beehive.gpullama3.format;
+package org.beehive.jllm.format;
 
-import org.beehive.gpullama3.runtime.tensor.DataType;
-import org.beehive.gpullama3.runtime.tensor.ExecutionTarget;
-import org.beehive.gpullama3.runtime.tensor.Shape;
-import org.beehive.gpullama3.runtime.tensor.TensorDescriptor;
-import org.beehive.gpullama3.runtime.tensor.TensorLayout;
-import org.beehive.gpullama3.runtime.tensor.TensorRole;
+import org.beehive.jllm.runtime.tensor.DataType;
+import org.beehive.jllm.runtime.tensor.ExecutionTarget;
+import org.beehive.jllm.runtime.tensor.Shape;
+import org.beehive.jllm.runtime.tensor.TensorDescriptor;
+import org.beehive.jllm.runtime.tensor.TensorLayout;
+import org.beehive.jllm.runtime.tensor.TensorRole;
 
 /**
  * Builds a runtime {@link TensorDescriptor} from a GGUF tensor entry.

@@ -1,7 +1,7 @@
-package org.beehive.gpullama3.backend.tornado;
+package org.beehive.jllm.backend.tornado;
 
-import org.beehive.gpullama3.runtime.metrics.MetricKey;
-import org.beehive.gpullama3.runtime.metrics.MetricsSink;
+import org.beehive.jllm.runtime.metrics.MetricKey;
+import org.beehive.jllm.runtime.metrics.MetricsSink;
 import uk.ac.manchester.tornado.api.TornadoExecutionPlan;
 import uk.ac.manchester.tornado.api.TornadoExecutionResult;
 import uk.ac.manchester.tornado.api.TornadoProfilerResult;

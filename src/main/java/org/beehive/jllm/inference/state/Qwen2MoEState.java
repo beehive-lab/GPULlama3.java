@@ -1,11 +1,11 @@
-package org.beehive.gpullama3.inference.state;
+package org.beehive.jllm.inference.state;
 
 import java.util.stream.Stream;
-import org.beehive.gpullama3.backend.tornado.workspace.TornadoWorkspaces;
-import org.beehive.gpullama3.model.Configuration;
-import org.beehive.gpullama3.model.qwen2.Qwen2MoEConfiguration;
-import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
-import org.beehive.gpullama3.tensor.standard.FloatTensor;
+import org.beehive.jllm.backend.tornado.workspace.TornadoWorkspaces;
+import org.beehive.jllm.model.Configuration;
+import org.beehive.jllm.model.qwen2.Qwen2MoEConfiguration;
+import org.beehive.jllm.tensor.standard.ArrayFloatTensor;
+import org.beehive.jllm.tensor.standard.FloatTensor;
 
 public class Qwen2MoEState extends Qwen2State {
 
@@ -51,7 +51,7 @@ public class Qwen2MoEState extends Qwen2State {
      *     allocate its own arrays
      */
     public Qwen2MoEState(
-            Configuration config, int batchsize, org.beehive.gpullama3.runtime.kv.KvLease lease) {
+            Configuration config, int batchsize, org.beehive.jllm.runtime.kv.KvLease lease) {
         super(config, batchsize, lease);
         Qwen2MoEConfiguration c = (Qwen2MoEConfiguration) config;
         this.routerLogits = ArrayFloatTensor.allocate(c.numberOfExperts());

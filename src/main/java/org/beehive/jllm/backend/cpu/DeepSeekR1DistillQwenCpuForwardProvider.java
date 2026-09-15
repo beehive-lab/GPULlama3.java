@@ -1,7 +1,7 @@
-package org.beehive.gpullama3.backend.cpu;
+package org.beehive.jllm.backend.cpu;
 
-import org.beehive.gpullama3.inference.ForwardPass;
-import org.beehive.gpullama3.runtime.model.ArchitectureId;
+import org.beehive.jllm.inference.ForwardPass;
+import org.beehive.jllm.runtime.model.ArchitectureId;
 
 /**
  * The host forward pass for {@code deepseek-r1-distill-qwen}.

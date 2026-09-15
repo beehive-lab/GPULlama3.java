@@ -1,10 +1,10 @@
-package org.beehive.gpullama3.backend.tornado.layers.type.q8_0.decode;
+package org.beehive.jllm.backend.tornado.layers.type.q8_0.decode;
 
-import org.beehive.gpullama3.backend.tornado.layers.type.q8_0.LogitsQ8_0Layer;
-import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerType;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.inference.weights.Weights;
-import org.beehive.gpullama3.model.Configuration;
+import org.beehive.jllm.backend.tornado.layers.type.q8_0.LogitsQ8_0Layer;
+import org.beehive.jllm.backend.tornado.scheduling.SchedulerType;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.inference.weights.Weights;
+import org.beehive.jllm.model.Configuration;
 import uk.ac.manchester.tornado.api.TaskGraph;
 
 /**

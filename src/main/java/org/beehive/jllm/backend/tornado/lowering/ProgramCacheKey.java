@@ -1,11 +1,11 @@
-package org.beehive.gpullama3.backend.tornado.lowering;
+package org.beehive.jllm.backend.tornado.lowering;
 
 import java.util.Objects;
-import org.beehive.gpullama3.program.ProgramSignature;
-import org.beehive.gpullama3.runtime.backend.BackendId;
-import org.beehive.gpullama3.runtime.backend.CompileOptions;
-import org.beehive.gpullama3.runtime.backend.DeviceCapabilities;
-import org.beehive.gpullama3.runtime.backend.DeviceId;
+import org.beehive.jllm.program.ProgramSignature;
+import org.beehive.jllm.runtime.backend.BackendId;
+import org.beehive.jllm.runtime.backend.CompileOptions;
+import org.beehive.jllm.runtime.backend.DeviceCapabilities;
+import org.beehive.jllm.runtime.backend.DeviceId;
 
 /**
  * What makes two compiled programs the same one.

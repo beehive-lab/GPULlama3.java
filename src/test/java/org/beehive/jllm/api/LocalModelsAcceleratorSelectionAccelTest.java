@@ -1,12 +1,12 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
 import static org.junit.Assume.assumeTrue;
 
 import java.nio.file.Path;
-import org.beehive.gpullama3.backend.tornado.device.TornadoDevices;
-import org.beehive.gpullama3.golden.GoldenFixture;
-import org.beehive.gpullama3.golden.GoldenFixture.Fixture;
-import org.beehive.gpullama3.runtime.backend.BackendId;
+import org.beehive.jllm.backend.tornado.device.TornadoDevices;
+import org.beehive.jllm.golden.GoldenFixture;
+import org.beehive.jllm.golden.GoldenFixture.Fixture;
+import org.beehive.jllm.runtime.backend.BackendId;
 import org.junit.Test;
 
 /**

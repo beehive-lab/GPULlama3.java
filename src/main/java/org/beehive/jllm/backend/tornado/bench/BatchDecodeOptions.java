@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.backend.tornado.bench;
+package org.beehive.jllm.backend.tornado.bench;
 
 /**
  * What a batched-decode run is configured with.

@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.inference.op;
+package org.beehive.jllm.inference.op;
 
 /**
  * The head geometry one attention call works over.

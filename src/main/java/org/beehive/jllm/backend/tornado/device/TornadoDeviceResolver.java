@@ -1,7 +1,7 @@
-package org.beehive.gpullama3.backend.tornado.device;
+package org.beehive.jllm.backend.tornado.device;
 
-import org.beehive.gpullama3.runtime.backend.Device;
-import org.beehive.gpullama3.runtime.backend.DeviceResolver;
+import org.beehive.jllm.runtime.backend.Device;
+import org.beehive.jllm.runtime.backend.DeviceResolver;
 
 /**
  * The Tornado backend's {@link DeviceResolver} — registered in {@code META-INF/services},

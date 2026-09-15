@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.model.loader;
+package org.beehive.jllm.model.loader;
 
 import java.io.IOException;
 import java.lang.foreign.MemorySegment;
@@ -8,25 +8,25 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.function.IntFunction;
-import org.beehive.gpullama3.Options;
-import org.beehive.gpullama3.auxiliary.RunMetrics;
-import org.beehive.gpullama3.backend.tornado.tensor.FP16TornadoTensor;
-import org.beehive.gpullama3.backend.tornado.tensor.FP32TornadoTensor;
-import org.beehive.gpullama3.backend.tornado.tensor.Q8_0TornadoTensor;
-import org.beehive.gpullama3.backend.tornado.tensor.TornadoTensor;
-import org.beehive.gpullama3.backend.tornado.tensor.TornadoTensorLoader;
-import org.beehive.gpullama3.format.*;
-import org.beehive.gpullama3.format.GGMLType;
-import org.beehive.gpullama3.format.GGUF;
-import org.beehive.gpullama3.format.TensorDescriptors;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.ModelType;
-import org.beehive.gpullama3.model.provider.ModelProvider;
-import org.beehive.gpullama3.model.provider.ModelProviders;
-import org.beehive.gpullama3.runtime.backend.BackendId;
-import org.beehive.gpullama3.runtime.tensor.ExecutionTarget;
-import org.beehive.gpullama3.runtime.tensor.TensorDescriptor;
-import org.beehive.gpullama3.tensor.standard.*;
+import org.beehive.jllm.Options;
+import org.beehive.jllm.auxiliary.RunMetrics;
+import org.beehive.jllm.backend.tornado.tensor.FP16TornadoTensor;
+import org.beehive.jllm.backend.tornado.tensor.FP32TornadoTensor;
+import org.beehive.jllm.backend.tornado.tensor.Q8_0TornadoTensor;
+import org.beehive.jllm.backend.tornado.tensor.TornadoTensor;
+import org.beehive.jllm.backend.tornado.tensor.TornadoTensorLoader;
+import org.beehive.jllm.format.*;
+import org.beehive.jllm.format.GGMLType;
+import org.beehive.jllm.format.GGUF;
+import org.beehive.jllm.format.TensorDescriptors;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.ModelType;
+import org.beehive.jllm.model.provider.ModelProvider;
+import org.beehive.jllm.model.provider.ModelProviders;
+import org.beehive.jllm.runtime.backend.BackendId;
+import org.beehive.jllm.runtime.tensor.ExecutionTarget;
+import org.beehive.jllm.runtime.tensor.TensorDescriptor;
+import org.beehive.jllm.tensor.standard.*;
 
 public abstract class ModelLoader {
 
@@ -178,7 +178,7 @@ public abstract class ModelLoader {
             return BackendId.CPU;
         }
         BackendId resolved =
-                org.beehive.gpullama3.backend.tornado.device.TornadoDevices.current()
+                org.beehive.jllm.backend.tornado.device.TornadoDevices.current()
                         .id()
                         .backend();
         return BackendId.CPU.equals(resolved) ? BackendId.CUDA : resolved;
@@ -207,7 +207,7 @@ public abstract class ModelLoader {
      *
      * <p>Lives here because Rule 4 permits the loaders to name GGUF and forbids it to the runtime
      * and the backends. What leaves this method is a neutral {@link
-     * org.beehive.gpullama3.runtime.memory.WeightFootprint}.
+     * org.beehive.jllm.runtime.memory.WeightFootprint}.
      *
      * <p>The per-layer / global split follows the GGUF convention that a layer's tensors are named
      * {@code blk.N.*}. That is the same convention every loader in this package already relies on
@@ -227,7 +227,7 @@ public abstract class ModelLoader {
      * Q8_0 and F32 materialize as themselves, so every tuple measured on CUDA is predicted
      * byte-for-byte as before.
      */
-    public static org.beehive.gpullama3.runtime.memory.WeightFootprint weightFootprint(
+    public static org.beehive.jllm.runtime.memory.WeightFootprint weightFootprint(
             Path ggufPath) throws IOException {
         GGUF gguf = GGUF.loadGGUFMetadata(ggufPath);
         long perLayer = 0;
@@ -242,12 +242,12 @@ public abstract class ModelLoader {
             for (int d : info.dimensions()) {
                 elements *= d;
             }
-            org.beehive.gpullama3.runtime.tensor.DataType materialized =
-                    org.beehive.gpullama3.format.DataTypeMapping.materializedType(
+            org.beehive.jllm.runtime.tensor.DataType materialized =
+                    org.beehive.jllm.format.DataTypeMapping.materializedType(
                             info.ggmlType(),
-                            org.beehive.gpullama3.runtime.tensor.ExecutionTarget.GPU);
+                            org.beehive.jllm.runtime.tensor.ExecutionTarget.GPU);
             long bytes =
-                    org.beehive.gpullama3.format.TensorDescriptors.layoutOf(materialized)
+                    org.beehive.jllm.format.TensorDescriptors.layoutOf(materialized)
                             .byteSize(elements);
             if (info.name().startsWith("blk.")) {
                 perLayer += bytes;
@@ -257,7 +257,7 @@ public abstract class ModelLoader {
                 globalTensors++;
             }
         }
-        return new org.beehive.gpullama3.runtime.memory.WeightFootprint(
+        return new org.beehive.jllm.runtime.memory.WeightFootprint(
                 perLayer, perLayerTensors, global, globalTensors);
     }
 
@@ -309,11 +309,11 @@ public abstract class ModelLoader {
     /** Loads a tensor for the device <b>retaining Q4_K</b> rather than materializing it as Q8_0. */
     public static TornadoTensor loadTornadoTensorRetainingQ4_K(GGMLTensorEntry entry) {
         if (entry.ggmlType() == GGMLType.Q4_K) {
-            return org.beehive.gpullama3.backend.tornado.tensor.Q4_KTornadoTensor
+            return org.beehive.jllm.backend.tornado.tensor.Q4_KTornadoTensor
                     .fromTornadoMemorySegment(entry.memorySegment());
         }
         if (entry.ggmlType() == GGMLType.Q6_K) {
-            return org.beehive.gpullama3.backend.tornado.tensor.Q6_KTornadoTensor
+            return org.beehive.jllm.backend.tornado.tensor.Q6_KTornadoTensor
                     .fromTornadoMemorySegment(entry.memorySegment());
         }
         return loadTornadoTensor(entry);

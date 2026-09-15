@@ -1,10 +1,10 @@
-package org.beehive.gpullama3.program.op;
+package org.beehive.jllm.program.op;
 
 import java.util.EnumSet;
 import java.util.Objects;
 import java.util.Set;
-import org.beehive.gpullama3.runtime.tensor.DataType;
-import org.beehive.gpullama3.runtime.tensor.ExecutionTarget;
+import org.beehive.jllm.runtime.tensor.DataType;
+import org.beehive.jllm.runtime.tensor.ExecutionTarget;
 
 /**
  * Which representations each execution target can actually run each operation at.

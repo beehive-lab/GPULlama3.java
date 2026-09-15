@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.program;
+package org.beehive.jllm.program;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
@@ -11,14 +11,14 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import org.beehive.gpullama3.program.op.MatVec;
-import org.beehive.gpullama3.program.op.OperandRef;
-import org.beehive.gpullama3.program.op.RmsNorm;
-import org.beehive.gpullama3.program.op.VocabProjection;
-import org.beehive.gpullama3.runtime.model.ArchitectureId;
-import org.beehive.gpullama3.runtime.tensor.DataType;
-import org.beehive.gpullama3.runtime.tensor.Shape;
-import org.beehive.gpullama3.runtime.tensor.TensorRole;
+import org.beehive.jllm.program.op.MatVec;
+import org.beehive.jllm.program.op.OperandRef;
+import org.beehive.jllm.program.op.RmsNorm;
+import org.beehive.jllm.program.op.VocabProjection;
+import org.beehive.jllm.runtime.model.ArchitectureId;
+import org.beehive.jllm.runtime.tensor.DataType;
+import org.beehive.jllm.runtime.tensor.Shape;
+import org.beehive.jllm.runtime.tensor.TensorRole;
 import org.junit.Test;
 
 /**
@@ -344,7 +344,7 @@ public class InferenceProgramTest {
 
     private static ProgramComponent leaf(
             String name,
-            org.beehive.gpullama3.program.op.Operation operation,
+            org.beehive.jllm.program.op.Operation operation,
             Set<PhaseId> phases) {
         return new ProgramComponent.Leaf(name, operation, phases);
     }

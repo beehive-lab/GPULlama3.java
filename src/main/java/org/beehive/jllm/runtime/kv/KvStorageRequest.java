@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.runtime.kv;
+package org.beehive.jllm.runtime.kv;
 
 /**
  * What a runtime needs of a key/value pool, stated without naming a backend.

@@ -1,13 +1,13 @@
-package org.beehive.gpullama3.backend.tornado.lowering;
+package org.beehive.jllm.backend.tornado.lowering;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
-import org.beehive.gpullama3.backend.tornado.plan.ExecutionMode;
-import org.beehive.gpullama3.runtime.model.ArchitectureId;
-import org.beehive.gpullama3.runtime.tensor.DataType;
+import org.beehive.jllm.backend.tornado.plan.ExecutionMode;
+import org.beehive.jllm.runtime.model.ArchitectureId;
+import org.beehive.jllm.runtime.tensor.DataType;
 import org.junit.Test;
 
 public class LoweringModeTest {

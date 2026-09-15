@@ -1,7 +1,7 @@
-package org.beehive.gpullama3.inference;
+package org.beehive.jllm.inference;
 
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.Model;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.Model;
 
 /**
  * One forward pass, without saying what performs it.

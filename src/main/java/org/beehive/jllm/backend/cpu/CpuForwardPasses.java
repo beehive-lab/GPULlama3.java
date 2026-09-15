@@ -1,11 +1,11 @@
-package org.beehive.gpullama3.backend.cpu;
+package org.beehive.jllm.backend.cpu;
 
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.ServiceLoader;
-import org.beehive.gpullama3.inference.ForwardPass;
-import org.beehive.gpullama3.runtime.model.ArchitectureId;
+import org.beehive.jllm.inference.ForwardPass;
+import org.beehive.jllm.runtime.model.ArchitectureId;
 
 /**
  * Resolves the host forward pass for an architecture, once.

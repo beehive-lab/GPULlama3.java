@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.model.provider;
+package org.beehive.jllm.model.provider;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assume.assumeTrue;
@@ -6,11 +6,11 @@ import static org.junit.Assume.assumeTrue;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import org.beehive.gpullama3.golden.GoldenFixture;
-import org.beehive.gpullama3.golden.GoldenFixture.Fixture;
-import org.beehive.gpullama3.model.Configuration;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.loader.ModelLoader;
+import org.beehive.jllm.golden.GoldenFixture;
+import org.beehive.jllm.golden.GoldenFixture.Fixture;
+import org.beehive.jllm.model.Configuration;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.loader.ModelLoader;
 import org.junit.Test;
 
 /**

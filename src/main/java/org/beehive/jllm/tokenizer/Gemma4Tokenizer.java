@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.tokenizer;
+package org.beehive.jllm.tokenizer;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;

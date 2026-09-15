@@ -1,8 +1,8 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
 import java.util.List;
 import java.util.Objects;
-import org.beehive.gpullama3.runtime.diagnostics.DiagnosticCode;
+import org.beehive.jllm.runtime.diagnostics.DiagnosticCode;
 
 /**
  * One turn in a conversation: who spoke, and what they said.

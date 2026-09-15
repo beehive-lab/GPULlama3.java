@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.backend.tornado.plan;
+package org.beehive.jllm.backend.tornado.plan;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -7,13 +7,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.ServiceLoader;
-import org.beehive.gpullama3.backend.tornado.plan.components.BatchPrefillDecodeForwardPlanComponents;
-import org.beehive.gpullama3.backend.tornado.plan.components.PrefillDecodeForwardPlanComponents;
-import org.beehive.gpullama3.backend.tornado.plan.components.SingleTokenForwardPlanComponents;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.runtime.model.ArchitectureId;
-import org.beehive.gpullama3.runtime.tensor.DataType;
+import org.beehive.jllm.backend.tornado.plan.components.BatchPrefillDecodeForwardPlanComponents;
+import org.beehive.jllm.backend.tornado.plan.components.PrefillDecodeForwardPlanComponents;
+import org.beehive.jllm.backend.tornado.plan.components.SingleTokenForwardPlanComponents;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.runtime.model.ArchitectureId;
+import org.beehive.jllm.runtime.tensor.DataType;
 
 /**
  * Finds the plan provider for an architecture — discovery, index and validation only.

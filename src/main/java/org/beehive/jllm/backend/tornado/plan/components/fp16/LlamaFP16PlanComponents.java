@@ -1,27 +1,27 @@
-package org.beehive.gpullama3.backend.tornado.plan.components.fp16;
+package org.beehive.jllm.backend.tornado.plan.components.fp16;
 
-import org.beehive.gpullama3.backend.tornado.TensorCoreSupport;
-import org.beehive.gpullama3.backend.tornado.layers.AbstractLogitsTaskGraph;
-import org.beehive.gpullama3.backend.tornado.layers.Activation;
-import org.beehive.gpullama3.backend.tornado.layers.ActivationTaskGraph;
-import org.beehive.gpullama3.backend.tornado.layers.BatchPrefillTransformerLayerTaskGraphs;
-import org.beehive.gpullama3.backend.tornado.layers.TransformerLayerTaskGraphs;
-import org.beehive.gpullama3.backend.tornado.layers.type.fp16.LlamaFP16FFNLayers;
-import org.beehive.gpullama3.backend.tornado.layers.type.fp16.LogitsFP16Layer;
-import org.beehive.gpullama3.backend.tornado.layers.type.fp16.decode.LlamaFP16FFNLayersDecode;
-import org.beehive.gpullama3.backend.tornado.layers.type.fp16.decode.LlamaFP16FFNLayersPrefillDecode;
-import org.beehive.gpullama3.backend.tornado.layers.type.fp16.decode.LogitsFP16LayerDecode;
-import org.beehive.gpullama3.backend.tornado.layers.type.fp16.prefill.LlamaFP16LayersBatchPrefill;
-import org.beehive.gpullama3.backend.tornado.layers.type.fp16.prefill.LlamaFP16LayersBatchPrefillMMA;
-import org.beehive.gpullama3.backend.tornado.plan.components.BatchPrefillDecodeForwardPlanComponents;
-import org.beehive.gpullama3.backend.tornado.plan.components.activation.BatchDecodeActivation;
-import org.beehive.gpullama3.backend.tornado.plan.components.activation.BatchPrefillActivation;
-import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerDetectionService;
-import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerType;
-import org.beehive.gpullama3.inference.state.LlamaState;
-import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.llama.LlamaConfiguration;
+import org.beehive.jllm.backend.tornado.TensorCoreSupport;
+import org.beehive.jllm.backend.tornado.layers.AbstractLogitsTaskGraph;
+import org.beehive.jllm.backend.tornado.layers.Activation;
+import org.beehive.jllm.backend.tornado.layers.ActivationTaskGraph;
+import org.beehive.jllm.backend.tornado.layers.BatchPrefillTransformerLayerTaskGraphs;
+import org.beehive.jllm.backend.tornado.layers.TransformerLayerTaskGraphs;
+import org.beehive.jllm.backend.tornado.layers.type.fp16.LlamaFP16FFNLayers;
+import org.beehive.jllm.backend.tornado.layers.type.fp16.LogitsFP16Layer;
+import org.beehive.jllm.backend.tornado.layers.type.fp16.decode.LlamaFP16FFNLayersDecode;
+import org.beehive.jllm.backend.tornado.layers.type.fp16.decode.LlamaFP16FFNLayersPrefillDecode;
+import org.beehive.jllm.backend.tornado.layers.type.fp16.decode.LogitsFP16LayerDecode;
+import org.beehive.jllm.backend.tornado.layers.type.fp16.prefill.LlamaFP16LayersBatchPrefill;
+import org.beehive.jllm.backend.tornado.layers.type.fp16.prefill.LlamaFP16LayersBatchPrefillMMA;
+import org.beehive.jllm.backend.tornado.plan.components.BatchPrefillDecodeForwardPlanComponents;
+import org.beehive.jllm.backend.tornado.plan.components.activation.BatchDecodeActivation;
+import org.beehive.jllm.backend.tornado.plan.components.activation.BatchPrefillActivation;
+import org.beehive.jllm.backend.tornado.scheduling.SchedulerDetectionService;
+import org.beehive.jllm.backend.tornado.scheduling.SchedulerType;
+import org.beehive.jllm.inference.state.LlamaState;
+import org.beehive.jllm.inference.weights.tornado.LlamaTornadoWeights;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.llama.LlamaConfiguration;
 
 /**
  * {@link BatchPrefillDecodeForwardPlanComponents} for Llama + FP16.

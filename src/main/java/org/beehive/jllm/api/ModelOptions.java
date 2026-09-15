@@ -1,10 +1,10 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
-import org.beehive.gpullama3.runtime.backend.BackendId;
-import org.beehive.gpullama3.runtime.backend.DeviceSelector;
-import org.beehive.gpullama3.runtime.diagnostics.DiagnosticCode;
-import org.beehive.gpullama3.runtime.policy.ExecutionPolicy;
-import org.beehive.gpullama3.runtime.policy.StorageOptions;
+import org.beehive.jllm.runtime.backend.BackendId;
+import org.beehive.jllm.runtime.backend.DeviceSelector;
+import org.beehive.jllm.runtime.diagnostics.DiagnosticCode;
+import org.beehive.jllm.runtime.policy.ExecutionPolicy;
+import org.beehive.jllm.runtime.policy.StorageOptions;
 
 /**
  * Load-time settings.

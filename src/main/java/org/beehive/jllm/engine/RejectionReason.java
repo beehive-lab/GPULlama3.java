@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.engine;
+package org.beehive.jllm.engine;
 
 /**
  * Why a request was refused before it ever ran.

@@ -1,9 +1,9 @@
-package org.beehive.gpullama3.backend.tornado.layers;
+package org.beehive.jllm.backend.tornado.layers;
 
-import org.beehive.gpullama3.backend.tornado.kernels.GraniteKernels;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.inference.weights.Weights;
-import org.beehive.gpullama3.model.granite.GraniteConfiguration;
+import org.beehive.jllm.backend.tornado.kernels.GraniteKernels;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.inference.weights.Weights;
+import org.beehive.jllm.model.granite.GraniteConfiguration;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 import uk.ac.manchester.tornado.api.types.arrays.ByteArray;

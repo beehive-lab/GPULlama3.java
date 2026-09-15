@@ -1,9 +1,9 @@
-package org.beehive.gpullama3.model.architecture;
+package org.beehive.jllm.model.architecture;
 
 import java.util.Objects;
-import org.beehive.gpullama3.model.Configuration;
-import org.beehive.gpullama3.runtime.policy.ExecutionPolicy;
-import org.beehive.gpullama3.runtime.tensor.DataType;
+import org.beehive.jllm.model.Configuration;
+import org.beehive.jllm.runtime.policy.ExecutionPolicy;
+import org.beehive.jllm.runtime.tensor.DataType;
 
 /**
  * What an architecture needs to describe a program, and nothing more.

@@ -1,8 +1,8 @@
-package org.beehive.gpullama3.runtime.backend;
+package org.beehive.jllm.runtime.backend;
 
 import java.util.Locale;
 import java.util.Objects;
-import org.beehive.gpullama3.api.Experimental;
+import org.beehive.jllm.api.Experimental;
 
 /**
  * One thing a device can do that changes what is lowered onto it.

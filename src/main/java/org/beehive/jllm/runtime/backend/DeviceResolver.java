@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.runtime.backend;
+package org.beehive.jllm.runtime.backend;
 
 /**
  * Resolves the device this process actually runs an accelerator on — implemented by a backend,

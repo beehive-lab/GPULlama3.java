@@ -1,7 +1,7 @@
-package org.beehive.gpullama3.model.provider;
+package org.beehive.jllm.model.provider;
 
-import org.beehive.gpullama3.format.ModelSource;
-import org.beehive.gpullama3.runtime.model.ArchitectureId;
+import org.beehive.jllm.format.ModelSource;
+import org.beehive.jllm.runtime.model.ArchitectureId;
 
 /**
  * The shape every built-in family provider has: one identity, one loader, and recognition that asks

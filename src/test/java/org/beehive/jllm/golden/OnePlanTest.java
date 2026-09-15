@@ -1,16 +1,16 @@
-package org.beehive.gpullama3.golden;
+package org.beehive.jllm.golden;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
-import org.beehive.gpullama3.inference.sampler.Sampler;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.format.ChatFormat;
-import org.beehive.gpullama3.model.loader.ModelLoader;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlan;
+import org.beehive.jllm.inference.sampler.Sampler;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.format.ChatFormat;
+import org.beehive.jllm.model.loader.ModelLoader;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
 /**
@@ -50,12 +50,12 @@ public final class OnePlanTest {
             int tok = forced.get(forced.size() - 1);
             float[] first =
                     snap(
-                            org.beehive.gpullama3.backend.tornado.TornadoForwardPass.forward(
+                            org.beehive.jllm.backend.tornado.TornadoForwardPass.forward(
                                     model, state, tok, pos, plan));
             for (int k = 0; k < 5; k++) {
                 float[] again =
                         snap(
-                                org.beehive.gpullama3.backend.tornado.TornadoForwardPass.forward(
+                                org.beehive.jllm.backend.tornado.TornadoForwardPass.forward(
                                         model, state, tok, pos, plan));
                 int diff = 0;
                 double worst = 0;
@@ -91,7 +91,7 @@ public final class OnePlanTest {
         report("A vs C  (rebuilt plan, recompiled)   ", a, c);
     }
 
-    private static float[] snap(org.beehive.gpullama3.inference.Logits logits) {
+    private static float[] snap(org.beehive.jllm.inference.Logits logits) {
         float[] out = new float[logits.size()];
         for (int i = 0; i < out.length; i++) {
             out[i] = logits.get(i);
@@ -178,8 +178,8 @@ public final class OnePlanTest {
             }
             return out;
         }
-        org.beehive.gpullama3.tensor.standard.FloatTensor ft =
-                (org.beehive.gpullama3.tensor.standard.FloatTensor) t;
+        org.beehive.jllm.tensor.standard.FloatTensor ft =
+                (org.beehive.jllm.tensor.standard.FloatTensor) t;
         float[] out = new float[ft.size()];
         for (int i = 0; i < out.length; i++) {
             out[i] = ft.getFloat(i);

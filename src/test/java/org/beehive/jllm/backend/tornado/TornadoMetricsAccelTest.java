@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.backend.tornado;
+package org.beehive.jllm.backend.tornado;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
@@ -8,13 +8,13 @@ import java.nio.file.Path;
 import java.util.EnumMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.beehive.gpullama3.golden.GoldenFixture;
-import org.beehive.gpullama3.golden.GoldenFixture.Fixture;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.loader.ModelLoader;
-import org.beehive.gpullama3.runtime.metrics.MetricKey;
-import org.beehive.gpullama3.runtime.metrics.MetricsSink;
+import org.beehive.jllm.golden.GoldenFixture;
+import org.beehive.jllm.golden.GoldenFixture.Fixture;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.loader.ModelLoader;
+import org.beehive.jllm.runtime.metrics.MetricKey;
+import org.beehive.jllm.runtime.metrics.MetricsSink;
 import org.junit.Test;
 
 /**
@@ -134,7 +134,7 @@ public class TornadoMetricsAccelTest {
         try {
             int token = model.shouldAddBeginOfText() ? model.chatFormat().getBeginOfText() : 0;
             for (int position = 0; position < TOKENS; position++) {
-                org.beehive.gpullama3.backend.tornado.TornadoForwardPass.forward(
+                org.beehive.jllm.backend.tornado.TornadoForwardPass.forward(
                         model, state, token, position, plan);
             }
         } finally {

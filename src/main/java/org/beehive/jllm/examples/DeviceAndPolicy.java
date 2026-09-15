@@ -1,14 +1,14 @@
-package org.beehive.gpullama3.examples;
+package org.beehive.jllm.examples;
 
 import java.nio.file.Path;
-import org.beehive.gpullama3.api.GenerationRequest;
-import org.beehive.gpullama3.api.GenerationResult;
-import org.beehive.gpullama3.api.GenerationSession;
-import org.beehive.gpullama3.api.LocalModel;
-import org.beehive.gpullama3.api.LocalModels;
-import org.beehive.gpullama3.api.ModelOptions;
-import org.beehive.gpullama3.api.TextGenerationModel;
-import org.beehive.gpullama3.runtime.memory.MemoryPlan;
+import org.beehive.jllm.api.GenerationRequest;
+import org.beehive.jllm.api.GenerationResult;
+import org.beehive.jllm.api.GenerationSession;
+import org.beehive.jllm.api.LocalModel;
+import org.beehive.jllm.api.LocalModels;
+import org.beehive.jllm.api.ModelOptions;
+import org.beehive.jllm.api.TextGenerationModel;
+import org.beehive.jllm.runtime.memory.MemoryPlan;
 
 /**
  * Choosing where and how a model runs, and finding out before paying for it.

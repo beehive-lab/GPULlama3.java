@@ -1,27 +1,27 @@
-package org.beehive.gpullama3.backend.tornado.plan.components.q8_0;
+package org.beehive.jllm.backend.tornado.plan.components.q8_0;
 
-import org.beehive.gpullama3.backend.tornado.TensorCoreSupport;
-import org.beehive.gpullama3.backend.tornado.layers.AbstractLogitsTaskGraph;
-import org.beehive.gpullama3.backend.tornado.layers.Activation;
-import org.beehive.gpullama3.backend.tornado.layers.ActivationTaskGraph;
-import org.beehive.gpullama3.backend.tornado.layers.BatchPrefillTransformerLayerTaskGraphs;
-import org.beehive.gpullama3.backend.tornado.layers.TransformerLayerTaskGraphs;
-import org.beehive.gpullama3.backend.tornado.layers.type.q8_0.LogitsQ8_0Layer;
-import org.beehive.gpullama3.backend.tornado.layers.type.q8_0.Qwen3Q8_0FFNLayers;
-import org.beehive.gpullama3.backend.tornado.layers.type.q8_0.decode.LogitsQ8_0LayerDecode;
-import org.beehive.gpullama3.backend.tornado.layers.type.q8_0.decode.Qwen3Q8_0FFNLayersDecode;
-import org.beehive.gpullama3.backend.tornado.layers.type.q8_0.decode.Qwen3Q8_0FFNLayersPrefillDecode;
-import org.beehive.gpullama3.backend.tornado.layers.type.q8_0.prefill.Qwen3Q8_0LayersBatchPrefill;
-import org.beehive.gpullama3.backend.tornado.layers.type.q8_0.prefill.Qwen3Q8_0LayersBatchPrefillMMA;
-import org.beehive.gpullama3.backend.tornado.plan.components.BatchPrefillDecodeForwardPlanComponents;
-import org.beehive.gpullama3.backend.tornado.plan.components.activation.BatchDecodeActivation;
-import org.beehive.gpullama3.backend.tornado.plan.components.activation.BatchPrefillActivation;
-import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerDetectionService;
-import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerType;
-import org.beehive.gpullama3.inference.state.Qwen3State;
-import org.beehive.gpullama3.inference.weights.tornado.Qwen3TornadoWeights;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.qwen3.Qwen3Configuration;
+import org.beehive.jllm.backend.tornado.TensorCoreSupport;
+import org.beehive.jllm.backend.tornado.layers.AbstractLogitsTaskGraph;
+import org.beehive.jllm.backend.tornado.layers.Activation;
+import org.beehive.jllm.backend.tornado.layers.ActivationTaskGraph;
+import org.beehive.jllm.backend.tornado.layers.BatchPrefillTransformerLayerTaskGraphs;
+import org.beehive.jllm.backend.tornado.layers.TransformerLayerTaskGraphs;
+import org.beehive.jllm.backend.tornado.layers.type.q8_0.LogitsQ8_0Layer;
+import org.beehive.jllm.backend.tornado.layers.type.q8_0.Qwen3Q8_0FFNLayers;
+import org.beehive.jllm.backend.tornado.layers.type.q8_0.decode.LogitsQ8_0LayerDecode;
+import org.beehive.jllm.backend.tornado.layers.type.q8_0.decode.Qwen3Q8_0FFNLayersDecode;
+import org.beehive.jllm.backend.tornado.layers.type.q8_0.decode.Qwen3Q8_0FFNLayersPrefillDecode;
+import org.beehive.jllm.backend.tornado.layers.type.q8_0.prefill.Qwen3Q8_0LayersBatchPrefill;
+import org.beehive.jllm.backend.tornado.layers.type.q8_0.prefill.Qwen3Q8_0LayersBatchPrefillMMA;
+import org.beehive.jllm.backend.tornado.plan.components.BatchPrefillDecodeForwardPlanComponents;
+import org.beehive.jllm.backend.tornado.plan.components.activation.BatchDecodeActivation;
+import org.beehive.jllm.backend.tornado.plan.components.activation.BatchPrefillActivation;
+import org.beehive.jllm.backend.tornado.scheduling.SchedulerDetectionService;
+import org.beehive.jllm.backend.tornado.scheduling.SchedulerType;
+import org.beehive.jllm.inference.state.Qwen3State;
+import org.beehive.jllm.inference.weights.tornado.Qwen3TornadoWeights;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.qwen3.Qwen3Configuration;
 
 public class Qwen3Q8_0PlanComponents implements BatchPrefillDecodeForwardPlanComponents {
 

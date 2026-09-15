@@ -1,10 +1,10 @@
-package org.beehive.gpullama3.backend.tornado.lowering;
+package org.beehive.jllm.backend.tornado.lowering;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Supplier;
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlan;
 
 /**
  * The model handle's internal compiled-program cache.

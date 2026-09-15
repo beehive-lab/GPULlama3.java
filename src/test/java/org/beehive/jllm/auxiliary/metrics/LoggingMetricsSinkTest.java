@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.auxiliary.metrics;
+package org.beehive.jllm.auxiliary.metrics;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -9,7 +9,7 @@ import java.lang.System.Logger.Level;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.ResourceBundle;
-import org.beehive.gpullama3.runtime.metrics.MetricKey;
+import org.beehive.jllm.runtime.metrics.MetricKey;
 import org.junit.Test;
 
 public class LoggingMetricsSinkTest {

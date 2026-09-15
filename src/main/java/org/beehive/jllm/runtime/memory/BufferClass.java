@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.runtime.memory;
+package org.beehive.jllm.runtime.memory;
 
-import org.beehive.gpullama3.api.Experimental;
+import org.beehive.jllm.api.Experimental;
 
 /**
  * What a device-resident buffer is <b>for</b> — the classification a memory plan reasons over.

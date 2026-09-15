@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.runtime.tensor;
+package org.beehive.jllm.runtime.tensor;
 
 import java.util.Arrays;
 

@@ -1,16 +1,16 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Objects;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.loader.ModelLoader;
-import org.beehive.gpullama3.runtime.backend.BackendId;
-import org.beehive.gpullama3.runtime.backend.Device;
-import org.beehive.gpullama3.runtime.backend.DeviceResolver;
-import org.beehive.gpullama3.runtime.backend.DeviceResolvers;
-import org.beehive.gpullama3.runtime.diagnostics.DiagnosticCode;
-import org.beehive.gpullama3.runtime.memory.MemoryPlan;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.loader.ModelLoader;
+import org.beehive.jllm.runtime.backend.BackendId;
+import org.beehive.jllm.runtime.backend.Device;
+import org.beehive.jllm.runtime.backend.DeviceResolver;
+import org.beehive.jllm.runtime.backend.DeviceResolvers;
+import org.beehive.jllm.runtime.diagnostics.DiagnosticCode;
+import org.beehive.jllm.runtime.memory.MemoryPlan;
 
 /**
  * Where a caller starts: load a model file, get a {@link LocalModel}.
@@ -113,7 +113,7 @@ public final class LocalModels {
             Path modelFile, ModelOptions options, Throwable cause) {
         StringBuilder message =
                 new StringBuilder(
-                                org.beehive.gpullama3.runtime.diagnostics.DiagnosticCode
+                                org.beehive.jllm.runtime.diagnostics.DiagnosticCode
                                         .DEVICE_MEMORY_INSUFFICIENT
                                         .prefix())
                         .append("The device ran out of memory loading ")

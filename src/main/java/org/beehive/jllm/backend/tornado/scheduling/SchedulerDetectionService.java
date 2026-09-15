@@ -1,9 +1,9 @@
-package org.beehive.gpullama3.backend.tornado.scheduling;
+package org.beehive.jllm.backend.tornado.scheduling;
 
-import org.beehive.gpullama3.backend.tornado.device.TornadoDevices;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.ModelType;
-import org.beehive.gpullama3.runtime.backend.DeviceCapability;
+import org.beehive.jllm.backend.tornado.device.TornadoDevices;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.ModelType;
+import org.beehive.jllm.runtime.backend.DeviceCapability;
 
 /** The device facts scheduling branches on. */
 public class SchedulerDetectionService {

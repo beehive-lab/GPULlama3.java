@@ -1,19 +1,19 @@
-package org.beehive.gpullama3.model.granite;
+package org.beehive.jllm.model.granite;
 
 import java.util.List;
 import java.util.Set;
 import java.util.function.IntConsumer;
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
-import org.beehive.gpullama3.inference.TokenGenerationLoop;
-import org.beehive.gpullama3.inference.sampler.Sampler;
-import org.beehive.gpullama3.inference.state.GraniteState;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.inference.weights.Weights;
-import org.beehive.gpullama3.model.AbstractModel;
-import org.beehive.gpullama3.model.ModelType;
-import org.beehive.gpullama3.model.format.ChatFormat;
-import org.beehive.gpullama3.tokenizer.GraniteTokenizer;
-import org.beehive.gpullama3.tokenizer.Tokenizer;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlan;
+import org.beehive.jllm.inference.TokenGenerationLoop;
+import org.beehive.jllm.inference.sampler.Sampler;
+import org.beehive.jllm.inference.state.GraniteState;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.inference.weights.Weights;
+import org.beehive.jllm.model.AbstractModel;
+import org.beehive.jllm.model.ModelType;
+import org.beehive.jllm.model.format.ChatFormat;
+import org.beehive.jllm.tokenizer.GraniteTokenizer;
+import org.beehive.jllm.tokenizer.Tokenizer;
 
 public class Granite extends AbstractModel {
 
@@ -124,7 +124,7 @@ public class Granite extends AbstractModel {
     }
 
     @Override
-    public State createNewState(org.beehive.gpullama3.runtime.kv.KvLease lease) {
+    public State createNewState(org.beehive.jllm.runtime.kv.KvLease lease) {
         if (lease == null || lease.storage() == null) {
             return createNewState();
         }
@@ -135,7 +135,7 @@ public class Granite extends AbstractModel {
 
     /** Its own identity, stated rather than derived. */
     @Override
-    public org.beehive.gpullama3.runtime.model.ArchitectureId architectureId() {
-        return org.beehive.gpullama3.runtime.model.ArchitectureId.of("granite");
+    public org.beehive.jllm.runtime.model.ArchitectureId architectureId() {
+        return org.beehive.jllm.runtime.model.ArchitectureId.of("granite");
     }
 }

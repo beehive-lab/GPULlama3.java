@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.arch;
+package org.beehive.jllm.arch;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -60,7 +60,7 @@ public class DependencyRulesTest {
      * be convenient.
      *
      * <p>The consumers live in {@code auxiliary.metrics} and are reached through {@link
-     * org.beehive.gpullama3.runtime.metrics.MetricsSink}. Inference, the backends, the runtime and
+     * org.beehive.jllm.runtime.metrics.MetricsSink}. Inference, the backends, the runtime and
      * the program layer record <b>through the seam</b>; formatting and I/O belong to the layer that
      * owns output.
      */
@@ -70,16 +70,16 @@ public class DependencyRulesTest {
         for (JavaClass c : classes()) {
             String name = c.getName();
             boolean isCore =
-                    name.startsWith("org.beehive.gpullama3.inference.")
-                            || name.startsWith("org.beehive.gpullama3.backend.")
-                            || name.startsWith("org.beehive.gpullama3.runtime.")
-                            || name.startsWith("org.beehive.gpullama3.program.");
+                    name.startsWith("org.beehive.jllm.inference.")
+                            || name.startsWith("org.beehive.jllm.backend.")
+                            || name.startsWith("org.beehive.jllm.runtime.")
+                            || name.startsWith("org.beehive.jllm.program.");
             if (!isCore) {
                 continue;
             }
             for (var dependency : c.getDirectDependenciesFromSelf()) {
                 String target = dependency.getTargetClass().getBaseComponentType().getName();
-                if (target.startsWith("org.beehive.gpullama3.auxiliary.metrics.")) {
+                if (target.startsWith("org.beehive.jllm.auxiliary.metrics.")) {
                     violations.add(name + " -> " + target);
                 }
             }
@@ -119,10 +119,10 @@ public class DependencyRulesTest {
                 ArchRules.rule18LowerTiersReachEngine(
                         classes(),
                         ArchRules.MODEL,
-                        "org.beehive.gpullama3.runtime",
-                        "org.beehive.gpullama3.inference",
-                        "org.beehive.gpullama3.backend.tornado",
-                        "org.beehive.gpullama3.tensor");
+                        "org.beehive.jllm.runtime",
+                        "org.beehive.jllm.inference",
+                        "org.beehive.jllm.backend.tornado",
+                        "org.beehive.jllm.tensor");
         assertTrue(
                 "Rule 18: a model, session, runtime or backend type reached into ..engine..;"
                         + " the simple path must stay usable without a scheduler. Violations: "
@@ -137,7 +137,7 @@ public class DependencyRulesTest {
                         classes(),
                         ArchRules.RUNTIME_BACKEND,
                         ArchRules.TORNADO_BACKEND,
-                        "org.beehive.gpullama3.backend");
+                        "org.beehive.jllm.backend");
         assertTrue(
                 "runtime.backend must hold neutral contracts only, and must not name"
                         + " TornadoVM or an implementation package. Violations: "
@@ -324,8 +324,8 @@ public class DependencyRulesTest {
                                         s ->
                                                 s.getName()
                                                         .equals(
-                                                                "org.beehive.gpullama3.model.AbstractModel"))
-                || c.getName().equals("org.beehive.gpullama3.model.AbstractModel");
+                                                                "org.beehive.jllm.model.AbstractModel"))
+                || c.getName().equals("org.beehive.jllm.model.AbstractModel");
     }
 
     private static void assertMatchesAllowlist(

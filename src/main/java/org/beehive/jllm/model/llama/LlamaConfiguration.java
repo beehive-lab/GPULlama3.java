@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.model.llama;
+package org.beehive.jllm.model.llama;
 
-import org.beehive.gpullama3.model.Configuration;
+import org.beehive.jllm.model.Configuration;
 
 // @formatter:off
 public record LlamaConfiguration(String quantization,

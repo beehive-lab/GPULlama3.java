@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
@@ -6,11 +6,11 @@ import static org.junit.Assert.assertTrue;
 import java.io.IOException;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
-import org.beehive.gpullama3.runtime.backend.BackendId;
-import org.beehive.gpullama3.runtime.backend.Device;
-import org.beehive.gpullama3.runtime.backend.DeviceCapabilities;
-import org.beehive.gpullama3.runtime.backend.DeviceId;
-import org.beehive.gpullama3.runtime.backend.DeviceResolver;
+import org.beehive.jllm.runtime.backend.BackendId;
+import org.beehive.jllm.runtime.backend.Device;
+import org.beehive.jllm.runtime.backend.DeviceCapabilities;
+import org.beehive.jllm.runtime.backend.DeviceId;
+import org.beehive.jllm.runtime.backend.DeviceResolver;
 import org.junit.Test;
 
 /**

@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.model.devstral;
+package org.beehive.jllm.model.devstral;
 
-import org.beehive.gpullama3.model.Configuration;
+import org.beehive.jllm.model.Configuration;
 
 /**
  * Configuration for Devstral 2 models (Mistral 3 architecture).

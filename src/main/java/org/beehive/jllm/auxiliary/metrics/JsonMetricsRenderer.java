@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.auxiliary.metrics;
+package org.beehive.jllm.auxiliary.metrics;
 
 import java.util.ArrayList;
 import java.util.List;

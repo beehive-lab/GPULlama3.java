@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.runtime.backend;
+package org.beehive.jllm.runtime.backend;
 
 import java.util.Collection;
 import java.util.Locale;
@@ -6,7 +6,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
-import org.beehive.gpullama3.api.Experimental;
+import org.beehive.jllm.api.Experimental;
 
 /**
  * What is being <b>asked for</b> — a structured request, resolved by a backend into a {@link

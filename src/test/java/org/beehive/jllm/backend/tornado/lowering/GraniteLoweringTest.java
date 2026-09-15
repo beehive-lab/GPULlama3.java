@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.backend.tornado.lowering;
+package org.beehive.jllm.backend.tornado.lowering;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -8,18 +8,18 @@ import static org.junit.Assert.fail;
 
 import java.util.ArrayList;
 import java.util.List;
-import org.beehive.gpullama3.model.architecture.GraniteProgramDescription;
-import org.beehive.gpullama3.model.architecture.LlamaProgramDescription;
-import org.beehive.gpullama3.model.granite.GraniteConfiguration;
-import org.beehive.gpullama3.model.llama.LlamaConfiguration;
-import org.beehive.gpullama3.program.InferenceProgram;
-import org.beehive.gpullama3.program.ProgramComponent;
-import org.beehive.gpullama3.program.op.Attention;
-import org.beehive.gpullama3.program.op.OperationKind;
-import org.beehive.gpullama3.runtime.backend.CompileOptions;
-import org.beehive.gpullama3.runtime.backend.DeviceCapabilities;
-import org.beehive.gpullama3.runtime.backend.DeviceCapability;
-import org.beehive.gpullama3.runtime.tensor.DataType;
+import org.beehive.jllm.model.architecture.GraniteProgramDescription;
+import org.beehive.jllm.model.architecture.LlamaProgramDescription;
+import org.beehive.jllm.model.granite.GraniteConfiguration;
+import org.beehive.jllm.model.llama.LlamaConfiguration;
+import org.beehive.jllm.program.InferenceProgram;
+import org.beehive.jllm.program.ProgramComponent;
+import org.beehive.jllm.program.op.Attention;
+import org.beehive.jllm.program.op.OperationKind;
+import org.beehive.jllm.runtime.backend.CompileOptions;
+import org.beehive.jllm.runtime.backend.DeviceCapabilities;
+import org.beehive.jllm.runtime.backend.DeviceCapability;
+import org.beehive.jllm.runtime.tensor.DataType;
 import org.junit.Test;
 
 /**
@@ -122,7 +122,7 @@ public class GraniteLoweringTest {
                 () ->
                         granite.validate(
                                 InferenceProgram.of(
-                                        new org.beehive.gpullama3.program.ProgramSignature(
+                                        new org.beehive.jllm.program.ProgramSignature(
                                                 original.signature().architecture(),
                                                         original.signature().policy(),
                                                 original.signature().capacity(), components,
@@ -190,7 +190,7 @@ public class GraniteLoweringTest {
         return kinds;
     }
 
-    private static List<org.beehive.gpullama3.program.PhaseSelection> phasesFor(
+    private static List<org.beehive.jllm.program.PhaseSelection> phasesFor(
             List<ProgramComponent> components) {
         List<Integer> prefill = new ArrayList<>();
         List<Integer> decode = new ArrayList<>();
@@ -198,16 +198,16 @@ public class GraniteLoweringTest {
             if (components
                     .get(i)
                     .phases()
-                    .contains(org.beehive.gpullama3.program.PhaseId.PREFILL)) {
+                    .contains(org.beehive.jllm.program.PhaseId.PREFILL)) {
                 prefill.add(i);
             }
             decode.add(i);
         }
         return List.of(
-                new org.beehive.gpullama3.program.PhaseSelection(
-                        org.beehive.gpullama3.program.PhaseId.PREFILL, prefill),
-                new org.beehive.gpullama3.program.PhaseSelection(
-                        org.beehive.gpullama3.program.PhaseId.DECODE, decode));
+                new org.beehive.jllm.program.PhaseSelection(
+                        org.beehive.jllm.program.PhaseId.PREFILL, prefill),
+                new org.beehive.jllm.program.PhaseSelection(
+                        org.beehive.jllm.program.PhaseId.DECODE, decode));
     }
 
     private static InferenceProgram rebuild(
@@ -215,7 +215,7 @@ public class GraniteLoweringTest {
         List<ProgramComponent> components = new ArrayList<>(original.components());
         components.set(index, replacement);
         return InferenceProgram.of(
-                new org.beehive.gpullama3.program.ProgramSignature(
+                new org.beehive.jllm.program.ProgramSignature(
                         original.signature().architecture(),
                         original.signature().policy(),
                         original.signature().capacity(),

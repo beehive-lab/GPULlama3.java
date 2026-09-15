@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.backend.tornado.lowering;
+package org.beehive.jllm.backend.tornado.lowering;
 
-import org.beehive.gpullama3.inference.Logits;
+import org.beehive.jllm.inference.Logits;
 
 /**
  * The boundary a lowered, workspace-sharing compiled program is invoked through.

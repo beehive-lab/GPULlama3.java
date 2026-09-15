@@ -1,8 +1,8 @@
-package org.beehive.gpullama3.model.loader;
+package org.beehive.jllm.model.loader;
 
 import static org.junit.Assert.assertEquals;
 
-import org.beehive.gpullama3.runtime.backend.BackendId;
+import org.beehive.jllm.runtime.backend.BackendId;
 import org.junit.Test;
 
 public class ModelLoaderProviderBackendTest {

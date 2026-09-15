@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.golden;
+package org.beehive.jllm.golden;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -7,14 +7,14 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
 
 import java.nio.file.Path;
-import org.beehive.gpullama3.api.InsufficientDeviceMemoryException;
-import org.beehive.gpullama3.api.LocalModel;
-import org.beehive.gpullama3.api.LocalModels;
-import org.beehive.gpullama3.api.ModelOptions;
-import org.beehive.gpullama3.backend.tornado.device.TornadoDevices;
-import org.beehive.gpullama3.golden.GoldenFixture.Fixture;
-import org.beehive.gpullama3.runtime.backend.BackendId;
-import org.beehive.gpullama3.runtime.memory.MemoryPlan;
+import org.beehive.jllm.api.InsufficientDeviceMemoryException;
+import org.beehive.jllm.api.LocalModel;
+import org.beehive.jllm.api.LocalModels;
+import org.beehive.jllm.api.ModelOptions;
+import org.beehive.jllm.backend.tornado.device.TornadoDevices;
+import org.beehive.jllm.golden.GoldenFixture.Fixture;
+import org.beehive.jllm.runtime.backend.BackendId;
+import org.beehive.jllm.runtime.memory.MemoryPlan;
 import org.junit.Test;
 
 public class MemoryPreflightAccelTest {
@@ -144,10 +144,10 @@ public class MemoryPreflightAccelTest {
                         ModelOptions.builder()
                                 .contextLength(512)
                                 .executionPolicy(
-                                        org.beehive.gpullama3.runtime.policy.ExecutionPolicy
+                                        org.beehive.jllm.runtime.policy.ExecutionPolicy
                                                 .builder()
                                                 .phaseStrategy(
-                                                        org.beehive.gpullama3.runtime.policy
+                                                        org.beehive.jllm.runtime.policy
                                                                 .ExecutionPolicy.PhaseStrategy
                                                                 .PREFILL_DECODE)
                                                 .prefillBatchSize(8)
@@ -167,7 +167,7 @@ public class MemoryPreflightAccelTest {
                                         .filter(
                                                 c ->
                                                         c.bufferClass()
-                                                                == org.beehive.gpullama3.runtime
+                                                                == org.beehive.jllm.runtime
                                                                         .memory.BufferClass
                                                                         .BATCH_STAGING)
                                         .mapToLong(c -> c.logicalBytes())

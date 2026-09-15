@@ -1,14 +1,14 @@
-package org.beehive.gpullama3.backend.tornado.layers.type.fp16.prefill;
+package org.beehive.jllm.backend.tornado.layers.type.fp16.prefill;
 
 import java.util.List;
 import java.util.stream.IntStream;
-import org.beehive.gpullama3.backend.tornado.kernels.TransformerBatchPrefillKernels;
-import org.beehive.gpullama3.backend.tornado.kernels.TransformerPagedKvBatchPrefillKernels;
-import org.beehive.gpullama3.backend.tornado.layers.BatchPrefillTransformerLayerTaskGraphs;
-import org.beehive.gpullama3.backend.tornado.scheduling.WorkerGridFactory;
-import org.beehive.gpullama3.inference.state.LlamaState;
-import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
-import org.beehive.gpullama3.model.llama.LlamaConfiguration;
+import org.beehive.jllm.backend.tornado.kernels.TransformerBatchPrefillKernels;
+import org.beehive.jllm.backend.tornado.kernels.TransformerPagedKvBatchPrefillKernels;
+import org.beehive.jllm.backend.tornado.layers.BatchPrefillTransformerLayerTaskGraphs;
+import org.beehive.jllm.backend.tornado.scheduling.WorkerGridFactory;
+import org.beehive.jllm.inference.state.LlamaState;
+import org.beehive.jllm.inference.weights.tornado.LlamaTornadoWeights;
+import org.beehive.jllm.model.llama.LlamaConfiguration;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.KernelContext;
@@ -18,7 +18,7 @@ import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 
 /**
  * Batched-prefill transformer-layer TaskGraphs for the unified batched prefill-decode plan ({@link
- * org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlanBatchPrefillDecode}).
+ * org.beehive.jllm.backend.tornado.TornadoVMMasterPlanBatchPrefillDecode}).
  *
  * <p>One {@link ImmutableTaskGraph} per transformer layer, each processing {@code batchSize} tokens
  * simultaneously via {@link TransformerBatchPrefillKernels}.

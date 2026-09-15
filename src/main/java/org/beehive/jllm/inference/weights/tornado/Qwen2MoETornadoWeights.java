@@ -1,7 +1,7 @@
-package org.beehive.gpullama3.inference.weights.tornado;
+package org.beehive.jllm.inference.weights.tornado;
 
-import org.beehive.gpullama3.backend.tornado.tensor.TornadoTensor;
-import org.beehive.gpullama3.runtime.tensor.DataType;
+import org.beehive.jllm.backend.tornado.tensor.TornadoTensor;
+import org.beehive.jllm.runtime.tensor.DataType;
 
 /**
  * TornadoVM weight container for Qwen2-MoE / Qwen1.5-MoE models.

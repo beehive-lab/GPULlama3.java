@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.program;
+package org.beehive.jllm.program;
 
 /**
  * The type of a scalar an invocation supplies or reads back.

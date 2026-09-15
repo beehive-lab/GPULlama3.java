@@ -1,14 +1,14 @@
-package org.beehive.gpullama3.backend.tornado.layers.type.fp16;
+package org.beehive.jllm.backend.tornado.layers.type.fp16;
 
-import org.beehive.gpullama3.backend.tornado.kernels.GraniteKernels;
-import org.beehive.gpullama3.backend.tornado.kernels.TransformerComputeKernels;
-import org.beehive.gpullama3.backend.tornado.kernels.TransformerComputeKernelsLayered;
-import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerType;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.inference.weights.Weights;
-import org.beehive.gpullama3.inference.weights.tornado.TornadoWeights;
-import org.beehive.gpullama3.model.Configuration;
-import org.beehive.gpullama3.model.granite.GraniteConfiguration;
+import org.beehive.jllm.backend.tornado.kernels.GraniteKernels;
+import org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernels;
+import org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsLayered;
+import org.beehive.jllm.backend.tornado.scheduling.SchedulerType;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.inference.weights.Weights;
+import org.beehive.jllm.inference.weights.tornado.TornadoWeights;
+import org.beehive.jllm.model.Configuration;
+import org.beehive.jllm.model.granite.GraniteConfiguration;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 

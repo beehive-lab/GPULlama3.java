@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.backend.tornado;
+package org.beehive.jllm.backend.tornado;
 
-import org.beehive.gpullama3.runtime.diagnostics.DiagnosticCode;
+import org.beehive.jllm.runtime.diagnostics.DiagnosticCode;
 
 /**
  * The device ran out of memory while building the execution plan.

@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.model.format;
+package org.beehive.jllm.model.format;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;

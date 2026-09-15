@@ -1,20 +1,20 @@
-package org.beehive.gpullama3.model.qwen2;
+package org.beehive.jllm.model.qwen2;
 
 import java.util.List;
 import java.util.Set;
 import java.util.function.IntConsumer;
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
-import org.beehive.gpullama3.inference.TokenGenerationLoop;
-import org.beehive.gpullama3.inference.sampler.Sampler;
-import org.beehive.gpullama3.inference.state.Qwen2MoEState;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.inference.weights.Weights;
-import org.beehive.gpullama3.model.AbstractModel;
-import org.beehive.gpullama3.model.ModelType;
-import org.beehive.gpullama3.model.format.ChatFormat;
-import org.beehive.gpullama3.runtime.policy.ExecutionPolicy.PhaseStrategy;
-import org.beehive.gpullama3.tokenizer.Qwen3Tokenizer;
-import org.beehive.gpullama3.tokenizer.Tokenizer;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlan;
+import org.beehive.jllm.inference.TokenGenerationLoop;
+import org.beehive.jllm.inference.sampler.Sampler;
+import org.beehive.jllm.inference.state.Qwen2MoEState;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.inference.weights.Weights;
+import org.beehive.jllm.model.AbstractModel;
+import org.beehive.jllm.model.ModelType;
+import org.beehive.jllm.model.format.ChatFormat;
+import org.beehive.jllm.runtime.policy.ExecutionPolicy.PhaseStrategy;
+import org.beehive.jllm.tokenizer.Qwen3Tokenizer;
+import org.beehive.jllm.tokenizer.Tokenizer;
 
 public class Qwen2MoE extends AbstractModel {
 
@@ -139,7 +139,7 @@ public class Qwen2MoE extends AbstractModel {
     }
 
     @Override
-    public State createNewState(org.beehive.gpullama3.runtime.kv.KvLease lease) {
+    public State createNewState(org.beehive.jllm.runtime.kv.KvLease lease) {
         if (lease == null || lease.storage() == null) {
             return createNewState();
         }
@@ -151,7 +151,7 @@ public class Qwen2MoE extends AbstractModel {
 
     /** Its own identity, stated rather than derived. */
     @Override
-    public org.beehive.gpullama3.runtime.model.ArchitectureId architectureId() {
-        return org.beehive.gpullama3.runtime.model.ArchitectureId.of("qwen2-moe");
+    public org.beehive.jllm.runtime.model.ArchitectureId architectureId() {
+        return org.beehive.jllm.runtime.model.ArchitectureId.of("qwen2-moe");
     }
 }

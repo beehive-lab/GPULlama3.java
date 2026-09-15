@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.program.op;
+package org.beehive.jllm.program.op;
 
 /**
  * How a rotary embedding pairs the components it rotates.

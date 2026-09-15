@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.runtime.backend;
+package org.beehive.jllm.runtime.backend;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;

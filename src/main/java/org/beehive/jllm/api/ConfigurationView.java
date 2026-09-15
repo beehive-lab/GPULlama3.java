@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
-import org.beehive.gpullama3.model.Configuration;
+import org.beehive.jllm.model.Configuration;
 
 /** The internal {@link Configuration}, narrowed to what a user may see. */
 final class ConfigurationView implements ModelConfiguration {

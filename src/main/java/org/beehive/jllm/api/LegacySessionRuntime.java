@@ -1,10 +1,10 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
-import org.beehive.gpullama3.auxiliary.metrics.RunMetricsSink;
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.runtime.kv.KvLease;
+import org.beehive.jllm.auxiliary.metrics.RunMetricsSink;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlan;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.runtime.kv.KvLease;
 
 /**
  * The session runtime as it has always been: this session owns its {@code State} and its plan.
@@ -31,8 +31,8 @@ final class LegacySessionRuntime implements SessionRuntime {
     LegacySessionRuntime(
             Model model,
             KvLease lease,
-            org.beehive.gpullama3.runtime.policy.ExecutionPolicy executionPolicy,
-            org.beehive.gpullama3.runtime.policy.StorageOptions storageOptions) {
+            org.beehive.jllm.runtime.policy.ExecutionPolicy executionPolicy,
+            org.beehive.jllm.runtime.policy.StorageOptions storageOptions) {
         this.model = model;
         this.lease = lease;
         // The model's storage options shape what this state allocates. They are the model's, not
@@ -42,10 +42,10 @@ final class LegacySessionRuntime implements SessionRuntime {
         // storage options type the arrays, and the prefill batch width sizes them. The policy
         // is only resolved on the finished state, which is too late to allocate for.
         this.state =
-                org.beehive.gpullama3.inference.state.State.withStorageOptions(
+                org.beehive.jllm.inference.state.State.withStorageOptions(
                         storageOptions,
                         () ->
-                                org.beehive.gpullama3.inference.state.State.withPrefillBatchSize(
+                                org.beehive.jllm.inference.state.State.withPrefillBatchSize(
                                         executionPolicy == null
                                                 ? 1
                                                 : executionPolicy.prefillBatchSize(),
@@ -96,7 +96,7 @@ final class LegacySessionRuntime implements SessionRuntime {
             java.util.List<Integer> promptTokens,
             java.util.Set<Integer> stopTokens,
             int budget,
-            org.beehive.gpullama3.inference.sampler.Sampler sampler,
+            org.beehive.jllm.inference.sampler.Sampler sampler,
             java.util.function.IntConsumer onToken) {
         return model.generateTokensGPU(
                 state,

@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.auxiliary;
+package org.beehive.jllm.auxiliary;
 
 import java.util.function.IntConsumer;
 import java.util.function.LongConsumer;

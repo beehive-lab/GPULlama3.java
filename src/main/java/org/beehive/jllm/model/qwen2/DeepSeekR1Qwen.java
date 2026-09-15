@@ -1,9 +1,9 @@
-package org.beehive.gpullama3.model.qwen2;
+package org.beehive.jllm.model.qwen2;
 
-import org.beehive.gpullama3.inference.weights.Weights;
-import org.beehive.gpullama3.model.ModelType;
-import org.beehive.gpullama3.model.format.ChatFormat;
-import org.beehive.gpullama3.tokenizer.Tokenizer;
+import org.beehive.jllm.inference.weights.Weights;
+import org.beehive.jllm.model.ModelType;
+import org.beehive.jllm.model.format.ChatFormat;
+import org.beehive.jllm.tokenizer.Tokenizer;
 
 public class DeepSeekR1Qwen extends Qwen2 {
 
@@ -27,7 +27,7 @@ public class DeepSeekR1Qwen extends Qwen2 {
 
     /** Its own identity, stated rather than derived. */
     @Override
-    public org.beehive.gpullama3.runtime.model.ArchitectureId architectureId() {
-        return org.beehive.gpullama3.runtime.model.ArchitectureId.of("deepseek-r1-distill-qwen");
+    public org.beehive.jllm.runtime.model.ArchitectureId architectureId() {
+        return org.beehive.jllm.runtime.model.ArchitectureId.of("deepseek-r1-distill-qwen");
     }
 }

@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.tokenizer;
+package org.beehive.jllm.tokenizer;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -12,8 +12,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-import org.beehive.gpullama3.auxiliary.Pair;
-import org.beehive.gpullama3.auxiliary.Utf8Mask;
+import org.beehive.jllm.auxiliary.Pair;
+import org.beehive.jllm.auxiliary.Utf8Mask;
 
 public class Qwen3Tokenizer implements Tokenizer {
     static final Map<Integer, Integer> BYTE_ENCODER = bytesToUnicode();

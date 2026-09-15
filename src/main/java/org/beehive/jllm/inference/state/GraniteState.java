@@ -1,10 +1,10 @@
-package org.beehive.gpullama3.inference.state;
+package org.beehive.jllm.inference.state;
 
 import java.util.stream.Stream;
-import org.beehive.gpullama3.backend.tornado.workspace.TornadoWorkspaces;
-import org.beehive.gpullama3.model.Configuration;
-import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
-import org.beehive.gpullama3.tensor.standard.FloatTensor;
+import org.beehive.jllm.backend.tornado.workspace.TornadoWorkspaces;
+import org.beehive.jllm.model.Configuration;
+import org.beehive.jllm.tensor.standard.ArrayFloatTensor;
+import org.beehive.jllm.tensor.standard.FloatTensor;
 
 /**
  * Represents the state of the Granite model during inference. This class extends {@link State} to
@@ -24,7 +24,7 @@ public final class GraniteState extends State {
      *     allocate its own arrays
      */
     public GraniteState(
-            Configuration config, int batchsize, org.beehive.gpullama3.runtime.kv.KvLease lease) {
+            Configuration config, int batchsize, org.beehive.jllm.runtime.kv.KvLease lease) {
         super(config, batchsize, lease);
     }
 

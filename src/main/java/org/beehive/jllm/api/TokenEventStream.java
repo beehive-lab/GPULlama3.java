@@ -1,10 +1,10 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Consumer;
-import org.beehive.gpullama3.tokenizer.Tokenizer;
+import org.beehive.jllm.tokenizer.Tokenizer;
 
 /**
  * Turns the loop's raw token ids into the facade's ordered event stream [A5].

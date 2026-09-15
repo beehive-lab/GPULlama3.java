@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.model.granite;
+package org.beehive.jllm.model.granite;
 
-import org.beehive.gpullama3.model.Configuration;
+import org.beehive.jllm.model.Configuration;
 
 // @formatter:off
 public record GraniteConfiguration(

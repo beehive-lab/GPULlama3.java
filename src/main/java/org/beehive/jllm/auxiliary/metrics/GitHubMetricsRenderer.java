@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.auxiliary.metrics;
+package org.beehive.jllm.auxiliary.metrics;
 
 /**
  * Renders metrics as a Markdown table suitable for appending to {@code $GITHUB_STEP_SUMMARY}.

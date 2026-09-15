@@ -1,16 +1,16 @@
-package org.beehive.gpullama3.model;
+package org.beehive.jllm.model;
 
 import java.nio.channels.FileChannel;
-import org.beehive.gpullama3.format.GGUF;
-import org.beehive.gpullama3.model.loader.DevstralModelLoader;
-import org.beehive.gpullama3.model.loader.Gemma4ModelLoader;
-import org.beehive.gpullama3.model.loader.GraniteLoader;
-import org.beehive.gpullama3.model.loader.LlamaModelLoader;
-import org.beehive.gpullama3.model.loader.MistralModelLoader;
-import org.beehive.gpullama3.model.loader.Phi3ModelLoader;
-import org.beehive.gpullama3.model.loader.Qwen2MoEModelLoader;
-import org.beehive.gpullama3.model.loader.Qwen2ModelLoader;
-import org.beehive.gpullama3.model.loader.Qwen3ModelLoader;
+import org.beehive.jllm.format.GGUF;
+import org.beehive.jllm.model.loader.DevstralModelLoader;
+import org.beehive.jllm.model.loader.Gemma4ModelLoader;
+import org.beehive.jllm.model.loader.GraniteLoader;
+import org.beehive.jllm.model.loader.LlamaModelLoader;
+import org.beehive.jllm.model.loader.MistralModelLoader;
+import org.beehive.jllm.model.loader.Phi3ModelLoader;
+import org.beehive.jllm.model.loader.Qwen2MoEModelLoader;
+import org.beehive.jllm.model.loader.Qwen2ModelLoader;
+import org.beehive.jllm.model.loader.Qwen3ModelLoader;
 
 /**
  * Enumerates the different types of models supported by GPULlama3.java. This enum helps in

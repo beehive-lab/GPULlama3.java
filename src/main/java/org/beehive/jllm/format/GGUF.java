@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.format;
+package org.beehive.jllm.format;
 
 import static java.nio.file.StandardOpenOption.READ;
 import static java.nio.file.StandardOpenOption.WRITE;
@@ -17,8 +17,8 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import org.beehive.gpullama3.auxiliary.Pair;
-import org.beehive.gpullama3.runtime.backend.Device;
+import org.beehive.jllm.auxiliary.Pair;
+import org.beehive.jllm.runtime.backend.Device;
 
 public final class GGUF {
     private static FileChannel fileChannel;

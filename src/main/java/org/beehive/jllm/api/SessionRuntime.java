@@ -1,8 +1,8 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.runtime.kv.KvLease;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlan;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.runtime.kv.KvLease;
 
 /**
  * How one session gets the state and the plan it executes with.
@@ -43,12 +43,12 @@ sealed interface SessionRuntime permits LegacySessionRuntime, LoweredSessionRunt
      * workspace another session will overwrite.
      */
     java.util.List<Integer> generateOnGpu(
-            org.beehive.gpullama3.model.Model model,
+            org.beehive.jllm.model.Model model,
             int startPosition,
             java.util.List<Integer> promptTokens,
             java.util.Set<Integer> stopTokens,
             int budget,
-            org.beehive.gpullama3.inference.sampler.Sampler sampler,
+            org.beehive.jllm.inference.sampler.Sampler sampler,
             java.util.function.IntConsumer onToken);
 
     /** Whether a GPU plan has been obtained yet. */

@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.backend.tornado.layers;
+package org.beehive.jllm.backend.tornado.layers;
 
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
@@ -8,7 +8,7 @@ import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
  * variants).
  *
  * <p>Implemented by {@link Activation} and custom activation wrappers used by {@link
- * org.beehive.gpullama3.backend.tornado.plan.components.SingleTokenForwardPlanComponents}.
+ * org.beehive.jllm.backend.tornado.plan.components.SingleTokenForwardPlanComponents}.
  */
 public interface ActivationTaskGraph {
     ImmutableTaskGraph getImmutableTaskGraph();

@@ -1,25 +1,25 @@
-package org.beehive.gpullama3.backend.tornado.lowering;
+package org.beehive.jllm.backend.tornado.lowering;
 
 import java.util.List;
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlanSingleToken;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.program.InferenceProgram;
-import org.beehive.gpullama3.program.ProgramComponent;
-import org.beehive.gpullama3.program.op.Attention;
-import org.beehive.gpullama3.program.op.KvAppend;
-import org.beehive.gpullama3.program.op.MatVec;
-import org.beehive.gpullama3.program.op.OperationKind;
-import org.beehive.gpullama3.program.op.RoPE;
-import org.beehive.gpullama3.program.op.RopeLayout;
-import org.beehive.gpullama3.program.op.SplitFusedQkv;
-import org.beehive.gpullama3.program.op.SplitGateUp;
-import org.beehive.gpullama3.runtime.backend.CompileOptions;
-import org.beehive.gpullama3.runtime.backend.DeviceCapabilities;
-import org.beehive.gpullama3.runtime.metrics.MetricsSink;
-import org.beehive.gpullama3.runtime.model.ArchitectureId;
-import org.beehive.gpullama3.runtime.tensor.DataType;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlan;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlanSingleToken;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.program.InferenceProgram;
+import org.beehive.jllm.program.ProgramComponent;
+import org.beehive.jllm.program.op.Attention;
+import org.beehive.jllm.program.op.KvAppend;
+import org.beehive.jllm.program.op.MatVec;
+import org.beehive.jllm.program.op.OperationKind;
+import org.beehive.jllm.program.op.RoPE;
+import org.beehive.jllm.program.op.RopeLayout;
+import org.beehive.jllm.program.op.SplitFusedQkv;
+import org.beehive.jllm.program.op.SplitGateUp;
+import org.beehive.jllm.runtime.backend.CompileOptions;
+import org.beehive.jllm.runtime.backend.DeviceCapabilities;
+import org.beehive.jllm.runtime.metrics.MetricsSink;
+import org.beehive.jllm.runtime.model.ArchitectureId;
+import org.beehive.jllm.runtime.tensor.DataType;
 
 /**
  * Lowers a Phi3 single-token {@link InferenceProgram} onto TornadoVM task graphs.

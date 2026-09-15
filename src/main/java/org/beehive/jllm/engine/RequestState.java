@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.engine;
+package org.beehive.jllm.engine;
 
 /**
  * Where a request is in its life. The whole vocabulary — there is no other state.

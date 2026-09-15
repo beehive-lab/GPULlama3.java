@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.runtime.kv;
+package org.beehive.jllm.runtime.kv;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;

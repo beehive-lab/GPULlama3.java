@@ -1,15 +1,15 @@
-package org.beehive.gpullama3.backend.tornado.plan;
+package org.beehive.jllm.backend.tornado.plan;
 
 import java.util.Set;
-import org.beehive.gpullama3.backend.tornado.lowering.TornadoSupportSets;
-import org.beehive.gpullama3.backend.tornado.plan.components.SingleTokenForwardPlanComponents;
-import org.beehive.gpullama3.backend.tornado.plan.components.fp16.Gemma4FP16PlanComponents;
-import org.beehive.gpullama3.backend.tornado.plan.components.q8_0.Gemma4Q8_0PlanComponents;
-import org.beehive.gpullama3.inference.state.Gemma4State;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.runtime.model.ArchitectureId;
-import org.beehive.gpullama3.runtime.tensor.DataType;
+import org.beehive.jllm.backend.tornado.lowering.TornadoSupportSets;
+import org.beehive.jllm.backend.tornado.plan.components.SingleTokenForwardPlanComponents;
+import org.beehive.jllm.backend.tornado.plan.components.fp16.Gemma4FP16PlanComponents;
+import org.beehive.jllm.backend.tornado.plan.components.q8_0.Gemma4Q8_0PlanComponents;
+import org.beehive.jllm.inference.state.Gemma4State;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.runtime.model.ArchitectureId;
+import org.beehive.jllm.runtime.tensor.DataType;
 
 /**
  * Gemma4's plan components. No program description exists for it yet, which is a separate fact: the

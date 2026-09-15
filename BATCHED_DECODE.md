@@ -291,7 +291,7 @@ for temperature sampling (which still needs logits on the host).
 
 After building TornadoVM (CUDA backend) and this project (steps 1–3 below), take
 `llama-tornado --show-command …`, swap the main class to
-`org.beehive.gpullama3.bench.BatchedDecodeEngine`, and prepend the flags. Keep
+`org.beehive.jllm.bench.BatchedDecodeEngine`, and prepend the flags. Keep
 `-Dllama.prefillBatchSize` equal to `-Dbatch.decode.B`.
 
 ```bash
@@ -350,7 +350,7 @@ mvn -Pjdk21 -Dtornadovm.base.version=5.0.1 -Djdk.version.suffix=-jdk21-dev \
 ### 3. Run the engine
 
 `-Dllama.prefillBatchSize` MUST equal `-Dbatch.decode.B` (it sizes the batch
-activation buffers). Launch `org.beehive.gpullama3.bench.BatchedDecodeEngine` on the
+activation buffers). Launch `org.beehive.jllm.bench.BatchedDecodeEngine` on the
 standard TornadoVM module path (easiest: take `llama-tornado --show-command …`,
 swap the main class to the engine, and prepend the `-D` flags):
 
@@ -361,7 +361,7 @@ swap the main class to the engine, and prepend the `-D` flags):
 -Dbatch.decode.n=64              # decode steps
 -Dbatch.decode.temp=0.0          # 0 = greedy (bit-exact verify); >0 = divergent streams
 -Dbatch.decode.cudaGraphs=true   # CUDA-graph capture/replay
-org.beehive.gpullama3.bench.BatchedDecodeEngine -m <llama-3.2-1b-fp16.gguf> -p "…" --instruct
+org.beehive.jllm.bench.BatchedDecodeEngine -m <llama-3.2-1b-fp16.gguf> -p "…" --instruct
 ```
 
 Two supporting micro-benchmarks (synthetic dims, no model load) isolate the two

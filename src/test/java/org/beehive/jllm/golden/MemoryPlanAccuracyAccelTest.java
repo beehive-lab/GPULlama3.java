@@ -1,16 +1,16 @@
-package org.beehive.gpullama3.golden;
+package org.beehive.jllm.golden;
 
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
 
 import java.nio.file.Path;
-import org.beehive.gpullama3.backend.tornado.device.TornadoDevices;
-import org.beehive.gpullama3.backend.tornado.memory.TornadoMemoryModel;
-import org.beehive.gpullama3.golden.GoldenFixture.Fixture;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.loader.ModelLoader;
-import org.beehive.gpullama3.runtime.memory.MemoryPlan;
-import org.beehive.gpullama3.runtime.policy.ExecutionPolicy;
+import org.beehive.jllm.backend.tornado.device.TornadoDevices;
+import org.beehive.jllm.backend.tornado.memory.TornadoMemoryModel;
+import org.beehive.jllm.golden.GoldenFixture.Fixture;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.loader.ModelLoader;
+import org.beehive.jllm.runtime.memory.MemoryPlan;
+import org.beehive.jllm.runtime.policy.ExecutionPolicy;
 import org.junit.Test;
 
 /**

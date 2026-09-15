@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.tensor.standard;
+package org.beehive.jllm.tensor.standard;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.reflect.Field;
@@ -6,10 +6,10 @@ import java.util.Arrays;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorShape;
 import jdk.incubator.vector.VectorSpecies;
-import org.beehive.gpullama3.auxiliary.Parallel;
-import org.beehive.gpullama3.format.DataTypeMapping;
-import org.beehive.gpullama3.format.GGMLType;
-import org.beehive.gpullama3.runtime.tensor.DataType;
+import org.beehive.jllm.auxiliary.Parallel;
+import org.beehive.jllm.format.DataTypeMapping;
+import org.beehive.jllm.format.GGMLType;
+import org.beehive.jllm.runtime.tensor.DataType;
 import sun.misc.Unsafe;
 
 /**
@@ -79,7 +79,7 @@ public abstract class FloatTensor {
 
     /**
      * @deprecated Use {@link #dataType()}; see {@link
-     *     org.beehive.gpullama3.runtime.tensor.DataType}.
+     *     org.beehive.jllm.runtime.tensor.DataType}.
      */
     @Deprecated
     protected abstract GGMLType type();

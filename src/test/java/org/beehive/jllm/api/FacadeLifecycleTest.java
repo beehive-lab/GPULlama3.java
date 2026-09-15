@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
@@ -9,15 +9,15 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
 import java.util.function.IntConsumer;
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
-import org.beehive.gpullama3.inference.sampler.Sampler;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.inference.weights.Weights;
-import org.beehive.gpullama3.model.Configuration;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.ModelType;
-import org.beehive.gpullama3.model.format.ChatFormat;
-import org.beehive.gpullama3.tokenizer.Tokenizer;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlan;
+import org.beehive.jllm.inference.sampler.Sampler;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.inference.weights.Weights;
+import org.beehive.jllm.model.Configuration;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.ModelType;
+import org.beehive.jllm.model.format.ChatFormat;
+import org.beehive.jllm.tokenizer.Tokenizer;
 import org.junit.Test;
 
 /**
@@ -44,7 +44,7 @@ public class FacadeLifecycleTest {
 
         @Override
         public Weights weights() {
-            return () -> org.beehive.gpullama3.runtime.tensor.DataType.Q8_0;
+            return () -> org.beehive.jllm.runtime.tensor.DataType.Q8_0;
         }
 
         @Override
@@ -257,7 +257,7 @@ public class FacadeLifecycleTest {
         TextGenerationModel model = model();
         assertEquals(512, model.info().contextLength());
         assertEquals(
-                org.beehive.gpullama3.runtime.tensor.DataType.Q8_0, model.info().computeType());
+                org.beehive.jllm.runtime.tensor.DataType.Q8_0, model.info().computeType());
         assertEquals(Path.of("stub.gguf"), model.info().source());
         assertEquals(16, model.configuration().layers());
         assertEquals(8, model.configuration().keyValueHeads());

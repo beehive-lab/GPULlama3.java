@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
@@ -7,7 +7,7 @@ import static org.junit.Assert.assertTrue;
 import java.nio.file.Path;
 import java.util.Optional;
 import java.util.Set;
-import org.beehive.gpullama3.runtime.tensor.DataType;
+import org.beehive.jllm.runtime.tensor.DataType;
 import org.junit.Test;
 
 public class ModelInfoTest {

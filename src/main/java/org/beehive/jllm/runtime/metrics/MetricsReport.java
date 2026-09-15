@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.runtime.metrics;
+package org.beehive.jllm.runtime.metrics;
 
 import java.util.Collections;
 import java.util.EnumMap;

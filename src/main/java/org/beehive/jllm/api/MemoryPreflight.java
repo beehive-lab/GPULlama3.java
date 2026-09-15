@@ -1,12 +1,12 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
 import java.io.IOException;
 import java.nio.file.Path;
-import org.beehive.gpullama3.backend.tornado.device.TornadoDevices;
-import org.beehive.gpullama3.backend.tornado.memory.TornadoMemoryModel;
-import org.beehive.gpullama3.model.Configuration;
-import org.beehive.gpullama3.model.loader.ModelLoader;
-import org.beehive.gpullama3.runtime.memory.MemoryPlan;
+import org.beehive.jllm.backend.tornado.device.TornadoDevices;
+import org.beehive.jllm.backend.tornado.memory.TornadoMemoryModel;
+import org.beehive.jllm.model.Configuration;
+import org.beehive.jllm.model.loader.ModelLoader;
+import org.beehive.jllm.runtime.memory.MemoryPlan;
 
 /**
  * Builds a {@link MemoryPlan} from a model file, and refuses a load that cannot fit.

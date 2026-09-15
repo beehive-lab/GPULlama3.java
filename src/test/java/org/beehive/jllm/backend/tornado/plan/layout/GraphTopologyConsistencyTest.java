@@ -1,9 +1,9 @@
-package org.beehive.gpullama3.backend.tornado.plan.layout;
+package org.beehive.jllm.backend.tornado.plan.layout;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
-import org.beehive.gpullama3.backend.tornado.plan.ExecutionMode;
+import org.beehive.jllm.backend.tornado.plan.ExecutionMode;
 import org.junit.Test;
 
 /**

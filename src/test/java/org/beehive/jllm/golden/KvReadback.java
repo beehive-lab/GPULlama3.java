@@ -1,15 +1,15 @@
-package org.beehive.gpullama3.golden;
+package org.beehive.jllm.golden;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
-import org.beehive.gpullama3.inference.sampler.Sampler;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.format.ChatFormat;
-import org.beehive.gpullama3.model.loader.ModelLoader;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlan;
+import org.beehive.jllm.inference.sampler.Sampler;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.format.ChatFormat;
+import org.beehive.jllm.model.loader.ModelLoader;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
 /**
@@ -63,13 +63,13 @@ public final class KvReadback {
 
             float[] prev =
                     snap(
-                            org.beehive.gpullama3.backend.tornado.TornadoForwardPass.forward(
+                            org.beehive.jllm.backend.tornado.TornadoForwardPass.forward(
                                     model, state, tok, pos, plan));
             float[] prevKv = snap(state.workspace.wrapKeyCache);
             for (int i = 1; i <= iterations; i++) {
                 float[] logits =
                         snap(
-                                org.beehive.gpullama3.backend.tornado.TornadoForwardPass.forward(
+                                org.beehive.jllm.backend.tornado.TornadoForwardPass.forward(
                                         model, state, tok, pos, plan));
                 float[] kv = snap(state.workspace.wrapKeyCache);
 
@@ -129,7 +129,7 @@ public final class KvReadback {
         return true;
     }
 
-    private static float[] snap(org.beehive.gpullama3.inference.Logits logits) {
+    private static float[] snap(org.beehive.jllm.inference.Logits logits) {
         float[] out = new float[logits.size()];
         for (int i = 0; i < out.length; i++) {
             out[i] = logits.get(i);

@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.inference;
+package org.beehive.jllm.inference;
 
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
@@ -6,16 +6,16 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.function.IntConsumer;
-import org.beehive.gpullama3.auxiliary.RunMetrics;
-import org.beehive.gpullama3.backend.cpu.InferenceCore;
-import org.beehive.gpullama3.backend.cpu.InferenceCoreBatchPrefillDecode;
-import org.beehive.gpullama3.backend.cpu.InferenceCoreWithPrefillDecode;
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
-import org.beehive.gpullama3.inference.sampler.Sampler;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.Configuration;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.tokenizer.Tokenizer;
+import org.beehive.jllm.auxiliary.RunMetrics;
+import org.beehive.jllm.backend.cpu.InferenceCore;
+import org.beehive.jllm.backend.cpu.InferenceCoreBatchPrefillDecode;
+import org.beehive.jllm.backend.cpu.InferenceCoreWithPrefillDecode;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlan;
+import org.beehive.jllm.inference.sampler.Sampler;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.Configuration;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.tokenizer.Tokenizer;
 
 /**
  * The token-generation loop: prompt ingestion, then generation until a stop condition.
@@ -57,12 +57,12 @@ public final class TokenGenerationLoop {
      * and the resolved pass is what the token loop calls.
      */
     private static final java.util.Map<
-                    org.beehive.gpullama3.runtime.model.ArchitectureId, ForwardPass>
+                    org.beehive.jllm.runtime.model.ArchitectureId, ForwardPass>
             HOST_FORWARD = new java.util.concurrent.ConcurrentHashMap<>();
 
     /** The loop's logits as a sampler sees them. */
     private static Logits asLogits(Object logits) {
-        if (logits instanceof org.beehive.gpullama3.tensor.standard.FloatTensor tensor) {
+        if (logits instanceof org.beehive.jllm.tensor.standard.FloatTensor tensor) {
             return Logits.of(tensor);
         }
         throw new IllegalArgumentException(
@@ -73,7 +73,7 @@ public final class TokenGenerationLoop {
     private static ForwardPass hostForward(Model model) {
         return HOST_FORWARD.computeIfAbsent(
                 model.architectureId(),
-                org.beehive.gpullama3.backend.cpu.CpuForwardPasses::forArchitecture);
+                org.beehive.jllm.backend.cpu.CpuForwardPasses::forArchitecture);
     }
 
     /**
@@ -100,7 +100,7 @@ public final class TokenGenerationLoop {
             State state,
             Sampler sampler,
             Logits logits,
-            org.beehive.gpullama3.backend.tornado.lowering.InvocationBoundary.Result result,
+            org.beehive.jllm.backend.tornado.lowering.InvocationBoundary.Result result,
             boolean deviceSample) {
         if (result != null) {
             // A lowered invocation already carries whatever the device decided, in storage this
@@ -153,7 +153,7 @@ public final class TokenGenerationLoop {
             boolean echo,
             IntConsumer onTokenGenerated) {
         if (state.executionPolicy().phaseStrategy()
-                == org.beehive.gpullama3.runtime.policy.ExecutionPolicy.PhaseStrategy
+                == org.beehive.jllm.runtime.policy.ExecutionPolicy.PhaseStrategy
                         .PREFILL_DECODE) {
             return state.executionPolicy().prefillBatchSize() > 1
                     ? generateLlamaCpuWithBatchPrefill(
@@ -722,7 +722,7 @@ public final class TokenGenerationLoop {
             IntConsumer onTokenGenerated,
             TornadoVMMasterPlan tornadoVMPlan) {
         if (state.executionPolicy().phaseStrategy()
-                == org.beehive.gpullama3.runtime.policy.ExecutionPolicy.PhaseStrategy
+                == org.beehive.jllm.runtime.policy.ExecutionPolicy.PhaseStrategy
                         .PREFILL_DECODE) {
             return generateWithPrefill(
                     model,
@@ -793,7 +793,7 @@ public final class TokenGenerationLoop {
 
         if (batched) {
             var plan =
-                    (org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlanBatchPrefillDecode)
+                    (org.beehive.jllm.backend.tornado.TornadoVMMasterPlanBatchPrefillDecode)
                             tornadoVMPlan;
             // This branch prefilled all N whenever the seed was the prompt's own first token, then
             // decoded starting from the last prompt token again. The model therefore saw that
@@ -806,7 +806,7 @@ public final class TokenGenerationLoop {
             // prompt's first token — so the two cases are one case, and `seedIsPromptHead` is the
             // condition both were expressing.
             boolean qwen2MoE =
-                    model.getModelType() == org.beehive.gpullama3.model.ModelType.QWEN_2_MOE;
+                    model.getModelType() == org.beehive.jllm.model.ModelType.QWEN_2_MOE;
             boolean seedIsPromptHead = qwen2MoE || ingestion.firstIndex() == 1;
             int prefillTokenCount = seedIsPromptHead ? Math.max(0, promptSize - 1) : promptSize;
             int[] prefillSeq = new int[prefillTokenCount];
@@ -832,7 +832,7 @@ public final class TokenGenerationLoop {
                                 actualMaxTokens - pos);
                 int chunkSize = chunkEnd - chunkStart;
                 int[] chunk = java.util.Arrays.copyOfRange(prefillSeq, chunkStart, chunkEnd);
-                org.beehive.gpullama3.backend.tornado.TornadoBatchPrefillPass.batchPrefill(
+                org.beehive.jllm.backend.tornado.TornadoBatchPrefillPass.batchPrefill(
                         model, state, chunk, pos + chunkStart, chunkSize, plan);
                 if (echo) {
                     for (int b = 0; b < chunkSize; b++) {
@@ -855,12 +855,12 @@ public final class TokenGenerationLoop {
             generatedTokenBudget = Math.max(0, actualMaxTokens - startPosition - prefillTokenCount);
         } else {
             var plan =
-                    (org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlanPrefillDecode)
+                    (org.beehive.jllm.backend.tornado.TornadoVMMasterPlanPrefillDecode)
                             tornadoVMPlan;
             for (int promptIndex = ingestion.firstIndex();
                     promptIndex < promptSize && pos < actualMaxTokens;
                     promptIndex++) {
-                org.beehive.gpullama3.backend.tornado.TornadoPrefillPass.prefill(
+                org.beehive.jllm.backend.tornado.TornadoPrefillPass.prefill(
                         model, state, currentToken, pos, plan);
                 currentToken = promptTokens.get(promptIndex);
                 if (echo) {
@@ -878,20 +878,20 @@ public final class TokenGenerationLoop {
         // ── Decode: one loop, whichever prefill ran ───────────────────────────
         boolean deviceSample =
                 state.executionPolicy().samplingResidency()
-                        == org.beehive.gpullama3.runtime.policy.ExecutionPolicy.SamplingResidency
+                        == org.beehive.jllm.runtime.policy.ExecutionPolicy.SamplingResidency
                                 .DEVICE;
         while (pos < actualMaxTokens && generatedTokens.size() < generatedTokenBudget) {
             Logits logits =
                     batched
-                            ? org.beehive.gpullama3.backend.tornado.TornadoBatchPrefillPass.decode(
+                            ? org.beehive.jllm.backend.tornado.TornadoBatchPrefillPass.decode(
                                     model,
                                     state,
                                     currentToken,
                                     pos,
-                                    (org.beehive.gpullama3.backend.tornado
+                                    (org.beehive.jllm.backend.tornado
                                                     .TornadoVMMasterPlanBatchPrefillDecode)
                                             tornadoVMPlan)
-                            : org.beehive.gpullama3.backend.tornado.TornadoForwardPass.forward(
+                            : org.beehive.jllm.backend.tornado.TornadoForwardPass.forward(
                                     model, state, currentToken, pos, tornadoVMPlan);
             int nextToken = sampleTokenGpu(state, sampler, logits, null, deviceSample);
 
@@ -982,7 +982,7 @@ public final class TokenGenerationLoop {
         // the CLI clear the property before the layer class could load.
         boolean deviceSample =
                 state.executionPolicy().samplingResidency()
-                        == org.beehive.gpullama3.runtime.policy.ExecutionPolicy.SamplingResidency
+                        == org.beehive.jllm.runtime.policy.ExecutionPolicy.SamplingResidency
                                 .DEVICE;
 
         // Main generation loop
@@ -990,7 +990,7 @@ public final class TokenGenerationLoop {
             // GPU Forward Pass - No conditional check since we know we're using GPU
             // System.out.println("currentToken: " + currentToken);
             Logits logits =
-                    org.beehive.gpullama3.backend.tornado.TornadoForwardPass.forward(
+                    org.beehive.jllm.backend.tornado.TornadoForwardPass.forward(
                             model, state, currentToken, pos, tornadoVMPlan);
 
             // Process prompt tokens if still remaining
@@ -1112,16 +1112,16 @@ public final class TokenGenerationLoop {
         var boundary =
                 tornadoVMPlan
                                 instanceof
-                                org.beehive.gpullama3.backend.tornado.lowering.InvocationBoundary b
+                                org.beehive.jllm.backend.tornado.lowering.InvocationBoundary b
                         ? b
                         : null;
-        org.beehive.gpullama3.backend.tornado.lowering.InvocationBoundary.Result lastResult = null;
+        org.beehive.jllm.backend.tornado.lowering.InvocationBoundary.Result lastResult = null;
         Logits lastLogits = null;
 
         // Resolved once for the whole generation, never per token.
         boolean deviceSample =
                 state.executionPolicy().samplingResidency()
-                        == org.beehive.gpullama3.runtime.policy.ExecutionPolicy.SamplingResidency
+                        == org.beehive.jllm.runtime.policy.ExecutionPolicy.SamplingResidency
                                 .DEVICE;
 
         for (int position = startPosition; position < maxTokens; ++position) {
@@ -1137,7 +1137,7 @@ public final class TokenGenerationLoop {
                     lastLogits = lastResult.logits();
                 } else {
                     lastLogits =
-                            org.beehive.gpullama3.backend.tornado.TornadoForwardPass.forward(
+                            org.beehive.jllm.backend.tornado.TornadoForwardPass.forward(
                                     model, state, token, position, tornadoVMPlan);
                 }
 
@@ -1166,7 +1166,7 @@ public final class TokenGenerationLoop {
                     lastLogits = lastResult.logits();
                 } else {
                     lastLogits =
-                            org.beehive.gpullama3.backend.tornado.TornadoForwardPass.forward(
+                            org.beehive.jllm.backend.tornado.TornadoForwardPass.forward(
                                     model, state, currentToken, position, tornadoVMPlan);
                 }
             }
@@ -1246,7 +1246,7 @@ public final class TokenGenerationLoop {
         while (pos < maxTokens) {
             // GPU Forward Pass
             Logits logits =
-                    org.beehive.gpullama3.backend.tornado.TornadoForwardPass.forward(
+                    org.beehive.jllm.backend.tornado.TornadoForwardPass.forward(
                             model, state, currentToken, pos, tornadoVMPlan);
 
             // Handle token processing
@@ -1423,7 +1423,7 @@ public final class TokenGenerationLoop {
         while (pos < maxTokens) {
             // Call TornadoVM forward pass (same as Llama for now)
             logits =
-                    org.beehive.gpullama3.backend.tornado.TornadoForwardPass.forward(
+                    org.beehive.jllm.backend.tornado.TornadoForwardPass.forward(
                             model, state, currentToken, pos, tornadoVMMasterPlan);
 
             if (promptIndex < promptTokens.size()) {

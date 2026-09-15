@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.inference;
+package org.beehive.jllm.inference;
 
-import org.beehive.gpullama3.tensor.standard.FloatTensor;
+import org.beehive.jllm.tensor.standard.FloatTensor;
 
 /**
  * The scores a sampler reads — indexed floats, and nothing else.

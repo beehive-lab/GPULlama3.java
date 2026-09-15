@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.model.qwen2;
+package org.beehive.jllm.model.qwen2;
 
-import org.beehive.gpullama3.model.Configuration;
+import org.beehive.jllm.model.Configuration;
 
 public record Qwen2MoEConfiguration(String quantization,
                                     int dim,

@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -100,10 +100,10 @@ public class FacadeSurfaceTest {
                 builderMethods);
 
         assertEquals(
-                org.beehive.gpullama3.runtime.backend.BackendId.class,
+                org.beehive.jllm.runtime.backend.BackendId.class,
                 parameterTypeOf(ModelOptions.Builder.class, "backend"));
         assertEquals(
-                org.beehive.gpullama3.runtime.backend.DeviceSelector.class,
+                org.beehive.jllm.runtime.backend.DeviceSelector.class,
                 parameterTypeOf(ModelOptions.Builder.class, "device"));
     }
 

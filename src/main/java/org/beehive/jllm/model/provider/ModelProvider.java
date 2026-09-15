@@ -1,10 +1,10 @@
-package org.beehive.gpullama3.model.provider;
+package org.beehive.jllm.model.provider;
 
 import java.io.IOException;
-import org.beehive.gpullama3.format.ModelSource;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.runtime.backend.BackendId;
-import org.beehive.gpullama3.runtime.model.ArchitectureId;
+import org.beehive.jllm.format.ModelSource;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.runtime.backend.BackendId;
+import org.beehive.jllm.runtime.model.ArchitectureId;
 
 /**
  * Recognizes a model source and loads it.

@@ -1,17 +1,17 @@
-package org.beehive.gpullama3.backend.tornado.memory;
+package org.beehive.jllm.backend.tornado.memory;
 
 import java.util.ArrayList;
 import java.util.List;
-import org.beehive.gpullama3.backend.tornado.plan.ExecutionMode;
-import org.beehive.gpullama3.backend.tornado.plan.layout.TornadoGraphTopology;
-import org.beehive.gpullama3.model.Configuration;
-import org.beehive.gpullama3.runtime.backend.BackendId;
-import org.beehive.gpullama3.runtime.backend.Device;
-import org.beehive.gpullama3.runtime.memory.BufferClass;
-import org.beehive.gpullama3.runtime.memory.MemoryComponent;
-import org.beehive.gpullama3.runtime.memory.MemoryPlan;
-import org.beehive.gpullama3.runtime.memory.WeightFootprint;
-import org.beehive.gpullama3.runtime.policy.ExecutionPolicy;
+import org.beehive.jllm.backend.tornado.plan.ExecutionMode;
+import org.beehive.jllm.backend.tornado.plan.layout.TornadoGraphTopology;
+import org.beehive.jllm.model.Configuration;
+import org.beehive.jllm.runtime.backend.BackendId;
+import org.beehive.jllm.runtime.backend.Device;
+import org.beehive.jllm.runtime.memory.BufferClass;
+import org.beehive.jllm.runtime.memory.MemoryComponent;
+import org.beehive.jllm.runtime.memory.MemoryPlan;
+import org.beehive.jllm.runtime.memory.WeightFootprint;
+import org.beehive.jllm.runtime.policy.ExecutionPolicy;
 
 /**
  * The Tornado backend's memory-plan model — <b>the only place that knows what a task graph
@@ -197,7 +197,7 @@ public final class TornadoMemoryModel {
      * disagree about which representation was chosen.
      */
     private static int kvBytesPerElement() {
-        return org.beehive.gpullama3.inference.state.State.USE_FP16_KV ? 2 : 4;
+        return org.beehive.jllm.inference.state.State.USE_FP16_KV ? 2 : 4;
     }
 
     /**

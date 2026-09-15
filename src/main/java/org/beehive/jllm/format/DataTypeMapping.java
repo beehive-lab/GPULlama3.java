@@ -1,7 +1,7 @@
-package org.beehive.gpullama3.format;
+package org.beehive.jllm.format;
 
-import org.beehive.gpullama3.runtime.tensor.DataType;
-import org.beehive.gpullama3.runtime.tensor.ExecutionTarget;
+import org.beehive.jllm.runtime.tensor.DataType;
+import org.beehive.jllm.runtime.tensor.ExecutionTarget;
 
 /**
  * The one place that says what a file's tensor becomes when it is loaded.

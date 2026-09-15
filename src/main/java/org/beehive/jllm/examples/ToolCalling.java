@@ -1,20 +1,20 @@
-package org.beehive.gpullama3.examples;
+package org.beehive.jllm.examples;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import org.beehive.gpullama3.api.ChatContent;
-import org.beehive.gpullama3.api.ChatMessage;
-import org.beehive.gpullama3.api.ChatRole;
-import org.beehive.gpullama3.api.FinishReason;
-import org.beehive.gpullama3.api.GenerationRequest;
-import org.beehive.gpullama3.api.GenerationResult;
-import org.beehive.gpullama3.api.GenerationSession;
-import org.beehive.gpullama3.api.LocalModel;
-import org.beehive.gpullama3.api.LocalModels;
-import org.beehive.gpullama3.api.ModelOptions;
-import org.beehive.gpullama3.api.TextGenerationModel;
-import org.beehive.gpullama3.api.ToolSpec;
+import org.beehive.jllm.api.ChatContent;
+import org.beehive.jllm.api.ChatMessage;
+import org.beehive.jllm.api.ChatRole;
+import org.beehive.jllm.api.FinishReason;
+import org.beehive.jllm.api.GenerationRequest;
+import org.beehive.jllm.api.GenerationResult;
+import org.beehive.jllm.api.GenerationSession;
+import org.beehive.jllm.api.LocalModel;
+import org.beehive.jllm.api.LocalModels;
+import org.beehive.jllm.api.ModelOptions;
+import org.beehive.jllm.api.TextGenerationModel;
+import org.beehive.jllm.api.ToolSpec;
 
 /**
  * A full tool round-trip: describe a tool, let the model call it, run it, hand back the result.

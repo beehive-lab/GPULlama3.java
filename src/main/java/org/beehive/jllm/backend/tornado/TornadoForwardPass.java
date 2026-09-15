@@ -1,11 +1,11 @@
-package org.beehive.gpullama3.backend.tornado;
+package org.beehive.jllm.backend.tornado;
 
 import java.lang.foreign.MemorySegment;
-import org.beehive.gpullama3.inference.Logits;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.inference.weights.tornado.TornadoWeights;
-import org.beehive.gpullama3.model.Configuration;
-import org.beehive.gpullama3.model.Model;
+import org.beehive.jllm.inference.Logits;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.inference.weights.tornado.TornadoWeights;
+import org.beehive.jllm.model.Configuration;
+import org.beehive.jllm.model.Model;
 
 /**
  * The accelerated forward pass: stage the token's embedding, then run the plan.
@@ -46,7 +46,7 @@ public final class TornadoForwardPass {
             TornadoVMMasterPlan tornadoVMMasterPlan) {
         if (tornadoVMMasterPlan
                 instanceof
-                org.beehive.gpullama3.backend.tornado.lowering.InvocationBoundary boundary) {
+                org.beehive.jllm.backend.tornado.lowering.InvocationBoundary boundary) {
             return boundary.invoke(token, position).logits();
         }
 

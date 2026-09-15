@@ -1,14 +1,14 @@
-package org.beehive.gpullama3.backend.tornado;
+package org.beehive.jllm.backend.tornado;
 
-import org.beehive.gpullama3.auxiliary.RunMetrics;
-import org.beehive.gpullama3.backend.tornado.plan.ForwardPlanFactory;
-import org.beehive.gpullama3.backend.tornado.plan.SingleTokenForwardPlan;
-import org.beehive.gpullama3.backend.tornado.plan.layout.SingleTokenForwardTaskGraphLayout;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.Configuration;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.runtime.metrics.MetricsSink;
-import org.beehive.gpullama3.runtime.tensor.DataType;
+import org.beehive.jllm.auxiliary.RunMetrics;
+import org.beehive.jllm.backend.tornado.plan.ForwardPlanFactory;
+import org.beehive.jllm.backend.tornado.plan.SingleTokenForwardPlan;
+import org.beehive.jllm.backend.tornado.plan.layout.SingleTokenForwardTaskGraphLayout;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.Configuration;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.runtime.metrics.MetricsSink;
+import org.beehive.jllm.runtime.tensor.DataType;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TornadoExecutionPlan;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;

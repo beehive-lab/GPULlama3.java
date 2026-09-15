@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.backend.tornado.bench;
+package org.beehive.jllm.backend.tornado.bench;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;

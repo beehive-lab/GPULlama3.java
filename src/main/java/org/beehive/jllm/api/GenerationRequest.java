@@ -1,8 +1,8 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
 import java.util.List;
 import java.util.function.Consumer;
-import org.beehive.gpullama3.runtime.diagnostics.DiagnosticCode;
+import org.beehive.jllm.runtime.diagnostics.DiagnosticCode;
 
 /**
  * What to generate, and how.

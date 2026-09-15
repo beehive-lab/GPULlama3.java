@@ -1,17 +1,17 @@
-package org.beehive.gpullama3.backend.tornado.layers.type.fp16;
+package org.beehive.jllm.backend.tornado.layers.type.fp16;
 
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
 
 import java.nio.file.Path;
-import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerDetectionService;
-import org.beehive.gpullama3.golden.GoldenFixture;
-import org.beehive.gpullama3.golden.GoldenFixture.Fixture;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.llama.LlamaConfiguration;
-import org.beehive.gpullama3.model.loader.ModelLoader;
+import org.beehive.jllm.backend.tornado.scheduling.SchedulerDetectionService;
+import org.beehive.jllm.golden.GoldenFixture;
+import org.beehive.jllm.golden.GoldenFixture.Fixture;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.inference.weights.tornado.LlamaTornadoWeights;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.llama.LlamaConfiguration;
+import org.beehive.jllm.model.loader.ModelLoader;
 import org.junit.Test;
 
 /**

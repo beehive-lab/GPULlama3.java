@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.generation;
+package org.beehive.jllm.generation;
 
-import static org.beehive.gpullama3.LlamaApp.SHOW_PERF_INTERACTIVE;
+import static org.beehive.jllm.LlamaApp.SHOW_PERF_INTERACTIVE;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -8,14 +8,14 @@ import java.util.Scanner;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
-import org.beehive.gpullama3.Options;
-import org.beehive.gpullama3.auxiliary.RunMetrics;
-import org.beehive.gpullama3.auxiliary.metrics.RunMetricsSink;
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
-import org.beehive.gpullama3.inference.sampler.Sampler;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.format.ChatFormat;
+import org.beehive.jllm.Options;
+import org.beehive.jllm.auxiliary.RunMetrics;
+import org.beehive.jllm.auxiliary.metrics.RunMetricsSink;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlan;
+import org.beehive.jllm.inference.sampler.Sampler;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.format.ChatFormat;
 
 /**
  * The generation loops that used to live on {@code Model} as default methods.

@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.backend.tornado.lowering;
+package org.beehive.jllm.backend.tornado.lowering;
 
-import org.beehive.gpullama3.runtime.diagnostics.DiagnosticCode;
+import org.beehive.jllm.runtime.diagnostics.DiagnosticCode;
 
 /**
  * Thrown when {@code llama.lowering=on} names a combination that has no lowered implementation

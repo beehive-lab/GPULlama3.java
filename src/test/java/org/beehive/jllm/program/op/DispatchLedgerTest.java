@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.program.op;
+package org.beehive.jllm.program.op;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
@@ -27,7 +27,7 @@ import org.junit.Test;
 public class DispatchLedgerTest {
 
     private static final Path TORNADO =
-            Path.of("src/main/java/org/beehive/gpullama3/backend/tornado");
+            Path.of("src/main/java/org/beehive/jllm/backend/tornado");
 
     /** The two representation-specific subtrees: layer implementations and plan components. */
     private static final List<Path> DISPATCH_ROOTS =
@@ -108,7 +108,7 @@ public class DispatchLedgerTest {
     @Test
     public void theOperationDispatchSurfaceObeysTheBound() {
         Map<String, Integer> census =
-                countPerFamilyAndDataType(Path.of("src/main/java/org/beehive/gpullama3/backend"));
+                countPerFamilyAndDataType(Path.of("src/main/java/org/beehive/jllm/backend"));
         List<String> over = overBound(census, K);
         assertTrue("operation dispatch over the k=" + K + " bound: " + over, over.isEmpty());
     }

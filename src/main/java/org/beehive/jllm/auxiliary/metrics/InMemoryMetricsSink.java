@@ -1,10 +1,10 @@
-package org.beehive.gpullama3.auxiliary.metrics;
+package org.beehive.jllm.auxiliary.metrics;
 
 import java.util.EnumMap;
 import java.util.Map;
-import org.beehive.gpullama3.runtime.metrics.MetricKey;
-import org.beehive.gpullama3.runtime.metrics.MetricsReport;
-import org.beehive.gpullama3.runtime.metrics.MetricsSink;
+import org.beehive.jllm.runtime.metrics.MetricKey;
+import org.beehive.jllm.runtime.metrics.MetricsReport;
+import org.beehive.jllm.runtime.metrics.MetricsSink;
 
 /**
  * The sink for a caller that wants the numbers rather than a printout: it accumulates what it is

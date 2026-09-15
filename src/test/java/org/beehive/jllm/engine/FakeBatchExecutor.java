@@ -1,9 +1,9 @@
-package org.beehive.gpullama3.engine;
+package org.beehive.jllm.engine;
 
 import java.util.ArrayList;
 import java.util.List;
-import org.beehive.gpullama3.runtime.batch.BatchExecutor;
-import org.beehive.gpullama3.runtime.batch.BatchSlots;
+import org.beehive.jllm.runtime.batch.BatchExecutor;
+import org.beehive.jllm.runtime.batch.BatchSlots;
 
 /**
  * A backend that produces tokens without a device, so the engine's whole contract is testable.

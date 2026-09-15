@@ -1,22 +1,22 @@
-package org.beehive.gpullama3.backend.tornado.lowering;
+package org.beehive.jllm.backend.tornado.lowering;
 
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
-import org.beehive.gpullama3.backend.tornado.plan.ExecutionMode;
-import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerDetectionService;
-import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerType;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.architecture.ArchitectureInputs;
-import org.beehive.gpullama3.model.architecture.ModelArchitecture;
-import org.beehive.gpullama3.model.architecture.ModelArchitectures;
-import org.beehive.gpullama3.program.InferenceProgram;
-import org.beehive.gpullama3.runtime.backend.CompileOptions;
-import org.beehive.gpullama3.runtime.backend.DeviceCapabilities;
-import org.beehive.gpullama3.runtime.backend.DeviceCapability;
-import org.beehive.gpullama3.runtime.metrics.MetricsSink;
-import org.beehive.gpullama3.runtime.policy.ExecutionPolicy;
-import org.beehive.gpullama3.runtime.policy.ExecutionPolicy.SamplingResidency;
-import org.beehive.gpullama3.runtime.tensor.DataType;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlan;
+import org.beehive.jllm.backend.tornado.plan.ExecutionMode;
+import org.beehive.jllm.backend.tornado.scheduling.SchedulerDetectionService;
+import org.beehive.jllm.backend.tornado.scheduling.SchedulerType;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.architecture.ArchitectureInputs;
+import org.beehive.jllm.model.architecture.ModelArchitecture;
+import org.beehive.jllm.model.architecture.ModelArchitectures;
+import org.beehive.jllm.program.InferenceProgram;
+import org.beehive.jllm.runtime.backend.CompileOptions;
+import org.beehive.jllm.runtime.backend.DeviceCapabilities;
+import org.beehive.jllm.runtime.backend.DeviceCapability;
+import org.beehive.jllm.runtime.metrics.MetricsSink;
+import org.beehive.jllm.runtime.policy.ExecutionPolicy;
+import org.beehive.jllm.runtime.policy.ExecutionPolicy.SamplingResidency;
+import org.beehive.jllm.runtime.tensor.DataType;
 
 /**
  * The one internal branch that decides whether a session's plan comes from the lowering or from the
@@ -217,7 +217,7 @@ public final class LoweredPlanSelection {
             BindingDomain domain,
             ExecutionPolicy policy,
             DataType keyValueRepresentation) {
-        var device = org.beehive.gpullama3.backend.tornado.device.TornadoDevices.current();
+        var device = org.beehive.jllm.backend.tornado.device.TornadoDevices.current();
         return ProgramCacheKey.of(
                 describe(model, policy, keyValueRepresentation).signature(),
                 device.backend(),
@@ -312,6 +312,6 @@ public final class LoweredPlanSelection {
      * silently invalidate nothing while keying everything differently.
      */
     private static String deviceLabel() {
-        return org.beehive.gpullama3.backend.tornado.device.TornadoDevices.current().displayName();
+        return org.beehive.jllm.backend.tornado.device.TornadoDevices.current().displayName();
     }
 }

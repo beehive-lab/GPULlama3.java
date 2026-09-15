@@ -1,7 +1,7 @@
-package org.beehive.gpullama3.backend.tornado.bench;
+package org.beehive.jllm.backend.tornado.bench;
 
 import java.util.Random;
-import org.beehive.gpullama3.backend.tornado.kernels.TransformerBatchPrefillKernels;
+import org.beehive.jllm.backend.tornado.kernels.TransformerBatchPrefillKernels;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.TaskGraph;

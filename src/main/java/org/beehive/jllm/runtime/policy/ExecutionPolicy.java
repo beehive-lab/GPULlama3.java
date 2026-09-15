@@ -1,8 +1,8 @@
-package org.beehive.gpullama3.runtime.policy;
+package org.beehive.jllm.runtime.policy;
 
 import java.util.Objects;
 import java.util.OptionalInt;
-import org.beehive.gpullama3.api.Experimental;
+import org.beehive.jllm.api.Experimental;
 
 /**
  * How a session executes: the choices that select <b>which components run and how</b>.

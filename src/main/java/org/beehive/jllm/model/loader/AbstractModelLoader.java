@@ -1,21 +1,21 @@
-package org.beehive.gpullama3.model.loader;
+package org.beehive.jllm.model.loader;
 
 import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.util.Map;
-import org.beehive.gpullama3.auxiliary.Pair;
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
-import org.beehive.gpullama3.format.DataTypeMapping;
-import org.beehive.gpullama3.format.GGMLTensorEntry;
-import org.beehive.gpullama3.format.GGMLType;
-import org.beehive.gpullama3.format.GGUF;
-import org.beehive.gpullama3.inference.weights.Weights;
-import org.beehive.gpullama3.model.Configuration;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.runtime.diagnostics.DiagnosticCode;
-import org.beehive.gpullama3.runtime.tensor.ExecutionTarget;
-import org.beehive.gpullama3.tokenizer.Tokenizer;
-import org.beehive.gpullama3.tokenizer.Vocabulary;
+import org.beehive.jllm.auxiliary.Pair;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlan;
+import org.beehive.jllm.format.DataTypeMapping;
+import org.beehive.jllm.format.GGMLTensorEntry;
+import org.beehive.jllm.format.GGMLType;
+import org.beehive.jllm.format.GGUF;
+import org.beehive.jllm.inference.weights.Weights;
+import org.beehive.jllm.model.Configuration;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.runtime.diagnostics.DiagnosticCode;
+import org.beehive.jllm.runtime.tensor.ExecutionTarget;
+import org.beehive.jllm.tokenizer.Tokenizer;
+import org.beehive.jllm.tokenizer.Vocabulary;
 
 /**
  * Abstract base class for model loaders using Template Method pattern. Provides common loading flow
@@ -141,7 +141,7 @@ public abstract class AbstractModelLoader<M extends Model, C extends Configurati
                                 fileChannel,
                                 gguf.getTensorDataOffset(),
                                 gguf.getTensorInfos(),
-                                org.beehive.gpullama3.backend.tornado.device.TornadoDevices
+                                org.beehive.jllm.backend.tornado.device.TornadoDevices
                                         .current());
             } else {
                 tensorEntries =

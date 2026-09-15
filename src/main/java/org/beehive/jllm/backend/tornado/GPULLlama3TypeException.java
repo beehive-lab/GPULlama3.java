@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.backend.tornado;
+package org.beehive.jllm.backend.tornado;
 
 public class GPULLlama3TypeException extends IllegalArgumentException {
     public GPULLlama3TypeException(String message) {

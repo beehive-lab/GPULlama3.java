@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.model.format;
+package org.beehive.jllm.model.format;
 
 import java.util.Optional;
 

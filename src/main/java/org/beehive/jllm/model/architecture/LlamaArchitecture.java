@@ -1,12 +1,12 @@
-package org.beehive.gpullama3.model.architecture;
+package org.beehive.jllm.model.architecture;
 
 import java.util.EnumSet;
 import java.util.Set;
-import org.beehive.gpullama3.model.Configuration;
-import org.beehive.gpullama3.model.llama.LlamaConfiguration;
-import org.beehive.gpullama3.program.InferenceProgram;
-import org.beehive.gpullama3.program.PhaseId;
-import org.beehive.gpullama3.runtime.model.ArchitectureId;
+import org.beehive.jllm.model.Configuration;
+import org.beehive.jllm.model.llama.LlamaConfiguration;
+import org.beehive.jllm.program.InferenceProgram;
+import org.beehive.jllm.program.PhaseId;
+import org.beehive.jllm.runtime.model.ArchitectureId;
 
 /**
  * Llama's computation.

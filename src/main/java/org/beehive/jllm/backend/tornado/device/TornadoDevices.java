@@ -1,13 +1,13 @@
-package org.beehive.gpullama3.backend.tornado.device;
+package org.beehive.jllm.backend.tornado.device;
 
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
-import org.beehive.gpullama3.runtime.backend.BackendId;
-import org.beehive.gpullama3.runtime.backend.Device;
-import org.beehive.gpullama3.runtime.backend.DeviceCapabilities;
-import org.beehive.gpullama3.runtime.backend.DeviceCapability;
-import org.beehive.gpullama3.runtime.backend.DeviceId;
+import org.beehive.jllm.runtime.backend.BackendId;
+import org.beehive.jllm.runtime.backend.Device;
+import org.beehive.jllm.runtime.backend.DeviceCapabilities;
+import org.beehive.jllm.runtime.backend.DeviceCapability;
+import org.beehive.jllm.runtime.backend.DeviceId;
 import uk.ac.manchester.tornado.api.enums.TornadoVMBackendType;
 import uk.ac.manchester.tornado.api.runtime.TornadoRuntimeProvider;
 import uk.ac.manchester.tornado.api.types.arrays.TornadoNativeArray;

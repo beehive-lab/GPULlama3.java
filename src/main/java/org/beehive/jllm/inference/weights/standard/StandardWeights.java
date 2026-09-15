@@ -1,8 +1,8 @@
-package org.beehive.gpullama3.inference.weights.standard;
+package org.beehive.jllm.inference.weights.standard;
 
-import org.beehive.gpullama3.inference.weights.Weights;
-import org.beehive.gpullama3.runtime.tensor.DataType;
-import org.beehive.gpullama3.tensor.standard.FloatTensor;
+import org.beehive.jllm.inference.weights.Weights;
+import org.beehive.jllm.runtime.tensor.DataType;
+import org.beehive.jllm.tensor.standard.FloatTensor;
 
 /**
  * Base class that represents the standard weight format used for Java-based CPU inference. This

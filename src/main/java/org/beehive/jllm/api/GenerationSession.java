@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
 /**
  * One sequence: a conversation, a completion, one thread's worth of work.

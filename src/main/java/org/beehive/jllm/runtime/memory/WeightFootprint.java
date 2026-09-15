@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.runtime.memory;
+package org.beehive.jllm.runtime.memory;
 
-import org.beehive.gpullama3.api.Experimental;
+import org.beehive.jllm.api.Experimental;
 
 /**
  * How much storage a model's weights need, split by whether a layer binds them.

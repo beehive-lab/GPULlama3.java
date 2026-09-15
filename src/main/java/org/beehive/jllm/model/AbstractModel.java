@@ -1,8 +1,8 @@
-package org.beehive.gpullama3.model;
+package org.beehive.jllm.model;
 
-import org.beehive.gpullama3.inference.weights.Weights;
-import org.beehive.gpullama3.model.format.ChatFormat;
-import org.beehive.gpullama3.tokenizer.Tokenizer;
+import org.beehive.jllm.inference.weights.Weights;
+import org.beehive.jllm.model.format.ChatFormat;
+import org.beehive.jllm.tokenizer.Tokenizer;
 
 public abstract class AbstractModel implements Model {
 

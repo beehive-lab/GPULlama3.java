@@ -1,20 +1,20 @@
-package org.beehive.gpullama3.model.mistral;
+package org.beehive.jllm.model.mistral;
 
 import java.util.List;
 import java.util.Set;
 import java.util.function.IntConsumer;
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
-import org.beehive.gpullama3.inference.TokenGenerationLoop;
-import org.beehive.gpullama3.inference.sampler.Sampler;
-import org.beehive.gpullama3.inference.state.LlamaState;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.inference.weights.Weights;
-import org.beehive.gpullama3.model.AbstractModel;
-import org.beehive.gpullama3.model.ModelType;
-import org.beehive.gpullama3.model.format.ChatFormat;
-import org.beehive.gpullama3.runtime.policy.ExecutionPolicy.PhaseStrategy;
-import org.beehive.gpullama3.tokenizer.MistralTokenizer;
-import org.beehive.gpullama3.tokenizer.Tokenizer;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlan;
+import org.beehive.jllm.inference.TokenGenerationLoop;
+import org.beehive.jllm.inference.sampler.Sampler;
+import org.beehive.jllm.inference.state.LlamaState;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.inference.weights.Weights;
+import org.beehive.jllm.model.AbstractModel;
+import org.beehive.jllm.model.ModelType;
+import org.beehive.jllm.model.format.ChatFormat;
+import org.beehive.jllm.runtime.policy.ExecutionPolicy.PhaseStrategy;
+import org.beehive.jllm.tokenizer.MistralTokenizer;
+import org.beehive.jllm.tokenizer.Tokenizer;
 
 public class Mistral extends AbstractModel {
 
@@ -128,7 +128,7 @@ public class Mistral extends AbstractModel {
 
     /** A state whose KV lives in the lease's shared storage. */
     @Override
-    public State createNewState(org.beehive.gpullama3.runtime.kv.KvLease lease) {
+    public State createNewState(org.beehive.jllm.runtime.kv.KvLease lease) {
         if (lease == null || lease.storage() == null) {
             return createNewState();
         }
@@ -139,7 +139,7 @@ public class Mistral extends AbstractModel {
 
     /** Its own identity, stated rather than derived. */
     @Override
-    public org.beehive.gpullama3.runtime.model.ArchitectureId architectureId() {
-        return org.beehive.gpullama3.runtime.model.ArchitectureId.of("mistral");
+    public org.beehive.jllm.runtime.model.ArchitectureId architectureId() {
+        return org.beehive.jllm.runtime.model.ArchitectureId.of("mistral");
     }
 }

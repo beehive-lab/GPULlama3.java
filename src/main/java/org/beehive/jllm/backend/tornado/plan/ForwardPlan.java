@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.backend.tornado.plan;
+package org.beehive.jllm.backend.tornado.plan;
 
 import java.util.List;
 import uk.ac.manchester.tornado.api.GridScheduler;

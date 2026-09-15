@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.server;
+package org.beehive.jllm.server;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;

@@ -1,11 +1,11 @@
-package org.beehive.gpullama3.golden;
+package org.beehive.jllm.golden;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.format.ChatFormat;
-import org.beehive.gpullama3.model.loader.ModelLoader;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.format.ChatFormat;
+import org.beehive.jllm.model.loader.ModelLoader;
 
 /**
  * Diagnostic: prompt token count, to build prompts whose length is an exact multiple of a chunk.

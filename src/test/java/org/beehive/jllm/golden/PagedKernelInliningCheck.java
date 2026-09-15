@@ -1,13 +1,13 @@
-package org.beehive.gpullama3.golden;
+package org.beehive.jllm.golden;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import org.beehive.gpullama3.backend.tornado.plan.ForwardPlanFactory;
-import org.beehive.gpullama3.backend.tornado.plan.SingleTokenForwardPlan;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.loader.ModelLoader;
+import org.beehive.jllm.backend.tornado.plan.ForwardPlanFactory;
+import org.beehive.jllm.backend.tornado.plan.SingleTokenForwardPlan;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.loader.ModelLoader;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TornadoExecutionPlan;
 import uk.ac.manchester.tornado.api.enums.ProfilerMode;

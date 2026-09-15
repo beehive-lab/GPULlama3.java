@@ -1,20 +1,20 @@
-package org.beehive.gpullama3.server;
+package org.beehive.jllm.server;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
-import org.beehive.gpullama3.backend.tornado.batch.TornadoBatchExecutor;
-import org.beehive.gpullama3.engine.LLMEngine;
-import org.beehive.gpullama3.engine.RequestHandle;
-import org.beehive.gpullama3.engine.RequestState;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.format.ChatFormat;
-import org.beehive.gpullama3.runtime.kv.KvCacheManager;
-import org.beehive.gpullama3.runtime.kv.KvLease;
-import org.beehive.gpullama3.runtime.kv.KvStorage;
-import org.beehive.gpullama3.runtime.kv.KvStorageFactories;
-import org.beehive.gpullama3.runtime.kv.KvStorageRequest;
+import org.beehive.jllm.backend.tornado.batch.TornadoBatchExecutor;
+import org.beehive.jllm.engine.LLMEngine;
+import org.beehive.jllm.engine.RequestHandle;
+import org.beehive.jllm.engine.RequestState;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.format.ChatFormat;
+import org.beehive.jllm.runtime.kv.KvCacheManager;
+import org.beehive.jllm.runtime.kv.KvLease;
+import org.beehive.jllm.runtime.kv.KvStorage;
+import org.beehive.jllm.runtime.kv.KvStorageFactories;
+import org.beehive.jllm.runtime.kv.KvStorageRequest;
 
 /**
  * The server's inference path, on the engine: several conversations decode in one batch instead of
@@ -104,7 +104,7 @@ public final class EngineInferenceService implements AutoCloseable {
                         executor,
                         batchSize,
                         maxQueuedRequests,
-                        org.beehive.gpullama3.auxiliary.metrics.RunMetricsSink
+                        org.beehive.jllm.auxiliary.metrics.RunMetricsSink
                                 .installedOrDisabled());
 
         this.driver = new Thread(this::drive, "engine-step");
@@ -181,10 +181,10 @@ public final class EngineInferenceService implements AutoCloseable {
      * template. Only text turns reach this server, so only text is translated.
      */
     private static ChatFormat.Message asFormatMessage(
-            org.beehive.gpullama3.api.ChatMessage message) {
+            org.beehive.jllm.api.ChatMessage message) {
         StringBuilder text = new StringBuilder();
-        for (org.beehive.gpullama3.api.ChatContent piece : message.content()) {
-            if (piece instanceof org.beehive.gpullama3.api.ChatContent.Text t) {
+        for (org.beehive.jllm.api.ChatContent piece : message.content()) {
+            if (piece instanceof org.beehive.jllm.api.ChatContent.Text t) {
                 text.append(t.text());
             }
         }
@@ -199,7 +199,7 @@ public final class EngineInferenceService implements AutoCloseable {
         if (model.shouldAddBeginOfText()) {
             tokens.add(chatFormat.getBeginOfText());
         }
-        for (org.beehive.gpullama3.api.ChatMessage message : request.messages()) {
+        for (org.beehive.jllm.api.ChatMessage message : request.messages()) {
             tokens.addAll(chatFormat.encodeMessage(asFormatMessage(message)));
         }
         tokens.addAll(

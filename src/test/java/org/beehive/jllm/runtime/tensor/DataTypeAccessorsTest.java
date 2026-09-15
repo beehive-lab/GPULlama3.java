@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.runtime.tensor;
+package org.beehive.jllm.runtime.tensor;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertSame;
@@ -6,9 +6,9 @@ import static org.junit.Assert.assertTrue;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.reflect.Method;
-import org.beehive.gpullama3.backend.tornado.tensor.Q8_0TornadoTensor;
-import org.beehive.gpullama3.format.GGMLType;
-import org.beehive.gpullama3.tensor.standard.Q8_0FloatTensor;
+import org.beehive.jllm.backend.tornado.tensor.Q8_0TornadoTensor;
+import org.beehive.jllm.format.GGMLType;
+import org.beehive.jllm.tensor.standard.Q8_0FloatTensor;
 import org.junit.Test;
 import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 
@@ -33,8 +33,8 @@ public class DataTypeAccessorsTest {
 
     @Test
     public void theFileTypeAccessorsThatRemainAreDeprecated() throws Exception {
-        assertDeprecated(org.beehive.gpullama3.backend.tornado.tensor.TornadoTensor.class, "type");
-        assertDeprecated(org.beehive.gpullama3.model.Configuration.class, "quantization");
+        assertDeprecated(org.beehive.jllm.backend.tornado.tensor.TornadoTensor.class, "type");
+        assertDeprecated(org.beehive.jllm.model.Configuration.class, "quantization");
     }
 
     private static void assertDeprecated(Class<?> type, String methodName) throws Exception {
@@ -54,9 +54,9 @@ public class DataTypeAccessorsTest {
         assertSame(DataType.Q8_0, configurationReporting("Q8_0").activationType());
     }
 
-    private static org.beehive.gpullama3.model.Configuration configurationReporting(
+    private static org.beehive.jllm.model.Configuration configurationReporting(
             String quantization) {
-        return new org.beehive.gpullama3.model.Configuration() {
+        return new org.beehive.jllm.model.Configuration() {
             @Override
             public String quantization() {
                 return quantization;

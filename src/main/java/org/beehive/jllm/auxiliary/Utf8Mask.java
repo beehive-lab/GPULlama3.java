@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.auxiliary;
+package org.beehive.jllm.auxiliary;
 
 /** mask of a byte-sequence in UTF-8 encoding */
 public record Utf8Mask(int mask, int pattern, int len) {

@@ -1,19 +1,19 @@
-package org.beehive.gpullama3.backend.tornado.lowering;
+package org.beehive.jllm.backend.tornado.lowering;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
 
 import java.nio.file.Path;
-import org.beehive.gpullama3.api.GenerationRequest;
-import org.beehive.gpullama3.api.GenerationResult;
-import org.beehive.gpullama3.api.GenerationSession;
-import org.beehive.gpullama3.api.LocalModel;
-import org.beehive.gpullama3.api.LocalModels;
-import org.beehive.gpullama3.api.ModelOptions;
-import org.beehive.gpullama3.api.TextGenerationModel;
-import org.beehive.gpullama3.golden.GoldenFixture;
-import org.beehive.gpullama3.golden.GoldenFixture.Fixture;
+import org.beehive.jllm.api.GenerationRequest;
+import org.beehive.jllm.api.GenerationResult;
+import org.beehive.jllm.api.GenerationSession;
+import org.beehive.jllm.api.LocalModel;
+import org.beehive.jllm.api.LocalModels;
+import org.beehive.jllm.api.ModelOptions;
+import org.beehive.jllm.api.TextGenerationModel;
+import org.beehive.jllm.golden.GoldenFixture;
+import org.beehive.jllm.golden.GoldenFixture.Fixture;
 import org.junit.Test;
 
 /**

@@ -1,10 +1,10 @@
-package org.beehive.gpullama3.golden;
+package org.beehive.jllm.golden;
 
 import java.nio.file.Path;
-import org.beehive.gpullama3.backend.tornado.bench.BatchDecodeOptions;
-import org.beehive.gpullama3.backend.tornado.bench.BatchedDecodeEngine;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.loader.ModelLoader;
+import org.beehive.jllm.backend.tornado.bench.BatchDecodeOptions;
+import org.beehive.jllm.backend.tornado.bench.BatchedDecodeEngine;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.loader.ModelLoader;
 
 /**
  * Drives #129's own harness, so its numbers can be compared with the promoted path's.

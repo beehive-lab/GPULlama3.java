@@ -1,16 +1,16 @@
-package org.beehive.gpullama3.golden;
+package org.beehive.jllm.golden;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
-import org.beehive.gpullama3.inference.sampler.Sampler;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.format.ChatFormat;
-import org.beehive.gpullama3.model.loader.ModelLoader;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlan;
+import org.beehive.jllm.inference.sampler.Sampler;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.format.ChatFormat;
+import org.beehive.jllm.model.loader.ModelLoader;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
 /**
@@ -61,12 +61,12 @@ public final class DivergenceRate {
             // beyond N are one forward behind. Capturing the reference straight after the first
             // forward would freeze that lag into the reference and report every later iteration as
             // differing (this is the "kvCache=300/300" that looked like a defect and is not one).
-            org.beehive.gpullama3.backend.tornado.TornadoForwardPass.forward(
+            org.beehive.jllm.backend.tornado.TornadoForwardPass.forward(
                     model, state, tok, pos, plan);
 
             float[] ref =
                     snap(
-                            org.beehive.gpullama3.backend.tornado.TornadoForwardPass.forward(
+                            org.beehive.jllm.backend.tornado.TornadoForwardPass.forward(
                                     model, state, tok, pos, plan));
             float[] refKv = snap(state.workspace.wrapKeyCache);
             float[] refX = snap(state.workspace.wrapX);
@@ -84,7 +84,7 @@ public final class DivergenceRate {
             for (int i = 1; i <= iterations; i++) {
                 float[] got =
                         snap(
-                                org.beehive.gpullama3.backend.tornado.TornadoForwardPass.forward(
+                                org.beehive.jllm.backend.tornado.TornadoForwardPass.forward(
                                         model, state, tok, pos, plan));
                 boolean differs = false;
                 for (int j = 0; j < ref.length; j++) {
@@ -157,7 +157,7 @@ public final class DivergenceRate {
         return true;
     }
 
-    private static float[] snap(org.beehive.gpullama3.inference.Logits logits) {
+    private static float[] snap(org.beehive.jllm.inference.Logits logits) {
         float[] out = new float[logits.size()];
         for (int i = 0; i < out.length; i++) {
             out[i] = logits.get(i);

@@ -1,9 +1,9 @@
-package org.beehive.gpullama3.backend.tornado.lowering;
+package org.beehive.jllm.backend.tornado.lowering;
 
 import java.lang.foreign.MemorySegment;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.inference.weights.tornado.TornadoWeights;
-import org.beehive.gpullama3.model.Model;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.inference.weights.tornado.TornadoWeights;
+import org.beehive.jllm.model.Model;
 
 /** Staging one token's embedding into the carrier a compiled program actually reads. */
 public final class EmbeddingStaging {

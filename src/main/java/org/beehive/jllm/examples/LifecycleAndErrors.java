@@ -1,12 +1,12 @@
-package org.beehive.gpullama3.examples;
+package org.beehive.jllm.examples;
 
 import java.nio.file.Path;
-import org.beehive.gpullama3.api.GenerationRequest;
-import org.beehive.gpullama3.api.GenerationSession;
-import org.beehive.gpullama3.api.LocalModel;
-import org.beehive.gpullama3.api.LocalModels;
-import org.beehive.gpullama3.api.ModelOptions;
-import org.beehive.gpullama3.api.TextGenerationModel;
+import org.beehive.jllm.api.GenerationRequest;
+import org.beehive.jllm.api.GenerationSession;
+import org.beehive.jllm.api.LocalModel;
+import org.beehive.jllm.api.LocalModels;
+import org.beehive.jllm.api.ModelOptions;
+import org.beehive.jllm.api.TextGenerationModel;
 
 /**
  * What the API does when you get the order wrong, and how to tell why.

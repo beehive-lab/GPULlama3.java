@@ -1,18 +1,18 @@
-package org.beehive.gpullama3.golden;
+package org.beehive.jllm.golden;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
-import org.beehive.gpullama3.inference.sampler.Sampler;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.inference.weights.standard.StandardWeights;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.format.ChatFormat;
-import org.beehive.gpullama3.model.loader.ModelLoader;
-import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
-import org.beehive.gpullama3.tensor.standard.FloatTensor;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlan;
+import org.beehive.jllm.inference.sampler.Sampler;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.inference.weights.standard.StandardWeights;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.format.ChatFormat;
+import org.beehive.jllm.model.loader.ModelLoader;
+import org.beehive.jllm.tensor.standard.ArrayFloatTensor;
+import org.beehive.jllm.tensor.standard.FloatTensor;
 import uk.ac.manchester.tornado.api.types.HalfFloat;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
@@ -63,7 +63,7 @@ public final class LayerParity {
             gpuModel.generateTokensGPU(
                     gpuState, 0, prompt, Set.of(), prompt.size() + 1, greedy, false, null, plan);
             token = sink.get(0);
-            org.beehive.gpullama3.backend.tornado.TornadoForwardPass.forward(
+            org.beehive.jllm.backend.tornado.TornadoForwardPass.forward(
                     gpuModel, gpuState, token, prompt.size(), plan);
             gpuTemp = snap(gpuState.workspace.temp);
             gpuXb = snapHalf(gpuState.workspace.wrapXbFP16);
@@ -119,7 +119,7 @@ public final class LayerParity {
                 qDim,
                 headSize,
                 cpuModel.configuration()
-                                instanceof org.beehive.gpullama3.model.llama.LlamaConfiguration lc
+                                instanceof org.beehive.jllm.model.llama.LlamaConfiguration lc
                         ? Float.toString(lc.ropeTheta())
                         : "n/a");
         System.out.printf(

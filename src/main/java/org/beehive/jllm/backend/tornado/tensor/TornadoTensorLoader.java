@@ -1,10 +1,10 @@
-package org.beehive.gpullama3.backend.tornado.tensor;
+package org.beehive.jllm.backend.tornado.tensor;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
-import org.beehive.gpullama3.runtime.tensor.LongIndexedTensor;
-import org.beehive.gpullama3.tensor.standard.FloatTensor;
+import org.beehive.jllm.runtime.tensor.LongIndexedTensor;
+import org.beehive.jllm.tensor.standard.FloatTensor;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.TornadoNativeArray;
 

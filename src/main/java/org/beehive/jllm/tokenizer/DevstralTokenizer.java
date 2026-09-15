@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.tokenizer;
+package org.beehive.jllm.tokenizer;
 
-import org.beehive.gpullama3.auxiliary.Pair;
+import org.beehive.jllm.auxiliary.Pair;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;

@@ -1,21 +1,21 @@
-package org.beehive.gpullama3.backend.tornado.bench;
+package org.beehive.jllm.backend.tornado.bench;
 
 import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
 import java.util.List;
-import org.beehive.gpullama3.backend.tornado.kernels.TransformerBatchPrefillKernels;
-import org.beehive.gpullama3.backend.tornado.layers.type.fp16.decode.LlamaFP16LayersBatchDecodeMMA;
-import org.beehive.gpullama3.backend.tornado.layers.type.fp16.decode.Qwen3FP16LayersBatchDecodeMMA;
-import org.beehive.gpullama3.backend.tornado.plan.components.activation.BatchPrefillActivation;
-import org.beehive.gpullama3.inference.state.LlamaState;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
-import org.beehive.gpullama3.inference.weights.tornado.TornadoWeights;
-import org.beehive.gpullama3.model.Configuration;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.format.ChatFormat;
-import org.beehive.gpullama3.model.llama.LlamaConfiguration;
-import org.beehive.gpullama3.model.qwen3.Qwen3Configuration;
+import org.beehive.jllm.backend.tornado.kernels.TransformerBatchPrefillKernels;
+import org.beehive.jllm.backend.tornado.layers.type.fp16.decode.LlamaFP16LayersBatchDecodeMMA;
+import org.beehive.jllm.backend.tornado.layers.type.fp16.decode.Qwen3FP16LayersBatchDecodeMMA;
+import org.beehive.jllm.backend.tornado.plan.components.activation.BatchPrefillActivation;
+import org.beehive.jllm.inference.state.LlamaState;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.inference.weights.tornado.LlamaTornadoWeights;
+import org.beehive.jllm.inference.weights.tornado.TornadoWeights;
+import org.beehive.jllm.model.Configuration;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.format.ChatFormat;
+import org.beehive.jllm.model.llama.LlamaConfiguration;
+import org.beehive.jllm.model.qwen3.Qwen3Configuration;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.KernelContext;
@@ -260,9 +260,9 @@ public class BatchedDecodeEngine {
         String lastLayerId;
         java.util.function.Consumer<GridScheduler> updateLayerSched;
         if (isQwen3) {
-            var qState = (org.beehive.gpullama3.inference.state.Qwen3State) state;
+            var qState = (org.beehive.jllm.inference.state.Qwen3State) state;
             var qWeights =
-                    (org.beehive.gpullama3.inference.weights.tornado.Qwen3TornadoWeights) weights;
+                    (org.beehive.jllm.inference.weights.tornado.Qwen3TornadoWeights) weights;
             Qwen3FP16LayersBatchDecodeMMA q =
                     paged
                             ? new Qwen3FP16LayersBatchDecodeMMA(

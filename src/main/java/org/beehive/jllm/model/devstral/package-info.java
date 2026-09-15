@@ -20,4 +20,4 @@
  * @see Devstral
  * @see <a href="https://huggingface.co/unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF">Devstral Small 2 24B GGUF</a>
  */
-package org.beehive.gpullama3.model.devstral;
+package org.beehive.jllm.model.devstral;

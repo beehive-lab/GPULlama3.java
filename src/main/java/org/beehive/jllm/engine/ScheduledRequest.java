@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.engine;
+package org.beehive.jllm.engine;
 
-import org.beehive.gpullama3.runtime.kv.KvLease;
+import org.beehive.jllm.runtime.kv.KvLease;
 
 /**
  * One request as the scheduler sees it: a declared budget, and — once admitted — a slot and a

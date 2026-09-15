@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.format;
+package org.beehive.jllm.format;
 
 import java.io.IOException;
 import java.nio.file.Path;

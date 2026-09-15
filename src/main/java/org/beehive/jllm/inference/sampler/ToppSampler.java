@@ -1,8 +1,8 @@
-package org.beehive.gpullama3.inference.sampler;
+package org.beehive.jllm.inference.sampler;
 
 import java.util.Comparator;
 import java.util.random.RandomGenerator;
-import org.beehive.gpullama3.inference.Logits;
+import org.beehive.jllm.inference.Logits;
 
 /**
  * Top-p sampling (nucleus sampling) implementation supporting both FloatTensor and FloatArray.

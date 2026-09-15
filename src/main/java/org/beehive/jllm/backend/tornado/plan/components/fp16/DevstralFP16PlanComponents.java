@@ -1,18 +1,18 @@
-package org.beehive.gpullama3.backend.tornado.plan.components.fp16;
+package org.beehive.jllm.backend.tornado.plan.components.fp16;
 
-import org.beehive.gpullama3.backend.tornado.layers.AbstractLogitsTaskGraph;
-import org.beehive.gpullama3.backend.tornado.layers.Activation;
-import org.beehive.gpullama3.backend.tornado.layers.ActivationTaskGraph;
-import org.beehive.gpullama3.backend.tornado.layers.TransformerLayerTaskGraphs;
-import org.beehive.gpullama3.backend.tornado.layers.type.fp16.DevstralFP16FFNLayers;
-import org.beehive.gpullama3.backend.tornado.layers.type.fp16.LogitsFP16Layer;
-import org.beehive.gpullama3.backend.tornado.plan.components.SingleTokenForwardPlanComponents;
-import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerDetectionService;
-import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerType;
-import org.beehive.gpullama3.inference.state.DevstralState;
-import org.beehive.gpullama3.inference.weights.tornado.LlamaTornadoWeights;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.devstral.DevstralConfiguration;
+import org.beehive.jllm.backend.tornado.layers.AbstractLogitsTaskGraph;
+import org.beehive.jllm.backend.tornado.layers.Activation;
+import org.beehive.jllm.backend.tornado.layers.ActivationTaskGraph;
+import org.beehive.jllm.backend.tornado.layers.TransformerLayerTaskGraphs;
+import org.beehive.jllm.backend.tornado.layers.type.fp16.DevstralFP16FFNLayers;
+import org.beehive.jllm.backend.tornado.layers.type.fp16.LogitsFP16Layer;
+import org.beehive.jllm.backend.tornado.plan.components.SingleTokenForwardPlanComponents;
+import org.beehive.jllm.backend.tornado.scheduling.SchedulerDetectionService;
+import org.beehive.jllm.backend.tornado.scheduling.SchedulerType;
+import org.beehive.jllm.inference.state.DevstralState;
+import org.beehive.jllm.inference.weights.tornado.LlamaTornadoWeights;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.devstral.DevstralConfiguration;
 
 public class DevstralFP16PlanComponents implements SingleTokenForwardPlanComponents {
 

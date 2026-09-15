@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.model.architecture;
+package org.beehive.jllm.model.architecture;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -9,13 +9,13 @@ import static org.junit.Assert.fail;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
-import org.beehive.gpullama3.model.Configuration;
-import org.beehive.gpullama3.model.llama.LlamaConfiguration;
-import org.beehive.gpullama3.program.InferenceProgram;
-import org.beehive.gpullama3.program.PhaseId;
-import org.beehive.gpullama3.runtime.model.ArchitectureId;
-import org.beehive.gpullama3.runtime.policy.ExecutionPolicy;
-import org.beehive.gpullama3.runtime.tensor.DataType;
+import org.beehive.jllm.model.Configuration;
+import org.beehive.jllm.model.llama.LlamaConfiguration;
+import org.beehive.jllm.program.InferenceProgram;
+import org.beehive.jllm.program.PhaseId;
+import org.beehive.jllm.runtime.model.ArchitectureId;
+import org.beehive.jllm.runtime.policy.ExecutionPolicy;
+import org.beehive.jllm.runtime.tensor.DataType;
 import org.junit.Test;
 
 /**
@@ -140,8 +140,8 @@ public class ModelArchitecturesTest {
         }
     }
 
-    private static org.beehive.gpullama3.model.mistral.MistralConfiguration mistralConfig() {
-        return new org.beehive.gpullama3.model.mistral.MistralConfiguration(
+    private static org.beehive.jllm.model.mistral.MistralConfiguration mistralConfig() {
+        return new org.beehive.jllm.model.mistral.MistralConfiguration(
                 "FP16", 64, 128, 2, 4, 2, 48, 32, false, 1e-5f, 500000f);
     }
 

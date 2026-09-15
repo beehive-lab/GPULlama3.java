@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
 /**
  * The capability of generating text — held by models that can, absent on models that cannot.

@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.model.loader;
+package org.beehive.jllm.model.loader;
 
-import org.beehive.gpullama3.auxiliary.Pair;
+import org.beehive.jllm.auxiliary.Pair;
 
 /**
  * Precomputed rotary position frequencies, built once per model at load.

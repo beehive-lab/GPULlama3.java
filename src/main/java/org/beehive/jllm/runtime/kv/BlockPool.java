@@ -1,9 +1,9 @@
-package org.beehive.gpullama3.runtime.kv;
+package org.beehive.jllm.runtime.kv;
 
 import java.util.Arrays;
 import java.util.BitSet;
-import org.beehive.gpullama3.runtime.backend.KvCapacity;
-import org.beehive.gpullama3.runtime.diagnostics.DiagnosticCode;
+import org.beehive.jllm.runtime.backend.KvCapacity;
+import org.beehive.jllm.runtime.diagnostics.DiagnosticCode;
 
 /**
  * The persistent block store behind the KV cache, and the one block table the kernels walk.

@@ -1,10 +1,10 @@
-package org.beehive.gpullama3.runtime.kv;
+package org.beehive.jllm.runtime.kv;
 
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.Set;
-import org.beehive.gpullama3.runtime.backend.CapacityQuery;
-import org.beehive.gpullama3.runtime.backend.KvCapacity;
+import org.beehive.jllm.runtime.backend.CapacityQuery;
+import org.beehive.jllm.runtime.backend.KvCapacity;
 
 /**
  * Owns KV block storage and leases it to sessions.

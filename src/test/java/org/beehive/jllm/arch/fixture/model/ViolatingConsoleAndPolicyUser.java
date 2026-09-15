@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.arch.fixture.model;
+package org.beehive.jllm.arch.fixture.model;
 
-import org.beehive.gpullama3.Options;
+import org.beehive.jllm.Options;
 
 /**
  * Deliberate violator for Rules 8a and 16: library-layer code that both prints to the console and

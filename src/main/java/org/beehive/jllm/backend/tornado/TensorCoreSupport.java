@@ -1,7 +1,7 @@
-package org.beehive.gpullama3.backend.tornado;
+package org.beehive.jllm.backend.tornado;
 
-import org.beehive.gpullama3.backend.tornado.device.TornadoDevices;
-import org.beehive.gpullama3.runtime.backend.DeviceCapability;
+import org.beehive.jllm.backend.tornado.device.TornadoDevices;
+import org.beehive.jllm.runtime.backend.DeviceCapability;
 
 /**
  * Whether the active device can execute the tensor-core (MMA) batch-prefill kernels. TornadoVM

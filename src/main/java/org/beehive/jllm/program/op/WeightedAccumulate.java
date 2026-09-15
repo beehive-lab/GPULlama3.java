@@ -1,8 +1,8 @@
-package org.beehive.gpullama3.program.op;
+package org.beehive.jllm.program.op;
 
 import java.util.List;
 import java.util.Objects;
-import org.beehive.gpullama3.runtime.tensor.DataType;
+import org.beehive.jllm.runtime.tensor.DataType;
 
 /**
  * Accumulating a branch result into the residual stream with a scalar weight.

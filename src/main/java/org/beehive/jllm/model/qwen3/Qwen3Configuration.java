@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.model.qwen3;
+package org.beehive.jllm.model.qwen3;
 
-import org.beehive.gpullama3.model.Configuration;
+import org.beehive.jllm.model.Configuration;
 
 // @formatter:off
 public record Qwen3Configuration(String quantization,

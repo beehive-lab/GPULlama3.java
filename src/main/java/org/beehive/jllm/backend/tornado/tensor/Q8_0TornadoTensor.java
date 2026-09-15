@@ -1,7 +1,7 @@
-package org.beehive.gpullama3.backend.tornado.tensor;
+package org.beehive.jllm.backend.tornado.tensor;
 
 import java.lang.foreign.MemorySegment;
-import org.beehive.gpullama3.format.GGMLType;
+import org.beehive.jllm.format.GGMLType;
 import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 
 /**

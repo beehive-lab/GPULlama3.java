@@ -1,15 +1,15 @@
-package org.beehive.gpullama3.inference.weights.tornado;
+package org.beehive.jllm.inference.weights.tornado;
 
-import org.beehive.gpullama3.backend.tornado.tensor.TornadoTensor;
-import org.beehive.gpullama3.runtime.tensor.DataType;
-import org.beehive.gpullama3.runtime.tensor.LongIndexedTensor;
+import org.beehive.jllm.backend.tornado.tensor.TornadoTensor;
+import org.beehive.jllm.runtime.tensor.DataType;
+import org.beehive.jllm.runtime.tensor.LongIndexedTensor;
 
 /**
  * TornadoVM (GPU) weights for the Gemma 4 architecture.
  *
  * <p>Extends {@link TornadoWeights} (rather than implementing {@link
- * org.beehive.gpullama3.inference.weights.Weights} directly, as its CPU counterpart {@link
- * org.beehive.gpullama3.inference.weights.standard.Gemma4StandardWeights} does) because the shared
+ * org.beehive.jllm.inference.weights.Weights} directly, as its CPU counterpart {@link
+ * org.beehive.jllm.inference.weights.standard.Gemma4StandardWeights} does) because the shared
  * {@code AbstractLogitsLayer}/{@code LogitsFP16Layer} GPU infrastructure requires a {@link
  * TornadoWeights}. The base class's "Llama-like" fields are reused for the closest equivalents
  * (e.g. {@code rms_att_weightLayered} &rarr; {@code attnNorm}, {@code w1Layered}/{@code w3Layered}
@@ -21,7 +21,7 @@ import org.beehive.gpullama3.runtime.tensor.LongIndexedTensor;
  * billion elements it is far too large to keep resident on the GPU. Its per-token row is instead
  * gathered on the host (see {@code CpuOperations.embeddingLookupLongIndexed}) and streamed to the
  * GPU each step via {@link
- * org.beehive.gpullama3.inference.state.Gemma4State#wrapPerLayerTokenEmbedRow}.
+ * org.beehive.jllm.inference.state.Gemma4State#wrapPerLayerTokenEmbedRow}.
  */
 public class Gemma4TornadoWeights extends TornadoWeights {
 
@@ -47,7 +47,7 @@ public class Gemma4TornadoWeights extends TornadoWeights {
      * the GPU, so it is kept as a raw {@link LongIndexedTensor} and addressed one row at a time on
      * the host -- via {@code CpuOperations.embeddingLookupLongIndexed} -- with the resulting row
      * streamed to the GPU each step (see {@link
-     * org.beehive.gpullama3.inference.state.Gemma4State#wrapPerLayerTokenEmbedRow}).
+     * org.beehive.jllm.inference.state.Gemma4State#wrapPerLayerTokenEmbedRow}).
      */
     public final LongIndexedTensor perLayerTokenEmbd;
 

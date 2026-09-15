@@ -1,12 +1,12 @@
-package org.beehive.gpullama3.backend.tornado.kernels;
+package org.beehive.jllm.backend.tornado.kernels;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
-import org.beehive.gpullama3.inference.state.LlamaState;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.llama.LlamaConfiguration;
+import org.beehive.jllm.inference.state.LlamaState;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.llama.LlamaConfiguration;
 import org.junit.Test;
 
 /**

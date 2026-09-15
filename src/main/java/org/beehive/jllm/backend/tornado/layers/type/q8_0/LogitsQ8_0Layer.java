@@ -1,15 +1,15 @@
-package org.beehive.gpullama3.backend.tornado.layers.type.q8_0;
+package org.beehive.jllm.backend.tornado.layers.type.q8_0;
 
-import org.beehive.gpullama3.backend.tornado.kernels.TransformerComputeKernels;
-import org.beehive.gpullama3.backend.tornado.kernels.TransformerComputeKernelsLayered;
-import org.beehive.gpullama3.backend.tornado.layers.AbstractLogitsTaskGraph;
-import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerType;
-import org.beehive.gpullama3.backend.tornado.scheduling.WorkerGridFactory;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.inference.weights.Weights;
-import org.beehive.gpullama3.inference.weights.tornado.Qwen2TornadoWeights;
-import org.beehive.gpullama3.inference.weights.tornado.TornadoWeights;
-import org.beehive.gpullama3.model.Configuration;
+import org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernels;
+import org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsLayered;
+import org.beehive.jllm.backend.tornado.layers.AbstractLogitsTaskGraph;
+import org.beehive.jllm.backend.tornado.scheduling.SchedulerType;
+import org.beehive.jllm.backend.tornado.scheduling.WorkerGridFactory;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.inference.weights.Weights;
+import org.beehive.jllm.inference.weights.tornado.Qwen2TornadoWeights;
+import org.beehive.jllm.inference.weights.tornado.TornadoWeights;
+import org.beehive.jllm.model.Configuration;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid1D;

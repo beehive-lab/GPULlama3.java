@@ -1,16 +1,16 @@
-package org.beehive.gpullama3.auxiliary;
+package org.beehive.jllm.auxiliary;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import org.beehive.gpullama3.auxiliary.metrics.GitHubMetricsRenderer;
-import org.beehive.gpullama3.auxiliary.metrics.HumanMetricsRenderer;
-import org.beehive.gpullama3.auxiliary.metrics.JsonMetricsRenderer;
-import org.beehive.gpullama3.auxiliary.metrics.MetricsRenderer;
-import org.beehive.gpullama3.auxiliary.metrics.RunMetricsSnapshot;
-import org.beehive.gpullama3.runtime.metrics.MetricKey;
-import org.beehive.gpullama3.runtime.metrics.MetricsReport;
+import org.beehive.jllm.auxiliary.metrics.GitHubMetricsRenderer;
+import org.beehive.jllm.auxiliary.metrics.HumanMetricsRenderer;
+import org.beehive.jllm.auxiliary.metrics.JsonMetricsRenderer;
+import org.beehive.jllm.auxiliary.metrics.MetricsRenderer;
+import org.beehive.jllm.auxiliary.metrics.RunMetricsSnapshot;
+import org.beehive.jllm.runtime.metrics.MetricKey;
+import org.beehive.jllm.runtime.metrics.MetricsReport;
 
 /**
  * Singleton that accumulates fine-grained performance metrics across one inference run.

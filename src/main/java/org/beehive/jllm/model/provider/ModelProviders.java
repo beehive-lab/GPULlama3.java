@@ -1,12 +1,12 @@
-package org.beehive.gpullama3.model.provider;
+package org.beehive.jllm.model.provider;
 
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.ServiceLoader;
 import java.util.stream.Collectors;
-import org.beehive.gpullama3.format.ModelSource;
-import org.beehive.gpullama3.runtime.diagnostics.DiagnosticCode;
+import org.beehive.jllm.format.ModelSource;
+import org.beehive.jllm.runtime.diagnostics.DiagnosticCode;
 
 /**
  * Finds the provider for a source.

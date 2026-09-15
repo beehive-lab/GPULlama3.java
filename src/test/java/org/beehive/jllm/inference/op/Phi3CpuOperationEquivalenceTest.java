@@ -1,17 +1,17 @@
-package org.beehive.gpullama3.inference.op;
+package org.beehive.jllm.inference.op;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 import java.util.Random;
-import org.beehive.gpullama3.auxiliary.Parallel;
-import org.beehive.gpullama3.backend.cpu.InferenceCore;
-import org.beehive.gpullama3.inference.state.Phi3State;
-import org.beehive.gpullama3.inference.weights.standard.Phi3StandardWeights;
-import org.beehive.gpullama3.model.phi3.Phi3Configuration;
-import org.beehive.gpullama3.runtime.tensor.DataType;
-import org.beehive.gpullama3.tensor.standard.ArrayFloatTensor;
-import org.beehive.gpullama3.tensor.standard.FloatTensor;
+import org.beehive.jllm.auxiliary.Parallel;
+import org.beehive.jllm.backend.cpu.InferenceCore;
+import org.beehive.jllm.inference.state.Phi3State;
+import org.beehive.jllm.inference.weights.standard.Phi3StandardWeights;
+import org.beehive.jllm.model.phi3.Phi3Configuration;
+import org.beehive.jllm.runtime.tensor.DataType;
+import org.beehive.jllm.tensor.standard.ArrayFloatTensor;
+import org.beehive.jllm.tensor.standard.FloatTensor;
 import org.junit.Test;
 
 /**

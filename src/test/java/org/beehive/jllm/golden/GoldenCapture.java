@@ -1,15 +1,15 @@
-package org.beehive.gpullama3.golden;
+package org.beehive.jllm.golden;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
-import org.beehive.gpullama3.inference.sampler.Sampler;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.format.ChatFormat;
-import org.beehive.gpullama3.model.loader.ModelLoader;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlan;
+import org.beehive.jllm.inference.sampler.Sampler;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.format.ChatFormat;
+import org.beehive.jllm.model.loader.ModelLoader;
 
 /**
  * Runs the pinned fixture and captures one logits row per generated token.
@@ -146,7 +146,7 @@ public final class GoldenCapture {
         // adjustment from the same source keeps the row count at TOKENS for every family, instead
         // of encoding one family's arithmetic as a constant that quietly rots.
         int skippedSeed =
-                org.beehive.gpullama3.inference.PromptIngestion.of(state, promptTokens, 0)
+                org.beehive.jllm.inference.PromptIngestion.of(state, promptTokens, 0)
                         .firstIndex();
         int budget = promptTokens.size() + TOKENS - skippedSeed;
 
@@ -173,7 +173,7 @@ public final class GoldenCapture {
         return result;
     }
 
-    private static float[] toFloatArray(org.beehive.gpullama3.inference.Logits logits) {
+    private static float[] toFloatArray(org.beehive.jllm.inference.Logits logits) {
         float[] out = new float[logits.size()];
         for (int i = 0; i < out.length; i++) {
             out[i] = logits.get(i);

@@ -1,16 +1,16 @@
-package org.beehive.gpullama3.backend.tornado.layers.type.fp16;
+package org.beehive.jllm.backend.tornado.layers.type.fp16;
 
-import org.beehive.gpullama3.backend.tornado.kernels.GraniteKernels;
-import org.beehive.gpullama3.backend.tornado.kernels.GranitePagedKvKernels;
-import org.beehive.gpullama3.backend.tornado.kernels.TransformerComputeKernels;
-import org.beehive.gpullama3.backend.tornado.kernels.TransformerComputeKernelsLayered;
-import org.beehive.gpullama3.backend.tornado.layers.AbstractTransformerLayerTaskGraphs;
-import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerDetectionService;
-import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerType;
-import org.beehive.gpullama3.backend.tornado.scheduling.WorkerGridFactory;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.inference.weights.tornado.GraniteTornadoWeights;
-import org.beehive.gpullama3.model.granite.GraniteConfiguration;
+import org.beehive.jllm.backend.tornado.kernels.GraniteKernels;
+import org.beehive.jllm.backend.tornado.kernels.GranitePagedKvKernels;
+import org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernels;
+import org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsLayered;
+import org.beehive.jllm.backend.tornado.layers.AbstractTransformerLayerTaskGraphs;
+import org.beehive.jllm.backend.tornado.scheduling.SchedulerDetectionService;
+import org.beehive.jllm.backend.tornado.scheduling.SchedulerType;
+import org.beehive.jllm.backend.tornado.scheduling.WorkerGridFactory;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.inference.weights.tornado.GraniteTornadoWeights;
+import org.beehive.jllm.model.granite.GraniteConfiguration;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
@@ -21,7 +21,7 @@ public class GraniteFP16FFNLayers
 
     /**
      * @see
-     *     org.beehive.gpullama3.backend.tornado.layers.type.fp16.LlamaFP16FFNLayers#useSimd32QkvFusion
+     *     org.beehive.jllm.backend.tornado.layers.type.fp16.LlamaFP16FFNLayers#useSimd32QkvFusion
      */
     private final boolean useSimd32QkvFusion =
             SchedulerDetectionService.isSubgroupShuffle32Supported();

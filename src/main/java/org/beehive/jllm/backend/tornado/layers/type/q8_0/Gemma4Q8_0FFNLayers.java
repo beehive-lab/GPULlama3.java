@@ -1,14 +1,14 @@
-package org.beehive.gpullama3.backend.tornado.layers.type.q8_0;
+package org.beehive.jllm.backend.tornado.layers.type.q8_0;
 
-import org.beehive.gpullama3.backend.tornado.kernels.Gemma4Kernels;
-import org.beehive.gpullama3.backend.tornado.kernels.TransformerComputeKernelsLayered;
-import org.beehive.gpullama3.backend.tornado.layers.AbstractTransformerLayerTaskGraphs;
-import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerType;
-import org.beehive.gpullama3.backend.tornado.scheduling.WorkerGridFactory;
-import org.beehive.gpullama3.backend.tornado.tensor.TornadoTensor;
-import org.beehive.gpullama3.inference.state.Gemma4State;
-import org.beehive.gpullama3.inference.weights.tornado.Gemma4TornadoWeights;
-import org.beehive.gpullama3.model.gemma4.Gemma4Configuration;
+import org.beehive.jllm.backend.tornado.kernels.Gemma4Kernels;
+import org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsLayered;
+import org.beehive.jllm.backend.tornado.layers.AbstractTransformerLayerTaskGraphs;
+import org.beehive.jllm.backend.tornado.scheduling.SchedulerType;
+import org.beehive.jllm.backend.tornado.scheduling.WorkerGridFactory;
+import org.beehive.jllm.backend.tornado.tensor.TornadoTensor;
+import org.beehive.jllm.inference.state.Gemma4State;
+import org.beehive.jllm.inference.weights.tornado.Gemma4TornadoWeights;
+import org.beehive.jllm.model.gemma4.Gemma4Configuration;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
@@ -33,7 +33,7 @@ import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
  * compile-time constants -- see {@link Gemma4Configuration#headDim}), some layers reuse an earlier
  * layer's KV cache instead of computing their own, the FFN uses GeGLU, and every layer mixes in a
  * per-layer embedding (PLE) contribution. See {@link
- * org.beehive.gpullama3.backend.cpu.InferenceCore#forwardJavaGemma4} for the reference computation
+ * org.beehive.jllm.backend.cpu.InferenceCore#forwardJavaGemma4} for the reference computation
  * each task mirrors.
  *
  * <p>Layer 0's task graph additionally carries one-time-per-token setup that the reference
@@ -460,11 +460,11 @@ public class Gemma4Q8_0FFNLayers
     /**
      * One-time-per-token setup tasks, prepended to layer 0's graph: scales the token embedding by
      * {@code sqrt(dim)} (Gemma4 scales embeddings on input -- the generic {@link
-     * org.beehive.gpullama3.backend.tornado.layers.Activation} task graph that produced {@code
+     * org.beehive.jllm.backend.tornado.layers.Activation} task graph that produced {@code
      * wrapX} doesn't know about this), then computes the per-layer embedding inputs from the
      * per-layer model projection and the (host-gathered) per-token per-layer-token-embedding row.
      * Mirrors steps 1-2 of {@link
-     * org.beehive.gpullama3.backend.cpu.InferenceCore#forwardJavaGemma4}.
+     * org.beehive.jllm.backend.cpu.InferenceCore#forwardJavaGemma4}.
      */
     private void appendPLESetupTasks(TaskGraph unifiedLayer) {
         unifiedLayer.task(

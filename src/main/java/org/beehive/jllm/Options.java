@@ -1,4 +1,4 @@
-package org.beehive.gpullama3;
+package org.beehive.jllm;
 
 import java.io.PrintStream;
 import java.nio.file.Path;

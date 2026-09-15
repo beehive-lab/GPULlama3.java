@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.runtime.backend;
+package org.beehive.jllm.runtime.backend;
 
-import org.beehive.gpullama3.api.Experimental;
+import org.beehive.jllm.api.Experimental;
 
 /**
  * A <b>resolved</b> device: the answer a backend gives to a {@link DeviceSelector}.

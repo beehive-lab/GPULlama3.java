@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.runtime.diagnostics;
+package org.beehive.jllm.runtime.diagnostics;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;

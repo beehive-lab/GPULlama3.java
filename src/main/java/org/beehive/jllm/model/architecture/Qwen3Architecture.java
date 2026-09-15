@@ -1,12 +1,12 @@
-package org.beehive.gpullama3.model.architecture;
+package org.beehive.jllm.model.architecture;
 
 import java.util.EnumSet;
 import java.util.Set;
-import org.beehive.gpullama3.model.Configuration;
-import org.beehive.gpullama3.model.qwen3.Qwen3Configuration;
-import org.beehive.gpullama3.program.InferenceProgram;
-import org.beehive.gpullama3.program.PhaseId;
-import org.beehive.gpullama3.runtime.model.ArchitectureId;
+import org.beehive.jllm.model.Configuration;
+import org.beehive.jllm.model.qwen3.Qwen3Configuration;
+import org.beehive.jllm.program.InferenceProgram;
+import org.beehive.jllm.program.PhaseId;
+import org.beehive.jllm.runtime.model.ArchitectureId;
 
 /** Qwen3's computation. Grouped per-head query and key norms, and three head dimensions. */
 public final class Qwen3Architecture implements ModelArchitecture {

@@ -1,9 +1,9 @@
-package org.beehive.gpullama3.program.op;
+package org.beehive.jllm.program.op;
 
 import java.util.List;
 import java.util.Objects;
 import java.util.OptionalInt;
-import org.beehive.gpullama3.runtime.tensor.DataType;
+import org.beehive.jllm.runtime.tensor.DataType;
 
 /**
  * Scaled dot-product attention of one query set against a set of keys and values.

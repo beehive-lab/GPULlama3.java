@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
-import org.beehive.gpullama3.inference.GenerationCursor;
+import org.beehive.jllm.inference.GenerationCursor;
 
 /**
  * The generation cursor a session owns, and everything else that varies independently by session.

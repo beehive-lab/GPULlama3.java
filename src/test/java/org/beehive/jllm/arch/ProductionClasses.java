@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.arch;
+package org.beehive.jllm.arch;
 
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
@@ -16,7 +16,7 @@ import com.tngtech.archunit.core.importer.ImportOption;
 public final class ProductionClasses {
 
     /** Root package of the shipped library. */
-    public static final String ROOT_PACKAGE = "org.beehive.gpullama3";
+    public static final String ROOT_PACKAGE = "org.beehive.jllm";
 
     private static final JavaClasses CLASSES =
             new ClassFileImporter()

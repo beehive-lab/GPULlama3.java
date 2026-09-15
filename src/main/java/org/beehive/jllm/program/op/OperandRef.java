@@ -1,7 +1,7 @@
-package org.beehive.gpullama3.program.op;
+package org.beehive.jllm.program.op;
 
 import java.util.Objects;
-import org.beehive.gpullama3.runtime.tensor.TensorRole;
+import org.beehive.jllm.runtime.tensor.TensorRole;
 
 /**
  * A reference to a tensor an operation reads or writes, by name rather than by handle.

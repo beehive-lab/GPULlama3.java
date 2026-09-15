@@ -1,15 +1,15 @@
-package org.beehive.gpullama3.backend.tornado.plan;
+package org.beehive.jllm.backend.tornado.plan;
 
 import java.util.Set;
-import org.beehive.gpullama3.backend.tornado.lowering.TornadoSupportSets;
-import org.beehive.gpullama3.backend.tornado.plan.components.SingleTokenForwardPlanComponents;
-import org.beehive.gpullama3.backend.tornado.plan.components.fp16.DevstralFP16PlanComponents;
-import org.beehive.gpullama3.backend.tornado.plan.components.q8_0.DevstralQ8_0PlanComponents;
-import org.beehive.gpullama3.inference.state.DevstralState;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.runtime.model.ArchitectureId;
-import org.beehive.gpullama3.runtime.tensor.DataType;
+import org.beehive.jllm.backend.tornado.lowering.TornadoSupportSets;
+import org.beehive.jllm.backend.tornado.plan.components.SingleTokenForwardPlanComponents;
+import org.beehive.jllm.backend.tornado.plan.components.fp16.DevstralFP16PlanComponents;
+import org.beehive.jllm.backend.tornado.plan.components.q8_0.DevstralQ8_0PlanComponents;
+import org.beehive.jllm.inference.state.DevstralState;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.runtime.model.ArchitectureId;
+import org.beehive.jllm.runtime.tensor.DataType;
 
 /**
  * Devstral's plan components. **No fixture exists on this machine**, so this migration is
@@ -45,7 +45,7 @@ public final class DevstralPlanProvider implements TornadoPlanProvider {
         // Q4_K reaches here as itself rather than as a Q8_0 materialization: Devstral is the family
         // that has Q4_K kernels.
         if (weights == DataType.Q4_K) {
-            return new org.beehive.gpullama3.backend.tornado.plan.components.q4_k
+            return new org.beehive.jllm.backend.tornado.plan.components.q4_k
                     .DevstralQ4_KPlanComponents(typed, model);
         }
         return new DevstralQ8_0PlanComponents(typed, model);

@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.arch.fixture.program;
+package org.beehive.jllm.arch.fixture.program;
 
-import org.beehive.gpullama3.tokenizer.Tokenizer;
+import org.beehive.jllm.tokenizer.Tokenizer;
 
 /**
  * Rule 14's fixture: a core-layer type that requires a tokenizer.

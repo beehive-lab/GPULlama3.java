@@ -1,8 +1,8 @@
-package org.beehive.gpullama3.model.provider;
+package org.beehive.jllm.model.provider;
 
-import org.beehive.gpullama3.format.ModelSource;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.runtime.model.ArchitectureId;
+import org.beehive.jllm.format.ModelSource;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.runtime.model.ArchitectureId;
 
 /**
  * Providers that exist only to be discovered. They recognize synthetic metadata and refuse to load,
@@ -28,7 +28,7 @@ public final class TestProviders {
         @Override
         public Model load(
                 ModelSource source,
-                org.beehive.gpullama3.runtime.backend.BackendId backend,
+                org.beehive.jllm.runtime.backend.BackendId backend,
                 int contextLength) {
             throw new UnsupportedOperationException(
                     "the fixture provider recognizes, it does not load");
@@ -51,7 +51,7 @@ public final class TestProviders {
         @Override
         public Model load(
                 ModelSource source,
-                org.beehive.gpullama3.runtime.backend.BackendId backend,
+                org.beehive.jllm.runtime.backend.BackendId backend,
                 int contextLength) {
             throw new UnsupportedOperationException(
                     "the fixture provider recognizes, it does not load");

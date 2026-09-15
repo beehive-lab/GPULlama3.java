@@ -1,8 +1,8 @@
-package org.beehive.gpullama3.model.provider;
+package org.beehive.jllm.model.provider;
 
 import java.util.Locale;
-import org.beehive.gpullama3.format.ModelSource;
-import org.beehive.gpullama3.runtime.model.ArchitectureId;
+import org.beehive.jllm.format.ModelSource;
+import org.beehive.jllm.runtime.model.ArchitectureId;
 
 /**
  * Which architecture a GGUF file declares itself to be.

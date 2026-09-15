@@ -1,15 +1,15 @@
-package org.beehive.gpullama3.format;
+package org.beehive.jllm.format;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import java.lang.foreign.MemorySegment;
-import org.beehive.gpullama3.runtime.tensor.DataType;
-import org.beehive.gpullama3.runtime.tensor.ExecutionTarget;
-import org.beehive.gpullama3.runtime.tensor.TensorDescriptor;
-import org.beehive.gpullama3.runtime.tensor.TensorLayout;
-import org.beehive.gpullama3.runtime.tensor.TensorRole;
+import org.beehive.jllm.runtime.tensor.DataType;
+import org.beehive.jllm.runtime.tensor.ExecutionTarget;
+import org.beehive.jllm.runtime.tensor.TensorDescriptor;
+import org.beehive.jllm.runtime.tensor.TensorLayout;
+import org.beehive.jllm.runtime.tensor.TensorRole;
 import org.junit.Test;
 
 public class TensorDescriptorsTest {

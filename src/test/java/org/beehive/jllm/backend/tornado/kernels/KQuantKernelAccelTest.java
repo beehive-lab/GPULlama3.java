@@ -1,12 +1,12 @@
-package org.beehive.gpullama3.backend.tornado.kernels;
+package org.beehive.jllm.backend.tornado.kernels;
 
 import static org.junit.Assert.assertEquals;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.util.Random;
-import org.beehive.gpullama3.tensor.standard.Q4_KFloatTensor;
-import org.beehive.gpullama3.tensor.standard.Q6_KFloatTensor;
+import org.beehive.jllm.tensor.standard.Q4_KFloatTensor;
+import org.beehive.jllm.tensor.standard.Q6_KFloatTensor;
 import org.junit.Test;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;

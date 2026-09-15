@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.server;
+package org.beehive.jllm.server;
 
-import static org.beehive.gpullama3.model.loader.ModelLoader.loadModel;
+import static org.beehive.jllm.model.loader.ModelLoader.loadModel;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -16,14 +16,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
-import org.beehive.gpullama3.Options;
-import org.beehive.gpullama3.api.ChatMessage;
-import org.beehive.gpullama3.api.ChatRole;
-import org.beehive.gpullama3.api.LocalModel;
-import org.beehive.gpullama3.api.LocalModels;
-import org.beehive.gpullama3.api.ModelOptions;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.runtime.backend.BackendId;
+import org.beehive.jllm.Options;
+import org.beehive.jllm.api.ChatMessage;
+import org.beehive.jllm.api.ChatRole;
+import org.beehive.jllm.api.LocalModel;
+import org.beehive.jllm.api.LocalModels;
+import org.beehive.jllm.api.ModelOptions;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.runtime.backend.BackendId;
 
 /**
  * OpenAI-compatible HTTP server for GPULlama3, built on the JDK {@link HttpServer} (no external
@@ -40,7 +40,7 @@ import org.beehive.gpullama3.runtime.backend.BackendId;
  * accept is multi-threaded so clients queue cleanly. Run:
  *
  * <pre>
- *   java. org.beehive.gpullama3.server.OpenAIServer --model model.gguf --port 8080 --gpu
+ *   java. org.beehive.jllm.server.OpenAIServer --model model.gguf --port 8080 --gpu
  * </pre>
  */
 public final class OpenAIServer {

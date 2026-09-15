@@ -1,13 +1,13 @@
-package org.beehive.gpullama3.server;
+package org.beehive.jllm.server;
 
 import java.util.List;
-import org.beehive.gpullama3.api.ChatMessage;
-import org.beehive.gpullama3.api.FinishReason;
-import org.beehive.gpullama3.api.GenerationRequest;
-import org.beehive.gpullama3.api.GenerationResult;
-import org.beehive.gpullama3.api.GenerationSession;
-import org.beehive.gpullama3.api.LocalModel;
-import org.beehive.gpullama3.api.TextGenerationModel;
+import org.beehive.jllm.api.ChatMessage;
+import org.beehive.jllm.api.FinishReason;
+import org.beehive.jllm.api.GenerationRequest;
+import org.beehive.jllm.api.GenerationResult;
+import org.beehive.jllm.api.GenerationSession;
+import org.beehive.jllm.api.LocalModel;
+import org.beehive.jllm.api.TextGenerationModel;
 
 /**
  * Reusable, thread-safe inference wrapper over one loaded model.

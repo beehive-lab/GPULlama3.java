@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.runtime.kv;
+package org.beehive.jllm.runtime.kv;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -7,8 +7,8 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
-import org.beehive.gpullama3.runtime.backend.CapacityQuery;
-import org.beehive.gpullama3.runtime.backend.KvCapacity;
+import org.beehive.jllm.runtime.backend.CapacityQuery;
+import org.beehive.jllm.runtime.backend.KvCapacity;
 import org.junit.Test;
 
 public class KvCacheManagerTest {
@@ -146,7 +146,7 @@ public class KvCacheManagerTest {
 
     /** Counts publishes; the real store copies the table into a device array. */
     private static final class RecordingStorage
-            implements org.beehive.gpullama3.runtime.kv.KvStorage {
+            implements org.beehive.jllm.runtime.kv.KvStorage {
         int publishes;
 
         @Override

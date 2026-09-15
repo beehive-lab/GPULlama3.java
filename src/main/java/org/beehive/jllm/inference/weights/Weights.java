@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.inference.weights;
+package org.beehive.jllm.inference.weights;
 
-import org.beehive.gpullama3.runtime.tensor.DataType;
+import org.beehive.jllm.runtime.tensor.DataType;
 
 /**
  * The GPULlama3.java utilizes two distinct weight types:

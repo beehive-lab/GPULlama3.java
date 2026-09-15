@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.arch.fixture.spi;
+package org.beehive.jllm.arch.fixture.spi;
 
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlan;
 
 /** Never referenced by production code. */
 public class ViolatingNeutralSpi {

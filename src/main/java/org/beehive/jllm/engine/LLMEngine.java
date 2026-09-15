@@ -1,16 +1,16 @@
-package org.beehive.gpullama3.engine;
+package org.beehive.jllm.engine;
 
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.IntConsumer;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.runtime.batch.BatchExecutor;
-import org.beehive.gpullama3.runtime.batch.BatchSlots;
-import org.beehive.gpullama3.runtime.kv.KvCacheManager;
-import org.beehive.gpullama3.runtime.metrics.MetricKey;
-import org.beehive.gpullama3.runtime.metrics.MetricsSink;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.runtime.batch.BatchExecutor;
+import org.beehive.jllm.runtime.batch.BatchSlots;
+import org.beehive.jllm.runtime.kv.KvCacheManager;
+import org.beehive.jllm.runtime.metrics.MetricKey;
+import org.beehive.jllm.runtime.metrics.MetricsSink;
 
 /**
  * Continuous batching over one loaded model: submit requests, drive {@code step()}, collect tokens.

@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.api;
+package org.beehive.jllm.api;
 
-import org.beehive.gpullama3.runtime.policy.ExecutionPolicy;
+import org.beehive.jllm.runtime.policy.ExecutionPolicy;
 
 /** Per-session settings. */
 public final class SessionOptions {

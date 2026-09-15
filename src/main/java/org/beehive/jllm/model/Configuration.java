@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.model;
+package org.beehive.jllm.model;
 
-import org.beehive.gpullama3.runtime.tensor.DataType;
+import org.beehive.jllm.runtime.tensor.DataType;
 
 public interface Configuration {
 

@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.model.architecture;
+package org.beehive.jllm.model.architecture;
 
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -6,35 +6,35 @@ import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
-import org.beehive.gpullama3.model.qwen3.Qwen3Configuration;
-import org.beehive.gpullama3.program.BindingEntry;
-import org.beehive.gpullama3.program.BindingRole;
-import org.beehive.gpullama3.program.CapacityShape;
-import org.beehive.gpullama3.program.Direction;
-import org.beehive.gpullama3.program.InferenceProgram;
-import org.beehive.gpullama3.program.PhaseId;
-import org.beehive.gpullama3.program.PhaseSelection;
-import org.beehive.gpullama3.program.ProgramComponent;
-import org.beehive.gpullama3.program.ProgramSignature;
-import org.beehive.gpullama3.program.ResultId;
-import org.beehive.gpullama3.program.ValueId;
-import org.beehive.gpullama3.program.ValueType;
-import org.beehive.gpullama3.program.op.ArgMax;
-import org.beehive.gpullama3.program.op.Attention;
-import org.beehive.gpullama3.program.op.EmbeddingLookup;
-import org.beehive.gpullama3.program.op.KvAppend;
-import org.beehive.gpullama3.program.op.MatVec;
-import org.beehive.gpullama3.program.op.OperandRef;
-import org.beehive.gpullama3.program.op.ResidualAdd;
-import org.beehive.gpullama3.program.op.RmsNorm;
-import org.beehive.gpullama3.program.op.RoPE;
-import org.beehive.gpullama3.program.op.RopeLayout;
-import org.beehive.gpullama3.program.op.SwiGLU;
-import org.beehive.gpullama3.program.op.VocabProjection;
-import org.beehive.gpullama3.runtime.model.ArchitectureId;
-import org.beehive.gpullama3.runtime.tensor.DataType;
-import org.beehive.gpullama3.runtime.tensor.Shape;
-import org.beehive.gpullama3.runtime.tensor.TensorRole;
+import org.beehive.jllm.model.qwen3.Qwen3Configuration;
+import org.beehive.jllm.program.BindingEntry;
+import org.beehive.jllm.program.BindingRole;
+import org.beehive.jllm.program.CapacityShape;
+import org.beehive.jllm.program.Direction;
+import org.beehive.jllm.program.InferenceProgram;
+import org.beehive.jllm.program.PhaseId;
+import org.beehive.jllm.program.PhaseSelection;
+import org.beehive.jllm.program.ProgramComponent;
+import org.beehive.jllm.program.ProgramSignature;
+import org.beehive.jllm.program.ResultId;
+import org.beehive.jllm.program.ValueId;
+import org.beehive.jllm.program.ValueType;
+import org.beehive.jllm.program.op.ArgMax;
+import org.beehive.jllm.program.op.Attention;
+import org.beehive.jllm.program.op.EmbeddingLookup;
+import org.beehive.jllm.program.op.KvAppend;
+import org.beehive.jllm.program.op.MatVec;
+import org.beehive.jllm.program.op.OperandRef;
+import org.beehive.jllm.program.op.ResidualAdd;
+import org.beehive.jllm.program.op.RmsNorm;
+import org.beehive.jllm.program.op.RoPE;
+import org.beehive.jllm.program.op.RopeLayout;
+import org.beehive.jllm.program.op.SwiGLU;
+import org.beehive.jllm.program.op.VocabProjection;
+import org.beehive.jllm.runtime.model.ArchitectureId;
+import org.beehive.jllm.runtime.tensor.DataType;
+import org.beehive.jllm.runtime.tensor.Shape;
+import org.beehive.jllm.runtime.tensor.TensorRole;
 
 /**
  * Builds the {@code InferenceProgram} for Qwen3, single-token, at a given weight representation.
@@ -465,7 +465,7 @@ public final class Qwen3ProgramDescription {
     }
 
     private static ProgramComponent leaf(
-            String name, org.beehive.gpullama3.program.op.Operation operation) {
+            String name, org.beehive.jllm.program.op.Operation operation) {
         return new ProgramComponent.Leaf(name, operation, BOTH);
     }
 

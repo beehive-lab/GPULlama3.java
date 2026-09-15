@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.bench;
+package org.beehive.jllm.bench;
 
-import static org.beehive.gpullama3.model.loader.ModelLoader.loadModel;
+import static org.beehive.jllm.model.loader.ModelLoader.loadModel;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -10,14 +10,14 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Random;
-import org.beehive.gpullama3.Options;
-import org.beehive.gpullama3.backend.cpu.CpuForwardPasses;
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlan;
-import org.beehive.gpullama3.backend.tornado.TornadoVMMasterPlanBatchPrefillDecode;
-import org.beehive.gpullama3.backend.tornado.bench.SyntheticKernelBench;
-import org.beehive.gpullama3.inference.ForwardPass;
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.Model;
+import org.beehive.jllm.Options;
+import org.beehive.jllm.backend.cpu.CpuForwardPasses;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlan;
+import org.beehive.jllm.backend.tornado.TornadoVMMasterPlanBatchPrefillDecode;
+import org.beehive.jllm.backend.tornado.bench.SyntheticKernelBench;
+import org.beehive.jllm.inference.ForwardPass;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.Model;
 
 /**
  * llama-bench-style performance benchmark for GPULlama3 (GPU forward path).
@@ -334,10 +334,10 @@ public class LlamaBench {
             if (hostForward != null) {
                 hostForward.forward(model, state, toks[pos], pos);
             } else if (batch > 1) {
-                org.beehive.gpullama3.backend.tornado.TornadoBatchPrefillPass.decode(
+                org.beehive.jllm.backend.tornado.TornadoBatchPrefillPass.decode(
                         model, state, toks[pos], pos, (TornadoVMMasterPlanBatchPrefillDecode) plan);
             } else {
-                org.beehive.gpullama3.backend.tornado.TornadoForwardPass.forward(
+                org.beehive.jllm.backend.tornado.TornadoForwardPass.forward(
                         model, state, toks[pos], pos, plan);
             }
         }
@@ -369,12 +369,12 @@ public class LlamaBench {
             for (int off = 0; off < count; off += batch) {
                 int chunkSize = Math.min(batch, count - off);
                 int[] chunk = Arrays.copyOfRange(toks, start + off, start + off + chunkSize);
-                org.beehive.gpullama3.backend.tornado.TornadoBatchPrefillPass.batchPrefill(
+                org.beehive.jllm.backend.tornado.TornadoBatchPrefillPass.batchPrefill(
                         model, state, chunk, start + off, chunkSize, bp);
             }
         } else {
             for (int i = 0; i < count; i++) {
-                org.beehive.gpullama3.backend.tornado.TornadoForwardPass.forward(
+                org.beehive.jllm.backend.tornado.TornadoForwardPass.forward(
                         model, state, toks[start + i], start + i, plan);
             }
         }
@@ -395,7 +395,7 @@ public class LlamaBench {
 
     /** The backend name for the report heading and the metrics sidecar. */
     static String backendName() {
-        var device = org.beehive.gpullama3.backend.tornado.device.TornadoDevices.current();
+        var device = org.beehive.jllm.backend.tornado.device.TornadoDevices.current();
         if (!device.capabilities().asSet().isEmpty()
                 || !"unavailable".equals(device.displayName())) {
             return device.backend().id().toUpperCase(java.util.Locale.ROOT);

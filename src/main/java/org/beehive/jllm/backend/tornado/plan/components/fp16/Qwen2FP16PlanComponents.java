@@ -1,18 +1,18 @@
-package org.beehive.gpullama3.backend.tornado.plan.components.fp16;
+package org.beehive.jllm.backend.tornado.plan.components.fp16;
 
-import org.beehive.gpullama3.backend.tornado.layers.AbstractLogitsTaskGraph;
-import org.beehive.gpullama3.backend.tornado.layers.Activation;
-import org.beehive.gpullama3.backend.tornado.layers.ActivationTaskGraph;
-import org.beehive.gpullama3.backend.tornado.layers.TransformerLayerTaskGraphs;
-import org.beehive.gpullama3.backend.tornado.layers.type.fp16.LogitsFP16Layer;
-import org.beehive.gpullama3.backend.tornado.layers.type.fp16.Qwen2FP16FFNLayers;
-import org.beehive.gpullama3.backend.tornado.plan.components.SingleTokenForwardPlanComponents;
-import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerDetectionService;
-import org.beehive.gpullama3.backend.tornado.scheduling.SchedulerType;
-import org.beehive.gpullama3.inference.state.Qwen2State;
-import org.beehive.gpullama3.inference.weights.tornado.Qwen2TornadoWeights;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.qwen2.Qwen2Configuration;
+import org.beehive.jllm.backend.tornado.layers.AbstractLogitsTaskGraph;
+import org.beehive.jllm.backend.tornado.layers.Activation;
+import org.beehive.jllm.backend.tornado.layers.ActivationTaskGraph;
+import org.beehive.jllm.backend.tornado.layers.TransformerLayerTaskGraphs;
+import org.beehive.jllm.backend.tornado.layers.type.fp16.LogitsFP16Layer;
+import org.beehive.jllm.backend.tornado.layers.type.fp16.Qwen2FP16FFNLayers;
+import org.beehive.jllm.backend.tornado.plan.components.SingleTokenForwardPlanComponents;
+import org.beehive.jllm.backend.tornado.scheduling.SchedulerDetectionService;
+import org.beehive.jllm.backend.tornado.scheduling.SchedulerType;
+import org.beehive.jllm.inference.state.Qwen2State;
+import org.beehive.jllm.inference.weights.tornado.Qwen2TornadoWeights;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.qwen2.Qwen2Configuration;
 
 public class Qwen2FP16PlanComponents implements SingleTokenForwardPlanComponents {
 

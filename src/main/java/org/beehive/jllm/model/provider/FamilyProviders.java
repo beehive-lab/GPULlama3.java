@@ -1,16 +1,16 @@
-package org.beehive.gpullama3.model.provider;
+package org.beehive.jllm.model.provider;
 
-import org.beehive.gpullama3.format.ModelSource;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.model.loader.DevstralModelLoader;
-import org.beehive.gpullama3.model.loader.GraniteLoader;
-import org.beehive.gpullama3.model.loader.LlamaModelLoader;
-import org.beehive.gpullama3.model.loader.MistralModelLoader;
-import org.beehive.gpullama3.model.loader.Phi3ModelLoader;
-import org.beehive.gpullama3.model.loader.Qwen2MoEModelLoader;
-import org.beehive.gpullama3.model.loader.Qwen2ModelLoader;
-import org.beehive.gpullama3.model.loader.Qwen3ModelLoader;
-import org.beehive.gpullama3.runtime.backend.BackendId;
+import org.beehive.jllm.format.ModelSource;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.model.loader.DevstralModelLoader;
+import org.beehive.jllm.model.loader.GraniteLoader;
+import org.beehive.jllm.model.loader.LlamaModelLoader;
+import org.beehive.jllm.model.loader.MistralModelLoader;
+import org.beehive.jllm.model.loader.Phi3ModelLoader;
+import org.beehive.jllm.model.loader.Qwen2MoEModelLoader;
+import org.beehive.jllm.model.loader.Qwen2ModelLoader;
+import org.beehive.jllm.model.loader.Qwen3ModelLoader;
+import org.beehive.jllm.runtime.backend.BackendId;
 
 /**
  * The providers for the architectures this build knows, one per family.

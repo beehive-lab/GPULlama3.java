@@ -1,4 +1,4 @@
-package org.beehive.gpullama3.auxiliary;
+package org.beehive.jllm.auxiliary;
 
 public class Tuple2<T, U> {
     private final T first;

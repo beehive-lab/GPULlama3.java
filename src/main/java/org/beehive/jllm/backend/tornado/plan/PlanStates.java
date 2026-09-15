@@ -1,7 +1,7 @@
-package org.beehive.gpullama3.backend.tornado.plan;
+package org.beehive.jllm.backend.tornado.plan;
 
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.runtime.model.ArchitectureId;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.runtime.model.ArchitectureId;
 
 /**
  * The cast the central factory used to do, in one family-neutral place.

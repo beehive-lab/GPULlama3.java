@@ -1,6 +1,6 @@
-package org.beehive.gpullama3.runtime.tensor;
+package org.beehive.jllm.runtime.tensor;
 
-import org.beehive.gpullama3.api.Experimental;
+import org.beehive.jllm.api.Experimental;
 
 /**
  * How values are represented where the engine actually computes with them.

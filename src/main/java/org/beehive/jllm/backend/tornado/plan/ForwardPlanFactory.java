@@ -1,8 +1,8 @@
-package org.beehive.gpullama3.backend.tornado.plan;
+package org.beehive.jllm.backend.tornado.plan;
 
-import org.beehive.gpullama3.inference.state.State;
-import org.beehive.gpullama3.model.Model;
-import org.beehive.gpullama3.runtime.tensor.DataType;
+import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.model.Model;
+import org.beehive.jllm.runtime.tensor.DataType;
 
 // @formatter:off
 /**
@@ -12,7 +12,7 @@ import org.beehive.gpullama3.runtime.tensor.DataType;
  *
  * <ol>
  *   <li>Quantization ({@link DataType} — the representation the weights were materialized in)
- *   <li>Model family ({@link org.beehive.gpullama3.model.ModelType})
+ *   <li>Model family ({@link org.beehive.jllm.model.ModelType})
  *   <li>Execution mode ({@link ExecutionMode})
  * </ol>
  *
