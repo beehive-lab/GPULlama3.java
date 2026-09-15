@@ -2,7 +2,7 @@
 #
 # benchmark_backends.sh
 #
-# Measures GPULlama3.java inference performance across the three TornadoVM GPU
+# Measures jllm inference performance across the three TornadoVM GPU
 # backends (OpenCL, PTX, CUDA) over the full model/quantization/configuration
 # matrix from .github/workflows/build-and-run.yml.
 #
@@ -27,7 +27,7 @@ set -o pipefail
 # ──────────────────────────────────────────────────────────────────────────────
 JAVA_SDK="${JAVA_SDK:-21.0.2-open}"
 TORNADO_ROOT="${TORNADO_ROOT:-$HOME/TornadoVM}"
-JLLM_ROOT_DIR="${JLLM_ROOT_DIR:-$HOME/GPULlama3.java}"
+JLLM_ROOT_DIR="${JLLM_ROOT_DIR:-$HOME/jllm}"
 MODELS_DIR="${MODELS_DIR:-/opt/models}"
 
 PROMPT="${PROMPT:-Write a long, detailed adventure story about a young explorer discovering a hidden ancient city in the jungle. Include vivid descriptions.}"
@@ -117,7 +117,7 @@ run_inference() {
     export JAVA_TOOL_OPTIONS="-Djllm.metrics.format=json -Djllm.metrics.output=file -Djllm.metrics.file=$metrics_file"
     # shellcheck disable=SC2086
     ( cd "$JLLM_ROOT_DIR" && \
-      ./llama-tornado --gpu \
+      ./jllm --gpu \
         --model "$MODELS_DIR/$model_file" \
         --prompt "$PROMPT" \
         --max-tokens "$MAX_TOKENS" \

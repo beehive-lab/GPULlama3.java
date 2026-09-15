@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-llama-tornado: GPU-accelerated Java LLM runner with TornadoVM
+jllm: GPU-accelerated Java LLM runner with TornadoVM
 Run LLM models using OpenCL, CUDA, or Metal backends.
 
 The backend is auto-detected from the installed TornadoVM SDK
@@ -60,7 +60,7 @@ class LlamaRunner:
         if not all([self.java_home, self.tornado_sdk, self.llama_root]):
             print("Error: Required environment variables not set")
             print("Please ensure JAVA_HOME, TORNADOVM_HOME, and JLLM_ROOT are defined")
-            print("Note: check set_path in root dir -> source set_path")
+            print("Note: check set_paths in root dir -> source set_paths")
             sys.exit(1)
 
     def _validate_paths(self):
@@ -254,16 +254,16 @@ class LlamaRunner:
     def _find_llama_jar(self) -> str:
         """Find the LLaMA JAR file automatically using glob pattern."""
         target_dir = f"{self.llama_root}/target"
-        jar_pattern = f"{target_dir}/gpu-llama3-*-SNAPSHOT.jar"
+        jar_pattern = f"{target_dir}/jllm-*-SNAPSHOT.jar"
         jar_files = glob.glob(jar_pattern)
 
         if not jar_files:
-            # Fallback: try any gpu-llama3 jar
-            jar_pattern = f"{target_dir}/gpu-llama3-*.jar"
+            # Fallback: try any jllm jar
+            jar_pattern = f"{target_dir}/jllm-*.jar"
             jar_files = glob.glob(jar_pattern)
 
         if not jar_files:
-            raise FileNotFoundError(f"No gpu-llama3 JAR file found in {target_dir}")
+            raise FileNotFoundError(f"No jllm JAR file found in {target_dir}")
 
         # Sort to get the latest version if multiple exist
         jar_files.sort(reverse=True)
@@ -418,7 +418,7 @@ def load_env_from_script():
 def create_parser() -> argparse.ArgumentParser:
     """Create and configure the argument parser."""
     parser = argparse.ArgumentParser(
-        prog="llama-tornado",
+        prog="jllm",
         description="GPU-accelerated LLM runner using TornadoVM",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         allow_abbrev=False,
@@ -645,7 +645,7 @@ def validate_backend_selection(args):
         f"Error: {flag} was given without --gpu, so the model would run on the CPU.\n"
         f"  {flag} only chooses which TornadoVM backend to prefer; --gpu is what enables "
         f"acceleration.\n"
-        f"  Use: llama-tornado --gpu {flag} ...   (or drop {flag} to run on the CPU "
+        f"  Use: jllm --gpu {flag} ...   (or drop {flag} to run on the CPU "
         f"deliberately)"
     )
     sys.exit(1)

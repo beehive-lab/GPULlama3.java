@@ -223,16 +223,16 @@ void printUsage() {
 
 String findLlamaJar(String llamaRoot) {
     var targetDir = Path.of(llamaRoot, "target");
-    try (var stream = Files.newDirectoryStream(targetDir, "gpu-llama3-*-SNAPSHOT.jar")) {
+    try (var stream = Files.newDirectoryStream(targetDir, "jllm-*-SNAPSHOT.jar")) {
         var jars = new ArrayList<Path>();
         stream.forEach(jars::add);
         if (jars.isEmpty()) {
-            try (var fallback = Files.newDirectoryStream(targetDir, "gpu-llama3-*.jar")) {
+            try (var fallback = Files.newDirectoryStream(targetDir, "jllm-*.jar")) {
                 fallback.forEach(jars::add);
             }
         }
         if (jars.isEmpty()) {
-            System.err.println("Error: No gpu-llama3 JAR found in " + targetDir);
+            System.err.println("Error: No jllm JAR found in " + targetDir);
             System.exit(1);
         }
         jars.sort(Comparator.reverseOrder());

@@ -35,7 +35,7 @@ public record Options(Path modelPath, String prompt, String systemPrompt, String
     }
 
     public static void printUsage(PrintStream out) {
-        out.println("Usage:  jbang Llama3.java [options]");
+        out.println("Usage:  jllm [options]");
         out.println();
         out.println("Options:");
         out.println("  --model, -m <path>            required, path to .gguf file");

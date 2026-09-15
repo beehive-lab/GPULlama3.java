@@ -5,7 +5,7 @@ source "$HOME/.sdkman/bin/sdkman-init.sh" >/dev/null 2>&1
 sdk use java 21.0.2-open >/dev/null
 source "$HOME/TornadoVM/setvars.sh" >/dev/null
 
-export JLLM_ROOT=/home/orion/GPULlama3.java
+export JLLM_ROOT=/home/orion/jllm
 cd "$JLLM_ROOT" || exit 1
 
 RESULTS_DIR="${RESULTS_DIR:-$JLLM_ROOT/perf-results/profile-cuda-baseline-$(date +%Y%m%d-%H%M%S)}"
@@ -52,7 +52,7 @@ for entry in "${models[@]}"; do
     export JAVA_TOOL_OPTIONS="-Djllm.bench.ignoreEos=true -Djllm.metrics.format=json -Djllm.metrics.output=file -Djllm.metrics.file=$metrics"
     start_ms=$(date +%s%3N)
     # shellcheck disable=SC2086
-    ./llama-tornado --gpu --cuda \
+    ./jllm --gpu --cuda \
       --model "$path" \
       --prompt "$PROMPT" \
       --max-tokens "$MAX_TOKENS" \

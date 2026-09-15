@@ -99,7 +99,7 @@ run_inference() {
     # EXTRA_JVM_PROPS is appended, not replaced: this assignment overrides any exported
     # JAVA_TOOL_OPTIONS, so a caller trying to add a property that way silently loses it.
     JAVA_TOOL_OPTIONS="-Djllm.metrics.format=json -Djllm.metrics.output=file -Djllm.metrics.file=$metrics_file ${EXTRA_JVM_PROPS:-}" \
-    "$REPO_ROOT/llama-tornado" --gpu "$BACKEND_FLAG" \
+    "$REPO_ROOT/jllm" --gpu "$BACKEND_FLAG" \
         --model "$MODELS_DIR/$MODEL_FILE" \
         --prompt "$PROMPT" \
         --max-tokens "$MAX_TOKENS" \

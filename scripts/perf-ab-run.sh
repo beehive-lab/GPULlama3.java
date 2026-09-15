@@ -125,7 +125,7 @@ run_inference() {
     local root="$1" metrics_file="$2" run_log="$3" seed="$4" side_props="$5"
     JLLM_ROOT="$root" \
     JAVA_TOOL_OPTIONS="-Djllm.metrics.format=json -Djllm.metrics.output=file -Djllm.metrics.file=$metrics_file ${EXTRA_JVM_PROPS:-} $side_props" \
-    "$root/llama-tornado" --gpu "$BACKEND_FLAG" \
+    "$root/jllm" --gpu "$BACKEND_FLAG" \
         --model "$MODELS_DIR/$MODEL_FILE" \
         --prompt "$PROMPT" \
         --max-tokens "$MAX_TOKENS" \
