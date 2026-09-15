@@ -407,9 +407,8 @@ public final class TransformerComputeKernelsQ5_K {
      * instructions rather than sixteen.
      *
      * <p>The five-bit quants are 0..31 — unsigned, and never recentred — so every packed byte is a
-     * valid signed byte and nothing here can reach the unsigned-recentring defect recorded in
-     * {@code docs/architecture/tornadovm-issues}. There is no activation-side correction constant
-     * at all.
+     * valid signed byte and nothing here can reach the unsigned-recentring defect recorded in the
+     * TornadoVM backend. There is no activation-side correction constant at all.
      *
      * <p>Four consecutive weights of a sub-block come from four consecutive {@code qs} bytes and
      * four consecutive {@code qh} bytes, which is why the loop packs in groups of four: the same
@@ -505,12 +504,9 @@ public final class TransformerComputeKernelsQ5_K {
         int dot = 0;
         for (int g = 0; g < 8; g++) {
             int t = g * 4;
-            // Both planes are read two bytes at a time rather than one, the way the Q4_0 kernels
-            // read their nibbles. getHalfFloatValue() is a bit-preserving load here -- these are
-            // quant bytes, never a number -- and each half is masked to sixteen bits before it is
-            // shifted so the signed short cannot sign-extend. Q5_K needs no alignment argument
-            // beyond the layout: a super-block is 176 bytes (a multiple of sixteen), qs starts at
-            // 48 and steps by 32, qh starts at 16, and t is a multiple of four, so every one of
+            // Both planes two bytes at a time, as TransformerComputeKernelsQ4_0 documents. Q5_K
+            // needs no alignment argument beyond its layout: a super-block is 176 bytes, qs starts
+            // at 48 and steps by 32, qh starts at 16, and t is a multiple of four, so every one of
             // these addresses is four-byte aligned.
             int lowBits = w.getHalfFloat(qsBase + t).getHalfFloatValue() & 0xFFFF;
             int highBits = w.getHalfFloat(qsBase + t + 2).getHalfFloatValue() & 0xFFFF;

@@ -781,7 +781,6 @@ public class Qwen35FFNLayers
         return layer;
     }
 
-    /** Whether this state's key/value store is half precision. */
     // @formatter:off
     /**
      * How many KV splits this family's decode attention runs, or one for the per-head kernel.
@@ -820,6 +819,7 @@ public class Qwen35FFNLayers
         return eligible ? org.beehive.gpullama3.inference.state.State.SPLIT_KV : 1;
     }
 
+    /** Whether this state's key/value store is half precision. */
     protected boolean fp16Kv() {
         return state.usesFp16KeyValueCache();
     }
@@ -833,26 +833,6 @@ public class Qwen35FFNLayers
         return fp16Kv() ? state.workspace.wrapValueCacheFP16 : state.workspace.wrapValueCache;
     }
 
-    /** {@code xb = weight ⊙ rms(x)} — the reduction, its finalize where needed, and the apply. */
-    // @formatter:off
-    /**
-     * Whether the gated norm takes a workgroup per head rather than a lane per head.
-     *
-     * <p>A property of the head's width, not a user choice and not a backend one: the wide kernel
-     * reduces through a shared tree, which halves a power-of-two width at every step, and its local
-     * work size is that width. Anything else keeps the per-head lane. This model's value head is
-     * 128 wide.
-     */
-    // @formatter:on
-    // @formatter:off
-    /**
-     * Whether the delta-net L2 norm takes a workgroup per head rather than a lane per head.
-     *
-     * <p>The same condition {@link #gatedNormIsWide} applies, read on the <b>key</b> head's width
-     * because that is what the L2 norm reduces over: the shared tree halves a power-of-two width at
-     * every step and its local work size is that width. This model's key head is 128 wide.
-     */
-    // @formatter:on
     // @formatter:off
     /**
      * Whether the delta rule splits each column's reduction across two lanes.
@@ -870,16 +850,36 @@ public class Qwen35FFNLayers
         return headDim % 2 == 0 && 2 * headDim <= 1024;
     }
 
+    // @formatter:off
+    /**
+     * Whether the delta-net L2 norm takes a workgroup per head rather than a lane per head.
+     *
+     * <p>The same condition {@link #gatedNormIsWide} applies, read on the <b>key</b> head's width
+     * because that is what the L2 norm reduces over: the shared tree halves a power-of-two width at
+     * every step and its local work size is that width. This model's key head is 128 wide.
+     */
+    // @formatter:on
     private boolean l2NormIsWide() {
         int headDim = config.headKeyDim();
         return headDim > 0 && (headDim & (headDim - 1)) == 0;
     }
 
+    // @formatter:off
+    /**
+     * Whether the gated norm takes a workgroup per head rather than a lane per head.
+     *
+     * <p>A property of the head's width, not a user choice and not a backend one: the wide kernel
+     * reduces through a shared tree, which halves a power-of-two width at every step, and its local
+     * work size is that width. Anything else keeps the per-head lane. This model's value head is
+     * 128 wide.
+     */
+    // @formatter:on
     private boolean gatedNormIsWide() {
         int headDim = config.headValueDim();
         return headDim > 0 && (headDim & (headDim - 1)) == 0;
     }
 
+    /** {@code xb = weight ⊙ rms(x)} — the reduction, its finalize where needed, and the apply. */
     private void normalize(
             TaskGraph layer,
             String reduce,
@@ -958,34 +958,6 @@ public class Qwen35FFNLayers
 
     // @formatter:off
     /**
-     * A full-attention block, from the normalized {@code wrapXb} back into {@code wrapX}.
-     *
-     * <p>Follows the host branch operation for operation. Three things separate it from Qwen3's:
-     * the query projection is twice as wide and carries an interleaved output gate; the rotation
-     * covers 64 of a 256-wide head; and the attention result is gated by a logistic before the
-     * output projection.
-     */
-    // @formatter:on
-    // @formatter:off
-    /**
-     * Whether this device's Q4_0 projections read a quantized activation and a packed integer dot
-     * product rather than a floating-point one.
-     *
-     * <p>A device fact, not a user choice: the packed path needs {@code dp4a} to be lowered, and it
-     * is worth taking only where that has been measured. Everything else about the decision is a
-     * property of the projection — Q4_0 weights, no residual, and an input the branch has already
-     * quantized — and is decided where the task is built.
-     *
-     * <p>Measured on the 27B at chunk 32, interleaved: {@code tg128} 14.73 and 14.72 t/s against
-     * 13.70 and 13.61, and {@code tg128@d381} 11.23 against 10.67 and 10.50. Prefill is untouched
-     * and unchanged. What it costs is in the parity record: the activation is quantized to eight
-     * bits, so the logits move by far more than the floating-point path's bounds allow — relative
-     * L2 2.45e-2 against a 1e-4 bound, cosine 0.99970 — while the decisions did not, at 0/63 argmax
-     * disagreements and token-identical greedy output over 120 tokens.
-     */
-    // @formatter:on
-    // @formatter:off
-    /**
      * Whether {@code wrapXb} still holds the activation {@code xb_quantize} quantized.
      *
      * <p>The buffer is reused inside a layer — the attention branch writes its gated output into
@@ -1008,6 +980,22 @@ public class Qwen35FFNLayers
      */
     private boolean hiddenActivationQuantized;
 
+    // @formatter:off
+    /**
+     * Whether this device's Q4_0 projections read a quantized activation and a packed integer dot
+     * product rather than a floating-point one.
+     *
+     * <p>A device fact, not a user choice: the packed path needs {@code dp4a} to be lowered, and it
+     * is worth taking only where that has been measured. Everything else about the decision is a
+     * property of the projection — Q4_0 weights, no residual, and an input the branch has already
+     * quantized — and is decided where the task is built.
+     *
+     * <p>Prefill is untouched. What the path costs is in the parity record: the activation is
+     * quantized to eight bits, so the logits move by far more than the floating-point path's bounds
+     * allow — relative L2 2.45e-2 against a 1e-4 bound, cosine 0.99970 — while the decisions did
+     * not, at 0/63 argmax disagreements and token-identical greedy output over 120 tokens.
+     */
+    // @formatter:on
     private static final boolean DP4A =
             TornadoDevices.current()
                             .capabilities()
@@ -1041,6 +1029,16 @@ public class Qwen35FFNLayers
         return elements <= Math.max(config.dim(), config.hiddenDim()) && elements % 32 == 0;
     }
 
+    // @formatter:off
+    /**
+     * A full-attention block, from the normalized {@code wrapXb} back into {@code wrapX}.
+     *
+     * <p>Follows the host branch operation for operation. Three things separate it from Qwen3's:
+     * the query projection is twice as wide and carries an interleaved output gate; the rotation
+     * covers 64 of a 256-wide head; and the attention result is gated by a logistic before the
+     * output projection.
+     */
+    // @formatter:on
     private void attentionBranch(TaskGraph layer, int layerIndex) {
         final int headDim = config.numberOfHeadsKey();
         final int kvDim = config.kvDim();
@@ -1509,12 +1507,6 @@ public class Qwen35FFNLayers
 
     // ── transfers ─────────────────────────────────────────────────────────────
 
-    /**
-     * This layer's weights, uploaded once in the graph that first reads them.
-     *
-     * <p>A weight array bound with {@code transferToDevice} in two graphs of one execution plan
-     * gets a device buffer in each, so a layer uploads only its own and never another's.
-     */
     // @formatter:off
     /**
      * The graph that has already uploaded this layer's weights, or {@code null} to upload them
@@ -1529,6 +1521,12 @@ public class Qwen35FFNLayers
         return null;
     }
 
+    /**
+     * This layer's weights, uploaded once in the graph that first reads them.
+     *
+     * <p>A weight array bound with {@code transferToDevice} in two graphs of one execution plan
+     * gets a device buffer in each, so a layer uploads only its own and never another's.
+     */
     private void transferLayerWeights(TaskGraph layer, int layerIndex) {
         List<Object> tensors = new ArrayList<>();
         tensors.add(weights.rms_att_weightLayered[layerIndex].asFloatArray());

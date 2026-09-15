@@ -179,8 +179,8 @@ public final class TransformerComputeKernelsQ6_K {
      * Building it that way is what {@code vec_dot_q6_K_q8_1_impl_mmvq} does, and it is why this
      * kernel needs no per-run sum of the activation's quants: there is no correction term. The
      * subtraction is masked to a byte as it is packed, which is what makes it safe against the
-     * unsigned-stamp wrap recorded in {@code docs/architecture/tornadovm-issues} -- the wrapped
-     * value and the correct one agree in their low eight bits, and the test walks all 64 values.
+     * unsigned-stamp wrap in the TornadoVM backend -- the wrapped value and the correct one agree
+     * in their low eight bits, and the test walks all 64 values.
      *
      * <p><b>Scale structure.</b> A super-block is 256 weights with one fp16 {@code d}, sixteen
      * signed byte scales, and a quantum split across {@code ql} and {@code qh}. A scale covers
@@ -250,15 +250,13 @@ public final class TransformerComputeKernelsQ6_K {
             int quantBase = run * 4;
             int dot = 0;
             for (int g = 0; g < 4; g++) {
-                // Both planes two bytes at a time instead of one, and the whole reconstruction
-                // on the packed word rather than lane by lane. getHalfFloatValue() is a
-                // bit-preserving load here -- these are quant bytes, never a number -- and each
-                // half is masked to sixteen bits before it is shifted. A super-block is 210
-                // bytes, so its start is even but only every other one is four-byte aligned;
-                // qlBase and qhBase add multiples of sixteen and this adds a multiple of four,
-                // so every address here is even, which is what the pair read needs. The last
-                // pair of a run reads qlBase+14..15 and qhBase+14..15, inside ql's 0..127 and
-                // qh's 128..191.
+                // Both planes two bytes at a time, as TransformerComputeKernelsQ4_0 documents,
+                // with the whole reconstruction on the packed word rather than lane by lane. A
+                // super-block is 210 bytes, so its start is even but only every other one is
+                // four-byte aligned; qlBase and qhBase add multiples of sixteen and this adds a
+                // multiple of four, so every address here is even, which is what the pair read
+                // needs. The last pair of a run reads qlBase+14..15 and qhBase+14..15, inside
+                // ql's 0..127 and qh's 128..191.
                 int at = g * 4;
                 int qlWord =
                         (w.getHalfFloat(qlBase + at).getHalfFloatValue() & 0xFFFF)

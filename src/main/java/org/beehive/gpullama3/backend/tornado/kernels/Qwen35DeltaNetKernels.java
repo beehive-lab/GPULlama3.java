@@ -323,17 +323,12 @@ public final class Qwen35DeltaNetKernels {
     /**
      * The delta rule with each column's reduction split across two lanes.
      *
-     * <p>{@link #deltaRule} gives one lane a whole column: it walks the column's {@code stateDim}
-     * rows twice, and each walk is a dependent accumulation, which the generated code shows as an
-     * unrolled but strictly serial chain of {@code FFMA}. The grid is one workgroup per value head
-     * — forty-eight of them at 128 lanes — so a multiprocessor holds four warps and there is very
-     * little to hide that chain behind.
-     *
-     * <p>This widens the workgroup to {@code 2 * stateDim} and gives a column two lanes, each
-     * taking half the rows. It halves the chain and doubles the warps per workgroup. It does
-     * <b>not</b> help the multiprocessors that get no workgroup at all: there are still
-     * forty-eight, and reaching the rest would mean splitting a column across workgroups, which is
-     * a reduction across workgroups and is not done here.
+     * <p>{@link #deltaRule} gives one lane a whole column, walking the column's {@code stateDim}
+     * rows twice in two dependent accumulations. This widens the workgroup to {@code 2 * stateDim}
+     * and gives a column two lanes, each taking half the rows, halving each chain and doubling the
+     * warps per workgroup. The grid is still one workgroup per value head, so it does not reach the
+     * multiprocessors that get no workgroup at all; that would mean a reduction across workgroups,
+     * which is not done here.
      *
      * <p><b>Ownership.</b> Lane {@code (half, column)} owns rows {@code [half*rows, (half+1)*rows)}
      * of that column, in both sweeps, so every state element has exactly one writer and is written

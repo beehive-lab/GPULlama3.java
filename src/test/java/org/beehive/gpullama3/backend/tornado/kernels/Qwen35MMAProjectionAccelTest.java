@@ -241,7 +241,6 @@ public class Qwen35MMAProjectionAccelTest {
      * it produces NaN. The kernels here escape it only because they choose the nibble with a
      * branch, and the phi merging the two arms is stamped signed — a rewrite to the branchless
      * form, which is the natural thing to write when a loop covers both halves, reintroduces it.
-     * The reproducer and the emitted code are in {@code docs/architecture/tornadovm-issues}.
      *
      * <p>The activation is one-hot: row {@code r} selects element {@code r} of each weight column,
      * so an output <b>is</b> a decoded weight rather than a sum of them, and each assertion names

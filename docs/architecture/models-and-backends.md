@@ -33,7 +33,7 @@ else claims the name, and the pass-through branch resolved it. A provider class 
 service line were the whole registration, which is what rule 15 is for. It is also the first
 family with **two kinds of layer**: only every fourth trunk layer attends, and the other
 three mix with a Gated Delta Net recurrence holding fixed-size state instead of a key/value
-cache. See [`qwen35-port-proposal.md`](qwen35-port-proposal.md).
+cache.
 
 It reuses Qwen 3's tokenizer, turn structure and thinking control, and **does not** reuse its
 tool-call format: Qwen 3 puts a JSON object inside `<tool_call>`, and Qwen 3.5 puts nested

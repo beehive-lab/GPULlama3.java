@@ -187,8 +187,8 @@ public final class Qwen35MMAKernels {
      * <p>One warp per output tile of sixteen rows by eight columns — the {@code m16n8k16} shape
      * itself. The B tile is staged through {@code swizzleStoreFp16Stride32} and read with {@code
      * mmaLoadBSwizzled}, which is the route that avoids ever reading a half's bits in the kernel;
-     * two implementations that did read them are recorded in {@code
-     * docs/architecture/tornadovm-issues}, one refusing to compile and one crashing the compiler.
+     * two implementations that did read them were tried, one refusing to compile and one crashing
+     * the compiler.
      *
      * @param aFP16 activations, {@code [M padded to 16][K]}, FP16
      * @param w the weight matrix, as the file stores it, {@code [N][K]} in {@code Q4_0}

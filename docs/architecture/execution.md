@@ -150,8 +150,7 @@ compilation occurs.
 
 A family whose layers carry state across tokens — `qwen35`'s recurrent three quarters — cannot
 treat a chunk's rows as independent. Its batched layer graphs scan the chunk in token order inside
-the kernel, which is what keeps the result independent of the chunk width. See
-[`qwen35-prefill-design.md`](qwen35-prefill-design.md).
+the kernel, which is what keeps the result independent of the chunk width.
 
 Policy is resolved **once per generation**, never per token, and reaches the plan as an
 `ExecutionPolicy` value rather than as process-global system properties. The properties

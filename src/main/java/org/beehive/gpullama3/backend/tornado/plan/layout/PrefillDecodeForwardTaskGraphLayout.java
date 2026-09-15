@@ -30,22 +30,23 @@ public record PrefillDecodeForwardTaskGraphLayout(int N) {
      * weights, and the Tornado runtime allocates a device buffer per graph — so this, not {@link
      * #totalGraphs()}, is the multiplier on per-layer weight memory. This layout has 1.
      *
-     * <p>{@code TornadoGraphTopology} asserts that {@code totalGraphs() == layerGraphFamilies() * N
-     * + nonLayerGraphs()}, so adding a family here without updating this method fails that check
-     * rather than silently under-predicting memory.
+     * <p>{@code TornadoGraphTopology} asserts that {@code totalGraphs()} equals the sum of {@link
+     * #layerFamilyGraphCounts()} plus {@link #nonLayerGraphs()}, with one term per declared family,
+     * so adding a family here without stating its graphs fails that check rather than silently
+     * under-predicting memory.
      */
     public int layerGraphFamilies() {
         return 1;
     }
 
-    /**
-     * Graphs that are not per-layer: activation and logits; prefill reuses the decode layer graphs.
-     */
     /** Graphs each family contributes, in layout order. One family, one graph per layer. */
     public int[] layerFamilyGraphCounts() {
         return new int[] {N};
     }
 
+    /**
+     * Graphs that are not per-layer: activation and logits; prefill reuses the decode layer graphs.
+     */
     public int nonLayerGraphs() {
         return 2;
     }

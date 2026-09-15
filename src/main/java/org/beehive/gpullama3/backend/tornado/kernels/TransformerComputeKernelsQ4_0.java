@@ -23,6 +23,16 @@ import uk.ac.manchester.tornado.api.utils.QuantizationUtils;
  * scales. Element {@code i} below 16 is the low nibble of byte {@code i}; element {@code i} at 16
  * or above is the high nibble of byte {@code i - 16}.
  *
+ * <h2>Reading the packed nibbles</h2>
+ *
+ * <p>The packed kernels below read each four-byte group of nibbles as two sixteen-bit words via
+ * {@code ByteArray.getHalfFloat(o).getHalfFloatValue()}. That accessor is used purely as a
+ * bit-preserving load — these bytes are quants, never a number — and each half is masked to sixteen
+ * bits before it is shifted, so the signed short cannot sign-extend into the packed word. A block
+ * is 18 bytes with its quants at offset 2, so every such offset is even, which is all a pair read
+ * needs; only every other quant run is four-byte aligned, which is why these are pairs and not
+ * single words.
+ *
  * <h2>Why it exists</h2>
  *
  * <p>Q4_0 used to be materialized as Q8_0 at load, which roughly doubles a model's device
@@ -155,8 +165,8 @@ public final class TransformerComputeKernelsQ4_0 {
      *
      * so the recentring comes out of the inner loop entirely and the dot product runs on the raw
      * nibbles, which are 0..15 and therefore already valid signed bytes. Nothing in the hot loop
-     * has to build a negative byte — which also keeps it clear of the unsigned-recentring defect
-     * recorded in {@code docs/architecture/tornadovm-issues}.
+     * has to build a negative byte — which also keeps it clear of the unsigned-recentring defect in
+     * the TornadoVM backend.
      *
      * <p>A block of exact zeros gets a zero scale and zero quants rather than a division by zero;
      * its contribution is then zero, which is what it should be.
@@ -341,10 +351,9 @@ public final class TransformerComputeKernelsQ4_0 {
      * shuffles; the only early return is on {@code rowId}, which is uniform across the workgroup,
      * and {@code localWorkGroupSize} must be a multiple of 32. Shuffles are correct on CUDA and
      * miscompile on OpenCL, which is why every packed kernel rides on {@code
-     * DeviceCapability.PACKED_INTEGER_DOT}, granted on CUDA alone. Interleaved whole-model A/B,
-     * tg128 b32, FP16 KV and CUDA graphs, RTX 5090 Laptop: 24.16 to 24.67 t/s against the tree, and
-     * 17.19 to 17.37 at depth 381. The order of summation differs from the tree's, so the
-     * floating-point total may round differently; the integer dot products are exact either way.
+     * DeviceCapability.PACKED_INTEGER_DOT}, granted on CUDA alone. The order of summation differs
+     * from the tree's, so the floating-point total may round differently; the integer dot products
+     * are exact either way.
      */
     // @formatter:on
     public static void matrixVectorGenericQ4_0DP4A(
@@ -376,13 +385,6 @@ public final class TransformerComputeKernelsQ4_0 {
 
             int dot = 0;
             for (int g = 0; g < 4; g++) {
-                // The paired raw-bit read the fused gate/up and the residual form already use:
-                // four packed nibble bytes as two sixteen-bit words, each masked to sixteen bits
-                // before it is shifted so the signed short cannot sign-extend.
-                // getHalfFloatValue() is a bit-preserving load here -- these are quant bytes,
-                // never a number. blockByteOffset is a multiple of eighteen and QS_OFFSET is two,
-                // so the offset is always even, which is what the pair read needs; only every
-                // other Q4_0 quant run is four-byte aligned, which is why this reads pairs.
                 int quantOffset = blockByteOffset + QS_OFFSET + g * 4;
                 int packed =
                         (w.getHalfFloat(quantOffset).getHalfFloatValue() & 0xFFFF)
@@ -631,13 +633,6 @@ public final class TransformerComputeKernelsQ4_0 {
 
             int dot = 0;
             for (int g = 0; g < 4; g++) {
-                // The paired raw-bit read fusedFFNGateUpSiLUQ4_0DP4A uses, for one weight matrix
-                // rather than two: four packed nibble bytes as two sixteen-bit words, each masked
-                // to sixteen bits before it is shifted so the signed short cannot sign-extend.
-                // getHalfFloatValue() is a bit-preserving load here -- these are quant bytes, never
-                // a number. blockByteOffset is a multiple of eighteen and QS_OFFSET is two, so the
-                // offset is always even, which is what the pair read needs; only every other Q4_0
-                // quant run is four-byte aligned, which is why this reads pairs.
                 int quantOffset = blockByteOffset + QS_OFFSET + g * 4;
                 int packed =
                         (w.getHalfFloat(quantOffset).getHalfFloatValue() & 0xFFFF)
@@ -732,13 +727,7 @@ public final class TransformerComputeKernelsQ4_0 {
             int gateDot = 0;
             int upDot = 0;
             for (int g = 0; g < 4; g++) {
-                // Four packed nibble bytes read as two sixteen-bit words rather than four single
-                // bytes. getHalfFloatValue() is used here purely as a bit-preserving load -- these
-                // are quant bytes, never a number -- and each half is masked to sixteen bits before
-                // it is shifted, so the signed short cannot sign-extend into the packed word. The
-                // offset is blockByteOffset + 2 + 4g with blockByteOffset a multiple of eighteen,
-                // so it is always even; a Q4_0 quant run is two-byte aligned and only half of them
-                // are four-byte aligned, which is why this reads pairs rather than one word.
+                // Paired nibble read; see the class comment for why it is a pair and not a word.
                 int quantOffset = blockByteOffset + QS_OFFSET + g * 4;
                 int gateWord =
                         (w1.getHalfFloat(quantOffset).getHalfFloatValue() & 0xFFFF)
@@ -922,9 +911,8 @@ public final class TransformerComputeKernelsQ4_0 {
      * bytes of weights and 557 KB of activations. Covering four output rows quarters the activation
      * traffic per output row and leaves the weight traffic where it was.
      *
-     * <p>Four rather than eight, measured: two took pp381 at a chunk of 32 from 28.4 to 35.9 t/s
-     * and four to 38.9, while eight gave 38.8 — by then the extra accumulators and the wider
-     * shared-memory reduction cost what the saved traffic bought.
+     * <p>Four rather than eight: eight measured no better, the extra accumulators and the wider
+     * shared-memory reduction costing what the saved traffic bought.
      */
     // @formatter:on
     private static final int COL_TILE = 4;
