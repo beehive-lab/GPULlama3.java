@@ -4,12 +4,12 @@
 
     <!-- Use your verified namespace -->
     <groupId>io.github.beehive-lab</groupId>
-    <artifactId>gpu-llama3</artifactId>
+    <artifactId>jllm</artifactId>
     <version>${revision}${jdk.version.suffix}</version>
 
-    <name>GPU Llama3</name>
-    <description>GPU-accelerated LLaMA3 inference using TornadoVM</description>
-    <url>https://github.com/beehive-lab/GPULlama3.java</url>
+    <name>jllm</name>
+    <description>LLM inference and serving for the JVM, GPU-accelerated with TornadoVM</description>
+    <url>https://github.com/beehive-lab/jllm</url>
 
     <licenses>
         <license>
@@ -28,10 +28,10 @@
     </developers>
 
     <scm>
-        <connection>scm:git:git://github.com/beehive-lab/GPULlama3.java.git</connection>
-        <developerConnection>scm:git:ssh://github.com/beehive-lab/GPULlama3.java.git</developerConnection>
+        <connection>scm:git:git://github.com/beehive-lab/jllm.git</connection>
+        <developerConnection>scm:git:ssh://github.com/beehive-lab/jllm.git</developerConnection>
         <tag>HEAD</tag>
-        <url>https://github.com/beehive-lab/GPULlama3.java</url>
+        <url>https://github.com/beehive-lab/jllm</url>
     </scm>
 
     <properties>
@@ -66,7 +66,7 @@
                  (see <version> at the top of this POM) and must keep saying -jdk25, while
                  TornadoVM 6.0.0 collapsed its jdk25/jdk26/jdk27 lines into a single jdk22plus
                  profile and publishes only 6.0.0-jdk21 and 6.0.0-jdk22plus to Maven Central.
-                 Tying the two together would silently rename gpu-llama3's own coordinates. -->
+                 Tying the two together would silently rename jllm's own coordinates. -->
         <tornadovm.version.suffix>-jdk21</tornadovm.version.suffix>
         <!-- CUDA backend is only available after 5.0.0 TornadoVM version -->
         <tornadovm.version>${tornadovm.base.version}${tornadovm.version.suffix}</tornadovm.version>
@@ -162,7 +162,7 @@
                             <rules>
                                 <requireJavaVersion>
                                     <version>[21,22),[25,26)</version>
-                                    <message>GPULlama3.java builds on JDK 21 or JDK 25 only. JDK 21 produces gpu-llama3:*-jdk21 against tornado *-jdk21; JDK 25 produces gpu-llama3:*-jdk25 against tornado *-jdk22plus. Any other JDK would activate neither profile and publish a mislabelled artifact.</message>
+                                    <message>jllm builds on JDK 21 or JDK 25 only. JDK 21 produces jllm:*-jdk21 against tornado *-jdk21; JDK 25 produces jllm:*-jdk25 against tornado *-jdk22plus. Any other JDK would activate neither profile and publish a mislabelled artifact.</message>
                                 </requireJavaVersion>
                             </rules>
                             <fail>true</fail>
@@ -212,7 +212,10 @@
                         <configuration>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>io.github.beehive-lab.gpullama3.JllmApp</mainClass>
+                                    <mainClass>org.beehive.jllm.JllmApp</mainClass>
+                                    <manifestEntries>
+                                        <Automatic-Module-Name>org.beehive.jllm</Automatic-Module-Name>
+                                    </manifestEntries>
                                 </transformer>
                             </transformers>
                         </configuration>
@@ -315,7 +318,7 @@
 
         <!-- ─── JDK 21 ───────────────────────────────────────────────────────────
                  Auto-activates on JDK 21.
-                 Publishes: gpu-llama3:${revision}-jdk21
+                 Publishes: jllm:${revision}-jdk21
                  TornadoVM: ${tornadovm.base.version}-jdk21
             ─────────────────────────────────────────────────────────────────────── -->
         <profile>
@@ -350,7 +353,7 @@
 
         <!-- ─── JDK 25 ───────────────────────────────────────────────────────────
                  Auto-activates on JDK 25.
-                 Publishes: gpu-llama3:${revision}-jdk25
+                 Publishes: jllm:${revision}-jdk25
                  TornadoVM: ${tornadovm.base.version}-jdk22plus (see tornadovm.version.suffix)
             ─────────────────────────────────────────────────────────────────────── -->
         <profile>
