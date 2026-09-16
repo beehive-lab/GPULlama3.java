@@ -13,8 +13,8 @@ authors:
   given-names: "Orion"
 - family-names: "Kotselidis"
   given-names: "Christos"
-title: "GPULlama3.java"
+title: "jllm (formerly GPULlama3.java)"
 license: MIT License
 version: 1.0.0
 date-released: 2026-07-28
-url: "https://github.com/beehive-lab/GPULlama3.java"
+url: "https://github.com/beehive-lab/jllm"

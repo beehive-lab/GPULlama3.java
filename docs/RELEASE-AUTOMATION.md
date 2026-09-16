@@ -1,4 +1,4 @@
-# GPULlama3.java Release Workflows
+# jllm Release Workflows
 
 GitHub Actions workflows for automating releases to Maven Central.
 
@@ -32,7 +32,7 @@ Available in `.github/workflows/`:
 
 ### Starting a Release
 
-1. Go to **Actions** → **Prepare GPULlama3 Release**
+1. Go to **Actions** → **Prepare jllm Release**
 2. Click **Run workflow**
 3. Enter version (e.g., `0.2.3`) and previous version (e.g., `0.2.2`)
 4. Review and merge the created PR

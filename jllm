@@ -1,0 +1,728 @@
+#!/usr/bin/env python3
+"""
+jllm: GPU-accelerated Java LLM runner with TornadoVM
+Run LLM models using OpenCL, CUDA, or Metal backends.
+
+The backend is auto-detected from the installed TornadoVM SDK
+(TORNADOVM_HOME/etc/tornado.backend) - no need to select it manually.
+"""
+
+import argparse
+import glob
+import os
+import subprocess
+import sys
+import time
+import platform
+from pathlib import Path
+from typing import List, Optional, Dict, Any
+from enum import Enum
+
+
+class Backend(Enum):
+    OPENCL = "opencl"
+    CUDA = "cuda"
+    METAL = "metal"
+
+
+# Maps the names TornadoVM writes to etc/tornado.backend to our Backend enum.
+BACKEND_NAME_MAP: Dict[str, Backend] = {
+    "opencl-backend": Backend.OPENCL,
+    "cuda-backend": Backend.CUDA,
+    "metal-backend": Backend.METAL,
+}
+
+# TornadoVM system property that ranks each backend for "driver 0" (default
+# device) selection when more than one backend is loaded - see
+# TornadoOptions.*_BACKEND_PRIORITY. Defaults there favor OpenCL (10) over
+# everything else (0), which doesn't match BACKEND_PRIORITY below, so we set
+# these explicitly whenever more than one backend is installed.
+BACKEND_PRIORITY_PROPERTY: Dict[Backend, str] = {
+    Backend.OPENCL: "tornado.opencl.priority",
+    Backend.CUDA: "tornado.cuda.priority",
+    Backend.METAL: "tornado.metal.priority",
+}
+
+# When an SDK is built with more than one backend, prefer this one for
+# properties that need a single "primary" backend (e.g. the printed message,
+# and which backend becomes TornadoVM's default device).
+BACKEND_PRIORITY: List[Backend] = [Backend.CUDA, Backend.OPENCL, Backend.METAL]
+
+
+class LlamaRunner:
+    """Main class for managing LLM execution with GPU acceleration."""
+
+    def __init__(self):
+        self.java_home = os.environ.get("JAVA_HOME")
+        self.tornado_sdk = os.environ.get("TORNADOVM_HOME")
+        self.llama_root = os.environ.get("JLLM_ROOT")
+
+        if not all([self.java_home, self.tornado_sdk, self.llama_root]):
+            print("Error: Required environment variables not set")
+            print("Please ensure JAVA_HOME, TORNADOVM_HOME, and JLLM_ROOT are defined")
+            print("Note: check set_paths in root dir -> source set_paths")
+            sys.exit(1)
+
+    def _validate_paths(self):
+        """Validate that required paths exist."""
+        paths_to_check = {
+            "JAVA_HOME": self.java_home,
+            "TORNADOVM_HOME": self.tornado_sdk,
+            "JLLM_ROOT": self.llama_root,
+        }
+
+        for name, path in paths_to_check.items():
+            if not Path(path).exists():
+                print(f"Error: {name} path does not exist: {path}")
+                sys.exit(1)
+
+    def detect_installed_backends(self) -> List[Backend]:
+        """Return every backend the installed TornadoVM SDK was built with (tornado.backend order)."""
+        backend_file = Path(self.tornado_sdk) / "etc" / "tornado.backend"
+        if not backend_file.exists():
+            print(f"Error: Could not detect TornadoVM backend - {backend_file} not found")
+            print("Note: this file is written by the TornadoVM installer; make sure TORNADOVM_HOME points at a valid SDK")
+            sys.exit(1)
+
+        installed_names: List[str] = []
+        for line in backend_file.read_text().splitlines():
+            line = line.strip()
+            if line.startswith("tornado.backends="):
+                installed_names = [b.strip() for b in line.split("=", 1)[1].split(",") if b.strip()]
+                break
+
+        if not installed_names:
+            print(f"Error: No backends declared in {backend_file}")
+            sys.exit(1)
+
+        installed = [BACKEND_NAME_MAP[n] for n in installed_names if n in BACKEND_NAME_MAP]
+        if not installed:
+            print(f"Error: Unsupported backend(s) in {backend_file}: {', '.join(installed_names)}")
+            sys.exit(1)
+
+        return installed
+
+    @staticmethod
+    def select_primary_backend(installed: List[Backend]) -> Backend:
+        """Pick which installed backend to report/default to when the SDK has more than one."""
+        for backend in BACKEND_PRIORITY:
+            if backend in installed:
+                return backend
+        return installed[0]
+
+    def _tornado_argfile(self) -> str:
+        """The SDK's own JVM argument file, which is the source of truth for how to start it.
+
+        It carries the module path, the Graal/JVMCI arrangement, the per-backend export lists
+        and the preview flag -- all of which differ by TornadoVM version, JDK and installed
+        backends. Reproducing them here is how a launcher silently starts the wrong thing on a
+        JDK it was not written for. The SDK writes it at build time, and the `tornado` launcher
+        refreshes it from the template on every invocation.
+        """
+        argfile = os.path.join(self.tornado_sdk, "tornado-argfile")
+        if not os.path.isfile(argfile):
+            print(
+                f"Error: {argfile} not found.\n"
+                f"Run '{self.tornado_sdk}/bin/tornado --devices' once to generate it from "
+                f"tornado-argfile.template, or reinstall the SDK.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        return argfile
+
+    def _build_base_command(self, args: argparse.Namespace) -> List[str]:
+        """Build the base Java command with JVM options."""
+        cmd = [
+            f"{self.java_home}/bin/java",
+            f"@{self._tornado_argfile()}",
+            f"-Xms{args.heap_min}",
+            f"-Xmx{args.heap_max}",
+            # Not supplied by the argfile: the Vector API is what FloatTensor's static
+            # initializer reaches for, and without it every run dies in class initialization.
+            "--add-modules",
+            "jdk.incubator.vector",
+            # Prompt ingestion emits more interpreter bytecode than the default buffer holds.
+            "-Dtornado.tvm.maxbytecodesize=65536",
+        ]
+
+        # GPU options
+        if args.use_gpu:
+            cmd.append("-Duse.tornadovm=true")
+
+        if args.verbose_init:
+            cmd.append("-Djllm.EnableTimingForTornadoVMInit=true")
+
+        if args.with_prefill_decode or args.batch_prefill_size is not None:
+            cmd.append("-Djllm.withPrefillDecode=true")
+
+        if args.batch_prefill_size is not None:
+            cmd.append(f"-Djllm.prefillBatchSize={args.batch_prefill_size}")
+
+        if args.cuda_graphs:
+            cmd.append("-Djllm.cudaGraphs=true")
+
+        if args.fp16_kv_cache:
+            cmd.append("-Djllm.kvcache.fp16=true")
+
+        if args.tensor_cores:
+            cmd.append("-Djllm.qwen35.tensorCores=true")
+
+        # Debug options
+        debug_config = []
+
+        if args.debug:
+            debug_config.extend(
+                [
+                    "-Dtornado.debug=true",
+                    "-Dtornado.threadInfo=True"
+                    if args.threads
+                    else "-Dtornado.threadInfo=false",
+                ]
+            )
+        else:
+            debug_config.extend(
+                [
+                    "-Dtornado.threadInfo=True"
+                    if args.threads
+                    else "-Dtornado.threadInfo=false",
+                    "-Dtornado.debug=false",
+                ]
+            )
+
+        # Additional debug options
+        debug_config.extend(
+            [
+                "-Dtornado.fullDebug=True"
+                if args.full_dump
+                else "-Dtornado.fullDebug=false",
+                "-Dtornado.printKernel=True"
+                if args.print_kernel
+                else "-Dtornado.printKernel=false",
+                "-Dtornado.print.bytecodes=True"
+                if args.print_bytecodes
+                else "-Dtornado.print.bytecodes=false",
+            ]
+        )
+
+        cmd.extend(debug_config)
+
+        # Additional TornadoVM settings
+        tornado_runtime_config = [
+            f"-Dtornado.device.memory={args.gpu_memory}",
+            f"-Dtornado.profiler={str(args.profiler).lower()}",
+            "-Dtornado.log.profiler=false",
+            f"-Dtornado.profiler.dump.dir={args.profiler_dump_dir}",
+            "-Dtornado.enable.fastMathOptimizations=true",
+            "-Dtornado.enable.mathOptimizations=false",
+            "-Dtornado.enable.nativeFunctions=true",
+            "-Dtornado.loop.interchange=true",
+            f"-Dtornado.eventpool.maxwaitevents={args.max_wait_events}",
+        ]
+        cmd.extend(tornado_runtime_config)
+
+        # Backend-specific configuration
+        if Backend.OPENCL in args.installed_backends:
+            # OpenCL specific flags
+            cmd.append(f"-Dtornado.opencl.compiler.flags={args.opencl_flags}")
+
+        if len(args.installed_backends) > 1:
+            # More than one backend is loaded, so pin TornadoVM's own driver-0
+            # (default device) selection to match args.backend - otherwise it
+            # falls back to its own defaults (OpenCL beats everything else).
+            # args.backend goes first (whether auto-picked or --backend
+            # override), then the rest of BACKEND_PRIORITY as a tiebreak.
+            effective_priority = [args.backend] + [b for b in BACKEND_PRIORITY if b != args.backend]
+            n = len(effective_priority)
+            for rank, backend in enumerate(effective_priority):
+                if backend in args.installed_backends:
+                    cmd.append(f"-D{BACKEND_PRIORITY_PROPERTY[backend]}={n - rank}")
+
+        module_config: List[str] = []
+
+        if getattr(args, "server", False):
+            main_class = "org.beehive.jllm.server.OpenAIServer"
+        elif getattr(args, "bench", False):
+            main_class = "org.beehive.jllm.bench.JllmBench"
+        else:
+            main_class = "org.beehive.jllm.JllmApp"
+
+        module_config.extend(
+            [
+                "-cp",
+                self._find_llama_jar(),
+                main_class,
+            ]
+        )
+        cmd.extend(module_config)
+
+        return cmd
+
+    def _find_llama_jar(self) -> str:
+        """Find the LLaMA JAR file automatically using glob pattern."""
+        target_dir = f"{self.llama_root}/target"
+        jar_pattern = f"{target_dir}/jllm-*-SNAPSHOT.jar"
+        jar_files = glob.glob(jar_pattern)
+
+        if not jar_files:
+            # Fallback: try any jllm jar
+            jar_pattern = f"{target_dir}/jllm-*.jar"
+            jar_files = glob.glob(jar_pattern)
+
+        if not jar_files:
+            raise FileNotFoundError(f"No jllm JAR file found in {target_dir}")
+
+        # Sort to get the latest version if multiple exist
+        jar_files.sort(reverse=True)
+        return jar_files[0]
+
+    def _add_llama_args(self, cmd: List[str], args: argparse.Namespace) -> List[str]:
+        """Add LLaMA-specific arguments to the command."""
+        if getattr(args, "server", False):
+            # OpenAI server mode: the server parses only --model / --port / --gpu.
+            srv = ["--model", args.model_path, "--port", str(getattr(args, "port", 8080))]
+            if args.use_gpu:
+                srv.append("--gpu")
+            return cmd + srv
+        if getattr(args, "bench", False):
+            # llama-bench mode: model(s) + benchmark options only. If --bench-args already
+            # supplies -m, use those verbatim (don't also prepend --model → duplicate rows).
+            extra = args.bench_args.split() if args.bench_args else []
+            bench_args = extra if ("-m" in extra or "--model" in extra) else ["-m", args.model_path] + extra
+            # Without --gpu the benchmark measures the host forward pass; say so explicitly, or it
+            # builds an accelerator plan and reports a GPU backend for a run the user asked to be
+            # on the CPU.
+            if not args.use_gpu and "--cpu" not in bench_args:
+                bench_args = bench_args + ["--cpu"]
+            return cmd + bench_args
+        llama_args = [
+            "-m",
+            args.model_path,
+            "--temperature",
+            str(args.temperature),
+            "--top-p",
+            str(args.top_p),
+            "--seed",
+            str(args.seed),
+            "--max-tokens",
+            str(args.max_tokens),
+            "--stream",
+            str(args.stream).lower(),
+            "--echo",
+            str(args.echo).lower(),
+        ]
+
+        if args.prompt:
+            llama_args.extend(["-p", args.prompt])
+
+        if args.system_prompt:
+            llama_args.extend(["-sp", args.system_prompt])
+
+        if args.interactive:
+            llama_args.append("--interactive")
+        elif args.instruct:
+            llama_args.append("--instruct")
+
+        return cmd + llama_args
+
+    def run(self, args: argparse.Namespace) -> int:
+        """Execute the LLaMA model with the specified arguments."""
+        self._validate_paths()
+
+        # Build the complete command
+        cmd = self._build_base_command(args)
+        cmd = self._add_llama_args(cmd, args)
+
+        # Print command if requested (before verbose output)
+        if args.show_command:
+            print("Full Java command:")
+            print("-" * 80)
+
+            # Create a properly formatted command for easy copy-paste
+            escaped_cmd = []
+            for arg in cmd:
+                # Escape arguments that contain spaces or special characters
+                if " " in arg or '"' in arg or "'" in arg:
+                    escaped_cmd.append(f'"{arg}"')
+                else:
+                    escaped_cmd.append(arg)
+
+            # Print as a continuous line that can be easily copied
+            print(" ".join(escaped_cmd))
+            print("-" * 80)
+            print()
+
+            # If user only wants to see the command without executing
+            if not args.execute_after_show:
+                print("Command built successfully. Exiting without execution.")
+                print(
+                    "Use --execute-after-show to run the command after displaying it."
+                )
+                return 0
+
+        if args.verbose:
+            print("Executing command:")
+            for arg in cmd:
+                print(f"  {arg}")
+            print()
+
+        # Execute the command
+        try:
+            result = subprocess.run(cmd, check=True)
+            return result.returncode
+        except subprocess.CalledProcessError as e:
+            print(f"Error: Command failed with return code {e.returncode}")
+            return e.returncode
+        except KeyboardInterrupt:
+            print("\nOperation cancelled by user")
+            return 130
+        except Exception as e:
+            print(f"Error: {e}")
+            return 1
+
+
+def load_env_from_script():
+    if "JLLM_ROOT" in os.environ and os.environ["JLLM_ROOT"]:
+        return
+
+    system = platform.system()
+
+    if system == "Windows":
+        # Call set_paths.cmd and capture output as environment
+        result = subprocess.run(
+            ["cmd.exe", "/c", "set_paths.cmd && set"],
+            capture_output=True,
+            text=True,
+            shell=False,
+        )
+        if result.returncode != 0:
+            print("Failed to run set_paths.cmd")
+            sys.exit(1)
+
+        # Parse environment variables from output
+        for line in result.stdout.splitlines():
+            if "=" in line:
+                key, value = line.strip().split("=", 1)
+                os.environ[key] = value
+
+    elif system in ("Linux", "Darwin"):
+        # Source the set_paths file and capture env
+        command = ["bash", "-c", "source ./set_paths && env"]
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode != 0:
+            print("Failed to source set_paths")
+            sys.exit(1)
+
+        for line in result.stdout.splitlines():
+            if "=" in line:
+                key, value = line.strip().split("=", 1)
+                os.environ[key] = value
+    else:
+        print(f"Unsupported OS: {system}")
+        sys.exit(1)
+
+
+def create_parser() -> argparse.ArgumentParser:
+    """Create and configure the argument parser."""
+    parser = argparse.ArgumentParser(
+        prog="jllm",
+        description="GPU-accelerated LLM runner using TornadoVM",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        allow_abbrev=False,
+    )
+
+    # Required arguments
+    parser.add_argument(
+        "--model",
+        dest="model_path",
+        required=True,
+        help="Path to the LLM gguf file (e.g., Llama-3.2-1B-Instruct-Q8_0.gguf)",
+    )
+
+    # LLM arguments
+    llm_group = parser.add_argument_group("LLaMA Configuration")
+    llm_group.add_argument("--prompt", help="Input prompt for the model")
+    llm_group.add_argument("-sp", "--system-prompt", help="System prompt for the model")
+    llm_group.add_argument(
+        "--temperature",
+        type=float,
+        default=0.1,
+        help="Sampling temperature (0.0 to 2.0)",
+    )
+    llm_group.add_argument(
+        "--top-p", type=float, default=0.95, help="Top-p sampling parameter"
+    )
+    llm_group.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed (default: current timestamp)",
+    )
+    llm_group.add_argument(
+        "-n",
+        "--max-tokens",
+        type=int,
+        default=512,
+        help="Maximum number of tokens to generate",
+    )
+    llm_group.add_argument(
+        "--stream", type=bool, default=True, help="Enable streaming output"
+    )
+    llm_group.add_argument(
+        "--echo", type=bool, default=False, help="Echo the input prompt"
+    )
+    llm_group.add_argument(
+        "--suffix", help="Suffix for fill-in-the-middle request (Codestral)"
+    )
+
+    # Mode selection
+    mode_group = parser.add_argument_group("Mode Selection")
+    mode_group.add_argument(
+        "-i", "--interactive", action="store_true", help="Run in interactive/chat mode"
+    )
+    mode_group.add_argument(
+        "--instruct",
+        action="store_true",
+        default=True,
+        help="Run in instruction mode (default)",
+    )
+
+    # OpenAI-compatible server
+    server_group = parser.add_argument_group("OpenAI-compatible server")
+    server_group.add_argument("--server", action="store_true", help="Run the OpenAI-compatible HTTP server instead of inference")
+    server_group.add_argument("--port", type=int, default=8080, help="Server port (default 8080)")
+
+    # Benchmark (llama-bench style)
+    parser.add_argument(
+        "--fp16-kv-cache",
+        action="store_true",
+        help="Hold the key/value cache in half precision (halves its bandwidth and footprint; accumulation stays FP32)",
+    )
+    parser.add_argument(
+        "--tensor-cores",
+        action="store_true",
+        help="Run the qwen35 Q4_0 projections that read the normed chunk on the tensor cores (FP16 multiplicands, FP32 accumulate)",
+    )
+    bench_group = parser.add_argument_group("Benchmark (llama-bench style)")
+    bench_group.add_argument(
+        "--bench",
+        action="store_true",
+        help="Run the llama-bench-style benchmark (bench.JllmBench) instead of inference",
+    )
+    bench_group.add_argument(
+        "--bench-args",
+        default="",
+        help='Extra benchmark options (use --bench-args="..."), e.g. "-p 512 -n 128 -d 0,4096 -r 5 -o md" (see JllmBench)',
+    )
+
+    # Hardware configuration
+    hw_group = parser.add_argument_group("Hardware Configuration")
+    hw_group.add_argument(
+        "--gpu", dest="use_gpu", action="store_true", help="Enable GPU acceleration"
+    )
+    hw_group.add_argument(
+        "--opencl", dest="backend_override", action="store_const", const=Backend.OPENCL,
+        help="Force the OpenCL backend when the installed TornadoVM SDK has more than one (default: auto-detected)",
+    )
+    hw_group.add_argument(
+        "--cuda", dest="backend_override", action="store_const", const=Backend.CUDA,
+        help="Force the CUDA backend when the installed TornadoVM SDK has more than one (default: auto-detected)",
+    )
+    hw_group.add_argument(
+        "--metal", dest="backend_override", action="store_const", const=Backend.METAL,
+        help="Force the Metal backend when the installed TornadoVM SDK has more than one (default: auto-detected)",
+    )
+    hw_group.add_argument("--gpu-memory", default="14GB", help="GPU memory allocation")
+    hw_group.add_argument("--heap-min", default="20g", help="Minimum JVM heap size")
+    hw_group.add_argument("--heap-max", default="20g", help="Maximum JVM heap size")
+
+    # Debug and profiling
+    debug_group = parser.add_argument_group("Debug and Profiling")
+    debug_group.add_argument("--debug", action="store_true", help="Enable debug output")
+    debug_group.add_argument(
+        "--profiler", action="store_true", help="Enable TornadoVM profiler"
+    )
+    debug_group.add_argument(
+        "--profiler-dump-dir",
+        default=None,
+        help="Directory for profiler output",
+    )
+
+    # TornadoVM Execution Verbose options
+    verbose_group = parser.add_argument_group("TornadoVM Execution Verbose")
+    verbose_group.add_argument(
+        "--print-bytecodes",
+        dest="print_bytecodes",
+        action="store_true",
+        help="Print bytecodes (tornado.print.bytecodes=true)",
+    )
+    verbose_group.add_argument(
+        "--print-threads",
+        dest="threads",
+        action="store_true",
+        help="Print thread information (tornado.threadInfo=true)",
+    )
+    verbose_group.add_argument(
+        "--print-kernel",
+        dest="print_kernel",
+        action="store_true",
+        help="Print kernel information (tornado.printKernel=true)",
+    )
+    verbose_group.add_argument(
+        "--full-dump",
+        dest="full_dump",
+        action="store_true",
+        help="Enable full debug dump (tornado.fullDebug=true)",
+    )
+    verbose_group.add_argument(
+        "--verbose-init",
+        dest="verbose_init",
+        action="store_true",
+        help="Enable timers for TornadoVM initialization (jllm.EnableTimingForTornadoVMInit=true)",
+    )
+
+    # Command display options
+    command_group = parser.add_argument_group("Command Display Options")
+    command_group.add_argument(
+        "--show-command",
+        action="store_true",
+        help="Display the full Java command that will be executed",
+    )
+    command_group.add_argument(
+        "--execute-after-show",
+        action="store_true",
+        help="Execute the command after showing it (use with --show-command)",
+    )
+
+    # Prefill-Decode optimizations
+    prefill_group = parser.add_argument_group("Prefill-Decode Optimizations")
+    prefill_group.add_argument(
+        "--with-prefill-decode",
+        dest="with_prefill_decode",
+        action="store_true",
+        help="Enable single-token prefill decode",
+    )
+    prefill_group.add_argument(
+        "--batch-prefill-size",
+        dest="batch_prefill_size",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Enable batching in prefill when --with-prefill-decode is active and N>1. "
+        ),
+    )
+
+    # Advanced CUDA features
+    advanced_cuda_features_group = parser.add_argument_group("Advanced CUDA Features")
+    advanced_cuda_features_group.add_argument(
+        "--cuda-graphs",
+        dest="cuda_graphs",
+        action="store_true",
+        help="Enable CUDA graph capture/replay (jllm.cudaGraphs=true); CUDA backend only.",
+    )
+
+    # Advanced options
+    advanced_group = parser.add_argument_group("Advanced Options")
+    advanced_group.add_argument(
+        "--opencl-flags",
+        default="-cl-denorms-are-zero -cl-no-signed-zeros -cl-finite-math-only",
+        help="OpenCL compiler flags",
+    )
+    advanced_group.add_argument(
+        "--max-wait-events",
+        type=int,
+        default=32000,
+        help="Maximum wait events for TornadoVM event pool",
+    )
+    advanced_group.add_argument(
+        "--verbose", "-v", action="store_true", help="Verbose output"
+    )
+
+    return parser
+
+
+def validate_backend_selection(args):
+    """Reject a backend flag that was given without --gpu (T12.1d).
+
+    --opencl/--cuda/--metal only rank TornadoVM's backends; they do not enable
+    acceleration. --gpu is what sets -Duse.tornadovm=true. So `--cuda` on its own used to
+    run the whole model on the CPU while printing "using cuda", which reads as a slow GPU
+    rather than as a mistake -- about 21 tok/s where the GPU gives 82, with no error and
+    nothing in the output naming the cause.
+
+    The engine cannot catch this: the JVM never sees --cuda. The flags are resolved into
+    -Dtornado.*.priority ranks and a boolean before it starts, so the combination has to be
+    refused here or not at all.
+    """
+    if args.backend_override is None or args.use_gpu:
+        return
+    flag = f"--{args.backend_override.value}"
+    print(
+        f"Error: {flag} was given without --gpu, so the model would run on the CPU.\n"
+        f"  {flag} only chooses which TornadoVM backend to prefer; --gpu is what enables "
+        f"acceleration.\n"
+        f"  Use: jllm --gpu {flag} ...   (or drop {flag} to run on the CPU "
+        f"deliberately)"
+    )
+    sys.exit(1)
+
+
+def main():
+    """Main entry point."""
+    load_env_from_script()
+    parser = create_parser()
+    args = parser.parse_args()
+
+    # Set default profiler log path relative to JLLM_ROOT
+    if args.profiler_dump_dir is None:
+        llama_root = os.environ.get("JLLM_ROOT")
+        args.profiler_dump_dir = os.path.join(llama_root, "profiler-log.json")
+
+    # Set default seed if not provided
+    if args.seed is None:
+        args.seed = int(time.time())
+
+    # Handle mode selection logic
+    if args.interactive:
+        args.instruct = False
+
+    validate_backend_selection(args)
+
+    # Create the LLaMA runner and auto-detect the TornadoVM backend(s)
+    runner = LlamaRunner()
+    installed_backends = runner.detect_installed_backends()
+    args.installed_backends = installed_backends
+
+    overridden = False
+    if args.backend_override is not None:
+        requested = args.backend_override
+        if requested not in installed_backends:
+            installed_names = ", ".join(b.value for b in installed_backends)
+            print(f"Error: --{requested.value} requested, but the installed TornadoVM SDK only has: {installed_names}")
+            sys.exit(1)
+        args.backend = requested
+        overridden = True
+    else:
+        args.backend = runner.select_primary_backend(installed_backends)
+
+    # stderr, not stdout: --bench writes a machine-readable document there, and a trailing
+    # human-readable line makes the JSON unparseable.
+    if len(installed_backends) > 1:
+        names = ", ".join(b.value for b in installed_backends)
+        reason = f"requested via --{args.backend.value}" if overridden else "auto-selected"
+        print(
+            f"Detected TornadoVM backends: {names} (from {runner.tornado_sdk}/etc/tornado.backend) "
+            f"- using {args.backend.value} ({reason})",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            f"Detected TornadoVM backend: {args.backend.value} (from {runner.tornado_sdk}/etc/tornado.backend)",
+            file=sys.stderr,
+        )
+
+    return runner.run(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

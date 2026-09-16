@@ -2,7 +2,7 @@ name: Deploy to Maven Central
 
 on:
   workflow_run:
-    workflows: ["Finalize GPULlama3 Release"]
+    workflows: ["Finalize jllm Release"]
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -21,7 +21,7 @@ jobs:
   deploy:
     name: Deploy to Maven Central (${{ matrix.jdk.name }})
     if: |
-      github.repository == 'beehive-lab/GPULlama3.java' &&
+      github.repository == 'beehive-lab/jllm' &&
       (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
     runs-on: [self-hosted, Linux, x64]
     timeout-minutes: 15
@@ -118,7 +118,7 @@ jobs:
           echo "| JDK | ${{ matrix.jdk.name }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Version | ${DEPLOYED_VERSION} |" >> $GITHUB_STEP_SUMMARY
           echo "| GroupId | io.github.beehive-lab |" >> $GITHUB_STEP_SUMMARY
-          echo "| ArtifactId | gpu-llama3 |" >> $GITHUB_STEP_SUMMARY
+          echo "| ArtifactId | jllm |" >> $GITHUB_STEP_SUMMARY
           echo "| Status | ✅ Deployed |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "📍 [View on Maven Central](https://central.sonatype.com/artifact/io.github.beehive-lab/gpu-llama3/${DEPLOYED_VERSION})" >> $GITHUB_STEP_SUMMARY
+          echo "📍 [View on Maven Central](https://central.sonatype.com/artifact/io.github.beehive-lab/jllm/${DEPLOYED_VERSION})" >> $GITHUB_STEP_SUMMARY

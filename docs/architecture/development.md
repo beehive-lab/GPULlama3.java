@@ -10,13 +10,13 @@ line.
 
 | Build JDK | This project publishes | It compiles against | `--enable-preview` |
 | --- | --- | --- | --- |
-| 21 | `gpu-llama3:<version>-jdk21` | `tornado-api`/`tornado-runtime` `<tvm>-jdk21` | yes — `java.lang.foreign` is a preview API on 21 |
-| 25 | `gpu-llama3:<version>-jdk25` | `tornado-api`/`tornado-runtime` `<tvm>-jdk22plus` | no |
+| 21 | `jllm:<version>-jdk21` | `tornado-api`/`tornado-runtime` `<tvm>-jdk21` | yes — `java.lang.foreign` is a preview API on 21 |
+| 25 | `jllm:<version>-jdk25` | `tornado-api`/`tornado-runtime` `<tvm>-jdk22plus` | no |
 
 TornadoVM 6.0.0 collapsed its per-version `jdk25`/`jdk26`/`jdk27` profiles into one
 `jdk22plus` profile and publishes only `-jdk21` and `-jdk22plus`, so `6.0.0-jdk25` does not
 exist. This project's own suffix stays `-jdk25`; the two are separate Maven properties on
-purpose, because tying them together would silently rename `gpu-llama3`'s coordinates.
+purpose, because tying them together would silently rename `jllm`'s coordinates.
 
 Profile activation is `[21,22)` and `[25,26)`, and `maven-enforcer-plugin` rejects any
 other JDK at `validate` with a message naming both lines. Nothing between or beyond the two
@@ -70,7 +70,7 @@ make test-scripts                    # the Python tooling tests
 ```
 
 Accelerator gates are opt-in and need a device, an SDK and the pinned fixtures under
-`$GPULLAMA_TEST_MODELS` or `~/.gpullama3/test-models/`:
+`$JLLM_TEST_MODELS` or `~/.jllm/test-models/`:
 
 ```bash
 export TORNADOVM_HOME=/path/to/sdk
@@ -83,10 +83,10 @@ Always `clean` when switching JDKs: a `target/` left by the other line fails wit
 ## Running
 
 ```bash
-./llama-tornado --gpu --model model.gguf --prompt "..."
+./jllm --gpu --model model.gguf --prompt "..."
 ```
 
-Both launchers — `llama-tornado` (Python) and `llamaTornado` (a single-file Java program,
+Both launchers — `jllm` (Python) and `jllm4j` (a single-file Java program,
 which needs JDK 25 to run itself) — start the JVM from `$TORNADOVM_HOME/tornado-argfile`.
 That file is the SDK's own record of how to launch it: module path, Graal and JVMCI
 arrangement, per-backend export lists, and the preview flag where the line needs one. All
@@ -98,15 +98,15 @@ sizes, `jdk.incubator.vector`, the interpreter bytecode buffer size, the `tornad
 If `tornado-argfile` is missing, run `$TORNADOVM_HOME/bin/tornado --devices` once — the
 launcher regenerates it from `tornado-argfile.template`.
 
-The backend is detected from `$TORNADOVM_HOME/etc/tornado.backend`. `--cuda`, `--opencl`,
-`--ptx` and `--metal` force one on a multi-backend SDK and error out if it is not installed.
+The backend is detected from `$TORNADOVM_HOME/etc/tornado.backend`. `--cuda`, `--opencl`
+and `--metal` force one on a multi-backend SDK and error out if it is not installed.
 
 ## Adding a model family
 
 The full workflow — inventory, the decision about whether the existing abstractions express
 the model, when to stop and write a design proposal, the implementation order, and the
-verification a port must pass — is the `port-model-to-gpullama` skill in
-`.claude/skills/port-model-to-gpullama/`. It carries the checklist and the traps previous
+verification a port must pass — is the `port-model-to-jllm` skill in
+`.claude/skills/port-model-to-jllm/`. It carries the checklist and the traps previous
 families have hit. What follows is the shape of the work.
 
 1. Add a `ModelProvider` that recognizes the GGUF and loads configuration, weights,
