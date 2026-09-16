@@ -148,7 +148,9 @@ public class Qwen35DequantGemmLifecycleAccelTest {
             Run freshB;
             Run pairA;
             Run pairB;
+            java.util.Set<String> pairKernels;
             try {
+                pairKernels = PlanDispatchEvidence.batchedTaskKernels(pairPlan, "attention");
                 freshB = run(model, pairState, pairPlan, promptB);
                 reset(pairState, pairPlan, initialSeed);
                 pairA = run(model, pairState, pairPlan, promptA);
@@ -166,6 +168,10 @@ public class Qwen35DequantGemmLifecycleAccelTest {
                     pairA.scheduler(), qwen.numberOfValueHeads(), qwen.headValueDim());
             PlanDispatchEvidence.assertQwen35FfnDownOnDequantGemm(
                     pairA.scheduler(), WIDTH, qwen.dim(), qwen.hiddenDim());
+            assertEquals(
+                    "the batched attention kernel this plan compiled",
+                    java.util.Set.of("attentionBatchFP16PagedScoredStagedWide"),
+                    pairKernels);
 
             assertSameInput("pair vs direct, prompt A", pairA, directA);
             assertRowsIdentical("pair vs direct, prompt A", pairA.rows(), directA.rows());

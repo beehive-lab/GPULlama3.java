@@ -11,6 +11,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.beehive.jllm.backend.tornado.kernels.Qwen35MMAKernels;
 import uk.ac.manchester.tornado.api.GridScheduler;
+import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
+import uk.ac.manchester.tornado.api.TaskGraph;
+import uk.ac.manchester.tornado.api.TornadoTaskGraphInterface;
 import uk.ac.manchester.tornado.api.WorkerGrid;
 
 // @formatter:off
@@ -195,6 +198,42 @@ public final class PlanDispatchEvidence {
             }
         }
         assertTrue("no batched ffn_down projection in this plan", found > 0);
+    }
+
+    /**
+     * The kernel method a task of a batched plan was built with, read off the plan's own task
+     * graphs: for every graph holding a task named {@code task}, the name of the Java method it
+     * compiles. The grid scheduler cannot tell two kernels of the same task name and geometry
+     * apart; the task graph can. Reaches the graph behind {@link ImmutableTaskGraph} by reflection,
+     * which is what the API offers nothing public for.
+     */
+    public static java.util.Set<String> batchedTaskKernels(TornadoVMMasterPlan plan, String task) {
+        assertTrue(
+                "not a batched plan: " + plan.getClass().getSimpleName(),
+                plan instanceof TornadoVMMasterPlanBatchPrefillDecode);
+        var batched = (TornadoVMMasterPlanBatchPrefillDecode) plan;
+        java.util.Set<String> kernels = new TreeSet<>();
+        try {
+            java.lang.reflect.Field field = ImmutableTaskGraph.class.getDeclaredField("taskGraph");
+            field.setAccessible(true);
+            java.lang.reflect.Field impl = TaskGraph.class.getDeclaredField("taskGraphImpl");
+            impl.setAccessible(true);
+            for (ImmutableTaskGraph immutable :
+                    batched.batchPrefillDecodeForwardPlan.getImmutableTaskGraphs()) {
+                TaskGraph graph = (TaskGraph) field.get(immutable);
+                if (!graph.getTaskGraphName().startsWith("batchLayer_")) {
+                    continue;
+                }
+                var found = ((TornadoTaskGraphInterface) impl.get(graph)).getTask(task);
+                if (found != null) {
+                    kernels.add(found.getTaskName());
+                }
+            }
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError("cannot reach the task graphs behind the plan", e);
+        }
+        assertTrue("no batched layer graph holds a task named " + task, !kernels.isEmpty());
+        return kernels;
     }
 
     /**

@@ -813,7 +813,7 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
             layer.task(
                     "attention",
                     ATTENTION_LOCAL == Qwen35BatchKernels.ATTENTION_STAGE_LANES
-                            ? Qwen35BatchKernels::attentionBatchFP16PagedScoredStaged
+                            ? Qwen35BatchKernels::attentionBatchFP16PagedScoredStagedWide
                             : Qwen35BatchKernels::attentionBatchFP16PagedScored,
                     context,
                     state.workspace.batchStartPosHolder,
