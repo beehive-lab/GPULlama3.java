@@ -51,6 +51,22 @@ public final class Qwen35BatchKernels {
      */
     private static final int ATTENTION_SLOTS = 4;
 
+    /** Head dimensions one staged key tile of the first pass holds. */
+    private static final int ATTENTION_STAGE_DIMS = 32;
+
+    /**
+     * Lanes the staged first pass is written for: its load mapping puts one position's 32
+     * dimensions on one warp and covers a 128-position tile with 128 lanes.
+     */
+    public static final int ATTENTION_STAGE_LANES = 128;
+
+    /**
+     * Row pitch of the transposed key tile, in floats: the 128 positions of a tile plus one, so
+     * that the 32 dimensions of one position — stored by one warp in one instruction — land in 32
+     * distinct banks.
+     */
+    private static final int ATTENTION_STAGE_LD = 129;
+
     private Qwen35BatchKernels() {}
 
     // ---- the recurrent scans -------------------------------------------------
@@ -951,6 +967,209 @@ public final class Qwen35BatchKernels {
             scores.set(scoreBase + p, score);
             score *= invSqrt;
             maxScore = TornadoMath.max(maxScore, score);
+        }
+        partialMax[tid] = maxScore;
+        context.localBarrier();
+        for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+            if (tid < stride) {
+                partialMax[tid] = TornadoMath.max(partialMax[tid], partialMax[tid + stride]);
+            }
+            context.localBarrier();
+        }
+        if (tid == 0) {
+            reduced[0] = partialMax[0];
+        }
+        context.localBarrier();
+        float globalMax = reduced[0];
+
+        // Pass 2: the denominator, against the settled maximum, from the stored dot products.
+        float sum = 0.0f;
+        for (int p = tid; p <= position; p += localSize) {
+            float score = scores.get(scoreBase + p);
+            sum += TornadoMath.exp(score * invSqrt - globalMax);
+        }
+        partialSum[tid] = sum;
+        context.localBarrier();
+        for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+            if (tid < stride) {
+                partialSum[tid] += partialSum[tid + stride];
+            }
+            context.localBarrier();
+        }
+        if (tid == 0) {
+            reduced[1] = partialSum[0];
+        }
+        context.localBarrier();
+        float denominator = reduced[1];
+
+        // Pass 3: the weighted value sum, a tile of positions at a time, as in the reference.
+        int outBase = row * heads * headSize + head * headSize;
+        float[] weights = context.allocateFloatLocalArray(ATTENTION_TILE);
+        float[] accumulated = new float[ATTENTION_SLOTS];
+        for (int t = 0; t < ATTENTION_SLOTS; t++) {
+            accumulated[t] = 0.0f;
+        }
+
+        for (int tileStart = 0; tileStart <= position; tileStart += ATTENTION_TILE) {
+            int tileEnd = tileStart + ATTENTION_TILE - 1;
+            if (tileEnd > position) {
+                tileEnd = position;
+            }
+
+            for (int p = tileStart + tid; p <= tileEnd; p += localSize) {
+                float score = scores.get(scoreBase + p);
+                weights[p - tileStart] = TornadoMath.exp(score * invSqrt - globalMax);
+            }
+            context.localBarrier();
+
+            int slotIndex = 0;
+            for (int d = tid; d < headSize; d += localSize) {
+                float partial = accumulated[slotIndex];
+                for (int p = tileStart; p <= tileEnd; p++) {
+                    int base =
+                            KvBlockAddress.offset(
+                                            blockTable,
+                                            slot,
+                                            p,
+                                            layerOff,
+                                            kvDim,
+                                            blockCfg,
+                                            blockStride)
+                                    + kvHead * headSize;
+                    partial += weights[p - tileStart] * valueCache.get(base + d).getFloat32();
+                }
+                accumulated[slotIndex] = partial;
+                slotIndex++;
+            }
+            context.localBarrier();
+        }
+
+        int slotIndex = 0;
+        for (int d = tid; d < headSize; d += localSize) {
+            outBatch.set(outBase + d, accumulated[slotIndex] / denominator);
+            slotIndex++;
+        }
+    }
+
+    // @formatter:off
+    /**
+     * {@link #attentionBatchFP16PagedScored} with the first pass reading keys through a transposed
+     * shared-memory tile.
+     *
+     * <p>The reference first pass has lane {@code p} read key row {@code p} on its own: across a
+     * warp the addresses are a key row apart, so every load instruction touches thirty-two separate
+     * segments. Here positions are taken 128 at a time and dimensions 32 at a time: the 128 lanes
+     * load the tile's 128 x 32 halves with consecutive lanes reading consecutive dimensions of one
+     * position (coalesced), widen them to FP32 (exact) and store them transposed, {@code
+     * keyTile[dim * 129 + positionInTile]}, so that a lane's later reads of its own position's
+     * dimensions are consecutive across the warp and the stores of one position's dimensions fall
+     * in distinct banks (the padding to 129 is what separates them). Lane {@code tid} owns position
+     * {@code tileStart + tid} — the reference's lane-to-position assignment — and accumulates its
+     * one FP32 score over the dimensions in increasing order, tile after tile, the reference's
+     * order; the unscaled score is stored and scaled exactly as before.
+     *
+     * <p>Every lane runs every tile's barriers; a lane whose position lies past the causal range
+     * skips only its loads (storing zeros), its accumulation and its stores.
+     *
+     * <p>Shared memory: {@code 32 * 129} floats for the tile, plus the reference kernel's own. The
+     * remaining passes, the score scratch, the launch geometry and the value pass are the reference
+     * kernel's.
+     */
+    // @formatter:on
+    public static void attentionBatchFP16PagedScoredStaged(
+            KernelContext context,
+            IntArray batchInfo,
+            FloatArray queryBatch,
+            HalfFloatArray keyCache,
+            HalfFloatArray valueCache,
+            FloatArray outBatch,
+            int heads,
+            int headSize,
+            int kvDim,
+            int kvMul,
+            int layer,
+            IntArray blockTable,
+            int blockCfg,
+            int blockStride,
+            int localWorkGroupSize,
+            FloatArray scores,
+            int scoreStride) {
+        int tid = context.localIdx;
+        // The workgroup width as a parameter, not as context.localGroupSizeX: a local array's
+        // extent has to be a compile-time constant on CUDA, and a value read from the context is
+        // not one ("expression must have a constant value" from nvrtc, on the __shared__ decl).
+        int localSize = localWorkGroupSize;
+        int group = context.groupIdx;
+        int row = group / heads;
+        int head = group - row * heads;
+        if (row >= batchInfo.get(1)) {
+            return;
+        }
+
+        int position = batchInfo.get(0) + row;
+        int slot = batchInfo.get(2);
+        int layerOff = KvBlockAddress.layerOffset(layer, kvDim, blockCfg);
+        int kvHead = head / kvMul;
+        float invSqrt = 1.0f / TornadoMath.sqrt(headSize);
+
+        float[] qShared = context.allocateFloatLocalArray(headSize);
+        float[] partialMax = context.allocateFloatLocalArray(localWorkGroupSize);
+        float[] partialSum = context.allocateFloatLocalArray(localWorkGroupSize);
+        float[] reduced = context.allocateFloatLocalArray(2);
+
+        int queryBase = row * heads * headSize + head * headSize;
+        for (int i = tid; i < headSize; i += localSize) {
+            qShared[i] = queryBatch.get(queryBase + i);
+        }
+        context.localBarrier();
+
+        int scoreBase = (row * heads + head) * scoreStride;
+
+        // Pass 1 through the staged tiles: this lane's positions, one per 128-position tile.
+        float[] keyTile =
+                context.allocateFloatLocalArray(ATTENTION_STAGE_DIMS * ATTENTION_STAGE_LD);
+        float maxScore = Float.NEGATIVE_INFINITY;
+        int loadPos0 = tid >> 5;
+        int loadDim = tid & 31;
+        for (int tileStart = 0; tileStart <= position; tileStart += localSize) {
+            int p = tileStart + tid;
+            float score = 0.0f;
+            for (int dimStart = 0; dimStart < headSize; dimStart += ATTENTION_STAGE_DIMS) {
+                // Stage: lane tid loads dimension (dimStart + tid % 32) of positions
+                // tileStart + tid / 32 + 4i. A warp's 32 lanes read one position's 32
+                // consecutive halves.
+                for (int i = 0; i < localSize / 4; i++) {
+                    int posInTile = loadPos0 + 4 * i;
+                    int loadPos = tileStart + posInTile;
+                    float value = 0.0f;
+                    if (loadPos <= position) {
+                        int base =
+                                KvBlockAddress.offset(
+                                                blockTable,
+                                                slot,
+                                                loadPos,
+                                                layerOff,
+                                                kvDim,
+                                                blockCfg,
+                                                blockStride)
+                                        + kvHead * headSize;
+                        value = keyCache.get(base + dimStart + loadDim).getFloat32();
+                    }
+                    keyTile[loadDim * ATTENTION_STAGE_LD + posInTile] = value;
+                }
+                context.localBarrier();
+                if (p <= position) {
+                    for (int d = 0; d < ATTENTION_STAGE_DIMS; d++) {
+                        score += qShared[dimStart + d] * keyTile[d * ATTENTION_STAGE_LD + tid];
+                    }
+                }
+                context.localBarrier();
+            }
+            if (p <= position) {
+                scores.set(scoreBase + p, score);
+                score *= invSqrt;
+                maxScore = TornadoMath.max(maxScore, score);
+            }
         }
         partialMax[tid] = maxScore;
         context.localBarrier();

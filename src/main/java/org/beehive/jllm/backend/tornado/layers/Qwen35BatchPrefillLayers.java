@@ -779,10 +779,14 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
 
         if (scoredAttention()) {
             // Each dot product once, kept in the state's score scratch for the two later passes.
-            // The span stride is the context capacity the scratch was sized to.
+            // The span stride is the context capacity the scratch was sized to. The staged form
+            // reads keys through a transposed shared tile whose lane mapping is written for a
+            // 128-lane workgroup; any other width keeps the per-lane form.
             layer.task(
                     "attention",
-                    Qwen35BatchKernels::attentionBatchFP16PagedScored,
+                    ATTENTION_LOCAL == Qwen35BatchKernels.ATTENTION_STAGE_LANES
+                            ? Qwen35BatchKernels::attentionBatchFP16PagedScoredStaged
+                            : Qwen35BatchKernels::attentionBatchFP16PagedScored,
                     context,
                     state.workspace.batchStartPosHolder,
                     state.workspace.wrapAttnQBatch,
