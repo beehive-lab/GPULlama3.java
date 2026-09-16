@@ -978,7 +978,7 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     state.workspace.wrapSsmOutFP16Batch);
             layer.task(
                     "ssm_out_proj",
-                    Qwen35MMAKernels::projectionMMAQ5_K,
+                    Qwen35MMAKernels::projectionMMAQ5_KPaired,
                     context,
                     state.workspace.wrapSsmOutFP16Batch,
                     ssmOut.asByteArray(),
