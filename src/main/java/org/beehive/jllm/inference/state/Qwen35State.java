@@ -446,5 +446,17 @@ public final class Qwen35State extends State {
         workspace.wrapSsmKBatch = TornadoWorkspaces.floats(batch * config.deltaNetKeyDim());
         workspace.wrapSsmVBatch = TornadoWorkspaces.floats(batch * config.deltaNetValueDim());
         workspace.wrapSsmOutBatch = TornadoWorkspaces.floats(batch * config.deltaNetValueDim());
+        // The attention scores, for the FP16 key/value kernel that computes each dot product once.
+        // Sized to the context capacity because a row's causal range can reach any position in
+        // it; a span per (row, head) so every workgroup of a launch writes and reads its own.
+        // Never uploaded, downloaded or reset: a launch reads only what it wrote.
+        if (storageOptions().usesFp16KeyValueCache()) {
+            workspace.wrapAttnScoresBatch =
+                    TornadoWorkspaces.floats(
+                            Math.toIntExact(
+                                    (long) batch
+                                            * config.numberOfHeads()
+                                            * config.contextLength()));
+        }
     }
 }

@@ -685,7 +685,30 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     state.kvBlockStride);
         }
 
-        if (fp16Kv()) {
+        if (scoredAttention()) {
+            // Each dot product once, kept in the state's score scratch for the two later passes.
+            // The span stride is the context capacity the scratch was sized to.
+            layer.task(
+                    "attention",
+                    Qwen35BatchKernels::attentionBatchFP16PagedScored,
+                    context,
+                    state.workspace.batchStartPosHolder,
+                    state.workspace.wrapAttnQBatch,
+                    state.workspace.wrapKeyCacheFP16,
+                    state.workspace.wrapValueCacheFP16,
+                    state.workspace.wrapXbBatch,
+                    config.numberOfHeads(),
+                    headDim,
+                    kvDim,
+                    config.kvMul(),
+                    kvLayer,
+                    state.workspace.wrapBlockTable,
+                    state.kvBlockCfg,
+                    state.kvBlockStride,
+                    ATTENTION_LOCAL,
+                    state.workspace.wrapAttnScoresBatch,
+                    config.contextLength());
+        } else if (fp16Kv()) {
             layer.task(
                     "attention",
                     Qwen35BatchKernels::attentionBatchFP16Paged,
@@ -1072,6 +1095,10 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     state.workspace.wrapSsmOutBatch,
                     state.workspace.wrapConvState,
                     state.workspace.wrapDeltaState);
+            if (scoredAttention()) {
+                layer.transferToDevice(
+                        DataTransferMode.FIRST_EXECUTION, state.workspace.wrapAttnScoresBatch);
+            }
         } else {
             layer.consumeFromDevice(
                     predecessor,
@@ -1109,7 +1136,18 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     state.workspace.wrapSsmOutBatch,
                     state.workspace.wrapConvState,
                     state.workspace.wrapDeltaState);
+            if (scoredAttention()) {
+                layer.consumeFromDevice(predecessor, state.workspace.wrapAttnScoresBatch);
+            }
         }
+    }
+
+    /**
+     * Whether attention runs the FP16 kernel that computes each query-key dot product once: the
+     * half-precision store, and the score scratch the state allocates alongside it.
+     */
+    private boolean scoredAttention() {
+        return fp16Kv() && state.workspace.wrapAttnScoresBatch != null;
     }
 
     // ── worker grids ──────────────────────────────────────────────────────────

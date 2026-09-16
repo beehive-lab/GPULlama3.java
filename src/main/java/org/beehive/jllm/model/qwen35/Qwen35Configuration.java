@@ -277,6 +277,10 @@ public record Qwen35Configuration(
                         + 2L * numberOfValueHeads() // decay and beta
                         + 2L * deltaNetKeyDim() // the split queries and keys
                         + deltaNetValueDim(); // the split values
+        // The attention scores of the batched FP16 key/value path, a span per (row, head) over
+        // the context capacity. Counted whether or not that path is built: the prediction has
+        // to hold for the widest state this width can allocate.
+        perRow += (long) numberOfHeads() * contextLength();
         return perRow * batchSize * Float.BYTES;
     }
 }

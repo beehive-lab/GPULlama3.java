@@ -177,6 +177,14 @@ public final class TornadoWorkspace {
     public FloatArray wrapQGateBatch;
     public FloatArray wrapAttnQBatch;
     public FloatArray wrapAttnGateBatch;
+
+    /**
+     * Batched prefill attention's query-key dot products, one span per (chunk row, query head) of
+     * the context capacity, written and read within a single attention launch. Null unless the
+     * batched FP16 key/value path was built, which is the only reader.
+     */
+    public FloatArray wrapAttnScoresBatch;
+
     public FloatArray wrapSsmQkvBatch;
     public FloatArray wrapSsmConvOutBatch;
     public FloatArray wrapSsmZBatch;

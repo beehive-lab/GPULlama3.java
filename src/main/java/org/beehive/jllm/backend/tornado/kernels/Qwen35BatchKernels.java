@@ -862,6 +862,179 @@ public final class Qwen35BatchKernels {
         }
     }
 
+    // @formatter:off
+    /**
+     * {@link #attentionBatchFP16Paged} with each causal query-key dot product computed once.
+     *
+     * <p>The reference kernel walks the causal range three times and recomputes every dot product
+     * on each walk: once for the maximum, once for the denominator, once for the value weights.
+     * This form computes it in the first walk, stores the <b>unscaled</b> FP32 sum in {@code
+     * scores} and reads it back in the other two. The score is stored before {@code invSqrt} is
+     * applied, so the scaled expression the later passes evaluate — {@code score * invSqrt -
+     * globalMax} — is the same expression over the same operand bits, and the compiler's
+     * contraction of it is the same in every pass. The dot product's own accumulation order, the
+     * reductions, the exponentials and the weighted value sum are the reference kernel's.
+     *
+     * <p>{@code scores} is scratch indexed by {@code ((row * heads) + head) * scoreStride + p}, so
+     * every (row, head) workgroup of a launch owns a disjoint span and no launch depends on what an
+     * earlier one left: every position a workgroup reads in passes two and three is one its own
+     * first pass wrote — the first walk covers {@code p = tid, tid + localSize, ...} up to the
+     * row's position, which is exactly the range the later walks read — and the workgroup barriers
+     * between the passes are what make one lane's global stores visible to the lanes that read them
+     * in the value pass, where a position belongs to a different lane.
+     *
+     * @param scores per-launch scratch, at least {@code rows * heads * scoreStride} floats
+     * @param scoreStride the stride between (row, head) spans; at least the largest position + 1
+     */
+    // @formatter:on
+    public static void attentionBatchFP16PagedScored(
+            KernelContext context,
+            IntArray batchInfo,
+            FloatArray queryBatch,
+            HalfFloatArray keyCache,
+            HalfFloatArray valueCache,
+            FloatArray outBatch,
+            int heads,
+            int headSize,
+            int kvDim,
+            int kvMul,
+            int layer,
+            IntArray blockTable,
+            int blockCfg,
+            int blockStride,
+            int localWorkGroupSize,
+            FloatArray scores,
+            int scoreStride) {
+        int tid = context.localIdx;
+        // The workgroup width as a parameter, not as context.localGroupSizeX: a local array's
+        // extent has to be a compile-time constant on CUDA, and a value read from the context is
+        // not one ("expression must have a constant value" from nvrtc, on the __shared__ decl).
+        int localSize = localWorkGroupSize;
+        int group = context.groupIdx;
+        int row = group / heads;
+        int head = group - row * heads;
+        if (row >= batchInfo.get(1)) {
+            return;
+        }
+
+        int position = batchInfo.get(0) + row;
+        int slot = batchInfo.get(2);
+        int layerOff = KvBlockAddress.layerOffset(layer, kvDim, blockCfg);
+        int kvHead = head / kvMul;
+        float invSqrt = 1.0f / TornadoMath.sqrt(headSize);
+
+        float[] qShared = context.allocateFloatLocalArray(headSize);
+        float[] partialMax = context.allocateFloatLocalArray(localWorkGroupSize);
+        float[] partialSum = context.allocateFloatLocalArray(localWorkGroupSize);
+        float[] reduced = context.allocateFloatLocalArray(2);
+
+        int queryBase = row * heads * headSize + head * headSize;
+        for (int i = tid; i < headSize; i += localSize) {
+            qShared[i] = queryBatch.get(queryBase + i);
+        }
+        context.localBarrier();
+
+        int scoreBase = (row * heads + head) * scoreStride;
+
+        // Pass 1: this lane's slice of the causal range, tracking a running maximum; the unscaled
+        // dot product is kept for the other two passes.
+        float maxScore = Float.NEGATIVE_INFINITY;
+        for (int p = tid; p <= position; p += localSize) {
+            int base =
+                    KvBlockAddress.offset(
+                                    blockTable, slot, p, layerOff, kvDim, blockCfg, blockStride)
+                            + kvHead * headSize;
+            float score = 0.0f;
+            for (int d = 0; d < headSize; d++) {
+                score += qShared[d] * keyCache.get(base + d).getFloat32();
+            }
+            scores.set(scoreBase + p, score);
+            score *= invSqrt;
+            maxScore = TornadoMath.max(maxScore, score);
+        }
+        partialMax[tid] = maxScore;
+        context.localBarrier();
+        for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+            if (tid < stride) {
+                partialMax[tid] = TornadoMath.max(partialMax[tid], partialMax[tid + stride]);
+            }
+            context.localBarrier();
+        }
+        if (tid == 0) {
+            reduced[0] = partialMax[0];
+        }
+        context.localBarrier();
+        float globalMax = reduced[0];
+
+        // Pass 2: the denominator, against the settled maximum, from the stored dot products.
+        float sum = 0.0f;
+        for (int p = tid; p <= position; p += localSize) {
+            float score = scores.get(scoreBase + p);
+            sum += TornadoMath.exp(score * invSqrt - globalMax);
+        }
+        partialSum[tid] = sum;
+        context.localBarrier();
+        for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+            if (tid < stride) {
+                partialSum[tid] += partialSum[tid + stride];
+            }
+            context.localBarrier();
+        }
+        if (tid == 0) {
+            reduced[1] = partialSum[0];
+        }
+        context.localBarrier();
+        float denominator = reduced[1];
+
+        // Pass 3: the weighted value sum, a tile of positions at a time, as in the reference.
+        int outBase = row * heads * headSize + head * headSize;
+        float[] weights = context.allocateFloatLocalArray(ATTENTION_TILE);
+        float[] accumulated = new float[ATTENTION_SLOTS];
+        for (int t = 0; t < ATTENTION_SLOTS; t++) {
+            accumulated[t] = 0.0f;
+        }
+
+        for (int tileStart = 0; tileStart <= position; tileStart += ATTENTION_TILE) {
+            int tileEnd = tileStart + ATTENTION_TILE - 1;
+            if (tileEnd > position) {
+                tileEnd = position;
+            }
+
+            for (int p = tileStart + tid; p <= tileEnd; p += localSize) {
+                float score = scores.get(scoreBase + p);
+                weights[p - tileStart] = TornadoMath.exp(score * invSqrt - globalMax);
+            }
+            context.localBarrier();
+
+            int slotIndex = 0;
+            for (int d = tid; d < headSize; d += localSize) {
+                float partial = accumulated[slotIndex];
+                for (int p = tileStart; p <= tileEnd; p++) {
+                    int base =
+                            KvBlockAddress.offset(
+                                            blockTable,
+                                            slot,
+                                            p,
+                                            layerOff,
+                                            kvDim,
+                                            blockCfg,
+                                            blockStride)
+                                    + kvHead * headSize;
+                    partial += weights[p - tileStart] * valueCache.get(base + d).getFloat32();
+                }
+                accumulated[slotIndex] = partial;
+                slotIndex++;
+            }
+            context.localBarrier();
+        }
+
+        int slotIndex = 0;
+        for (int d = tid; d < headSize; d += localSize) {
+            outBatch.set(outBase + d, accumulated[slotIndex] / denominator);
+            slotIndex++;
+        }
+    }
+
     /** The attention result gated by the logistic of its gate, over a chunk. */
     public static void applyOutputGateBatch(
             KernelContext context,
