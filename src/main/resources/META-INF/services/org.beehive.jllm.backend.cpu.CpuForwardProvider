@@ -8,3 +8,4 @@ org.beehive.jllm.backend.cpu.Phi3CpuForwardProvider
 org.beehive.jllm.backend.cpu.Gemma4CpuForwardProvider
 org.beehive.jllm.backend.cpu.GraniteCpuForwardProvider
 org.beehive.jllm.backend.cpu.DevstralCpuForwardProvider
+org.beehive.jllm.backend.cpu.Qwen35CpuForwardProvider

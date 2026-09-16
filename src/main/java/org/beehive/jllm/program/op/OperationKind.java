@@ -109,6 +109,49 @@ public enum OperationKind {
      */
     WEIGHTED_ACCUMULATE,
 
+    /**
+     * Scaling a vector to unit length: {@code x / ||x||₂}.
+     *
+     * <p>Not {@link #RMS_NORM} with a weight of one. RMS normalization divides by the root
+     * <i>mean</i> square — a factor of {@code √n} apart — and carries a learned scale. Qwen3.5's
+     * delta-net layers normalize their convolved queries and keys this way, per head, with no
+     * weight at all.
+     */
+    L2_NORM,
+
+    /**
+     * Depthwise causal convolution over a channel vector, against a retained window of previous
+     * inputs.
+     *
+     * <p>The first convolution in the vocabulary. It is a mixer in its own right in every recurrent
+     * architecture — Mamba, Mamba2, Qwen3-Next and Qwen3.5 all place one before their state update
+     * — and its retained window is state, which is what distinguishes it from an elementwise
+     * operation over the same weights.
+     */
+    CAUSAL_CONV_1D,
+
+    /**
+     * One step of the gated delta rule: decay the retained state, compute the correction between
+     * the incoming value and what the state already predicts, accumulate it as an outer product,
+     * and read the state out against the query.
+     *
+     * <p>The recurrent counterpart of {@link #ATTENTION}: it summarizes the whole history in a
+     * fixed-size matrix per head instead of scoring against a growing key/value store. Stated as
+     * one operation because the state update and the readout share the state — decomposing it into
+     * matrix multiplies and adds would name neither the state nor the order it is written in, and
+     * would leave a backend nothing it could fuse.
+     */
+    DELTA_RULE_UPDATE,
+
+    /**
+     * Normalization gated by a second branch: {@code rms_norm(x, w) * silu(gate)}.
+     *
+     * <p>Neither half alone. {@link #SWIGLU} multiplies by {@code silu(gate)} but normalizes
+     * nothing, and composing {@link #RMS_NORM} with it needs an intermediate the fused form does
+     * not. Qwen3.5's recurrent branch ends this way.
+     */
+    GATED_NORM,
+
     /** Greedy selection of the highest-scoring token. */
     ARG_MAX,
 

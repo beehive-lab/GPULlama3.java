@@ -14,6 +14,9 @@ public final class TornadoBatchPrefillPass {
     private static final int Q8_0_BLOCK_SIZE = 32;
     private static final int Q8_0_BLOCK_BYTES = 34;
 
+    private static final int Q4_0_BLOCK_SIZE = 32;
+    private static final int Q4_0_BLOCK_BYTES = 18;
+
     private TornadoBatchPrefillPass() {}
 
     /**
@@ -52,7 +55,10 @@ public final class TornadoBatchPrefillPass {
             moeState.workspace.activeBatchSizeHolder.set(0, chunkSize);
         }
 
-        switch (weights.dataType()) {
+        // The embedding tensor's own representation, not the model-wide one: a mixed model holds
+        // them apart, and reading 18-byte blocks as 34-byte ones is a plausible activation and
+        // wrong output.
+        switch (weights.getTokenEmbeddingTable().dataType()) {
             case F16 -> {
                 MemorySegment embTable =
                         weights.getTokenEmbeddingTable().asHalfFloatArray().getSegment();
@@ -81,9 +87,32 @@ public final class TornadoBatchPrefillPass {
                     }
                 }
             }
+            case Q4_0 -> {
+                // Retained: 18 bytes per 32 weights, an unsigned nibble recentred by eight. Decoded
+                // here into the FP32 batch carrier, as the Q8_0 branch above decodes its own — the
+                // batch activation graph then passes it through rather than converting.
+                var embTable = weights.getTokenEmbeddingTable().asByteArray();
+                int dim = config.dim();
+                int blocksPerRow = (dim + Q4_0_BLOCK_SIZE - 1) / Q4_0_BLOCK_SIZE;
+                for (int b = 0; b < chunkSize; b++) {
+                    int tokenId = tokens[b];
+                    for (int j = 0; j < dim; j++) {
+                        int blockByteOffset =
+                                (tokenId * blocksPerRow + j / Q4_0_BLOCK_SIZE) * Q4_0_BLOCK_BYTES;
+                        float scale = embTable.getHalfFloat(blockByteOffset).getFloat32();
+                        int within = j % Q4_0_BLOCK_SIZE;
+                        int half = within / 16;
+                        int packed =
+                                embTable.get(blockByteOffset + 2 + (within - half * 16)) & 0xFF;
+                        int quant = half == 0 ? (packed & 0xF) : ((packed >> 4) & 0xF);
+                        state.workspace.wrapXBatch.set(b * dim + j, scale * (quant - 8));
+                    }
+                }
+            }
             default ->
                     throw new IllegalArgumentException(
-                            "Unsupported weight type: " + weights.dataType());
+                            "Unsupported embedding weight type: "
+                                    + weights.getTokenEmbeddingTable().dataType());
         }
 
         plan.tornadoVMForwardBatchPrefill();
@@ -113,7 +142,7 @@ public final class TornadoBatchPrefillPass {
         final Configuration config = model.configuration();
         final TornadoWeights weights = (TornadoWeights) model.weights();
 
-        switch (weights.dataType()) {
+        switch (weights.getTokenEmbeddingTable().dataType()) {
             case F16 -> {
                 MemorySegment embTable =
                         weights.getTokenEmbeddingTable().asHalfFloatArray().getSegment();
@@ -136,9 +165,22 @@ public final class TornadoBatchPrefillPass {
                         0L,
                         bytesPerToken);
             }
+            case Q4_0 -> {
+                MemorySegment embTable =
+                        weights.getTokenEmbeddingTable().asByteArray().getSegment();
+                int blocksPerToken = (config.dim() + Q4_0_BLOCK_SIZE - 1) / Q4_0_BLOCK_SIZE;
+                long bytesPerToken = (long) blocksPerToken * Q4_0_BLOCK_BYTES;
+                MemorySegment.copy(
+                        embTable,
+                        (long) token * bytesPerToken,
+                        state.workspace.embeddingX.getSegment(),
+                        0L,
+                        bytesPerToken);
+            }
             default ->
                     throw new IllegalArgumentException(
-                            "Unsupported weight type: " + weights.dataType());
+                            "Unsupported embedding weight type: "
+                                    + weights.getTokenEmbeddingTable().dataType());
         }
 
         return state.workspace.logitsView(plan.tornadoVMForwardDecode(position));

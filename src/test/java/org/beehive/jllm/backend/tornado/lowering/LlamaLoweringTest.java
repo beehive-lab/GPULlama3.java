@@ -473,6 +473,9 @@ public class LlamaLoweringTest {
         }
 
         @Override
+        public void resetSequenceState() {}
+
+        @Override
         public void forceCopyInReadOnlyData() {}
 
         @Override

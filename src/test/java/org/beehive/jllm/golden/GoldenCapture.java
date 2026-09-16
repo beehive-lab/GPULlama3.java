@@ -10,6 +10,7 @@ import org.beehive.jllm.inference.state.State;
 import org.beehive.jllm.model.Model;
 import org.beehive.jllm.model.format.ChatFormat;
 import org.beehive.jllm.model.loader.ModelLoader;
+import uk.ac.manchester.tornado.api.GridScheduler;
 
 /**
  * Runs the pinned fixture and captures one logits row per generated token.
@@ -36,6 +37,17 @@ public final class GoldenCapture {
     public static final class Result {
         public final List<float[]> rows = new ArrayList<>();
         public final List<Integer> tokenIds = new ArrayList<>();
+
+        /**
+         * The grid scheduler of the plan this capture ran on: one entry per task, with the geometry
+         * it is configured to launch on. {@code null} for a CPU capture, or for a plan shape {@link
+         * org.beehive.jllm.backend.tornado.PlanDispatchEvidence} cannot reach — callers that need
+         * it assert on it. Readable after the execution plan is freed.
+         */
+        public GridScheduler gridScheduler;
+
+        /** The model dimension of the capture, so a caller can compute an expected grid. */
+        public int dim;
     }
 
     private GoldenCapture() {}
@@ -81,11 +93,28 @@ public final class GoldenCapture {
     public static Result capture(
             Path ggufPath, boolean useGpu, List<Integer> forcedTokens, int prefillBatchSize)
             throws Exception {
+        return capture(ggufPath, useGpu, forcedTokens, prefillBatchSize, prefillBatchSize > 1);
+    }
+
+    /**
+     * The same capture with the phase strategy stated rather than inferred from the batch width.
+     *
+     * <p>Sequential prefill is {@code PREFILL_DECODE} at a batch of one, which the batch width
+     * alone cannot express: a width of one is also what {@code STANDARD} uses. A caller that wants
+     * prompt ingestion as its own phase says so.
+     */
+    public static Result capture(
+            Path ggufPath,
+            boolean useGpu,
+            List<Integer> forcedTokens,
+            int prefillBatchSize,
+            boolean separatePrefillPhase)
+            throws Exception {
         assertHostLogitsAvailable();
 
         String previousPrefill = System.getProperty("jllm.withPrefillDecode");
         String previousBatch = System.getProperty("jllm.prefillBatchSize");
-        if (prefillBatchSize > 1) {
+        if (separatePrefillPhase) {
             System.setProperty("jllm.withPrefillDecode", "true");
             System.setProperty("jllm.prefillBatchSize", String.valueOf(prefillBatchSize));
         }
@@ -125,6 +154,7 @@ public final class GoldenCapture {
                 chatFormat.encodeHeader(new ChatFormat.Message(ChatFormat.Role.ASSISTANT, "")));
 
         Result result = new Result();
+        result.dim = model.configuration().dim();
         Sampler capturing =
                 tensor -> {
                     result.rows.add(toFloatArray(tensor));
@@ -158,6 +188,11 @@ public final class GoldenCapture {
                 // Callers still assert on LoweredPlanSelection.loweredPlanCount(), never on the
                 // property: the question is whether the lowering ran, not whether it was asked for.
                 plan = TornadoVMMasterPlan.initializeTornadoVMPlan(state, model);
+                // The dispatch this capture's own plan was built with, for callers that assert on
+                // it. Optional here: a plan shape this seam cannot reach records nothing.
+                result.gridScheduler =
+                        org.beehive.jllm.backend.tornado.PlanDispatchEvidence
+                                .gridSchedulerIfAvailable(plan);
                 model.generateTokensGPU(
                         state, 0, promptTokens, stopTokens, budget, capturing, false, null, plan);
             } else {

@@ -31,22 +31,42 @@ public class OperationSupportTest {
     }
 
     /**
-     * The accelerator never sees a format-decoded representation: the loader materialized {@code
-     * Q8_0} before dispatch existed. Declaring support would promise a kernel that is not there.
+     * The accelerator reads quantized weights in the file's own layout, for the operations that
+     * have kernels for them.
+     *
+     * <p>This replaces a test asserting the opposite. The engine used to materialize every
+     * block-encoded representation as {@code Q8_0} before it reached a device, and that test
+     * enforced the consequence — that no such representation could be claimed on the GPU. Both are
+     * gone. Decoding a block inside the arithmetic is what a device kernel does as much as a host
+     * dot product, and materializing instead nearly doubles a 4-bit model's device footprint.
+     *
+     * <p>What is still true, and what this asserts, is narrower: support is per operation. A
+     * matrix-vector product reads all six; matrix-matrix has tensor-core kernels for two.
      */
     @Test
-    public void theAcceleratorSeesNoFormatDecodedRepresentation() {
-        for (OperationKind kind : OperationKind.values()) {
-            for (DataType dataType : OperationSupport.supported(kind, ExecutionTarget.GPU)) {
-                assertFalse(
-                        kind
-                                + " must not claim "
-                                + dataType
-                                + " on the GPU: it is decoded"
-                                + " during compute and is never materialized on the device",
-                        dataType.isFormatDecoded());
-            }
+    public void theAcceleratorReadsQuantizedWeightsInTheirOwnLayout() {
+        for (DataType quantized :
+                Set.of(
+                        DataType.Q4_0,
+                        DataType.Q4_1,
+                        DataType.Q4_K,
+                        DataType.Q5_K,
+                        DataType.Q6_K,
+                        DataType.Q8_0)) {
+            assertTrue(
+                    quantized + " is decoded inside the device dot product and must be supported",
+                    OperationSupport.supports(
+                            OperationKind.MAT_VEC, quantized, ExecutionTarget.GPU));
+            assertTrue(
+                    quantized + " must also be readable by the vocabulary projection",
+                    OperationSupport.supports(
+                            OperationKind.VOCAB_PROJECTION, quantized, ExecutionTarget.GPU));
         }
+        // Per operation, not per backend: the batched tensor-core path has two representations.
+        assertFalse(
+                "MAT_MUL has no quantized tensor-core kernel beyond Q8_0",
+                OperationSupport.supports(
+                        OperationKind.MAT_MUL, DataType.Q5_K, ExecutionTarget.GPU));
     }
 
     /**
@@ -64,7 +84,7 @@ public class OperationSupportTest {
         assertEquals(
                 "the narrowing the loader performs must be the one DataType states",
                 DataType.F16,
-                DataType.BF16.materializedFallback());
+                DataType.BF16.narrowedFallback());
     }
 
     /**
@@ -109,20 +129,26 @@ public class OperationSupportTest {
         }
     }
 
-    /** An unsupported pair is refused before invocation, naming the operation and the dtype. */
+    /**
+     * An unsupported pair is refused before invocation, naming the operation and the dtype.
+     *
+     * <p>The example is a quantized matrix-<i>matrix</i> product, which is genuinely unsupported:
+     * the batched tensor-core kernels exist for F16 and Q8_0 only. It used to be a quantized
+     * matrix-vector product, which is no longer unsupported at all.
+     */
     @Test
     public void anUnsupportedPairIsRefusedByName() {
-        Operation kQuantOnTheDevice = new MatVec(W, A, B, 4096, 4096, DataType.Q4_K);
+        Operation kQuantBatchedOnTheDevice = new MatMul(W, A, B, 4096, 4096, 8, DataType.Q5_K);
         try {
-            OperationSupport.require(kQuantOnTheDevice, ExecutionTarget.GPU);
-            fail("Q4_K has no device kernel and must be refused");
+            OperationSupport.require(kQuantBatchedOnTheDevice, ExecutionTarget.GPU);
+            fail("Q5_K has no tensor-core kernel and must be refused");
         } catch (UnsupportedOperationException e) {
             String message = e.getMessage();
             assertTrue(
-                    "the message must name the operation: " + message, message.contains("MAT_VEC"));
+                    "the message must name the operation: " + message, message.contains("MAT_MUL"));
             assertTrue(
                     "the message must name the representation: " + message,
-                    message.contains("Q4_K"));
+                    message.contains("Q5_K"));
             assertTrue("the message must name the target: " + message, message.contains("GPU"));
         }
     }

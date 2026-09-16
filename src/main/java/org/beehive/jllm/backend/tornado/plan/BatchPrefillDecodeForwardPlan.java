@@ -36,7 +36,6 @@ public class BatchPrefillDecodeForwardPlan extends ForwardPlan {
     public BatchPrefillDecodeForwardPlan(
             Model model, BatchPrefillDecodeForwardPlanComponents components, int batchSize) {
         int N = model.configuration().numberOfLayers();
-        this.taskGraphLayout = new BatchPrefillDecodeForwardTaskGraphLayout(N);
 
         List<ImmutableTaskGraph> all = new ArrayList<>(2 * N + 3);
         GridScheduler scheduler = new GridScheduler();
@@ -56,8 +55,14 @@ public class BatchPrefillDecodeForwardPlan extends ForwardPlan {
         decodeAct.updateGridScheduler(scheduler);
 
         TransformerLayerTaskGraphs decodeLayers = components.batchDecodeTransformerLayers();
-        all.addAll(decodeLayers.getFFNLayerImmutableTaskGraphs());
+        List<ImmutableTaskGraph> decodeLayerGraphs = decodeLayers.getFFNLayerImmutableTaskGraphs();
+        all.addAll(decodeLayerGraphs);
         decodeLayers.updateGridScheduler(scheduler);
+        // Read from the graphs the family actually built rather than assumed to be one per layer:
+        // a family may hold several layers in one graph, and every index after the decode layers
+        // depends on how many there are.
+        this.taskGraphLayout =
+                new BatchPrefillDecodeForwardTaskGraphLayout(N, decodeLayerGraphs.size());
 
         AbstractLogitsTaskGraph logits =
                 components.decodeLogits(decodeLayers.getLastFFNLayerTaskGraphID());

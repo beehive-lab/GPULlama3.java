@@ -80,6 +80,35 @@ public final class TornadoWorkspaces {
         workspace.wrapValueCache.init(0.f);
     }
 
+    /**
+     * A zeroed float array.
+     *
+     * <p>Here rather than {@code floats(n).init(0)} at the call site for the reason every allocator
+     * in this class is here: naming a TornadoVM type outside the backend is Rule 1, and its
+     * allowlist is empty. A family says how large; the backend says what with.
+     */
+    public static FloatArray zeroedFloats(int size) {
+        FloatArray array = new FloatArray(size);
+        array.init(0.f);
+        return array;
+    }
+
+    /**
+     * Zeroes a family's recurrent state, if it has any.
+     *
+     * <p>For {@code qwen35}, whose convolution windows and delta-net matrices are updated in place
+     * and have no position to rewind: a reset must clear them or the next sequence continues the
+     * last one. Null-safe, because the same state serves a host-only session that allocated none.
+     */
+    public static void zeroRecurrentState(TornadoWorkspace workspace) {
+        if (workspace.wrapConvState != null) {
+            workspace.wrapConvState.init(0.f);
+        }
+        if (workspace.wrapDeltaState != null) {
+            workspace.wrapDeltaState.init(0.f);
+        }
+    }
+
     /** Zeroes an already-allocated key/value pair — the families that re-zero after binding. */
     public static void zeroKeyValue(TornadoWorkspace workspace) {
         workspace.wrapKeyCache.init(0.f);

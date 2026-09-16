@@ -260,6 +260,9 @@ public class CompiledProgramIdentityAccelTest {
         }
 
         @Override
+        public void resetSequenceState() {}
+
+        @Override
         public void forceCopyInReadOnlyData() {
             state.workspace.wrapX.clear();
             state.resetPositionHolder();

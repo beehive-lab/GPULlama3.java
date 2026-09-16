@@ -26,7 +26,7 @@ public abstract class AbstractTransformerLayerTaskGraphs<W extends Weights, C ex
      * List of TornadoVM {@link ImmutableTaskGraph}s, one per transformer layer. Built by {@link
      * #setupFFNLayers()}.
      */
-    private List<ImmutableTaskGraph> ffnLayerITGs;
+    protected List<ImmutableTaskGraph> ffnLayerITGs;
 
     protected final W weights;
     protected final C config;
