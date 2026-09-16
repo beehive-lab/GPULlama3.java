@@ -157,12 +157,11 @@ public class Qwen35DequantGemmLifecycleAccelTest {
             } finally {
                 pairPlan.freeTornadoExecutionPlan();
             }
+            var qwen = (org.beehive.jllm.model.qwen35.Qwen35Configuration) model.configuration();
             PlanDispatchEvidence.assertQwen35AttentionOutputOnDequantGemm(
-                    pairA.scheduler(),
-                    WIDTH,
-                    model.configuration().dim(),
-                    ((org.beehive.jllm.model.qwen35.Qwen35Configuration) model.configuration())
-                            .attentionOutputInputDim());
+                    pairA.scheduler(), WIDTH, qwen.dim(), qwen.attentionOutputInputDim());
+            PlanDispatchEvidence.assertQwen35SsmOutOnDequantGemm(
+                    pairA.scheduler(), WIDTH, qwen.dim(), qwen.deltaNetValueDim());
 
             assertSameInput("pair vs direct, prompt A", pairA, directA);
             assertRowsIdentical("pair vs direct, prompt A", pairA.rows(), directA.rows());

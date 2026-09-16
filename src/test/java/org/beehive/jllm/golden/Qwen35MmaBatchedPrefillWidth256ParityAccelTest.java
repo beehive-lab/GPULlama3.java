@@ -25,5 +25,6 @@ public class Qwen35MmaBatchedPrefillWidth256ParityAccelTest extends CpuGpuParity
                 assertParityBatched(Fixture.QWEN3_8_27B_Q4_0, Q8_0_PACKED_DECODE, 256);
         PlanDispatchEvidence.assertQwen35AttentionOutputOnDequantGemm(
                 gpu.gridScheduler, 256, gpu.dim, 6144);
+        PlanDispatchEvidence.assertQwen35SsmOutOnDequantGemm(gpu.gridScheduler, 256, gpu.dim, 6144);
     }
 }

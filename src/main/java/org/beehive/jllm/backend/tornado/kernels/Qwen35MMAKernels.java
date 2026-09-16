@@ -676,6 +676,43 @@ public final class Qwen35MMAKernels {
         out.set(lane, new HalfFloat(scale * (q - 8)));
     }
 
+    /**
+     * {@code out[row][e] = fp16(scale * (q5 + high * 16) - minimum)} for a whole {@code Q5_K}
+     * matrix, one lane per element: the sub-block's scale and minimum through {@link #scaleAndMin},
+     * the low nibble chosen by a branch on the sub-block's parity, the high bit from the {@code qh}
+     * plane — the expression {@link #projectionMMAQ5_KPaired} stages, so the halves carry the bits
+     * it multiplies.
+     *
+     * <p>Worker: {@code n * k} lanes.
+     */
+    public static void dequantizeQ5_KToFP16(
+            KernelContext ctx, ByteArray w, HalfFloatArray out, int n, int k) {
+        int lane = ctx.globalIdx;
+        int superBlocksPerRow = k / QK_K;
+        int row = lane / k;
+        int element = lane - row * k;
+        int superBlock = element >> 8;
+        int inSuper = element & 255;
+        int subBlock = inSuper >> 5;
+        int posInSub = inSuper & 31;
+        int base = (row * superBlocksPerRow + superBlock) * K_BLOCK_BYTES;
+        float d = w.getHalfFloat(base).getFloat32();
+        float dmin = w.getHalfFloat(base + 2).getFloat32();
+        int packedScale = scaleAndMin(w, base + K_SCALES_OFFSET, subBlock);
+        float scale = d * (packedScale >> 8);
+        float minimum = dmin * (packedScale & 0xFF);
+        int pairIndex = subBlock >> 1;
+        int highNibble = subBlock & 1;
+        int qsByte = w.get(base + K_QS_OFFSET + pairIndex * 32 + posInSub) & 0xFF;
+        int low = qsByte & 0xF;
+        if (highNibble == 1) {
+            low = (qsByte >> 4) & 0xF;
+        }
+        int qhByte = w.get(base + K_QH_OFFSET + posInSub) & 0xFF;
+        int high = (qhByte >> (pairIndex * 2 + highNibble)) & 1;
+        out.set(lane, new HalfFloat(scale * (low + high * 16) - minimum));
+    }
+
     // @formatter:off
 
     /** {@code hb = silu(gate) * up} over the chunk. One lane per element. */

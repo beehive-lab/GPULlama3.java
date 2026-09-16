@@ -102,9 +102,9 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
     private final java.util.Map<String, Integer> mmaTasks = new java.util.LinkedHashMap<>();
 
     /**
-     * Q4_0 projections that run as a dequantization into the FP16 scratch followed by the tiled
-     * FP16 GEMM: the projection task to its output width, and its dequantization task to the
-     * matrix's element count. Each pair's grids come from here.
+     * Projections — Q4_0, and the Q5_K ssm_out — that run as a dequantization into the FP16 scratch
+     * followed by the tiled FP16 GEMM: the projection task to its output width, and its
+     * dequantization task to the matrix's element count. Each pair's grids come from here.
      */
     private final java.util.Map<String, Integer> gemmTasks = new java.util.LinkedHashMap<>();
 
@@ -123,10 +123,12 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
     private static final int GEMM_LOCAL = 256;
 
     /**
-     * Whether a Q4_0 projection of {@code n} outputs over {@code k} inputs takes the
+     * Whether a quantized projection of {@code n} outputs over {@code k} inputs takes the
      * dequantize-then-GEMM pair: the state allocated the scratch (which is what says the width
      * fills whole GEMM tiles), the shape divides the GEMM's tiles, the matrix fits the scratch, and
-     * the width is one the pair was measured to gain at.
+     * the output width is one the pair was measured to gain at. Asked for the Q4_0 projections and
+     * for the Q5_K ssm_out alike; the scratch is one buffer that every pair of every layer graph
+     * writes and reads in turn, in graph order.
      */
     private boolean dequantGemmEligible(int n, int k) {
         return state.workspace.wrapDequantScratchFP16 != null
@@ -1063,23 +1065,50 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
         if (ssmOut.dataType() == DataType.Q5_K && mmaEligible(valueDim, config.dim())) {
             // Same shape as ffn_down: convert the readout, project, then add the residual back,
             // because a tensor-core store overwrites.
-            mmaTasks.put("batchLayer_" + layerIndex + ".ssm_out_proj", config.dim());
             layer.task(
                     "ssm_out_fp16",
                     Qwen35MMAKernels::convertToFP16,
                     context,
                     state.workspace.wrapSsmOutBatch,
                     state.workspace.wrapSsmOutFP16Batch);
-            layer.task(
-                    "ssm_out_proj",
-                    Qwen35MMAKernels::projectionMMAQ5_KPaired,
-                    context,
-                    state.workspace.wrapSsmOutFP16Batch,
-                    ssmOut.asByteArray(),
-                    state.workspace.wrapFFNDownBatch,
-                    batchSize,
-                    config.dim(),
-                    valueDim);
+            if (dequantGemmEligible(config.dim(), valueDim)) {
+                // The same pair the wide Q4_0 projections take, through the same scratch: its
+                // dequantization runs after the previous projection's GEMM has read the scratch
+                // and before this GEMM, in this graph's task order.
+                String qualified = "batchLayer_" + layerIndex + ".ssm_out_proj";
+                dequantTasks.put(qualified + "_dequant", config.dim() * valueDim);
+                gemmTasks.put(qualified, config.dim());
+                layer.task(
+                        "ssm_out_proj_dequant",
+                        Qwen35MMAKernels::dequantizeQ5_KToFP16,
+                        context,
+                        ssmOut.asByteArray(),
+                        state.workspace.wrapDequantScratchFP16,
+                        config.dim(),
+                        valueDim);
+                layer.task(
+                        "ssm_out_proj",
+                        TransformerBatchPrefillKernels::gemmMMA,
+                        context,
+                        state.workspace.wrapSsmOutFP16Batch,
+                        state.workspace.wrapDequantScratchFP16,
+                        state.workspace.wrapFFNDownBatch,
+                        batchSize,
+                        config.dim(),
+                        valueDim);
+            } else {
+                mmaTasks.put("batchLayer_" + layerIndex + ".ssm_out_proj", config.dim());
+                layer.task(
+                        "ssm_out_proj",
+                        Qwen35MMAKernels::projectionMMAQ5_KPaired,
+                        context,
+                        state.workspace.wrapSsmOutFP16Batch,
+                        ssmOut.asByteArray(),
+                        state.workspace.wrapFFNDownBatch,
+                        batchSize,
+                        config.dim(),
+                        valueDim);
+            }
             layer.task(
                     "ssm_out_residual",
                     Qwen35MMAKernels::residualAdd,

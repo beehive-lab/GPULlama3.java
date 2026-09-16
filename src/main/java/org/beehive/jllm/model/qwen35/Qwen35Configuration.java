@@ -282,8 +282,8 @@ public record Qwen35Configuration(
         // to hold for the widest state this width can allocate.
         perRow += (long) numberOfHeads() * contextLength();
         long bytes = perRow * batchSize * Float.BYTES;
-        // The dequantize-then-GEMM scratch: one FP16 copy of the largest Q4_0 projection matrix,
-        // at the widths that take that path.
+        // The dequantize-then-GEMM scratch: one FP16 copy of the largest projection matrix that
+        // takes the pair (gate/up; the Q5_K ssm_out shares it), at the widths that take that path.
         if (dequantGemmWidth(batchSize)) {
             bytes += 2L * hiddenDim() * dim();
         }

@@ -134,6 +134,41 @@ public final class PlanDispatchEvidence {
         }
     }
 
+    /**
+     * Asserts that every batched ssm_out projection in {@code scheduler} runs as the
+     * dequantize-then-GEMM pair: its {@code _dequant} task with one lane per weight and the
+     * projection on the FP16 GEMM's two-dimensional grid.
+     */
+    public static void assertQwen35SsmOutOnDequantGemm(
+            GridScheduler scheduler, int batchSize, int dim, int valueDim) {
+        assertNotNull("no grid scheduler for the plan this run built", scheduler);
+        List<Integer> layers = new ArrayList<>();
+        for (String task : new TreeSet<>(scheduler.keySet())) {
+            if (task.matches("batchLayer_\\d+\\.ssm_out_proj")) {
+                layers.add(Integer.parseInt(task.replaceAll("\\D", "")));
+            }
+        }
+        assertTrue("no batched ssm_out projection in this plan", !layers.isEmpty());
+        for (int layer : layers) {
+            String prefix = "batchLayer_" + layer + ".";
+            WorkerGrid dequant = scheduler.get(prefix + "ssm_out_proj_dequant");
+            assertNotNull("layer " + layer + " has no ssm_out_proj_dequant task", dequant);
+            assertEquals(
+                    "layer " + layer + " ssm_out dequantization lanes",
+                    (long) dim * valueDim,
+                    dequant.getGlobalWork()[0]);
+            WorkerGrid gemm = scheduler.get(prefix + "ssm_out_proj");
+            assertEquals(
+                    "layer " + layer + " ssm_out GEMM rows of work",
+                    (batchSize / 128) * 256L,
+                    gemm.getGlobalWork()[0]);
+            assertEquals(
+                    "layer " + layer + " ssm_out GEMM column tiles",
+                    dim / 128L,
+                    gemm.getGlobalWork()[1]);
+        }
+    }
+
     // @formatter:off
     /**
      * Asserts that this plan's decode attention is the split-KV pair rather than the per-head
