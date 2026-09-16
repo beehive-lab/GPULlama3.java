@@ -1183,4 +1183,251 @@ public final class Qwen35MMAKernels {
 
         ctx.mmaStore(acc, out, blockRow, blockCol, n);
     }
+
+    // ---- Q4_0 decoded straight into the GEMM's B-tile order (experiment) ---------------
+
+    /** The tiled GEMM's geometry, restated here so this file's loader agrees with it by name. */
+    private static final int GEMM_BM = 128;
+
+    private static final int GEMM_BN = 128;
+    private static final int GEMM_BK = 16;
+    private static final int GEMM_WARPS_N = 2;
+    private static final int GEMM_WM = 32;
+    private static final int GEMM_WN = 64;
+
+    /** Ints in one B tile: {@code GEMM_BK * GEMM_BN / 2}. */
+    private static final int GEMM_B_TILE_INTS = GEMM_BK * GEMM_BN / 2;
+
+    // @formatter:off
+    /**
+     * {@code out = fp16(scale * (q - 8))} for a whole {@code Q4_0} matrix, one lane per element,
+     * the decode expression of {@link #dequantizeQ4_0ToFP16}, written not row-major but in the
+     * order the tiled GEMM stages its B tile in shared memory, so the GEMM can copy each tile
+     * global-to-shared as contiguous four-byte words.
+     *
+     * <p><b>Layout.</b> The matrix is {@code n} rows (output columns of the projection) by {@code
+     * k}. It is cut into tiles of 128 rows by 16 k, numbered {@code tile = (row / 128) * (k / 16) +
+     * kk / 16}: all of a row block's k-steps in order, then the next row block. A tile holds 1024
+     * packed pairs; pair {@code idx} (0..1023) holds rows {@code (idx >>> 6) * 8 + (idx & 3) * 2}
+     * and that plus one at k {@code (idx & 63) >>> 2} within the tile — the index {@code gemmMMA}
+     * gives {@code bTile[idx]} — with the even row in the low half. Half position {@code h = tile *
+     * 2048 + idx * 2 + (row & 1)}.
+     *
+     * <p><b>Inverse.</b> From {@code h}: {@code idx = (h >>> 1) & 1023}, {@code tile = h >>> 11},
+     * {@code row = (tile / (k / 16)) * 128 + ((idx >>> 6) << 3) + ((idx & 3) << 1) + (h & 1)},
+     * {@code kk = (tile % (k / 16)) * 16 + ((idx & 63) >>> 2)}. Every half position maps to one
+     * element and back; {@code n % 128 == 0} and {@code k % 16 == 0}, as the GEMM requires.
+     *
+     * <p>Worker: {@code n * k} lanes; the lane order is a fixed permutation of the half positions
+     * (see the body), so every half is written exactly once.
+     */
+    // @formatter:on
+    public static void dequantizeQ4_0ToFP16Tiled(
+            KernelContext ctx, ByteArray w, HalfFloatArray out, int n, int k) {
+        int lane = ctx.globalIdx;
+        int kSteps = k / GEMM_BK;
+        // Lane to half position: not the identity. A warp of 32 lanes covers four rows by eight k
+        // (four blocks read, four 32-byte sectors written) rather than the eight rows by four k
+        // the identity would give (eight blocks read, two sectors written); measured 2-3% faster
+        // over the production shapes. Lane bits, low to high: row parity, the low pair bit, three
+        // low k bits, the high pair bit, the high k bit, then the sub-tile and tile.
+        int parity = lane & 1;
+        int pairInSub = ((lane >>> 1) & 1) | (((lane >>> 5) & 1) << 1);
+        int kk = ((lane >>> 2) & 7) | (((lane >>> 6) & 1) << 3);
+        int pair = ((lane >>> 7) << 6) + (kk << 2) + pairInSub;
+        int tile = pair >>> 10;
+        int idx = pair & (GEMM_B_TILE_INTS - 1);
+        int rowBlock = tile / kSteps;
+        int kStep = tile - rowBlock * kSteps;
+        int row = rowBlock * GEMM_BN + ((idx >>> 6) << 3) + ((idx & 3) << 1) + parity;
+        int element = kStep * GEMM_BK + ((idx & 63) >>> 2);
+        int blocksPerRow = k / QK;
+        int block = element >> 5;
+        int within = element & 31;
+        int base = (row * blocksPerRow + block) * BLOCK_BYTES;
+        float scale = w.getHalfFloat(base).getFloat32();
+        int packed = w.get(base + 2 + (within & 15)) & 0xFF;
+        int q = packed & 0xF;
+        if (within >= 16) {
+            q = (packed >> 4) & 0xF;
+        }
+        out.set((pair << 1) + parity, new HalfFloat(scale * (q - 8)));
+    }
+
+    /** {@code lo | hi << 16} of two halves: the packing of the GEMM's shared tiles. */
+    private static int packHalvesGemm(HalfFloatArray src, int idxLo, int idxHi) {
+        int lo = src.get(idxLo).getHalfFloatValue() & 0xFFFF;
+        int hi = src.get(idxHi).getHalfFloatValue() & 0xFFFF;
+        return lo | (hi << 16);
+    }
+
+    // @formatter:off
+    /**
+     * {@code TransformerBatchPrefillKernels.gemmMMA} with its B operand in the tile order {@link
+     * #dequantizeQ4_0ToFP16Tiled} writes: {@code C[M,N] (FP32) = A[M,K] (FP16, row-major) x B},
+     * where B's tile {@code (blockCol / 128) * (K / 16) + kStep} is the 1024 ints of this K-step's
+     * shared tile in shared-tile order. The A staging, the fragment loads, the MMA sequence, the
+     * FP32 accumulation, the store and the tile geometry are those of {@code gemmMMA}; only the B
+     * staging differs: each lane's four ints of the tile are copied global-to-shared with {@code
+     * cp.async}, four-byte words from contiguous addresses, in place of eight two-byte loads a K
+     * apart and four shared stores through registers.
+     *
+     * <p>Same synchronisation shape: the next step's B copies are issued after the barrier that
+     * ends this step's fragment loads, overlap the MMAs, and are waited for before the barrier that
+     * publishes the tile.
+     *
+     * <p>Requires M % 128 == 0, N % 128 == 0, K % 16 == 0. Worker: WorkerGrid2D((M/128)*256,
+     * N/128), local (256,1,1).
+     */
+    // @formatter:on
+    public static void gemmMMATiledB(
+            KernelContext ctx,
+            HalfFloatArray A,
+            HalfFloatArray B,
+            FloatArray C,
+            int M,
+            int N,
+            int K) {
+        int tid = ctx.localIdx;
+        int warpId = tid / WARP_SIZE;
+        int warpM = warpId / GEMM_WARPS_N;
+        int warpN = warpId % GEMM_WARPS_N;
+        int blockRow = GEMM_BM * ctx.groupIdx;
+        int blockCol = GEMM_BN * ctx.groupIdy;
+
+        int[] aTile = ctx.allocateIntLocalArray(GEMM_BM * GEMM_BK / 2);
+        // Two B tiles: the copy for the next step lands in the one this step is not reading.
+        int[] bTile = ctx.allocateIntLocalArray(2 * GEMM_B_TILE_INTS);
+
+        float[] c00 = ctx.mmaFragment(0.0f);
+        float[] c01 = ctx.mmaFragment(0.0f);
+        float[] c02 = ctx.mmaFragment(0.0f);
+        float[] c03 = ctx.mmaFragment(0.0f);
+        float[] c04 = ctx.mmaFragment(0.0f);
+        float[] c05 = ctx.mmaFragment(0.0f);
+        float[] c06 = ctx.mmaFragment(0.0f);
+        float[] c07 = ctx.mmaFragment(0.0f);
+        float[] c10 = ctx.mmaFragment(0.0f);
+        float[] c11 = ctx.mmaFragment(0.0f);
+        float[] c12 = ctx.mmaFragment(0.0f);
+        float[] c13 = ctx.mmaFragment(0.0f);
+        float[] c14 = ctx.mmaFragment(0.0f);
+        float[] c15 = ctx.mmaFragment(0.0f);
+        float[] c16 = ctx.mmaFragment(0.0f);
+        float[] c17 = ctx.mmaFragment(0.0f);
+
+        int aIdx0 = tid;
+        int gA0 = (blockRow + (aIdx0 >>> 3)) * K + ((aIdx0 & 7) << 1);
+        int aIdx1 = tid + 256;
+        int gA1 = (blockRow + (aIdx1 >>> 3)) * K + ((aIdx1 & 7) << 1);
+        int aIdx2 = tid + 512;
+        int gA2 = (blockRow + (aIdx2 >>> 3)) * K + ((aIdx2 & 7) << 1);
+        int aIdx3 = tid + 768;
+        int gA3 = (blockRow + (aIdx3 >>> 3)) * K + ((aIdx3 & 7) << 1);
+        // B: this block's column tile sequence starts at pair (groupIdy * (K / 16)) * 1024; each
+        // K-step's tile is the next 1024 pairs, and shared int idx is global half 2 * (base + idx).
+        int numKSteps = K / GEMM_BK;
+        int bTileBase = ctx.groupIdy * numKSteps * GEMM_B_TILE_INTS;
+        int bIdx0 = tid;
+        int bIdx1 = tid + 256;
+        int bIdx2 = tid + 512;
+        int bIdx3 = tid + 768;
+
+        int aReg0 = packHalvesGemm(A, gA0, gA0 + 1);
+        int aReg1 = packHalvesGemm(A, gA1, gA1 + 1);
+        int aReg2 = packHalvesGemm(A, gA2, gA2 + 1);
+        int aReg3 = packHalvesGemm(A, gA3, gA3 + 1);
+        aTile[aIdx0] = aReg0;
+        aTile[aIdx1] = aReg1;
+        aTile[aIdx2] = aReg2;
+        aTile[aIdx3] = aReg3;
+        int gB = (bTileBase) << 1;
+        ctx.asyncCopyToLocal(bTile, bIdx0, B, gB + (bIdx0 << 1));
+        ctx.asyncCopyToLocal(bTile, bIdx1, B, gB + (bIdx1 << 1));
+        ctx.asyncCopyToLocal(bTile, bIdx2, B, gB + (bIdx2 << 1));
+        ctx.asyncCopyToLocal(bTile, bIdx3, B, gB + (bIdx3 << 1));
+        ctx.asyncCopyCommit();
+        ctx.asyncCopyWaitGroup(0);
+        ctx.localBarrier();
+
+        for (int kStep = 0; kStep < numKSteps; kStep++) {
+            int bufThis = (kStep & 1) * GEMM_B_TILE_INTS;
+            int bufNext = GEMM_B_TILE_INTS - bufThis;
+            if (kStep + 1 < numKSteps) {
+                int kOff = (kStep + 1) * GEMM_BK;
+                aReg0 = packHalvesGemm(A, gA0 + kOff, gA0 + kOff + 1);
+                aReg1 = packHalvesGemm(A, gA1 + kOff, gA1 + kOff + 1);
+                aReg2 = packHalvesGemm(A, gA2 + kOff, gA2 + kOff + 1);
+                aReg3 = packHalvesGemm(A, gA3 + kOff, gA3 + kOff + 1);
+                // The other B buffer was last read a step ago, before that step's closing
+                // barrier: free. Issue now, so the copy overlaps this whole step.
+                int gBNext = (bTileBase + (kStep + 1) * GEMM_B_TILE_INTS) << 1;
+                ctx.asyncCopyToLocal(bTile, bufNext + bIdx0, B, gBNext + (bIdx0 << 1));
+                ctx.asyncCopyToLocal(bTile, bufNext + bIdx1, B, gBNext + (bIdx1 << 1));
+                ctx.asyncCopyToLocal(bTile, bufNext + bIdx2, B, gBNext + (bIdx2 << 1));
+                ctx.asyncCopyToLocal(bTile, bufNext + bIdx3, B, gBNext + (bIdx3 << 1));
+                ctx.asyncCopyCommit();
+            }
+
+            int aOff0 = warpM * 1024;
+            int aOff1 = warpM * 1024 + 512;
+            HalfFloat[] a0 = ctx.mmaLoadA(aTile, GEMM_BK, aOff0);
+            HalfFloat[] a1 = ctx.mmaLoadA(aTile, GEMM_BK, aOff1);
+            int bBase = warpN * 8 + (bufThis >>> 6);
+            HalfFloat[] b0 = ctx.mmaLoadB(bTile, GEMM_BK, (bBase + 0) * B_SUBTILE_BYTES);
+            HalfFloat[] b1 = ctx.mmaLoadB(bTile, GEMM_BK, (bBase + 1) * B_SUBTILE_BYTES);
+            HalfFloat[] b2 = ctx.mmaLoadB(bTile, GEMM_BK, (bBase + 2) * B_SUBTILE_BYTES);
+            HalfFloat[] b3 = ctx.mmaLoadB(bTile, GEMM_BK, (bBase + 3) * B_SUBTILE_BYTES);
+            HalfFloat[] b4 = ctx.mmaLoadB(bTile, GEMM_BK, (bBase + 4) * B_SUBTILE_BYTES);
+            HalfFloat[] b5 = ctx.mmaLoadB(bTile, GEMM_BK, (bBase + 5) * B_SUBTILE_BYTES);
+            HalfFloat[] b6 = ctx.mmaLoadB(bTile, GEMM_BK, (bBase + 6) * B_SUBTILE_BYTES);
+            HalfFloat[] b7 = ctx.mmaLoadB(bTile, GEMM_BK, (bBase + 7) * B_SUBTILE_BYTES);
+            ctx.localBarrier();
+
+            if (kStep + 1 < numKSteps) {
+                aTile[aIdx0] = aReg0;
+                aTile[aIdx1] = aReg1;
+                aTile[aIdx2] = aReg2;
+                aTile[aIdx3] = aReg3;
+            }
+
+            c00 = ctx.mma(a0, b0, c00, MMAShape.M16N8K16);
+            c01 = ctx.mma(a0, b1, c01, MMAShape.M16N8K16);
+            c02 = ctx.mma(a0, b2, c02, MMAShape.M16N8K16);
+            c03 = ctx.mma(a0, b3, c03, MMAShape.M16N8K16);
+            c04 = ctx.mma(a0, b4, c04, MMAShape.M16N8K16);
+            c05 = ctx.mma(a0, b5, c05, MMAShape.M16N8K16);
+            c06 = ctx.mma(a0, b6, c06, MMAShape.M16N8K16);
+            c07 = ctx.mma(a0, b7, c07, MMAShape.M16N8K16);
+            c10 = ctx.mma(a1, b0, c10, MMAShape.M16N8K16);
+            c11 = ctx.mma(a1, b1, c11, MMAShape.M16N8K16);
+            c12 = ctx.mma(a1, b2, c12, MMAShape.M16N8K16);
+            c13 = ctx.mma(a1, b3, c13, MMAShape.M16N8K16);
+            c14 = ctx.mma(a1, b4, c14, MMAShape.M16N8K16);
+            c15 = ctx.mma(a1, b5, c15, MMAShape.M16N8K16);
+            c16 = ctx.mma(a1, b6, c16, MMAShape.M16N8K16);
+            c17 = ctx.mma(a1, b7, c17, MMAShape.M16N8K16);
+            ctx.asyncCopyWaitGroup(0);
+            ctx.localBarrier();
+        }
+
+        int rBase = blockRow + warpM * GEMM_WM;
+        int cBase = blockCol + warpN * GEMM_WN;
+        ctx.mmaStore(c00, C, rBase + 0, cBase + 0, N);
+        ctx.mmaStore(c01, C, rBase + 0, cBase + 8, N);
+        ctx.mmaStore(c02, C, rBase + 0, cBase + 16, N);
+        ctx.mmaStore(c03, C, rBase + 0, cBase + 24, N);
+        ctx.mmaStore(c04, C, rBase + 0, cBase + 32, N);
+        ctx.mmaStore(c05, C, rBase + 0, cBase + 40, N);
+        ctx.mmaStore(c06, C, rBase + 0, cBase + 48, N);
+        ctx.mmaStore(c07, C, rBase + 0, cBase + 56, N);
+        ctx.mmaStore(c10, C, rBase + 16, cBase + 0, N);
+        ctx.mmaStore(c11, C, rBase + 16, cBase + 8, N);
+        ctx.mmaStore(c12, C, rBase + 16, cBase + 16, N);
+        ctx.mmaStore(c13, C, rBase + 16, cBase + 24, N);
+        ctx.mmaStore(c14, C, rBase + 16, cBase + 32, N);
+        ctx.mmaStore(c15, C, rBase + 16, cBase + 40, N);
+        ctx.mmaStore(c16, C, rBase + 16, cBase + 48, N);
+        ctx.mmaStore(c17, C, rBase + 16, cBase + 56, N);
+    }
 }

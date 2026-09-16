@@ -143,6 +143,12 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
      * A Q4_0 projection on the tensor cores: {@code out[batch][n] = a[batch][k] x w[n][k]}. The
      * dequantize-then-GEMM pair where {@link #dequantGemmEligible} says so, otherwise the direct
      * quantized kernel; either way the task named {@code task} is the one that writes {@code out}.
+     *
+     * <p>The Q4_0 pair is the tiled one: the decoder writes the scratch in the GEMM's B-tile order
+     * and the GEMM copies each tile global-to-shared as contiguous words. The Q4_1 and Q5_K pairs
+     * write and read the same scratch row-major with the general GEMM; the scratch carries no
+     * layout of its own, each pair's two tasks agree between themselves, and no task reads what
+     * another family's decoder wrote.
      */
     private void q40Projection(
             TaskGraph graph,
@@ -158,7 +164,7 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
             gemmTasks.put(qualified, n);
             graph.task(
                     task + "_dequant",
-                    Qwen35MMAKernels::dequantizeQ4_0ToFP16,
+                    Qwen35MMAKernels::dequantizeQ4_0ToFP16Tiled,
                     context,
                     w,
                     state.workspace.wrapDequantScratchFP16,
@@ -166,7 +172,7 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     k);
             graph.task(
                     task,
-                    TransformerBatchPrefillKernels::gemmMMA,
+                    Qwen35MMAKernels::gemmMMATiledB,
                     context,
                     aFP16,
                     state.workspace.wrapDequantScratchFP16,

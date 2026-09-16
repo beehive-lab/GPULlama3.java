@@ -150,9 +150,15 @@ public class Qwen35DequantGemmLifecycleAccelTest {
             Run pairB;
             java.util.Set<String> pairKernels;
             java.util.Set<String> scanKernels;
+            java.util.Map<String, Integer> dequantPairs;
             try {
                 pairKernels = PlanDispatchEvidence.batchedTaskKernels(pairPlan, "attention");
                 scanKernels = PlanDispatchEvidence.batchedTaskKernels(pairPlan, "ssm_delta_rule");
+                // Every pair's producer and consumer agree on the scratch's layout, the Q4_0
+                // tiled pairs interleaved in graph order with the row-major Q4_1 and Q5_K ones.
+                dequantPairs =
+                        PlanDispatchEvidence.assertQwen35DequantGemmPairs(
+                                pairPlan, PlanDispatchEvidence.gridSchedulerIfAvailable(pairPlan));
                 freshB = run(model, pairState, pairPlan, promptB);
                 reset(pairState, pairPlan, initialSeed);
                 pairA = run(model, pairState, pairPlan, promptA);
@@ -178,6 +184,11 @@ public class Qwen35DequantGemmLifecycleAccelTest {
                     "the batched delta-rule scan this plan compiled",
                     java.util.Set.of("deltaRuleScanWarp"),
                     scanKernels);
+            assertEquals(
+                    "the three pair layouts all in this plan, interleaved: " + dequantPairs,
+                    3,
+                    dequantPairs.size());
+            System.out.println("[lifecycle] dequant pairs " + dequantPairs);
 
             assertSameInput("pair vs direct, prompt A", pairA, directA);
             assertRowsIdentical("pair vs direct, prompt A", pairA.rows(), directA.rows());

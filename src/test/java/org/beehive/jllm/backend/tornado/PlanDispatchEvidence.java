@@ -237,6 +237,87 @@ public final class PlanDispatchEvidence {
     }
 
     /**
+     * The kernel method each batched layer graph compiles for a task named {@code task}, by graph
+     * name; graphs without the task are absent. See {@link #batchedTaskKernels}.
+     */
+    public static java.util.Map<String, String> batchedTaskKernelsByGraph(
+            TornadoVMMasterPlan plan, String task) {
+        assertTrue(
+                "not a batched plan: " + plan.getClass().getSimpleName(),
+                plan instanceof TornadoVMMasterPlanBatchPrefillDecode);
+        var batched = (TornadoVMMasterPlanBatchPrefillDecode) plan;
+        java.util.Map<String, String> kernels = new java.util.TreeMap<>();
+        try {
+            java.lang.reflect.Field field = ImmutableTaskGraph.class.getDeclaredField("taskGraph");
+            field.setAccessible(true);
+            java.lang.reflect.Field impl = TaskGraph.class.getDeclaredField("taskGraphImpl");
+            impl.setAccessible(true);
+            for (ImmutableTaskGraph immutable :
+                    batched.batchPrefillDecodeForwardPlan.getImmutableTaskGraphs()) {
+                TaskGraph graph = (TaskGraph) field.get(immutable);
+                if (!graph.getTaskGraphName().startsWith("batchLayer_")) {
+                    continue;
+                }
+                var found = ((TornadoTaskGraphInterface) impl.get(graph)).getTask(task);
+                if (found != null) {
+                    kernels.put(graph.getTaskGraphName(), found.getTaskName());
+                }
+            }
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError("cannot reach the task graphs behind the plan", e);
+        }
+        return kernels;
+    }
+
+    /**
+     * Asserts the producer and consumer of every dequantize-then-GEMM pair in a batched plan agree
+     * on the scratch's layout, layer by layer: a Q4_0 pair is the tiled decoder with the tiled-B
+     * GEMM, a Q4_1 or Q5_K pair its row-major decoder with the general GEMM, and no other
+     * combination exists. Every {@code *_dequant} task in the plan's own scheduler is examined, so
+     * a pair this test does not know of fails rather than passing unexamined. Returns the count of
+     * each combination seen, keyed {@code decoder+gemm}.
+     */
+    public static java.util.Map<String, Integer> assertQwen35DequantGemmPairs(
+            TornadoVMMasterPlan plan, GridScheduler scheduler) {
+        assertNotNull("no grid scheduler for the plan this run built", scheduler);
+        java.util.Set<String> allowed =
+                java.util.Set.of(
+                        "dequantizeQ4_0ToFP16Tiled+gemmMMATiledB",
+                        "dequantizeQ4_1ToFP16+gemmMMA",
+                        "dequantizeQ5_KToFP16+gemmMMA");
+        java.util.Map<String, Integer> seen = new java.util.TreeMap<>();
+        java.util.Set<String> tasks = new TreeSet<>();
+        for (String key : scheduler.keySet()) {
+            if (key.matches("batchLayer_\\d+\\..*_dequant")) {
+                tasks.add(key.substring(key.indexOf('.') + 1));
+            }
+        }
+        assertTrue("no dequantize-then-GEMM pair in this plan", !tasks.isEmpty());
+        for (String dequantTask : tasks) {
+            String gemmTask = dequantTask.substring(0, dequantTask.length() - "_dequant".length());
+            java.util.Map<String, String> decoders = batchedTaskKernelsByGraph(plan, dequantTask);
+            java.util.Map<String, String> gemms = batchedTaskKernelsByGraph(plan, gemmTask);
+            assertTrue("no graph holds " + dequantTask, !decoders.isEmpty());
+            for (var entry : decoders.entrySet()) {
+                String gemm = gemms.get(entry.getKey());
+                assertNotNull(entry.getKey() + " has " + dequantTask + " but no " + gemmTask, gemm);
+                String pair = entry.getValue() + "+" + gemm;
+                assertTrue(
+                        entry.getKey()
+                                + "."
+                                + gemmTask
+                                + " pairs "
+                                + pair
+                                + ", not a layout the"
+                                + " scratch has a producer and consumer for",
+                        allowed.contains(pair));
+                seen.merge(pair, 1, Integer::sum);
+            }
+        }
+        return seen;
+    }
+
+    /**
      * Asserts that every batched delta-rule scan in {@code scheduler} is the shared-state form:
      * 32-lane groups, one per (head, 32 columns), rather than the per-lane scan's 128-lane groups.
      */
