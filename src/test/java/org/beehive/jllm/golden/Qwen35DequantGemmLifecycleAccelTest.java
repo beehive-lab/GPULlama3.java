@@ -83,7 +83,13 @@ public class Qwen35DequantGemmLifecycleAccelTest {
         return b.toString();
     }
 
-    private record Run(List<float[]> rows, GridScheduler scheduler, int promptTokens) {}
+    /** A sequence's rows, plus what was fed: the seed, the ingestion's first index, the prompt. */
+    private record Run(
+            List<float[]> rows,
+            GridScheduler scheduler,
+            int seed,
+            int firstIndex,
+            List<Integer> prompt) {}
 
     @Test
     public void thePairPathMatchesTheDirectPathAcrossChunksDecodeAndReset() throws Exception {
@@ -114,12 +120,14 @@ public class Qwen35DequantGemmLifecycleAccelTest {
 
             // Direct path first, in a child JVM (see the class comment), so its device memory is
             // released before this process allocates its own plan.
-            List<float[]> directRows = captureDirectInChildJvm(modelPath);
+            Run directA = captureDirectInChildJvm(modelPath);
 
             // Pair path, one state and one plan, three sequences: prompt B on the fresh plan,
             // reset, prompt A (the multi-chunk one, compared with the direct path), reset, prompt
             // B again (compared with its own fresh run, so nothing A left behind can pass).
             State pairState = State.withPrefillBatchSize(WIDTH, model::createNewState);
+            // The seed the state was created with, restored on every reset as a session does.
+            int initialSeed = pairState.latestToken;
             assertNotNull(
                     "the state did not allocate the dequantization scratch at width " + WIDTH,
                     pairState.workspace.wrapDequantScratchFP16);
@@ -130,9 +138,9 @@ public class Qwen35DequantGemmLifecycleAccelTest {
             Run pairB;
             try {
                 freshB = run(model, pairState, pairPlan, promptB);
-                reset(model, pairState, pairPlan);
+                reset(pairState, pairPlan, initialSeed);
                 pairA = run(model, pairState, pairPlan, promptA);
-                reset(model, pairState, pairPlan);
+                reset(pairState, pairPlan, initialSeed);
                 pairB = run(model, pairState, pairPlan, promptB);
             } finally {
                 pairPlan.freeTornadoExecutionPlan();
@@ -144,11 +152,9 @@ public class Qwen35DequantGemmLifecycleAccelTest {
                     ((org.beehive.jllm.model.qwen35.Qwen35Configuration) model.configuration())
                             .attentionOutputInputDim());
 
-            // The direct-path rows for prompt A, captured by the child JVM before this one built
-            // its plan.
-            List<float[]> directA = directRows;
-
-            assertRowsIdentical("pair vs direct, prompt A", pairA.rows(), directA);
+            assertSameInput("pair vs direct, prompt A", pairA, directA);
+            assertRowsIdentical("pair vs direct, prompt A", pairA.rows(), directA.rows());
+            assertSameInput("after reset vs fresh, prompt B", pairB, freshB);
             assertRowsIdentical("after reset vs fresh, prompt B", pairB.rows(), freshB.rows());
             assertTrue(
                     "prompts A and B produced identical first rows, so the input is not reaching"
@@ -158,9 +164,9 @@ public class Qwen35DequantGemmLifecycleAccelTest {
                     "[LIFECYCLE] width %d: prompt A %d tokens (%d chunks), prompt B %d tokens,"
                             + " %d rows compared each, all raw-bit identical%n",
                     WIDTH,
-                    pairA.promptTokens(),
-                    (pairA.promptTokens() + WIDTH - 1) / WIDTH,
-                    pairB.promptTokens(),
+                    pairA.prompt().size(),
+                    (pairA.prompt().size() + WIDTH - 1) / WIDTH,
+                    pairB.prompt().size(),
                     pairA.rows().size());
         } finally {
             restore("jllm.withPrefillDecode", previousPrefill);
@@ -169,14 +175,19 @@ public class Qwen35DequantGemmLifecycleAccelTest {
     }
 
     /**
-     * What a session's reset does (see {@code LegacySessionRuntime.reset}): re-seed the state's
-     * latest token, then clear the sequence state on the device through the plan. The plan-level
-     * reset alone leaves the previous sequence's last token as the seed the next prompt is fed
-     * from, and the next sequence then differs from a fresh one at every row.
+     * What a session's reset does (see {@code LegacySessionRuntime.reset}): restore the seed the
+     * state was created with, then clear the sequence state on the device through the plan.
      */
-    private static void reset(Model model, State state, TornadoVMMasterPlan plan) {
-        state.latestToken = model.chatFormat().getBeginOfText();
+    private static void reset(State state, TornadoVMMasterPlan plan, int initialSeed) {
+        state.latestToken = initialSeed;
         plan.resetSequenceState();
+    }
+
+    /** Two runs meant to be equivalent were fed the same thing: seed, first index and prompt. */
+    private static void assertSameInput(String what, Run a, Run b) {
+        assertEquals(what + ": seed", a.seed(), b.seed());
+        assertEquals(what + ": ingestion first index", a.firstIndex(), b.firstIndex());
+        assertEquals(what + ": prompt tokens", a.prompt(), b.prompt());
     }
 
     private static List<Integer> encode(Model model, String prompt) {
@@ -206,32 +217,26 @@ public class Qwen35DequantGemmLifecycleAccelTest {
                     int token = Sampler.TENSOR_ARGMAX.sampleToken(tensor);
                     return token;
                 };
-        int skippedSeed =
+        int seed = state.latestToken;
+        int firstIndex =
                 org.beehive.jllm.inference.PromptIngestion.of(state, prompt, 0).firstIndex();
-        int budget = prompt.size() + DECODE_STEPS - skippedSeed;
+        // generateTokensGPUPrefillDecode ingests the whole prompt at positions 0..N-1, whatever
+        // the first index (a seed the prompt opens with is fed once, as the prompt's own first
+        // token), then decodes one row per position while pos < maxTokens: exactly
+        // maxTokens - N rows. The context has to hold every one of those positions.
+        int budget = prompt.size() + DECODE_STEPS;
+        assertTrue("prompt + decode exceed the context of " + CONTEXT, budget <= CONTEXT);
         Set<Integer> stopTokens = Set.of();
         model.generateTokensGPU(state, 0, prompt, stopTokens, budget, capturing, false, null, plan);
         GridScheduler scheduler = PlanDispatchEvidence.gridSchedulerIfAvailable(plan);
-        // The budget counts every forward, ingestion included; what matters is several decode
-        // rows, and the same budget for both runs being compared.
-        assertTrue("only " + rows.size() + " rows captured", rows.size() >= DECODE_STEPS - 2);
-        return new Run(rows, scheduler, prompt.size());
+        assertEquals("decode rows captured", DECODE_STEPS, rows.size());
+        return new Run(rows, scheduler, seed, firstIndex, prompt);
     }
 
-    /**
-     * Every row both runs produced, raw-bit equal. The counts may differ by one: a fresh state is
-     * seeded with the token the prompt opens with and ingests it once ({@code
-     * PromptIngestion.firstIndex} 1), while a reset state's seed is its last generated token, so
-     * the same budget buys one more decode row there. The rows align from the front — both runs
-     * start at position zero on the same prompt — so the extra row is the last one.
-     */
+    /** Every row of both runs, raw-bit equal, and the same number of them. */
     private static void assertRowsIdentical(String what, List<float[]> a, List<float[]> b) {
-        int common = Math.min(a.size(), b.size());
-        assertTrue(
-                what + ": counts " + a.size() + " and " + b.size() + " differ by more than one",
-                Math.abs(a.size() - b.size()) <= 1);
-        assertTrue(what + ": only " + common + " rows to compare", common >= DECODE_STEPS - 2);
-        for (int r = 0; r < common; r++) {
+        assertEquals(what + ": row count", a.size(), b.size());
+        for (int r = 0; r < a.size(); r++) {
             float[] x = a.get(r);
             float[] y = b.get(r);
             assertEquals(what + ": row " + r + " length", x.length, y.length);
@@ -258,11 +263,7 @@ public class Qwen35DequantGemmLifecycleAccelTest {
      * Runs {@link #main} in a child JVM with this JVM's arguments and class path: the direct path
      * at {@link #WIDTH}, prompt A, rows written raw to a temporary file.
      */
-    private static List<float[]> captureDirectInChildJvm(Path modelPath) throws Exception {
-        return captureInChildJvm(modelPath, "direct");
-    }
-
-    private static List<float[]> captureInChildJvm(Path modelPath, String mode) throws Exception {
+    private static Run captureDirectInChildJvm(Path modelPath) throws Exception {
         Path out = java.nio.file.Files.createTempFile("qwen35-direct-rows", ".bin");
         List<String> command = new ArrayList<>();
         command.add(Path.of(System.getProperty("java.home"), "bin", "java").toString());
@@ -276,7 +277,6 @@ public class Qwen35DequantGemmLifecycleAccelTest {
         command.add(Qwen35DequantGemmLifecycleAccelTest.class.getName());
         command.add(modelPath.toString());
         command.add(out.toString());
-        command.add(mode);
         Process child =
                 new ProcessBuilder(command)
                         .redirectErrorStream(true)
@@ -284,9 +284,9 @@ public class Qwen35DequantGemmLifecycleAccelTest {
                         .start();
         int status = child.waitFor();
         assertEquals("the direct-path capture in the child JVM failed", 0, status);
-        List<float[]> rows = readRows(out);
+        Run run = readRun(out);
         java.nio.file.Files.deleteIfExists(out);
-        return rows;
+        return run;
     }
 
     /** Child entry: the direct path at {@link #WIDTH} over prompt A; rows to {@code args[1]}. */
@@ -297,9 +297,7 @@ public class Qwen35DequantGemmLifecycleAccelTest {
         List<Integer> promptA = encode(model, PROMPT_A);
         State directState = State.withPrefillBatchSize(WIDTH, model::createNewState);
         // The test-only selection: no scratch, so the dispatch keeps the direct kernels.
-        if (args[2].equals("direct")) {
-            directState.workspace.wrapDequantScratchFP16 = null;
-        }
+        directState.workspace.wrapDequantScratchFP16 = null;
         TornadoVMMasterPlan directPlan =
                 TornadoVMMasterPlan.initializeTornadoVMPlan(directState, model);
         Run directA;
@@ -308,24 +306,28 @@ public class Qwen35DequantGemmLifecycleAccelTest {
         } finally {
             directPlan.freeTornadoExecutionPlan();
         }
-        if (args[2].equals("direct")) {
-            PlanDispatchEvidence.assertQwen35AttentionOutputOnTensorCores(
-                    directA.scheduler(), WIDTH, model.configuration().dim());
-        }
-        writeRows(Path.of(args[1]), directA.rows());
+        PlanDispatchEvidence.assertQwen35AttentionOutputOnTensorCores(
+                directA.scheduler(), WIDTH, model.configuration().dim());
+        writeRun(Path.of(args[1]), directA);
         System.out.printf(
                 "[LIFECYCLE] child: direct path at width %d, %d rows written%n",
                 WIDTH, directA.rows().size());
         System.exit(0);
     }
 
-    private static void writeRows(Path path, List<float[]> rows) throws java.io.IOException {
+    private static void writeRun(Path path, Run run) throws java.io.IOException {
         try (var out =
                 new java.io.DataOutputStream(
                         new java.io.BufferedOutputStream(
                                 java.nio.file.Files.newOutputStream(path)))) {
-            out.writeInt(rows.size());
-            for (float[] row : rows) {
+            out.writeInt(run.seed());
+            out.writeInt(run.firstIndex());
+            out.writeInt(run.prompt().size());
+            for (int token : run.prompt()) {
+                out.writeInt(token);
+            }
+            out.writeInt(run.rows().size());
+            for (float[] row : run.rows()) {
                 out.writeInt(row.length);
                 for (float v : row) {
                     out.writeInt(Float.floatToRawIntBits(v));
@@ -334,11 +336,18 @@ public class Qwen35DequantGemmLifecycleAccelTest {
         }
     }
 
-    private static List<float[]> readRows(Path path) throws java.io.IOException {
+    private static Run readRun(Path path) throws java.io.IOException {
         try (var in =
                 new java.io.DataInputStream(
                         new java.io.BufferedInputStream(
                                 java.nio.file.Files.newInputStream(path)))) {
+            int seed = in.readInt();
+            int firstIndex = in.readInt();
+            int promptCount = in.readInt();
+            List<Integer> prompt = new ArrayList<>(promptCount);
+            for (int i = 0; i < promptCount; i++) {
+                prompt.add(in.readInt());
+            }
             int count = in.readInt();
             List<float[]> rows = new ArrayList<>(count);
             for (int r = 0; r < count; r++) {
@@ -348,7 +357,7 @@ public class Qwen35DequantGemmLifecycleAccelTest {
                 }
                 rows.add(row);
             }
-            return rows;
+            return new Run(rows, null, seed, firstIndex, prompt);
         }
     }
 
