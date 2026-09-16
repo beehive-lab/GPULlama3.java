@@ -22,7 +22,32 @@ public class Activation extends AbstractLayer implements ActivationTaskGraph {
     }
 
     // @formatter:off
+    /**
+     * The embedding row, converted to the FP32 activation the first layer reads.
+     *
+     * <p>Dispatches on the <b>embedding tensor's own</b> representation, not on the model-wide
+     * quantization string. They agree for a uniform F16 or Q8_0 file and disagree for every mixed
+     * one: Qwen3.5 reports {@code Q8_0} model-wide while holding its token embeddings as retained
+     * Q4_0, and staging 18-byte blocks to be read as 34-byte ones produces a plausible activation
+     * and wrong output. {@code TornadoForwardPass} already stages by the tensor's own type for the
+     * same reason; this is the other half of that.
+     */
     protected TaskGraph setupActivationTaskGraph(String name) {
+        org.beehive.gpullama3.runtime.tensor.DataType embedding =
+                weights instanceof org.beehive.gpullama3.inference.weights.tornado.TornadoWeights t
+                        ? t.getTokenEmbeddingTable().dataType()
+                        : null;
+        if (embedding == org.beehive.gpullama3.runtime.tensor.DataType.Q4_0) {
+            return new TaskGraph(name)
+                    .transferToDevice(DataTransferMode.EVERY_EXECUTION, state.workspace.embeddingX)
+                    .task(
+                            "updateX",
+                            TransformerComputeKernels::convertQ4_0toFP32,
+                            context,
+                            (ByteArray) state.workspace.embeddingX,
+                            state.workspace.wrapX)
+                    .persistOnDevice(state.workspace.wrapX);
+        }
         return switch (config.quantization()) {
             case "FP16" ->
                     new TaskGraph(name)

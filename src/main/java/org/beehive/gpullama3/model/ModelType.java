@@ -10,6 +10,7 @@ import org.beehive.gpullama3.model.loader.MistralModelLoader;
 import org.beehive.gpullama3.model.loader.Phi3ModelLoader;
 import org.beehive.gpullama3.model.loader.Qwen2MoEModelLoader;
 import org.beehive.gpullama3.model.loader.Qwen2ModelLoader;
+import org.beehive.gpullama3.model.loader.Qwen35ModelLoader;
 import org.beehive.gpullama3.model.loader.Qwen3ModelLoader;
 
 /**
@@ -96,6 +97,15 @@ public enum ModelType {
         public Model loadModel(
                 FileChannel fileChannel, GGUF gguf, int contextLength, boolean useTornadovm) {
             return new GraniteLoader(fileChannel, gguf, contextLength, useTornadovm).loadModel();
+        }
+    },
+
+    QWEN_3_5 {
+        @Override
+        public Model loadModel(
+                FileChannel fileChannel, GGUF gguf, int contextLength, boolean useTornadovm) {
+            return new Qwen35ModelLoader(fileChannel, gguf, contextLength, useTornadovm)
+                    .loadModel();
         }
     },
 

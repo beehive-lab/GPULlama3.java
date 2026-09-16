@@ -84,7 +84,10 @@ public final class TornadoMemoryModel {
             Device device,
             long configuredBudgetBytes) {
         long header = device.nativeArrayHeaderBytes();
-        int families = layerGraphFamilies(policy, config.numberOfLayers());
+        int layoutFamilies = layerGraphFamilies(policy, config.numberOfLayers());
+        // How many of those families upload the weights, which is what costs memory. A family
+        // that consumes another's copy costs graphs and not gigabytes.
+        int families = config.weightBindingFamilies(layoutFamilies);
         List<MemoryComponent> components = new ArrayList<>();
 
         // ── weights, classified by whether a layer graph binds them ──────────
@@ -109,7 +112,11 @@ public final class TornadoMemoryModel {
                         (long) weights.globalTensors() * header));
 
         // ── key/value cache ──────────────────────────────────────────────────
-        long kvElements = (long) config.contextLength() * config.numberOfLayers() * config.kvDim();
+        // The layers that actually hold key/value entries, which is every layer for every family
+        // but qwen35 — where it is one in four, and the layer count would predict four times the
+        // store that is allocated.
+        long kvElements =
+                (long) config.contextLength() * config.keyValueLayerCount() * config.kvDim();
         // FP16 KV is a storage choice, so it must be read rather than assumed FP32 — assuming
         // FP32 would over-predict a configured FP16 cache by exactly its own size.
         int kvElementBytes = kvBytesPerElement();
@@ -130,6 +137,20 @@ public final class TornadoMemoryModel {
                         1,
                         24 * header));
 
+        // ── recurrent state, for a family that keeps one ─────────────────────
+        // Zero for every attention-only stack, and 151 MiB for Qwen3.8-27B. It is neither cache
+        // nor scratch: fixed-size per layer, updated in place, and independent of the context
+        // length, so neither of the two components above accounts for it.
+        if (config.recurrentStateBytes() > 0) {
+            components.add(
+                    new MemoryComponent(
+                            "recurrent state",
+                            BufferClass.ACTIVATION_WORKSPACE,
+                            config.recurrentStateBytes(),
+                            1,
+                            2 * header));
+        }
+
         // ── batch staging, only when a batched capacity is configured ────────
         if (policy.phaseStrategy() == ExecutionPolicy.PhaseStrategy.PREFILL_DECODE
                 && policy.prefillBatchSize() > 1) {
@@ -137,7 +158,9 @@ public final class TornadoMemoryModel {
                     new MemoryComponent(
                             "batch staging",
                             BufferClass.BATCH_STAGING,
-                            batchStagingBytes(config, policy.prefillBatchSize()),
+                            batchStagingBytes(config, policy.prefillBatchSize())
+                                    + config.additionalBatchWorkspaceBytes(
+                                            policy.prefillBatchSize()),
                             1,
                             11 * header));
         }
@@ -211,14 +234,33 @@ public final class TornadoMemoryModel {
         long dim = config.dim();
         long hidden = config.hiddenDim();
         long kvDim = config.kvDim();
-        long attention = (long) config.numberOfHeads() * config.contextLength();
+        // Two attention buffers where a family decodes with the split-KV decomposition: the
+        // scalar scratch of heads x context, and the split scratch holding per head nSplits
+        // partial numerators of headSize plus nSplits maxima and sums. The term below counted the
+        // second as another copy of the first; at a wide head and a short context the split
+        // scratch is the larger, so it is now sized from what is actually allocated.
+        long scalarAttention = (long) config.numberOfHeads() * config.contextLength();
+        long splitKvAttention =
+                (long) config.numberOfHeads()
+                        * org.beehive.gpullama3.inference.state.State.SPLIT_KV
+                        * (config.headSize() + 2L);
         long floats =
                 dim * 6 // x, xb, xb2, q, and two spare dim-sized activations
                         + hidden * 2 // hb, hb2
                         + kvDim * 2 // k, v
-                        + attention * 2 // att and the split-KV variant
+                        + scalarAttention // att
+                        + splitKvAttention // the split-KV partials
                         + dim * 2; // FP16 staging mirrors, counted as floats for headroom
-        return floats * Float.BYTES;
+        // The packed-integer projections' activation, in Q8 blocks: four quants per int plus a
+        // scale and a sum of quants per block of 32, sized for the widest activation any of them
+        // reads. About 22 KiB at Qwen3.8-27B's shape, which is why it changes no prediction here
+        // -- it is counted so the term stays a description of what is allocated.
+        long widest = Math.max(dim, hidden);
+        long quantizationBytes =
+                widest / 4 * Integer.BYTES
+                        + widest / 32 * Float.BYTES
+                        + widest / 32 * Integer.BYTES;
+        return floats * Float.BYTES + quantizationBytes;
     }
 
     /** Staging for a batched prefill chunk: embeddings and per-row activations. */

@@ -86,6 +86,22 @@ public final class TornadoForwardPass {
                         0,
                         bytesPerToken);
             }
+            case Q4_0 -> {
+                // Retained rather than materialized, so the row is 18 bytes per 32 weights.
+                MemorySegment tokenEmbeddings =
+                        weights.getTokenEmbeddingTable().asByteArray().getSegment();
+                int blockSize = 32;
+                int Q4_0_BLOCK_BYTES = 18; // 2 bytes scale + 16 bytes of packed nibbles
+                int blocksPerToken = (configuration.dim() + blockSize - 1) / blockSize;
+                long bytesPerToken = (long) blocksPerToken * Q4_0_BLOCK_BYTES;
+
+                MemorySegment.copy(
+                        tokenEmbeddings,
+                        (long) token * bytesPerToken,
+                        state.workspace.embeddingX.getSegment(),
+                        0,
+                        bytesPerToken);
+            }
             default ->
                     throw new IllegalArgumentException(
                             "Unsupported embedding weight type: "

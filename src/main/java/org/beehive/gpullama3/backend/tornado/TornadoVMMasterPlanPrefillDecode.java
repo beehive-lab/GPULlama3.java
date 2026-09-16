@@ -107,6 +107,11 @@ public class TornadoVMMasterPlanPrefillDecode implements TornadoVMMasterPlan {
 
     // ── Initialisation ────────────────────────────────────────────────────────
 
+    @Override
+    public void resetSequenceState() {
+        TornadoVMMasterPlan.resetSequenceState(executionPlan, state, taskGraphLayout.layerIdx(0));
+    }
+
     /** Runs all graphs once to trigger FIRST_EXECUTION uploads and warm up CUDA graphs. */
     // @formatter:off
     @Override
