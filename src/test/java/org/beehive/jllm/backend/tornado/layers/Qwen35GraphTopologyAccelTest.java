@@ -76,6 +76,14 @@ public class Qwen35GraphTopologyAccelTest {
 
     /** The same fixture with a chosen feed-forward width, so a GEMM-eligible one can be built. */
     private static Qwen35Configuration config(int trunkLayers, int hidden) {
+        return config(trunkLayers, hidden, STATE_SIZE);
+    }
+
+    /**
+     * The same fixture with a chosen recurrent state width; the delta-net inner width scales with
+     * it so each value head's width — which is the width the scan's state has — equals it.
+     */
+    private static Qwen35Configuration config(int trunkLayers, int hidden, int stateSize) {
         return new Qwen35Configuration(
                 "Q8_0",
                 DIM,
@@ -88,10 +96,10 @@ public class Qwen35GraphTopologyAccelTest {
                 HEAD_DIM,
                 ATTENTION_INTERVAL,
                 CONV_KERNEL,
-                STATE_SIZE,
+                stateSize,
                 GROUPS,
                 VALUE_HEADS,
-                INNER,
+                VALUE_HEADS * stateSize,
                 16,
                 512,
                 32,
@@ -1071,6 +1079,39 @@ public class Qwen35GraphTopologyAccelTest {
                             * (5120 / Qwen35MMAKernels.BN)
                             * Qwen35MMAKernels.LOCAL,
                     direct.get("batchLayer_" + layer + ".ffn_gate_proj").getGlobalWork()[0]);
+        }
+    }
+
+    /**
+     * The batched delta-rule scan's dispatch by value-head width, which is the width of the scan's
+     * state: 128, this family's, takes the shared-state scan (32-lane groups); the fixture's 64
+     * keeps the per-lane scan (128-lane groups). Same task name either way, so the grid is what is
+     * asserted.
+     */
+    @Test
+    public void theBatchedDeltaRuleScanIsSharedForThe128WideState() {
+        for (int stateSize : new int[] {64, 128}) {
+            Qwen35Configuration config = config(TRUNK_LAYERS, HIDDEN, stateSize);
+            GridScheduler scheduler = new GridScheduler();
+            buildBatched(config, PREFILL_BATCH).updateGridScheduler(scheduler);
+            int expectedLocal = stateSize == 128 ? 32 : 128;
+            int found = 0;
+            for (int layer = 0; layer < TRUNK_LAYERS; layer++) {
+                WorkerGrid grid = scheduler.get("batchLayer_" + layer + ".ssm_delta_rule");
+                if (grid == null) {
+                    continue;
+                }
+                assertEquals(
+                        "state " + stateSize + " layer " + layer + " delta-rule global work",
+                        (long) VALUE_HEADS * stateSize,
+                        grid.getGlobalWork()[0]);
+                assertEquals(
+                        "state " + stateSize + " layer " + layer + " delta-rule local work",
+                        (long) expectedLocal,
+                        grid.getLocalWork()[0]);
+                found++;
+            }
+            assertTrue("no batched delta-rule scan built for state " + stateSize, found > 0);
         }
     }
 

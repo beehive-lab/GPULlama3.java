@@ -1032,9 +1032,13 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 state.workspace.batchStartPosHolder);
 
         // The other scan: one lane per (value head, value column), same order.
+        // The scan with the state column held in shared memory, where the state is the 128-wide
+        // one its tile is sized for; otherwise the per-lane scan over the persistent state.
         layer.task(
                 "ssm_delta_rule",
-                Qwen35BatchKernels::deltaRuleScan,
+                Qwen35BatchKernels.deltaSharedEligible(headV)
+                        ? Qwen35BatchKernels::deltaRuleScanShared
+                        : Qwen35BatchKernels::deltaRuleScan,
                 context,
                 state.workspace.wrapSsmQBatch,
                 state.workspace.wrapSsmKBatch,
@@ -1344,9 +1348,17 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
         // the loop inside the lane.
         WorkerGrid convChannels =
                 WorkerGridFactory.genericWorker(config.deltaNetConvDim(), ELEMENTWISE_LOCAL);
+        // The shared-state scan's worker is a 32-lane group per (head, 32 columns); the per-lane
+        // scan's is one lane per (head, column) in 128-lane groups. Same lane count, different
+        // grouping, so the grid has to match the kernel that was dispatched.
         WorkerGrid deltaColumns =
-                WorkerGridFactory.genericWorker(
-                        config.numberOfValueHeads() * config.headValueDim(), ELEMENTWISE_LOCAL);
+                Qwen35BatchKernels.deltaSharedEligible(config.headValueDim())
+                        ? WorkerGridFactory.genericWorker(
+                                config.numberOfValueHeads() * config.headValueDim(),
+                                Qwen35BatchKernels.DELTA_SHARED_COLUMNS)
+                        : WorkerGridFactory.genericWorker(
+                                config.numberOfValueHeads() * config.headValueDim(),
+                                ELEMENTWISE_LOCAL);
         WorkerGrid keyDim =
                 WorkerGridFactory.genericWorker(
                         batchSize * config.deltaNetKeyDim(), ELEMENTWISE_LOCAL);

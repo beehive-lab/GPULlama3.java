@@ -162,6 +162,8 @@ public class Qwen35DequantGemmLifecycleAccelTest {
                     pairA.scheduler(), WIDTH, qwen.dim(), qwen.attentionOutputInputDim());
             PlanDispatchEvidence.assertQwen35SsmOutOnDequantGemm(
                     pairA.scheduler(), WIDTH, qwen.dim(), qwen.deltaNetValueDim());
+            PlanDispatchEvidence.assertQwen35BatchDeltaRuleShared(
+                    pairA.scheduler(), qwen.numberOfValueHeads(), qwen.headValueDim());
 
             assertSameInput("pair vs direct, prompt A", pairA, directA);
             assertRowsIdentical("pair vs direct, prompt A", pairA.rows(), directA.rows());

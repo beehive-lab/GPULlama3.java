@@ -236,6 +236,104 @@ public final class Qwen35BatchKernels {
                 lane);
     }
 
+    /** Columns one workgroup of {@link #deltaRuleScanShared} owns: one lane each. */
+    public static final int DELTA_SHARED_COLUMNS = 32;
+
+    /** State rows the shared tile is sized for: this family's 128-wide state. */
+    public static final int DELTA_SHARED_STATE_DIM = 128;
+
+    /**
+     * Whether the state geometry can run the shared-state scan: the tile is sized for a 128-wide
+     * state, whose columns fall into whole groups of 32.
+     */
+    public static boolean deltaSharedEligible(int stateDim) {
+        return stateDim == DELTA_SHARED_STATE_DIM;
+    }
+
+    // @formatter:off
+    /**
+     * {@link #deltaRuleScan} with the state column held in shared memory across the chunk.
+     *
+     * <p>One 32-lane workgroup owns 32 adjacent value columns of one head; lane {@code l} owns
+     * column {@code col0 + l}. The 128 x 32 state slice is staged once from the persistent state —
+     * for each state row, the 32 lanes read 32 consecutive floats — into {@code tile[i * 32 +
+     * lane]}, so a lane's column lives in one bank and no lane ever touches another lane's
+     * elements; the scan then walks the active tokens in order doing exactly the per-token decay,
+     * prediction, correction, update and readout of the reference lane, in the reference order,
+     * reading and writing the column through the tile, and writes the column back once at the end.
+     * No consumer reads the persistent state between tokens of a chunk: the scan is the only writer
+     * in the batched graph and the next reader is the next chunk's scan (or decode's), so the
+     * intermediate values are private to the lane either way.
+     *
+     * <p>Worker: {@code valueHeads * (stateDim / 32)} groups of 32 lanes. Requires {@code stateDim
+     * % 32 == 0}, which {@link #deltaSharedEligible(int)} decides.
+     */
+    // @formatter:on
+    public static void deltaRuleScanShared(
+            KernelContext context,
+            FloatArray qBatch,
+            FloatArray kBatch,
+            FloatArray vBatch,
+            FloatArray decayBatch,
+            FloatArray betaBatch,
+            FloatArray state,
+            FloatArray outBatch,
+            int valueHeads,
+            int keyHeads,
+            int stateDim,
+            int stateOffset,
+            IntArray batchInfo) {
+        int lane = context.localIdx;
+        int group = context.groupIdx;
+        int columnGroups = stateDim / DELTA_SHARED_COLUMNS;
+        int head = group / columnGroups;
+        int column = (group - head * columnGroups) * DELTA_SHARED_COLUMNS + lane;
+        int activeRows = batchInfo.get(1);
+
+        int stateBase = stateOffset + head * stateDim * stateDim;
+        int keyBase = (head % keyHeads) * stateDim;
+        int valueBase = head * stateDim;
+        int keyRowStride = keyHeads * stateDim;
+        int valueRowStride = valueHeads * stateDim;
+
+        // The state column: tile[i * 32 + lane] is element i of this lane's column.
+        float[] tile =
+                context.allocateFloatLocalArray(DELTA_SHARED_STATE_DIM * DELTA_SHARED_COLUMNS);
+        for (int i = 0; i < stateDim; i++) {
+            tile[i * DELTA_SHARED_COLUMNS + lane] = state.get(stateBase + i * stateDim + column);
+        }
+
+        for (int row = 0; row < activeRows; row++) {
+            float g = decayBatch.get(row * valueHeads + head);
+            float b = betaBatch.get(row * valueHeads + head);
+            int keyRow = row * keyRowStride + keyBase;
+            int valueRow = row * valueRowStride + valueBase;
+
+            float prediction = 0.0f;
+            for (int i = 0; i < stateDim; i++) {
+                int index = i * DELTA_SHARED_COLUMNS + lane;
+                float decayed = tile[index] * g;
+                tile[index] = decayed;
+                prediction += decayed * kBatch.get(keyRow + i);
+            }
+
+            float correction = (vBatch.get(valueRow + column) - prediction) * b;
+
+            float readout = 0.0f;
+            for (int i = 0; i < stateDim; i++) {
+                int index = i * DELTA_SHARED_COLUMNS + lane;
+                float updated = tile[index] + kBatch.get(keyRow + i) * correction;
+                tile[index] = updated;
+                readout += updated * qBatch.get(keyRow + i);
+            }
+            outBatch.set(valueRow + column, readout);
+        }
+
+        for (int i = 0; i < stateDim; i++) {
+            state.set(stateBase + i * stateDim + column, tile[i * DELTA_SHARED_COLUMNS + lane]);
+        }
+    }
+
     // ---- per-token kernels, with a row index ---------------------------------
 
     /** SiLU over a chunk, in place. One lane per element of the chunk. */

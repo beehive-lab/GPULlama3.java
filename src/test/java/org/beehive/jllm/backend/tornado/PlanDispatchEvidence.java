@@ -169,6 +169,28 @@ public final class PlanDispatchEvidence {
         }
     }
 
+    /**
+     * Asserts that every batched delta-rule scan in {@code scheduler} is the shared-state form:
+     * 32-lane groups, one per (head, 32 columns), rather than the per-lane scan's 128-lane groups.
+     */
+    public static void assertQwen35BatchDeltaRuleShared(
+            GridScheduler scheduler, int valueHeads, int stateDim) {
+        assertNotNull("no grid scheduler for the plan this run built", scheduler);
+        int found = 0;
+        for (String task : new TreeSet<>(scheduler.keySet())) {
+            if (task.matches("batchLayer_\\d+\\.ssm_delta_rule")) {
+                WorkerGrid grid = scheduler.get(task);
+                assertEquals(
+                        task + " global work",
+                        (long) valueHeads * stateDim,
+                        grid.getGlobalWork()[0]);
+                assertEquals(task + " local work", 32L, grid.getLocalWork()[0]);
+                found++;
+            }
+        }
+        assertTrue("no batched delta-rule scan in this plan", found > 0);
+    }
+
     // @formatter:off
     /**
      * Asserts that this plan's decode attention is the split-KV pair rather than the per-head
