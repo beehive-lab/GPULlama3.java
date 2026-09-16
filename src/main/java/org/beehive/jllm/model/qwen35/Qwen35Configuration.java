@@ -283,7 +283,8 @@ public record Qwen35Configuration(
         perRow += (long) numberOfHeads() * contextLength();
         long bytes = perRow * batchSize * Float.BYTES;
         // The dequantize-then-GEMM scratch: one FP16 copy of the largest projection matrix that
-        // takes the pair (gate/up; the Q5_K ssm_out shares it), at the widths that take that path.
+        // takes the pair (gate/up and the Q4_1 ffn_down; the Q5_K ssm_out shares it), at the widths
+        // that take that path.
         if (dequantGemmWidth(batchSize)) {
             bytes += 2L * hiddenDim() * dim();
         }

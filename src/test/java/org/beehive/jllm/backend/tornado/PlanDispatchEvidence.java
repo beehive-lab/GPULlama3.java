@@ -170,6 +170,34 @@ public final class PlanDispatchEvidence {
     }
 
     /**
+     * Asserts that every batched ffn_down projection in {@code scheduler} — the Q4_1 blocks and the
+     * Q4_0 ones alike — runs as the dequantize-then-GEMM pair.
+     */
+    public static void assertQwen35FfnDownOnDequantGemm(
+            GridScheduler scheduler, int batchSize, int dim, int hiddenDim) {
+        assertNotNull("no grid scheduler for the plan this run built", scheduler);
+        int found = 0;
+        for (String task : new TreeSet<>(scheduler.keySet())) {
+            if (task.matches("batchLayer_\\d+\\.ffn_down_proj")) {
+                WorkerGrid dequant = scheduler.get(task + "_dequant");
+                assertNotNull(task + " has no dequantization task", dequant);
+                assertEquals(
+                        task + " dequantization lanes",
+                        (long) dim * hiddenDim,
+                        dequant.getGlobalWork()[0]);
+                WorkerGrid gemm = scheduler.get(task);
+                assertEquals(
+                        task + " GEMM rows of work",
+                        (batchSize / 128) * 256L,
+                        gemm.getGlobalWork()[0]);
+                assertEquals(task + " GEMM column tiles", dim / 128L, gemm.getGlobalWork()[1]);
+                found++;
+            }
+        }
+        assertTrue("no batched ffn_down projection in this plan", found > 0);
+    }
+
+    /**
      * Asserts that every batched delta-rule scan in {@code scheduler} is the shared-state form:
      * 32-lane groups, one per (head, 32 columns), rather than the per-lane scan's 128-lane groups.
      */

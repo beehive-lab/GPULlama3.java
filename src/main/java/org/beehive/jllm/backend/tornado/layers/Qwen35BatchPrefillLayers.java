@@ -126,9 +126,9 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
      * Whether a quantized projection of {@code n} outputs over {@code k} inputs takes the
      * dequantize-then-GEMM pair: the state allocated the scratch (which is what says the width
      * fills whole GEMM tiles), the shape divides the GEMM's tiles, the matrix fits the scratch, and
-     * the output width is one the pair was measured to gain at. Asked for the Q4_0 projections and
-     * for the Q5_K ssm_out alike; the scratch is one buffer that every pair of every layer graph
-     * writes and reads in turn, in graph order.
+     * the output width is one the pair was measured to gain at. Asked for the Q4_0 projections, the
+     * Q4_1 ffn_down and the Q5_K ssm_out alike; the scratch is one buffer that every pair of every
+     * layer graph writes and reads in turn, in graph order.
      */
     private boolean dequantGemmEligible(int n, int k) {
         return state.workspace.wrapDequantScratchFP16 != null
@@ -578,17 +578,43 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     state.workspace.wrapHbBatch,
                     state.workspace.wrapHbFP16BatchMMA);
             if (down.dataType() == DataType.Q4_1) {
-                mmaTasks.put("batchLayer_" + layerIndex + ".ffn_down_proj", config.dim());
-                layer.task(
-                        "ffn_down_proj",
-                        Qwen35MMAKernels::projectionMMAQ4_1,
-                        context,
-                        state.workspace.wrapHbFP16BatchMMA,
-                        down.asByteArray(),
-                        state.workspace.wrapFFNDownBatch,
-                        batchSize,
-                        config.dim(),
-                        config.hiddenDim());
+                if (dequantGemmEligible(config.dim(), config.hiddenDim())) {
+                    // The same pair as the Q4_0 and Q5_K projections, through the same scratch,
+                    // with the Q4_1 decoder; this matrix is the scratch's full size.
+                    String qualified = "batchLayer_" + layerIndex + ".ffn_down_proj";
+                    dequantTasks.put(qualified + "_dequant", config.dim() * config.hiddenDim());
+                    gemmTasks.put(qualified, config.dim());
+                    layer.task(
+                            "ffn_down_proj_dequant",
+                            Qwen35MMAKernels::dequantizeQ4_1ToFP16,
+                            context,
+                            down.asByteArray(),
+                            state.workspace.wrapDequantScratchFP16,
+                            config.dim(),
+                            config.hiddenDim());
+                    layer.task(
+                            "ffn_down_proj",
+                            TransformerBatchPrefillKernels::gemmMMA,
+                            context,
+                            state.workspace.wrapHbFP16BatchMMA,
+                            state.workspace.wrapDequantScratchFP16,
+                            state.workspace.wrapFFNDownBatch,
+                            batchSize,
+                            config.dim(),
+                            config.hiddenDim());
+                } else {
+                    mmaTasks.put("batchLayer_" + layerIndex + ".ffn_down_proj", config.dim());
+                    layer.task(
+                            "ffn_down_proj",
+                            Qwen35MMAKernels::projectionMMAQ4_1,
+                            context,
+                            state.workspace.wrapHbFP16BatchMMA,
+                            down.asByteArray(),
+                            state.workspace.wrapFFNDownBatch,
+                            batchSize,
+                            config.dim(),
+                            config.hiddenDim());
+                }
             } else {
                 q40Projection(
                         layer,

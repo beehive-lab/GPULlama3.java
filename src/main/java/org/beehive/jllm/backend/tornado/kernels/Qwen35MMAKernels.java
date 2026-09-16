@@ -713,6 +713,34 @@ public final class Qwen35MMAKernels {
         out.set(lane, new HalfFloat(scale * (low + high * 16) - minimum));
     }
 
+    /**
+     * {@code out[row][e] = fp16(scale * q + minimum)} for a whole {@code Q4_1} matrix, one lane per
+     * element: the block's two halves, the unsigned nibble chosen by a branch on a lane-dependent
+     * value (the branchless form is stamped unsigned and decodes wrongly, as the Q4_0 decoder
+     * records), the expression {@link #projectionMMAQ4_1} stages, so the halves carry the bits it
+     * multiplies.
+     *
+     * <p>Worker: {@code n * k} lanes.
+     */
+    public static void dequantizeQ4_1ToFP16(
+            KernelContext ctx, ByteArray w, HalfFloatArray out, int n, int k) {
+        int lane = ctx.globalIdx;
+        int blocksPerRow = k / QK;
+        int row = lane / k;
+        int element = lane - row * k;
+        int block = element >> 5;
+        int within = element & 31;
+        int base = (row * blocksPerRow + block) * BLOCK_BYTES_Q4_1;
+        float scale = w.getHalfFloat(base).getFloat32();
+        float minimum = w.getHalfFloat(base + 2).getFloat32();
+        int packed = w.get(base + 4 + (within & 15)) & 0xFF;
+        int q = packed & 0xF;
+        if (within >= 16) {
+            q = (packed >> 4) & 0xF;
+        }
+        out.set(lane, new HalfFloat(scale * q + minimum));
+    }
+
     // @formatter:off
 
     /** {@code hb = silu(gate) * up} over the chunk. One lane per element. */
