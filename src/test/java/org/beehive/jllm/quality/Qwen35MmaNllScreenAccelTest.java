@@ -1,5 +1,7 @@
 package org.beehive.jllm.quality;
 
+import static org.junit.Assert.assertEquals;
+
 import org.beehive.jllm.backend.tornado.PlanDispatchEvidence;
 import uk.ac.manchester.tornado.api.GridScheduler;
 
@@ -38,5 +40,19 @@ public class Qwen35MmaNllScreenAccelTest extends Qwen35NllScreenAccelTest {
         } else {
             PlanDispatchEvidence.assertQwen35AttentionOutputOnTensorCores(grids, batch, dim);
         }
+    }
+
+    @Override
+    protected void verifyBatchedScan(String kernel, int stateDim) {
+        // The 128-wide state on CUDA takes the warp-per-column scan; the same width elsewhere the
+        // shared-state one. The report names the kernel; this pins it to the dispatch rule.
+        String expected =
+                org.beehive.jllm.backend.tornado.kernels.Qwen35BatchKernels.deltaWarpEligible(
+                                        stateDim)
+                                && org.beehive.jllm.backend.tornado.TensorCoreSupport
+                                        .isTensorCoreCapableBackend()
+                        ? "deltaRuleScanWarp"
+                        : "deltaRuleScanShared";
+        assertEquals("batched delta-rule scan this screen scored", expected, kernel);
     }
 }
