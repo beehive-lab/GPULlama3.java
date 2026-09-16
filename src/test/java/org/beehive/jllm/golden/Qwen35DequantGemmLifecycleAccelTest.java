@@ -56,8 +56,20 @@ public class Qwen35DequantGemmLifecycleAccelTest {
         System.setProperty("jllm.cudaGraphs", "true");
     }
 
-    private static final int WIDTH = 256;
-    private static final int CONTEXT = 1024;
+    /**
+     * The width under test: 256 by default; {@code JLLM_LIFECYCLE_WIDTH} selects another, so a
+     * wider width can be validated the same way before it is recommended. The prompts and the
+     * context scale with it so prompt A always spans two full chunks and a partial third.
+     */
+    private static final int WIDTH = width();
+
+    private static final int CONTEXT = 4 * WIDTH;
+
+    private static int width() {
+        String env = System.getenv("JLLM_LIFECYCLE_WIDTH");
+        return env == null ? 256 : Integer.parseInt(env);
+    }
+
     private static final int DECODE_STEPS = 8;
 
     /** Long enough for two full 256-token chunks and a partial third. */
@@ -65,14 +77,14 @@ public class Qwen35DequantGemmLifecycleAccelTest {
             repeat(
                             "A matrix multiplication combines two matrices by taking dot products of the"
                                     + " rows of the first with the columns of the second. ",
-                            32)
+                            32 * WIDTH / 256)
                     + "Explain what a matrix multiplication is in one paragraph.";
 
     private static final String PROMPT_B =
             repeat(
                             "The river flows past the old mill, turning the wheel that grinds the grain"
                                     + " the farmers bring each autumn. ",
-                            20)
+                            20 * WIDTH / 256)
                     + "Describe the mill in one paragraph.";
 
     private static String repeat(String s, int n) {
