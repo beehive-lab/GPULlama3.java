@@ -149,8 +149,10 @@ public class Qwen35DequantGemmLifecycleAccelTest {
             Run pairA;
             Run pairB;
             java.util.Set<String> pairKernels;
+            java.util.Set<String> scanKernels;
             try {
                 pairKernels = PlanDispatchEvidence.batchedTaskKernels(pairPlan, "attention");
+                scanKernels = PlanDispatchEvidence.batchedTaskKernels(pairPlan, "ssm_delta_rule");
                 freshB = run(model, pairState, pairPlan, promptB);
                 reset(pairState, pairPlan, initialSeed);
                 pairA = run(model, pairState, pairPlan, promptA);
@@ -164,7 +166,7 @@ public class Qwen35DequantGemmLifecycleAccelTest {
                     pairA.scheduler(), WIDTH, qwen.dim(), qwen.attentionOutputInputDim());
             PlanDispatchEvidence.assertQwen35SsmOutOnDequantGemm(
                     pairA.scheduler(), WIDTH, qwen.dim(), qwen.deltaNetValueDim());
-            PlanDispatchEvidence.assertQwen35BatchDeltaRuleShared(
+            PlanDispatchEvidence.assertQwen35BatchDeltaRuleWarp(
                     pairA.scheduler(), qwen.numberOfValueHeads(), qwen.headValueDim());
             PlanDispatchEvidence.assertQwen35FfnDownOnDequantGemm(
                     pairA.scheduler(), WIDTH, qwen.dim(), qwen.hiddenDim());
@@ -172,6 +174,10 @@ public class Qwen35DequantGemmLifecycleAccelTest {
                     "the batched attention kernel this plan compiled",
                     java.util.Set.of("attentionBatchFP16PagedScoredStagedWide"),
                     pairKernels);
+            assertEquals(
+                    "the batched delta-rule scan this plan compiled",
+                    java.util.Set.of("deltaRuleScanWarp"),
+                    scanKernels);
 
             assertSameInput("pair vs direct, prompt A", pairA, directA);
             assertRowsIdentical("pair vs direct, prompt A", pairA.rows(), directA.rows());

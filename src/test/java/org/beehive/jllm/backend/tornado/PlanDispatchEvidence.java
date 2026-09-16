@@ -242,16 +242,27 @@ public final class PlanDispatchEvidence {
      */
     public static void assertQwen35BatchDeltaRuleShared(
             GridScheduler scheduler, int valueHeads, int stateDim) {
+        assertQwen35BatchDeltaRuleGrid(scheduler, (long) valueHeads * stateDim, 32L);
+    }
+
+    /**
+     * Asserts that every batched delta-rule scan in {@code scheduler} is the warp-per-column form:
+     * a warp per column, four columns to a 128-lane group.
+     */
+    public static void assertQwen35BatchDeltaRuleWarp(
+            GridScheduler scheduler, int valueHeads, int stateDim) {
+        assertQwen35BatchDeltaRuleGrid(scheduler, (long) valueHeads * stateDim * 32, 128L);
+    }
+
+    private static void assertQwen35BatchDeltaRuleGrid(
+            GridScheduler scheduler, long global, long local) {
         assertNotNull("no grid scheduler for the plan this run built", scheduler);
         int found = 0;
         for (String task : new TreeSet<>(scheduler.keySet())) {
             if (task.matches("batchLayer_\\d+\\.ssm_delta_rule")) {
                 WorkerGrid grid = scheduler.get(task);
-                assertEquals(
-                        task + " global work",
-                        (long) valueHeads * stateDim,
-                        grid.getGlobalWork()[0]);
-                assertEquals(task + " local work", 32L, grid.getLocalWork()[0]);
+                assertEquals(task + " global work", global, grid.getGlobalWork()[0]);
+                assertEquals(task + " local work", local, grid.getLocalWork()[0]);
                 found++;
             }
         }

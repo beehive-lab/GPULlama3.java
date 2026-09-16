@@ -341,6 +341,141 @@ public final class Qwen35BatchKernels {
         }
     }
 
+    /** Warps per workgroup of {@link #deltaRuleScanWarp}: each owns one value column. */
+    public static final int DELTA_WARP_COLUMNS_PER_GROUP = 4;
+
+    /** Lanes of {@link #deltaRuleScanWarp}'s workgroup. */
+    public static final int DELTA_WARP_LOCAL = DELTA_WARP_COLUMNS_PER_GROUP * 32;
+
+    /**
+     * Whether the state geometry can run the warp-per-column scan: a 128-wide state, four rows a
+     * lane.
+     */
+    public static boolean deltaWarpEligible(int stateDim) {
+        return stateDim == DELTA_SHARED_STATE_DIM;
+    }
+
+    /**
+     * The sum of {@code value} over the 32 lanes of the warp, folded with five shuffle-down steps
+     * (lane {@code l} adds lane {@code l + 16}, then {@code l + 8}, ... ), and broadcast from lane
+     * zero so every lane holds it. A fixed association: {@code ((v0 + v16) + (v8 + v24)) + ...},
+     * the same on every call.
+     */
+    private static float warpSumBroadcast(KernelContext context, float value) {
+        float sum = value;
+        sum += context.simdShuffleDown(sum, 16);
+        sum += context.simdShuffleDown(sum, 8);
+        sum += context.simdShuffleDown(sum, 4);
+        sum += context.simdShuffleDown(sum, 2);
+        sum += context.simdShuffleDown(sum, 1);
+        return context.simdBroadcastFirst(sum);
+    }
+
+    // @formatter:off
+    /**
+     * The batched delta-rule scan with one warp per value column and the column's 128 state
+     * elements spread over the warp's lanes in registers, four a lane.
+     *
+     * <p>Lane {@code l} holds state rows {@code l, l + 32, l + 64, l + 96} of its warp's column,
+     * loaded once from the persistent {@code [head][row][column]} layout (a strided gather, since a
+     * lane's rows are a state width apart) and written back once. Per token, in order: every lane
+     * decays each of its four elements, multiplies each by that row's key and folds the four
+     * products; the warp sums the 32 partials for the prediction; every lane computes the same
+     * correction from the broadcast prediction, adds {@code key * correction} to each element and
+     * folds each updated element times that row's query; the warp sums the partials for the
+     * readout, which lane zero stores. The head-to-key-head mapping, the token order, the query
+     * scaling and the decay input are the per-lane scan's.
+     *
+     * <p><b>Not bit-preserving.</b> The per-lane scan sums a column's 128 products in row order in
+     * one accumulator; here each lane sums four and the warp folds the 32 partials as a tree, so
+     * the prediction and the readout are reassociated. The decay is applied to each element before
+     * its product, as in the per-lane scan, and not factored out of the sum.
+     *
+     * <p>Worker: {@code valueHeads * stateDim} lanes in groups of {@link #DELTA_WARP_LOCAL}: four
+     * warps a group, one column each.
+     */
+    // @formatter:on
+    public static void deltaRuleScanWarp(
+            KernelContext context,
+            FloatArray qBatch,
+            FloatArray kBatch,
+            FloatArray vBatch,
+            FloatArray decayBatch,
+            FloatArray betaBatch,
+            FloatArray state,
+            FloatArray outBatch,
+            int valueHeads,
+            int keyHeads,
+            int stateDim,
+            int stateOffset,
+            IntArray batchInfo) {
+        int local = context.localIdx;
+        int lane = local & 31;
+        int warp = local >> 5;
+        int column0 = context.groupIdx * DELTA_WARP_COLUMNS_PER_GROUP + warp;
+        int head = column0 / stateDim;
+        int column = column0 - head * stateDim;
+        int activeRows = batchInfo.get(1);
+
+        int stateBase = stateOffset + head * stateDim * stateDim;
+        int keyBase = (head % keyHeads) * stateDim;
+        int valueBase = head * stateDim;
+        int keyRowStride = keyHeads * stateDim;
+        int valueRowStride = valueHeads * stateDim;
+
+        // This lane's four state rows: lane, lane + 32, lane + 64, lane + 96.
+        int row0 = lane;
+        int row1 = lane + 32;
+        int row2 = lane + 64;
+        int row3 = lane + 96;
+        float s0 = state.get(stateBase + row0 * stateDim + column);
+        float s1 = state.get(stateBase + row1 * stateDim + column);
+        float s2 = state.get(stateBase + row2 * stateDim + column);
+        float s3 = state.get(stateBase + row3 * stateDim + column);
+
+        for (int row = 0; row < activeRows; row++) {
+            float g = decayBatch.get(row * valueHeads + head);
+            float b = betaBatch.get(row * valueHeads + head);
+            int keyRow = row * keyRowStride + keyBase;
+            int valueRow = row * valueRowStride + valueBase;
+            float k0 = kBatch.get(keyRow + row0);
+            float k1 = kBatch.get(keyRow + row1);
+            float k2 = kBatch.get(keyRow + row2);
+            float k3 = kBatch.get(keyRow + row3);
+
+            // Decay each element, then its product with the key; fold the four in row order.
+            s0 = s0 * g;
+            s1 = s1 * g;
+            s2 = s2 * g;
+            s3 = s3 * g;
+            float partial = s0 * k0;
+            partial += s1 * k1;
+            partial += s2 * k2;
+            partial += s3 * k3;
+            float prediction = warpSumBroadcast(context, partial);
+
+            float correction = (vBatch.get(valueRow + column) - prediction) * b;
+
+            s0 = s0 + k0 * correction;
+            s1 = s1 + k1 * correction;
+            s2 = s2 + k2 * correction;
+            s3 = s3 + k3 * correction;
+            float readoutPartial = s0 * qBatch.get(keyRow + row0);
+            readoutPartial += s1 * qBatch.get(keyRow + row1);
+            readoutPartial += s2 * qBatch.get(keyRow + row2);
+            readoutPartial += s3 * qBatch.get(keyRow + row3);
+            float readout = warpSumBroadcast(context, readoutPartial);
+            if (lane == 0) {
+                outBatch.set(valueRow + column, readout);
+            }
+        }
+
+        state.set(stateBase + row0 * stateDim + column, s0);
+        state.set(stateBase + row1 * stateDim + column, s1);
+        state.set(stateBase + row2 * stateDim + column, s2);
+        state.set(stateBase + row3 * stateDim + column, s3);
+    }
+
     // ---- per-token kernels, with a row index ---------------------------------
 
     /** SiLU over a chunk, in place. One lane per element of the chunk. */

@@ -1094,7 +1094,10 @@ public class Qwen35GraphTopologyAccelTest {
             Qwen35Configuration config = config(TRUNK_LAYERS, HIDDEN, stateSize);
             GridScheduler scheduler = new GridScheduler();
             buildBatched(config, PREFILL_BATCH).updateGridScheduler(scheduler);
-            int expectedLocal = stateSize == 128 ? 32 : 128;
+            // On CUDA the 128-wide state takes the warp-per-column scan: a warp per column in
+            // 128-lane groups; the 64-wide one keeps the per-lane scan in 128-lane groups.
+            int expectedLocal = 128;
+            long expectedGlobal = (long) VALUE_HEADS * stateSize * (stateSize == 128 ? 32 : 1);
             int found = 0;
             for (int layer = 0; layer < TRUNK_LAYERS; layer++) {
                 WorkerGrid grid = scheduler.get("batchLayer_" + layer + ".ssm_delta_rule");
@@ -1103,7 +1106,7 @@ public class Qwen35GraphTopologyAccelTest {
                 }
                 assertEquals(
                         "state " + stateSize + " layer " + layer + " delta-rule global work",
-                        (long) VALUE_HEADS * stateSize,
+                        expectedGlobal,
                         grid.getGlobalWork()[0]);
                 assertEquals(
                         "state " + stateSize + " layer " + layer + " delta-rule local work",

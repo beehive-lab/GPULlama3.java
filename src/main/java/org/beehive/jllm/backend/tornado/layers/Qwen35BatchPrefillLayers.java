@@ -1058,13 +1058,17 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 state.workspace.batchStartPosHolder);
 
         // The other scan: one lane per (value head, value column), same order.
-        // The scan with the state column held in shared memory, where the state is the 128-wide
-        // one its tile is sized for; otherwise the per-lane scan over the persistent state.
+        // The warp-per-column scan where the state is 128 wide and the backend's warp shuffle is
+        // the one verified correct (CUDA: the same guard as the tensor-core path; OpenCL compiles
+        // the shuffle and computes the wrong answer); else the shared-state scan for a 128-wide
+        // state; else the per-lane scan over the persistent state.
         layer.task(
                 "ssm_delta_rule",
-                Qwen35BatchKernels.deltaSharedEligible(headV)
-                        ? Qwen35BatchKernels::deltaRuleScanShared
-                        : Qwen35BatchKernels::deltaRuleScan,
+                warpScan(headV)
+                        ? Qwen35BatchKernels::deltaRuleScanWarp
+                        : Qwen35BatchKernels.deltaSharedEligible(headV)
+                                ? Qwen35BatchKernels::deltaRuleScanShared
+                                : Qwen35BatchKernels::deltaRuleScan,
                 context,
                 state.workspace.wrapSsmQBatch,
                 state.workspace.wrapSsmKBatch,
@@ -1303,6 +1307,15 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
     }
 
     /**
+     * Whether the batched delta-rule scan is the warp-per-column form: a 128-wide state, on the
+     * backend whose warp shuffle is verified correct — CUDA, the tensor-core guard.
+     */
+    private static boolean warpScan(int stateDim) {
+        return Qwen35BatchKernels.deltaWarpEligible(stateDim)
+                && TensorCoreSupport.isTensorCoreCapableBackend();
+    }
+
+    /**
      * Whether attention runs the FP16 kernel that computes each query-key dot product once: the
      * half-precision store, and the score scratch the state allocates alongside it.
      */
@@ -1378,13 +1391,17 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
         // scan's is one lane per (head, column) in 128-lane groups. Same lane count, different
         // grouping, so the grid has to match the kernel that was dispatched.
         WorkerGrid deltaColumns =
-                Qwen35BatchKernels.deltaSharedEligible(config.headValueDim())
+                warpScan(config.headValueDim())
                         ? WorkerGridFactory.genericWorker(
-                                config.numberOfValueHeads() * config.headValueDim(),
-                                Qwen35BatchKernels.DELTA_SHARED_COLUMNS)
-                        : WorkerGridFactory.genericWorker(
-                                config.numberOfValueHeads() * config.headValueDim(),
-                                ELEMENTWISE_LOCAL);
+                                config.numberOfValueHeads() * config.headValueDim() * 32,
+                                Qwen35BatchKernels.DELTA_WARP_LOCAL)
+                        : Qwen35BatchKernels.deltaSharedEligible(config.headValueDim())
+                                ? WorkerGridFactory.genericWorker(
+                                        config.numberOfValueHeads() * config.headValueDim(),
+                                        Qwen35BatchKernels.DELTA_SHARED_COLUMNS)
+                                : WorkerGridFactory.genericWorker(
+                                        config.numberOfValueHeads() * config.headValueDim(),
+                                        ELEMENTWISE_LOCAL);
         WorkerGrid keyDim =
                 WorkerGridFactory.genericWorker(
                         batchSize * config.deltaNetKeyDim(), ELEMENTWISE_LOCAL);
