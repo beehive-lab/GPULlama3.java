@@ -71,10 +71,15 @@ public class Qwen35GraphTopologyAccelTest {
 
     /** The same fixture with a chosen trunk depth, so a remainder group can be exercised. */
     private static Qwen35Configuration config(int trunkLayers) {
+        return config(trunkLayers, HIDDEN);
+    }
+
+    /** The same fixture with a chosen feed-forward width, so a GEMM-eligible one can be built. */
+    private static Qwen35Configuration config(int trunkLayers, int hidden) {
         return new Qwen35Configuration(
                 "Q8_0",
                 DIM,
-                HIDDEN,
+                hidden,
                 trunkLayers,
                 NEXTN_LAYERS,
                 HEADS,
@@ -993,6 +998,79 @@ public class Qwen35GraphTopologyAccelTest {
                     tasks.contains("ffn_gate_proj")
                             || tasks.contains("ffn_down_fp16")
                             || tasks.contains("attn_output_fp16"));
+        }
+    }
+
+    // @formatter:off
+    /**
+     * Which Q4_0 projections take the dequantize-then-GEMM pair, and at which widths.
+     *
+     * <p>The pair needs the chunk to fill whole 128-row GEMM tiles and the projection to be at
+     * least 5,120 outputs wide, so with a 5,120-wide feed-forward: at width 128 the gate and up
+     * projections gain a {@code _dequant} task and the GEMM's two-dimensional grid, the 256-wide
+     * down projection stays on the direct kernel, and the scratch exists; at width 64 nothing
+     * changes and no scratch is allocated. The direct kernel's grid is what a projection left off
+     * the pair would carry, so the grid is asserted, not just the task name.
+     */
+    // @formatter:on
+    @Test
+    public void theBatchedPlanSelectsDequantizeThenGemmPerWidthAndWidthOfOutput() {
+        assumeTrue(
+                "no tensor-core-capable device",
+                org.beehive.jllm.backend.tornado.TensorCoreSupport.isTensorCoreCapableBackend());
+        Qwen35Configuration wide = config(TRUNK_LAYERS, 5120);
+        assertTrue(Qwen35Configuration.dequantGemmWidth(128));
+        assertFalse(Qwen35Configuration.dequantGemmWidth(64));
+
+        GridScheduler paired = new GridScheduler();
+        buildBatched(wide, 128).updateGridScheduler(paired);
+        for (int layer = 0; layer < TRUNK_LAYERS; layer++) {
+            List<String> tasks = batchTaskNames(paired, layer);
+            for (String task : new String[] {"ffn_gate_proj", "ffn_up_proj"}) {
+                assertTrue(
+                        "width 128 layer "
+                                + layer
+                                + " "
+                                + task
+                                + " has no dequantization: "
+                                + tasks,
+                        tasks.contains(task + "_dequant"));
+                WorkerGrid gemm = paired.get("batchLayer_" + layer + "." + task);
+                assertEquals(
+                        "width 128 " + task + " GEMM rows of work",
+                        (128 / 128) * 256L,
+                        gemm.getGlobalWork()[0]);
+                assertEquals(
+                        "width 128 " + task + " GEMM column tiles",
+                        5120L / 128,
+                        gemm.getGlobalWork()[1]);
+                assertEquals(
+                        "width 128 " + task + " dequantization lanes",
+                        5120L * wide.dim(),
+                        paired.get("batchLayer_" + layer + "." + task + "_dequant")
+                                .getGlobalWork()[0]);
+            }
+            assertFalse(
+                    "width 128 layer " + layer + " put the 256-wide down projection on the pair",
+                    tasks.contains("ffn_down_proj_dequant"));
+            assertTrue(
+                    "width 128 layer " + layer + " lost the SwiGLU after the pair",
+                    tasks.contains("ffn_swiglu"));
+        }
+
+        GridScheduler direct = new GridScheduler();
+        buildBatched(wide, 64).updateGridScheduler(direct);
+        for (int layer = 0; layer < TRUNK_LAYERS; layer++) {
+            List<String> tasks = batchTaskNames(direct, layer);
+            assertFalse(
+                    "width 64 layer " + layer + " took the pair: " + tasks,
+                    tasks.contains("ffn_gate_proj_dequant"));
+            assertEquals(
+                    "width 64 ffn_gate_proj direct grid",
+                    (64L / Qwen35MMAKernels.BM)
+                            * (5120 / Qwen35MMAKernels.BN)
+                            * Qwen35MMAKernels.LOCAL,
+                    direct.get("batchLayer_" + layer + ".ffn_gate_proj").getGlobalWork()[0]);
         }
     }
 

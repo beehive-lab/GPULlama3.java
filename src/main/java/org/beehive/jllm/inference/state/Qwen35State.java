@@ -450,6 +450,13 @@ public final class Qwen35State extends State {
         // Sized to the context capacity because a row's causal range can reach any position in
         // it; a span per (row, head) so every workgroup of a launch writes and reads its own.
         // Never uploaded, downloaded or reset: a launch reads only what it wrote.
+        // The dequantize-then-GEMM scratch, only at the widths whose GEMM tiles the chunk fills:
+        // one matrix, the largest Q4_0 projection (gate/up: hiddenDim x dim), reused in turn.
+        if (Qwen35Configuration.dequantGemmWidth(batch)) {
+            workspace.wrapDequantScratchFP16 =
+                    TornadoWorkspaces.halfFloats(
+                            Math.toIntExact((long) config.hiddenDim() * config.dim()));
+        }
         if (storageOptions().usesFp16KeyValueCache()) {
             workspace.wrapAttnScoresBatch =
                     TornadoWorkspaces.floats(

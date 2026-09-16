@@ -185,6 +185,14 @@ public final class TornadoWorkspace {
      */
     public FloatArray wrapAttnScoresBatch;
 
+    /**
+     * One FP16 matrix of scratch for the batched prefill's dequantize-then-GEMM Q4_0 projections,
+     * sized to the largest such matrix and reused by every projection of every layer graph in turn:
+     * each projection's dequantization writes it and its GEMM reads it before the next projection's
+     * dequantization runs. Null unless the width takes that path.
+     */
+    public HalfFloatArray wrapDequantScratchFP16;
+
     public FloatArray wrapSsmQkvBatch;
     public FloatArray wrapSsmConvOutBatch;
     public FloatArray wrapSsmZBatch;

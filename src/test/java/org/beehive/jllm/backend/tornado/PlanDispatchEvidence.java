@@ -105,6 +105,35 @@ public final class PlanDispatchEvidence {
         }
     }
 
+    /**
+     * Asserts that every batched attention-output projection in {@code scheduler} runs as the
+     * dequantize-then-GEMM pair: its {@code _dequant} task present with one lane per weight, and
+     * the projection on the FP16 GEMM's two-dimensional grid rather than the direct kernel's.
+     */
+    public static void assertQwen35AttentionOutputOnDequantGemm(
+            GridScheduler scheduler, int batchSize, int dim, int attnDim) {
+        assertNotNull("no grid scheduler for the plan this run built", scheduler);
+        List<Integer> layers = attentionLayers(scheduler);
+        assertTrue("no batched attention-output projection in this plan", !layers.isEmpty());
+        for (int layer : layers) {
+            String prefix = "batchLayer_" + layer + ".";
+            WorkerGrid dequant = scheduler.get(prefix + "attn_output_proj_dequant");
+            assertNotNull("layer " + layer + " has no attn_output_proj_dequant task", dequant);
+            assertEquals(
+                    "layer " + layer + " dequantization lanes",
+                    (long) dim * attnDim,
+                    dequant.getGlobalWork()[0]);
+            WorkerGrid gemm = scheduler.get(prefix + "attn_output_proj");
+            assertEquals(
+                    "layer " + layer + " GEMM rows of work",
+                    (batchSize / 128) * 256L,
+                    gemm.getGlobalWork()[0]);
+            assertEquals(
+                    "layer " + layer + " GEMM column tiles", dim / 128L, gemm.getGlobalWork()[1]);
+            assertEquals("layer " + layer + " GEMM local", 256L, gemm.getLocalWork()[0]);
+        }
+    }
+
     // @formatter:off
     /**
      * Asserts that this plan's decode attention is the split-KV pair rather than the per-head

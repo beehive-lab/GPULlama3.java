@@ -281,6 +281,24 @@ public record Qwen35Configuration(
         // the context capacity. Counted whether or not that path is built: the prediction has
         // to hold for the widest state this width can allocate.
         perRow += (long) numberOfHeads() * contextLength();
-        return perRow * batchSize * Float.BYTES;
+        long bytes = perRow * batchSize * Float.BYTES;
+        // The dequantize-then-GEMM scratch: one FP16 copy of the largest Q4_0 projection matrix,
+        // at the widths that take that path.
+        if (dequantGemmWidth(batchSize)) {
+            bytes += 2L * hiddenDim() * dim();
+        }
+        return bytes;
+    }
+
+    /** Rows one tile of the batched FP16 GEMM covers; a width has to be a whole number of them. */
+    public static final int DEQUANT_GEMM_ROWS = 128;
+
+    /**
+     * Whether a prefill width takes the dequantize-then-GEMM path for its Q4_0 projections: the
+     * chunk has to fill whole 128-row GEMM tiles. The state allocates the scratch, the plan
+     * dispatches, and the memory model accounts, all from this one answer.
+     */
+    public static boolean dequantGemmWidth(int batchSize) {
+        return batchSize > 0 && batchSize % DEQUANT_GEMM_ROWS == 0;
     }
 }

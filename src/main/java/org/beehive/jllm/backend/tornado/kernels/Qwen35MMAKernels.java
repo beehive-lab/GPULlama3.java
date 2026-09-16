@@ -644,6 +644,38 @@ public final class Qwen35MMAKernels {
         ctx.mmaStore(acc, out, blockRow, blockCol, n);
     }
 
+    // ---- Q4_0 dequantization to FP16 (experiment) --------------------------------
+
+    /**
+     * {@code out[row][e] = fp16(scale * (q - 8))} for a whole {@code Q4_0} matrix, one lane per
+     * element, decoded with the expression the tensor-core kernels stage into their shared tiles so
+     * the halves carry the same bits those kernels multiply.
+     *
+     * <p>The nibble is chosen by a branch on a lane-dependent value, as in the projection kernels:
+     * with the choice foldable at compile time the high nibble's recentring is stamped unsigned and
+     * every value below eight decodes to infinity (see
+     * everyNibbleDecodesWithTheSignItsScaleGivesIt).
+     *
+     * <p>Worker: {@code n * k} lanes.
+     */
+    public static void dequantizeQ4_0ToFP16(
+            KernelContext ctx, ByteArray w, HalfFloatArray out, int n, int k) {
+        int lane = ctx.globalIdx;
+        int blocksPerRow = k / QK;
+        int row = lane / k;
+        int element = lane - row * k;
+        int block = element >> 5;
+        int within = element & 31;
+        int base = (row * blocksPerRow + block) * BLOCK_BYTES;
+        float scale = w.getHalfFloat(base).getFloat32();
+        int packed = w.get(base + 2 + (within & 15)) & 0xFF;
+        int q = packed & 0xF;
+        if (within >= 16) {
+            q = (packed >> 4) & 0xF;
+        }
+        out.set(lane, new HalfFloat(scale * (q - 8)));
+    }
+
     // @formatter:off
 
     /** {@code hb = silu(gate) * up} over the chunk. One lane per element. */
