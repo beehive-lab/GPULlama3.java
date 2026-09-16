@@ -473,6 +473,178 @@ public final class Qwen35MMAKernels {
     }
 
     // @formatter:off
+    /**
+     * {@link #projectionMMAQ4_0Paired} with the next block's weight loads issued a round early.
+     *
+     * <p>Per lane the loads are a scale and four packed words; here they are hoisted into private
+     * scalars one block ahead — a prologue loads block zero, and each round, having copied the
+     * values it will decode, issues the loads for the block after it before staging its own tiles,
+     * so that decode, the copy wait and the barrier can overlap the loads' latency if the compiler
+     * keeps that order. The last round issues nothing: the guard is {@code blockIndex + 1 <
+     * numBlocks}, so every block is loaded exactly once and nothing past the row's last block is
+     * read. What is decoded, stored and multiplied is the paired kernel's in the paired kernel's
+     * order, so the outputs are bit-identical.
+     */
+    // @formatter:on
+    public static void projectionMMAQ4_0Prefetch(
+            KernelContext ctx,
+            HalfFloatArray aFP16,
+            ByteArray w,
+            FloatArray out,
+            int m,
+            int n,
+            int k) {
+        int lane = ctx.localIdx;
+        int colTiles = n / BN;
+        int group = ctx.groupIdx;
+        int rowTile = group / colTiles;
+        int colTile = group - rowTile * colTiles;
+        int blockRow = rowTile * BM;
+        int blockCol = colTile * BN;
+        int blocksPerRow = k / QK;
+
+        // One allocation for both A panels, as for B: the first at byte offset zero, the second at
+        // A_SUBTILE_BYTES. The A load applies no swizzle — its per-lane address is
+        // (row << 5) + col with row < 16 and col in {0, 16}, so a panel reaches at most byte 496
+        // and stays inside its own 512 — and the offset-aware load adds the base afterwards, so
+        // each panel sees exactly the layout it had as its own array.
+        int[] aTile = ctx.allocateIntLocalArray(2 * BM * BK / 2);
+        // One allocation for both B panels: the low half at byte offset zero, the high half at
+        // B_SUBTILE_BYTES. The offset-aware store and load apply the swizzle to the in-panel
+        // address first and add the offset afterwards, so each panel keeps exactly the layout it
+        // had as its own array, and the two cannot overlap -- a panel's swizzled address stays
+        // inside its own 256 bytes.
+        HalfFloat[] bTile = ctx.allocateHalfFloatLocalArray(2 * PANEL * BK);
+
+        float[] acc = ctx.mmaFragment(0.0f);
+
+        // One staging round per Q4_0 block, not per MMA step. A block is 32 elements and the MMA
+        // step is 16, so a round stages two tiles and issues two MMAs: the block scale is read
+        // once for all 32 of its weights instead of once per weight, both nibble halves of each
+        // packed byte are used, and the two barriers are paid per 32 elements rather than per 16.
+        //
+        // A lane owns eight consecutive elements of one column. Which half of the block those
+        // eight fall in is fixed by the lane, so the choice of destination tile is loop-invariant
+        // rather than a branch per element.
+        int stageCol = lane >> 2;
+        int stageQuarter = lane & 3;
+        int stageFirst = stageQuarter * 8;
+        int stageByte = stageFirst & 15;
+        boolean stageHighNibble = stageFirst >= 16;
+        boolean stageHighHalf = stageFirst >= 16;
+        // Which panel this lane stages, as a byte offset rather than a choice of array.
+        int stageOffset = 0;
+        if (stageHighHalf) {
+            stageOffset = B_SUBTILE_BYTES;
+        }
+        int stageK = stageFirst & 15;
+
+        int numBlocks = k / QK;
+        int laneBlockStride = BLOCK_BYTES;
+        int laneRowBase = (blockCol + stageCol) * blocksPerRow * BLOCK_BYTES + 2 + stageByte;
+
+        // Prologue: block zero's scale and packed words.
+        int nextBase = (blockCol + stageCol) * blocksPerRow * BLOCK_BYTES;
+        float scaleNext = w.getHalfFloat(nextBase).getFloat32();
+        int wordNext0 = w.getHalfFloat(laneRowBase).getHalfFloatValue() & 0xFFFF;
+        int wordNext1 = w.getHalfFloat(laneRowBase + 2).getHalfFloatValue() & 0xFFFF;
+        int wordNext2 = w.getHalfFloat(laneRowBase + 4).getHalfFloatValue() & 0xFFFF;
+        int wordNext3 = w.getHalfFloat(laneRowBase + 6).getHalfFloatValue() & 0xFFFF;
+
+        for (int blockIndex = 0; blockIndex < numBlocks; blockIndex++) {
+            int kBase = blockIndex * QK;
+
+            // This round's operands, then the next block's loads before any of this round's
+            // staging.
+            float scale = scaleNext;
+            int word0 = wordNext0;
+            int word1 = wordNext1;
+            int word2 = wordNext2;
+            int word3 = wordNext3;
+            if (blockIndex + 1 < numBlocks) {
+                int base = nextBase + laneBlockStride;
+                int packed = laneRowBase + (blockIndex + 1) * laneBlockStride;
+                scaleNext = w.getHalfFloat(base).getFloat32();
+                wordNext0 = w.getHalfFloat(packed).getHalfFloatValue() & 0xFFFF;
+                wordNext1 = w.getHalfFloat(packed + 2).getHalfFloatValue() & 0xFFFF;
+                wordNext2 = w.getHalfFloat(packed + 4).getHalfFloatValue() & 0xFFFF;
+                wordNext3 = w.getHalfFloat(packed + 6).getHalfFloatValue() & 0xFFFF;
+                nextBase = base;
+            }
+
+            // A: 256 ints over 32 lanes, eight each — two MMA steps' worth. Int i holds row i/8 at
+            // element pair (i%8)*2 for the first step, and the same for the second.
+            for (int slot = 0; slot < 8; slot++) {
+                int i = lane + slot * WARP_SIZE;
+                int half = i >>> 7;
+                int j = i & 127;
+                int row = j >>> 3;
+                int kk = (j & 7) << 1;
+                int base = (blockRow + row) * k + kBase + half * BK + kk;
+                // The same two adjacent halves, the same destination slot, packed the same way —
+                // src[base] | src[base + 1] << 16 — but copied global-to-shared without the
+                // register round-trip. `base` is even (k is a whole number of Q4_0 blocks, and
+                // kBase, half * BK and kk are all even), so the source byte address is
+                // header + 2 * base and four-byte aligned, which is what cp.async requires.
+                ctx.asyncCopyToLocal(aTile, half * (BM * BK / 2) + j, aFP16, base);
+            }
+
+            // B: this lane's column from the values loaded a round ago, one word per pair.
+            for (int pair = 0; pair < 4; pair++) {
+                int word = word0;
+                if (pair == 1) {
+                    word = word1;
+                } else if (pair == 2) {
+                    word = word2;
+                } else if (pair == 3) {
+                    word = word3;
+                }
+                int packedLow = word & 0xFF;
+                int qLow = packedLow & 0xF;
+                if (stageHighNibble) {
+                    qLow = (packedLow >> 4) & 0xF;
+                }
+                HalfFloat valueLow = new HalfFloat(scale * (qLow - 8));
+                // (k index, column, columns per row) — the order the swizzled load expects.
+                ctx.mmaStoreBSwizzled(
+                        bTile, stageK + 2 * pair, stageCol, PANEL, valueLow, stageOffset);
+                int packedHigh = (word >> 8) & 0xFF;
+                int qHigh = packedHigh & 0xF;
+                if (stageHighNibble) {
+                    qHigh = (packedHigh >> 4) & 0xF;
+                }
+                HalfFloat valueHigh = new HalfFloat(scale * (qHigh - 8));
+                ctx.mmaStoreBSwizzled(
+                        bTile, stageK + 2 * pair + 1, stageCol, PANEL, valueHigh, stageOffset);
+            }
+            // Commit and wait before the barrier that publishes both tiles: every lane issues
+            // its own eight copies -- i = lane + slot * 32 covers 0..255 exactly once across the
+            // warp -- and every lane waits, so no MMA reads a slot whose copy is still in flight.
+            // The trailing barrier below keeps the next round's copies out of a tile this round is
+            // still reading.
+            ctx.asyncCopyCommit();
+            ctx.asyncCopyWaitGroup(0);
+            ctx.localBarrier();
+
+            acc =
+                    ctx.mma(
+                            ctx.mmaLoadA(aTile, BK, 0),
+                            ctx.mmaLoadBSwizzled(bTile, BK, 0),
+                            acc,
+                            MMAShape.M16N8K16);
+            acc =
+                    ctx.mma(
+                            ctx.mmaLoadA(aTile, BK, A_SUBTILE_BYTES),
+                            ctx.mmaLoadBSwizzled(bTile, BK, B_SUBTILE_BYTES),
+                            acc,
+                            MMAShape.M16N8K16);
+            ctx.localBarrier();
+        }
+
+        ctx.mmaStore(acc, out, blockRow, blockCol, n);
+    }
+
+    // @formatter:off
 
     /** {@code hb = silu(gate) * up} over the chunk. One lane per element. */
     public static void swiGLUBatch(

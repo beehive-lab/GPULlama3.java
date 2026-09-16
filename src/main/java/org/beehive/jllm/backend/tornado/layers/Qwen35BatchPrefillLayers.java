@@ -216,7 +216,7 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     mmaTasks.put("batchLayer_" + layer + "." + task, d);
                     graph.task(
                             task,
-                            Qwen35MMAKernels::projectionMMAQ4_0Paired,
+                            Qwen35MMAKernels::projectionMMAQ4_0Prefetch,
                             context,
                             state.workspace.wrapNormedFP16Batch,
                             w.asByteArray(),
@@ -393,7 +393,7 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
             mmaTasks.put("batchLayer_" + layer + ".ffn_up_proj", config.hiddenDim());
             graph.task(
                     "ffn_gate_proj",
-                    Qwen35MMAKernels::projectionMMAQ4_0Paired,
+                    Qwen35MMAKernels::projectionMMAQ4_0Prefetch,
                     context,
                     state.workspace.wrapNormedFP16Batch,
                     gate.asByteArray(),
@@ -403,7 +403,7 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     config.dim());
             graph.task(
                     "ffn_up_proj",
-                    Qwen35MMAKernels::projectionMMAQ4_0Paired,
+                    Qwen35MMAKernels::projectionMMAQ4_0Prefetch,
                     context,
                     state.workspace.wrapNormedFP16Batch,
                     up.asByteArray(),
@@ -498,7 +498,7 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     "ffn_down_proj",
                     down.dataType() == DataType.Q4_1
                             ? Qwen35MMAKernels::projectionMMAQ4_1
-                            : Qwen35MMAKernels::projectionMMAQ4_0Paired,
+                            : Qwen35MMAKernels::projectionMMAQ4_0Prefetch,
                     context,
                     state.workspace.wrapHbFP16BatchMMA,
                     down.asByteArray(),
@@ -780,7 +780,7 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     state.workspace.wrapHbFP16BatchMMA);
             layer.task(
                     "attn_output_proj",
-                    Qwen35MMAKernels::projectionMMAQ4_0Paired,
+                    Qwen35MMAKernels::projectionMMAQ4_0Prefetch,
                     context,
                     state.workspace.wrapHbFP16BatchMMA,
                     attnOutput.asByteArray(),
