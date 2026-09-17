@@ -110,7 +110,10 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
 
     private final java.util.Map<String, Integer> dequantTasks = new java.util.LinkedHashMap<>();
 
-    /** The F32 projections placed on the warp-per-output kernel, with their output counts. */
+    /**
+     * The F32 projections placed on the warp kernels, with their output counts: positive for a warp
+     * per output, negative for a warp per 4 x 4 tile.
+     */
     private final java.util.Map<String, Integer> warpMatVecTasks = new java.util.LinkedHashMap<>();
 
     /**
@@ -323,10 +326,15 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 // guard): the same partial sums and the same reduction tree as the 128-lane
                 // workgroup kernel, so the outputs are bit-identical; elsewhere the workgroup one.
                 if (TensorCoreSupport.isTensorCoreCapableBackend()) {
-                    warpMatVecTasks.put("batchLayer_" + layer + "." + task, d);
+                    // A warp per 4 x 4 tile of (row, output) pairs where the outputs divide into
+                    // tiles — the same per-pair arithmetic, each load serving four products.
+                    boolean tiled = d % TransformerBatchPrefillKernels.MATVEC_TILE == 0;
+                    warpMatVecTasks.put("batchLayer_" + layer + "." + task, tiled ? -d : d);
                     graph.task(
                             task,
-                            TransformerBatchPrefillKernels::batchedMatVecF32Warp,
+                            tiled
+                                    ? TransformerBatchPrefillKernels::batchedMatVecF32WarpTile
+                                    : TransformerBatchPrefillKernels::batchedMatVecF32Warp,
                             context,
                             xBatch,
                             outBatch,
@@ -1767,6 +1775,12 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
     private WorkerGrid matVecWorker(String qualifiedTask, int rows) {
         Integer warpOutputs = warpMatVecTasks.get(qualifiedTask);
         if (warpOutputs != null) {
+            if (warpOutputs < 0) {
+                // One warp per 4 x 4 tile of (row, output) pairs, four to a 128-lane block.
+                int tile = TransformerBatchPrefillKernels.MATVEC_TILE;
+                int tiles = ((batchSize + tile - 1) / tile) * (-warpOutputs / tile);
+                return WorkerGridFactory.genericWorker(tiles * 32, MATVEC_LOCAL);
+            }
             // One warp per (row, output), four to a 128-lane block.
             return WorkerGridFactory.genericWorker(batchSize * warpOutputs * 32, MATVEC_LOCAL);
         }

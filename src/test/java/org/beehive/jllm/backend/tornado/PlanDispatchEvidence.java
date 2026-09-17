@@ -322,8 +322,8 @@ public final class PlanDispatchEvidence {
 
     /**
      * Asserts that the batched F32 alpha and beta projections of every recurrent layer run as the
-     * warp-per-output kernel: {@code batchedMatVecF32Warp} by name off the task graphs, and a grid
-     * of {@code batchSize * valueHeads * 32} lanes in 128-lane blocks.
+     * warp-per-tile kernel: {@code batchedMatVecF32WarpTile} by name off the task graphs, and a
+     * grid of {@code ceil(batchSize / 4) * (valueHeads / 4) * 32} lanes in 128-lane blocks.
      */
     public static void assertQwen35AlphaBetaOnWarpMatVec(
             TornadoVMMasterPlan plan, GridScheduler scheduler, int batchSize, int valueHeads) {
@@ -331,15 +331,16 @@ public final class PlanDispatchEvidence {
         for (String task : new String[] {"ssm_alpha_proj", "ssm_beta_proj"}) {
             assertEquals(
                     task + " kernel",
-                    java.util.Set.of("batchedMatVecF32Warp"),
+                    java.util.Set.of("batchedMatVecF32WarpTile"),
                     batchedTaskKernels(plan, task));
             int found = 0;
             for (String key : new TreeSet<>(scheduler.keySet())) {
                 if (key.matches("batchLayer_\\d+\\." + task)) {
                     WorkerGrid grid = scheduler.get(key);
+                    assertEquals("value heads divide into 4-wide tiles", 0, valueHeads % 4);
                     assertEquals(
                             key + " global",
-                            (long) batchSize * valueHeads * 32,
+                            (long) ((batchSize + 3) / 4) * (valueHeads / 4) * 32,
                             grid.getGlobalWork()[0]);
                     assertEquals(key + " local", 128L, grid.getLocalWork()[0]);
                     found++;

@@ -185,7 +185,7 @@ public class Qwen35DequantGemmLifecycleAccelTest {
                     pairA.scheduler(), WIDTH, qwen.dim(), qwen.hiddenDim());
             assertEquals(
                     "the batched alpha/beta projections this plan compiled",
-                    java.util.Set.of("batchedMatVecF32Warp"),
+                    java.util.Set.of("batchedMatVecF32WarpTile"),
                     alphaBetaKernels);
             assertEquals(
                     "the batched attention kernel this plan compiled",

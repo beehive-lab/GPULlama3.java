@@ -49,7 +49,7 @@ public class Qwen35MmaBatchedPrefillWidth256Fp16KvParityAccelTest extends CpuGpu
                 gpu.gridScheduler, 256, gpu.dim, 17408);
         assertEquals(
                 "the batched alpha/beta projections this plan compiled",
-                Set.of("batchedMatVecF32Warp"),
+                Set.of("batchedMatVecF32WarpTile"),
                 gpu.batchedTaskKernels.get("ssm_alpha_proj"));
     }
 }
