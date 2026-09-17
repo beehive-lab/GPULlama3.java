@@ -106,6 +106,26 @@ public class Gemma4Q8_0FFNLayers
     //                                  TASK GRAPH
     // ═══════════════════════════════════════════════════════════════════════════════════
 
+    /**
+     * Lanes per output row for a row-per-workgroup projection.
+     *
+     * <p>One warp per row leaves a 1536-row projection with 1536 warps, which is not enough
+     * resident work to hide DRAM latency on this device. Measured with Nsight Compute on
+     * gemma-4-E2B-it-Q8_0: {@code matrixVectorGenericQ8Byte} at grid 1536 x 32 reached 27.4% of
+     * DRAM peak, while {@code fusedGateUpGeGLUQ8} at grid 6144 x 32 reached 74.9% running the
+     * identical inner routine. The routine already reduces over an arbitrary block, so the fix is
+     * the launch shape, not the kernel.
+     *
+     * <p>Derived from the projection's own row count, decided at graph build. Wide projections
+     * already have the warps and keep the narrow block.
+     */
+    private static int projectionLocalSize(int rows) {
+        if (rows >= 4096) {
+            return LOCAL_WORK_GROUP_SIZE_ALLOC;
+        }
+        return rows >= 1024 ? 128 : 256;
+    }
+
     /** How many slices the window is cut into, or 1 to run the single-pass kernel. */
     private int attentionSplits() {
         return config.contextLength() >= SPLIT_KV_MIN_CONTEXT
@@ -199,7 +219,7 @@ public class Gemma4Q8_0FFNLayers
                 weights.wqLayered[layerIndex].asByteArray(),
                 dim,
                 qDim,
-                LOCAL_WORK_GROUP_SIZE_ALLOC);
+                projectionLocalSize(qDim));
         unifiedLayer.task(
                 "q_norm",
                 Gemma4Kernels::rmsNormPerHead,
@@ -221,7 +241,7 @@ public class Gemma4Q8_0FFNLayers
                     weights.wkLayered[layerIndex].asByteArray(),
                     dim,
                     kvDim,
-                    LOCAL_WORK_GROUP_SIZE_ALLOC);
+                    projectionLocalSize(kvDim));
             unifiedLayer.task(
                     "k_norm",
                     Gemma4Kernels::rmsNormPerHead,
@@ -241,7 +261,7 @@ public class Gemma4Q8_0FFNLayers
                     weights.wvLayered[layerIndex].asByteArray(),
                     dim,
                     kvDim,
-                    LOCAL_WORK_GROUP_SIZE_ALLOC);
+                    projectionLocalSize(kvDim));
             unifiedLayer.task(
                     "v_norm",
                     Gemma4Kernels::rmsNormPerHeadNoWeight,
@@ -339,7 +359,7 @@ public class Gemma4Q8_0FFNLayers
                 weights.woLayered[layerIndex].asByteArray(),
                 qDim,
                 dim,
-                LOCAL_WORK_GROUP_SIZE_ALLOC);
+                projectionLocalSize(dim));
 
         unifiedLayer.task(
                 "post_attn_reduce",
@@ -418,7 +438,7 @@ public class Gemma4Q8_0FFNLayers
                 weights.w2Layered[layerIndex].asByteArray(),
                 ffnLen,
                 dim,
-                LOCAL_WORK_GROUP_SIZE_ALLOC);
+                projectionLocalSize(dim));
 
         unifiedLayer.task(
                 "post_ffn_reduce",
@@ -650,7 +670,7 @@ public class Gemma4Q8_0FFNLayers
                             w.asByteArray(),
                             n,
                             d,
-                            LOCAL_WORK_GROUP_SIZE_ALLOC);
+                            projectionLocalSize(d));
             case F16 ->
                     tg.task(
                             taskName,
@@ -661,7 +681,7 @@ public class Gemma4Q8_0FFNLayers
                             w.asHalfFloatArray(),
                             n,
                             d,
-                            LOCAL_WORK_GROUP_SIZE_ALLOC);
+                            projectionLocalSize(d));
             case F32 ->
                     tg.task(
                             taskName,
@@ -672,7 +692,7 @@ public class Gemma4Q8_0FFNLayers
                             w.asFloatArray(),
                             n,
                             d,
-                            LOCAL_WORK_GROUP_SIZE_ALLOC);
+                            projectionLocalSize(d));
             default ->
                     throw new UnsupportedOperationException(
                             "Unsupported projection weight type: " + w.dataType());
@@ -708,10 +728,11 @@ public class Gemma4Q8_0FFNLayers
                 WorkerGridFactory.genericWorker(dim, LOCAL_WORK_GROUP_SIZE_ALLOC);
         WorkerGrid woProjWorker =
                 WorkerGridFactory.genericWorker(
-                        dim * LOCAL_WORK_GROUP_SIZE_ALLOC, LOCAL_WORK_GROUP_SIZE_ALLOC);
+                        dim * projectionLocalSize(dim), projectionLocalSize(dim));
         WorkerGrid pleGateProjWorker =
                 WorkerGridFactory.genericWorker(
-                        nEmbdPerLayer * LOCAL_WORK_GROUP_SIZE_ALLOC, LOCAL_WORK_GROUP_SIZE_ALLOC);
+                        nEmbdPerLayer * projectionLocalSize(nEmbdPerLayer),
+                        projectionLocalSize(nEmbdPerLayer));
         WorkerGrid pleGateGeluWorker =
                 WorkerGridFactory.genericWorker(nEmbdPerLayer, LOCAL_WORK_GROUP_SIZE_ALLOC);
 
@@ -720,7 +741,8 @@ public class Gemma4Q8_0FFNLayers
         gridScheduler.addWorkerGrid(
                 "layer_0.ple_model_proj",
                 WorkerGridFactory.genericWorker(
-                        perLayerTotal * LOCAL_WORK_GROUP_SIZE_ALLOC, LOCAL_WORK_GROUP_SIZE_ALLOC));
+                        perLayerTotal * projectionLocalSize(perLayerTotal),
+                        projectionLocalSize(perLayerTotal)));
         gridScheduler.addWorkerGrid(
                 "layer_0.ple_proj_scale_norm",
                 WorkerGridFactory.genericWorker(
@@ -747,10 +769,10 @@ public class Gemma4Q8_0FFNLayers
             WorkerGrid attentionWorker = WorkerGridFactory.createAttentionWorker(nHead, headDim);
             WorkerGrid qProjWorker =
                     WorkerGridFactory.genericWorker(
-                            qDim * LOCAL_WORK_GROUP_SIZE_ALLOC, LOCAL_WORK_GROUP_SIZE_ALLOC);
+                            qDim * projectionLocalSize(qDim), projectionLocalSize(qDim));
             WorkerGrid kvProjWorker =
                     WorkerGridFactory.genericWorker(
-                            kvDim * LOCAL_WORK_GROUP_SIZE_ALLOC, LOCAL_WORK_GROUP_SIZE_ALLOC);
+                            kvDim * projectionLocalSize(kvDim), projectionLocalSize(kvDim));
             WorkerGrid ffnGateUpWorker =
                     WorkerGridFactory.genericWorker(
                             ffnLen * LOCAL_WORK_GROUP_SIZE_ALLOC, LOCAL_WORK_GROUP_SIZE_ALLOC);
