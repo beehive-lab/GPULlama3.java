@@ -143,6 +143,30 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
     }
 
     /**
+     * Width from which the Q4_0 key/value projections (kvDim outputs, below the shared output
+     * threshold) take the pair: measured on the 1024 x 5120 shape, the complete pair is 44% faster
+     * than the direct kernel at 512, 67% at 1024 and 77% at 2048, level at 256 and twice as slow at
+     * 128.
+     */
+    private static final int DEQUANT_GEMM_KV_MIN_WIDTH = 512;
+
+    /**
+     * Whether a Q4_0 projection of exactly the key/value width takes the pair: the scratch, the
+     * tile divisibility and the fit as {@link #dequantGemmEligible}, but the width rule above in
+     * place of the output threshold. Only Q4_0 asks this; the Q4_1 and Q5_K pairs keep the shared
+     * rule.
+     */
+    private boolean kvPairEligible(int n, int k) {
+        return n == config.kvDim()
+                && batchSize >= DEQUANT_GEMM_KV_MIN_WIDTH
+                && state.workspace.wrapDequantScratchFP16 != null
+                && Qwen35Configuration.dequantGemmWidth(batchSize)
+                && n % GEMM_TILE == 0
+                && k % 16 == 0
+                && (long) n * k <= state.workspace.wrapDequantScratchFP16.getSize();
+    }
+
+    /**
      * A Q4_0 projection on the tensor cores: {@code out[batch][n] = a[batch][k] x w[n][k]}. The
      * dequantize-then-GEMM pair where {@link #dequantGemmEligible} says so, otherwise the direct
      * quantized kernel; either way the task named {@code task} is the one that writes {@code out}.
@@ -162,7 +186,7 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
             FloatArray out,
             int n,
             int k) {
-        if (dequantGemmEligible(n, k)) {
+        if (dequantGemmEligible(n, k) || kvPairEligible(n, k)) {
             // One lane per packed byte: both nibbles decoded, two halves written.
             dequantTasks.put(qualified + "_dequant", n * k / 2);
             gemmTasks.put(qualified, n);

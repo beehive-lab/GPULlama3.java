@@ -351,6 +351,52 @@ public final class PlanDispatchEvidence {
     }
 
     /**
+     * Asserts the batched Q4_0 key and value projections' dispatch: on the pair (decoder task, GEMM
+     * grid of {@code batchSize / 128 * 256} by {@code kvDim / 128}, kernels by name) when {@code
+     * pair}, else on the direct kernel with its grid and no decoder task.
+     */
+    public static void assertQwen35KvProjectionDispatch(
+            TornadoVMMasterPlan plan,
+            GridScheduler scheduler,
+            int batchSize,
+            int kvDim,
+            boolean pair) {
+        assertNotNull("no grid scheduler for the plan this run built", scheduler);
+        for (String task : new String[] {"attn_k_proj", "attn_v_proj"}) {
+            int found = 0;
+            for (String key : new TreeSet<>(scheduler.keySet())) {
+                if (!key.matches("batchLayer_\\d+\\." + task)) {
+                    continue;
+                }
+                found++;
+                WorkerGrid grid = scheduler.get(key);
+                WorkerGrid dequant = scheduler.get(key + "_dequant");
+                if (pair) {
+                    assertNotNull(key + " has no decoder task", dequant);
+                    assertEquals(
+                            key + " decoder lanes",
+                            (long) kvDim * 5120 / 2,
+                            dequant.getGlobalWork()[0]);
+                    assertEquals(
+                            key + " GEMM rows of work",
+                            (batchSize / 128) * 256L,
+                            grid.getGlobalWork()[0]);
+                    assertEquals(key + " GEMM column tiles", kvDim / 128L, grid.getGlobalWork()[1]);
+                } else {
+                    assertTrue(key + " has a decoder task", dequant == null);
+                    assertEquals(key + " direct local", 32L, grid.getLocalWork()[0]);
+                }
+            }
+            assertTrue("no batched " + task + " in this plan", found > 0);
+            java.util.Set<String> kernels = batchedTaskKernels(plan, task);
+            assertEquals(
+                    task + " kernel",
+                    java.util.Set.of(pair ? "gemmMMATiledB" : "projectionMMAQ4_0Prefetch"),
+                    kernels);
+        }
+    }
+
+    /**
      * Asserts that every batched delta-rule scan in {@code scheduler} is the shared-state form:
      * 32-lane groups, one per (head, 32 columns), rather than the per-lane scan's 128-lane groups.
      */
