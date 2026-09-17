@@ -290,7 +290,7 @@ public class Gemma4FP16FFNLayers
                     ATTENTION_LOCAL_SIZE);
             unifiedLayer.task(
                     "attention_combine",
-                    TransformerComputeKernelsLayered::combineSplitKVAttention,
+                    Gemma4Kernels::combineSplitKVAttentionPerElement,
                     context,
                     gemma4State.workspace.wrapAttSplit,
                     gemma4State.workspace.wrapXb,
@@ -692,7 +692,9 @@ public class Gemma4FP16FFNLayers
                         WorkerGridFactory.genericWorker(
                                 nHead * attentionSplits() * ATTENTION_LOCAL_SIZE,
                                 ATTENTION_LOCAL_SIZE));
-                gridScheduler.addWorkerGrid(prefix + "attention_combine", attentionWorker);
+                gridScheduler.addWorkerGrid(
+                        prefix + "attention_combine",
+                        WorkerGridFactory.genericWorker(nHead * headDim, 128));
             } else {
                 gridScheduler.addWorkerGrid(prefix + "attention", attentionWorker);
             }

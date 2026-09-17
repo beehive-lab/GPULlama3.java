@@ -310,6 +310,69 @@ public class Gemma4Kernels {
      * <p>Scores still go through {@code wrapAtt} at their absolute position, so the slices write
      * disjoint ranges of it and no extra scratch is needed for them.
      */
+    /**
+     * Split-KV attention, phase 2: combine, one thread per output element.
+     *
+     * <p>A Gemma 4 kernel rather than a change to {@link
+     * TransformerComputeKernelsLayered#combineSplitKVAttention}, which Qwen 3.5 also runs. That one
+     * maps a workgroup to a head, which for this family is eight workgroups on a device with far
+     * more multiprocessors: Nsight Compute measured it at 2.1% of DRAM peak, 0.2% of compute and
+     * essentially zero occupancy.
+     *
+     * <p>The parallelism available is {@code nHeads * headDim} output elements, each independently
+     * computable, so this maps one thread to each. The per-head scalars -- the global maximum and
+     * the denominator -- are then recomputed by every thread of that head from the {@code nSplits}
+     * maxima and sums rather than shared through local memory. That is a few dozen redundant reads
+     * per thread, and what it buys is no local array, no barrier, and a grid that is no longer one
+     * workgroup per head.
+     *
+     * <p><b>Bit-identical to the shared kernel by construction.</b> The maximum is taken over the
+     * same values in the same order, the denominator accumulates the same products in the same
+     * order, and each output element accumulates its splits in the same order. Only where the
+     * intermediate values live changes, so parity is expected to be unchanged to the last digit and
+     * that is the contract this is tested against.
+     */
+    public static void combineSplitKVAttentionPerElement(
+            KernelContext context,
+            FloatArray att,
+            FloatArray xb,
+            int nHeads,
+            int headDim,
+            int nSplits) {
+
+        int gid = context.globalIdx;
+        if (gid >= nHeads * headDim) {
+            return;
+        }
+        int h = gid / headDim;
+        int d = gid - h * headDim;
+
+        // Must match the COMPACT layout attentionWithSlidingWindowSplit writes: per head,
+        // nSplits numerators of headDim, then nSplits maxima, then nSplits sums.
+        int headBase = h * nSplits * (headDim + 2);
+        int mBase = headBase + nSplits * headDim;
+        int lBase = mBase + nSplits;
+
+        float gMax = Float.NEGATIVE_INFINITY;
+        for (int s = 0; s < nSplits; s++) {
+            float ms = att.get(mBase + s);
+            if (ms > gMax) {
+                gMax = ms;
+            }
+        }
+
+        float denom = 0.0f;
+        float acc = 0.0f;
+        for (int s = 0; s < nSplits; s++) {
+            float ms = att.get(mBase + s);
+            float f = (ms == Float.NEGATIVE_INFINITY) ? 0.0f : TornadoMath.exp(ms - gMax);
+            denom += f * att.get(lBase + s);
+            acc += f * att.get(headBase + s * headDim + d);
+        }
+        float inv = (denom > 0.0f) ? (1.0f / denom) : 0.0f;
+        xb.set(h * headDim + d, acc * inv);
+    }
+
     public static void attentionWithSlidingWindowSplit(
             KernelContext context,
             FloatArray q,
