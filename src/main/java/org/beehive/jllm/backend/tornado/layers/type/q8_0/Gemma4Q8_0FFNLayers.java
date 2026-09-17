@@ -371,6 +371,18 @@ public class Gemma4Q8_0FFNLayers
                     ATTENTION_LOCAL_SIZE);
         }
 
+        if (packed) {
+            // The attention output, not the normalized activation the projections above read: the
+            // triple holds one activation at a time and attention has overwritten wrapXb since.
+            unifiedLayer.task(
+                    "attn_out_quantize",
+                    org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0::quantizeActivationQ8Blocks,
+                    context,
+                    gemma4State.workspace.wrapXb,
+                    gemma4State.workspace.wrapXbQuants,
+                    gemma4State.workspace.wrapXbScales,
+                    gemma4State.workspace.wrapXbSums);
+        }
         addProjection(
                 unifiedLayer,
                 "wo_proj",
@@ -378,7 +390,8 @@ public class Gemma4Q8_0FFNLayers
                 gemma4State.workspace.wrapXb2,
                 weights.woLayered[layerIndex],
                 qDim,
-                dim);
+                dim,
+                packed);
 
         unifiedLayer.task(
                 "post_attn_reduce",
@@ -492,6 +505,18 @@ public class Gemma4Q8_0FFNLayers
                     ffnLen,
                     LOCAL_WORK_GROUP_SIZE_ALLOC);
         }
+        if (packed) {
+            // The feed-forward's hidden vector, which is wider than anything quantized above --
+            // up to 12288 here against the embedding's 1536.
+            unifiedLayer.task(
+                    "ffn_hidden_quantize",
+                    org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0::quantizeActivationQ8Blocks,
+                    context,
+                    gemma4State.workspace.wrapHb,
+                    gemma4State.workspace.wrapXbQuants,
+                    gemma4State.workspace.wrapXbScales,
+                    gemma4State.workspace.wrapXbSums);
+        }
         addProjection(
                 unifiedLayer,
                 "ffn_down_proj",
@@ -499,7 +524,8 @@ public class Gemma4Q8_0FFNLayers
                 gemma4State.workspace.wrapXb2,
                 weights.w2Layered[layerIndex],
                 ffnLen,
-                dim);
+                dim,
+                packed);
 
         unifiedLayer.task(
                 "post_ffn_reduce",
@@ -903,6 +929,12 @@ public class Gemma4Q8_0FFNLayers
                 WorkerGrid quantizeWorker = WorkerGridFactory.genericWorker(dim, 32);
                 gridScheduler.addWorkerGrid(prefix + "attn_quantize", quantizeWorker);
                 gridScheduler.addWorkerGrid(prefix + "ffn_quantize", quantizeWorker);
+                gridScheduler.addWorkerGrid(
+                        prefix + "attn_out_quantize",
+                        WorkerGridFactory.genericWorker(qDim, 32));
+                gridScheduler.addWorkerGrid(
+                        prefix + "ffn_hidden_quantize",
+                        WorkerGridFactory.genericWorker(ffnLen, 32));
             }
             gridScheduler.addWorkerGrid(prefix + "q_proj", qProjWorker);
             gridScheduler.addWorkerGrid(prefix + "q_norm", headNormWorker);
