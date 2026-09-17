@@ -629,6 +629,183 @@ public final class Qwen35BatchKernels {
         }
     }
 
+    // ---- per-head norms, a workgroup per (row, head) ---------------------------------------
+
+    // @formatter:off
+    /**
+     * {@link #gatedNormPerHeadBatch} with a workgroup per (row, head) and a lane per element, the
+     * arithmetic and its order unchanged.
+     *
+     * <p>The one-lane form launches {@code rows * heads} single-thread workgroups, each walking its
+     * head twice from global memory in series with the reciprocal square root sunk into the apply
+     * loop. Here the workgroup loads the head once, coalesced, into shared memory; lane zero then
+     * computes the sum of squares as the same left fold in element order over the staged values and
+     * publishes {@code inv}; every lane applies its own element. The fold's order, the expression
+     * {@code weight[i] * (inv * v) * silu(z)} and the epsilon are those of the one-lane form, so
+     * the results are bit-equal to it (asserted by the test); what changes is only who does the
+     * work.
+     *
+     * <p>Worker: {@code rows * heads} groups of {@code headDim} lanes.
+     */
+    // @formatter:on
+    public static void gatedNormPerHeadBatchGroup(
+            KernelContext context,
+            FloatArray values,
+            FloatArray gate,
+            FloatArray weight,
+            int heads,
+            int headDim,
+            float eps,
+            IntArray batchInfo) {
+        int group = context.groupIdx;
+        if (group >= heads * batchInfo.get(1)) {
+            return;
+        }
+        int lane = context.localIdx;
+        int index = group * headDim + lane;
+        float[] shared = context.allocateFloatLocalArray(headDim + 1);
+        float v = values.get(index);
+        shared[lane] = v;
+        context.localBarrier();
+        if (lane == 0) {
+            float ss = 0.0f;
+            for (int i = 0; i < headDim; i++) {
+                float x = shared[i];
+                ss += x * x;
+            }
+            shared[headDim] = 1.0f / TornadoMath.sqrt(ss / headDim + eps);
+        }
+        context.localBarrier();
+        float inv = shared[headDim];
+        float z = gate.get(index);
+        float silu = z / (1.0f + TornadoMath.exp(-z));
+        values.set(index, weight.get(lane) * (inv * v) * silu);
+    }
+
+    /**
+     * {@link #l2NormPerHeadBatch} with a workgroup per (row, head) and a lane per element; lane
+     * zero keeps the left fold over the staged head, so the results are bit-equal to the one-lane
+     * form. Worker: {@code rows * heads} groups of {@code headDim} lanes.
+     */
+    public static void l2NormPerHeadBatchGroup(
+            KernelContext context,
+            FloatArray values,
+            int heads,
+            int headDim,
+            float eps,
+            IntArray batchInfo) {
+        int group = context.groupIdx;
+        if (group >= heads * batchInfo.get(1)) {
+            return;
+        }
+        int lane = context.localIdx;
+        int index = group * headDim + lane;
+        float[] shared = context.allocateFloatLocalArray(headDim + 1);
+        float v = values.get(index);
+        shared[lane] = v;
+        context.localBarrier();
+        if (lane == 0) {
+            float ss = 0.0f;
+            for (int i = 0; i < headDim; i++) {
+                float x = shared[i];
+                ss += x * x;
+            }
+            shared[headDim] = 1.0f / TornadoMath.max(TornadoMath.sqrt(ss), eps);
+        }
+        context.localBarrier();
+        values.set(index, v * shared[headDim]);
+    }
+
+    /**
+     * {@link #fusedQKRmsNormBatch} with a workgroup per (row, head) and a lane per element; lane
+     * zero keeps the left fold over the staged head, so the results are bit-equal to the one-lane
+     * form. Groups past the query heads of a row address its key heads. Worker: {@code rows *
+     * (heads + keyValueHeads)} groups of {@code headDim} lanes.
+     */
+    public static void fusedQKRmsNormBatchGroup(
+            KernelContext context,
+            FloatArray queryBatch,
+            FloatArray keyBatch,
+            FloatArray queryWeights,
+            FloatArray keyWeights,
+            int heads,
+            int keyValueHeads,
+            int headDim,
+            float eps,
+            IntArray batchInfo) {
+        int group = context.groupIdx;
+        int perRow = heads + keyValueHeads;
+        if (group >= perRow * batchInfo.get(1)) {
+            return;
+        }
+        int lane = context.localIdx;
+        int row = group / perRow;
+        int head = group - row * perRow;
+        float[] shared = context.allocateFloatLocalArray(headDim + 1);
+        if (head < heads) {
+            int index = row * heads * headDim + head * headDim + lane;
+            float v = queryBatch.get(index);
+            shared[lane] = v;
+            context.localBarrier();
+            if (lane == 0) {
+                float ss = 0.0f;
+                for (int i = 0; i < headDim; i++) {
+                    float x = shared[i];
+                    ss += x * x;
+                }
+                shared[headDim] = 1.0f / TornadoMath.sqrt(ss / headDim + eps);
+            }
+            context.localBarrier();
+            queryBatch.set(index, queryWeights.get(lane) * (shared[headDim] * v));
+        } else {
+            int index = row * keyValueHeads * headDim + (head - heads) * headDim + lane;
+            float v = keyBatch.get(index);
+            shared[lane] = v;
+            context.localBarrier();
+            if (lane == 0) {
+                float ss = 0.0f;
+                for (int i = 0; i < headDim; i++) {
+                    float x = shared[i];
+                    ss += x * x;
+                }
+                shared[headDim] = 1.0f / TornadoMath.sqrt(ss / headDim + eps);
+            }
+            context.localBarrier();
+            keyBatch.set(index, keyWeights.get(lane) * (shared[headDim] * v));
+        }
+    }
+
+    /** Lanes of one row-norm workgroup. */
+    public static final int RMS_GROUP_LOCAL = 256;
+
+    /**
+     * {@code TransformerBatchPrefillKernels.batchedRmsReduce} with a workgroup per row: the row is
+     * staged into shared memory by all lanes, coalesced, and lane zero keeps the left fold in
+     * element order over the staged values, so the scale is bit-equal to the one-lane form's.
+     * Worker: {@code rows} groups of {@link #RMS_GROUP_LOCAL} lanes; {@code dim} a multiple of it.
+     */
+    public static void rmsReduceBatchGroup(
+            KernelContext context, FloatArray x, FloatArray scale, int dim, float eps) {
+        int row = context.groupIdx;
+        int lane = context.localIdx;
+        int base = row * dim;
+        float[] shared = context.allocateFloatLocalArray(dim);
+        for (int i = lane; i < dim; i += RMS_GROUP_LOCAL) {
+            shared[i] = x.get(base + i);
+        }
+        context.localBarrier();
+        if (lane == 0) {
+            float ss = 0.0f;
+            for (int i = 0; i < dim; i++) {
+                float v = shared[i];
+                ss += v * v;
+            }
+            ss /= dim;
+            ss += eps;
+            scale.set(row, 1.0f / TornadoMath.sqrt(ss));
+        }
+    }
+
     // ---- attention-layer kernels ---------------------------------------------
 
     /** The interleaved query/gate projection, separated per row. */

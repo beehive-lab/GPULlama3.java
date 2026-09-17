@@ -708,6 +708,26 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
         return layer;
     }
 
+    /** The largest workgroup a CUDA device schedules; a head wider than it keeps one lane. */
+    private static final int MAX_GROUP = 1024;
+
+    /**
+     * Whether a per-head norm over {@code headDim} runs as a workgroup per (row, head) with the
+     * exact one-lane arithmetic ({@code Qwen35BatchKernels.*BatchGroup}): the head has to be a
+     * workgroup's width or less. The one-lane kernels stay for anything wider.
+     */
+    private static boolean groupNormEligible(int headDim) {
+        return headDim >= 1 && headDim <= MAX_GROUP;
+    }
+
+    /**
+     * Whether the row RMS reduction runs as a workgroup per row with the exact one-lane fold: the
+     * row has to be whole strides of the group and fit the staged shared row.
+     */
+    private static boolean groupRmsEligible(int dim) {
+        return dim % Qwen35BatchKernels.RMS_GROUP_LOCAL == 0 && dim <= 12288;
+    }
+
     /** {@code normed[b] = weight ⊙ rms(x[b])} — a scale per row, then the apply. */
     private void normalize(
             TaskGraph layer,
@@ -715,14 +735,25 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
             String apply,
             FloatArray scaleBatch,
             TornadoTensor weight) {
-        layer.task(
-                reduce,
-                TransformerBatchPrefillKernels::batchedRmsReduce,
-                context,
-                state.workspace.wrapXBatch,
-                scaleBatch,
-                config.dim(),
-                config.rmsNormEps());
+        if (groupRmsEligible(config.dim())) {
+            layer.task(
+                    reduce,
+                    Qwen35BatchKernels::rmsReduceBatchGroup,
+                    context,
+                    state.workspace.wrapXBatch,
+                    scaleBatch,
+                    config.dim(),
+                    config.rmsNormEps());
+        } else {
+            layer.task(
+                    reduce,
+                    TransformerBatchPrefillKernels::batchedRmsReduce,
+                    context,
+                    state.workspace.wrapXBatch,
+                    scaleBatch,
+                    config.dim(),
+                    config.rmsNormEps());
+        }
         layer.task(
                 apply,
                 TransformerBatchPrefillKernels::batchedRmsApplyFP32,
@@ -797,7 +828,9 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
 
         layer.task(
                 "attn_qk_norm",
-                Qwen35BatchKernels::fusedQKRmsNormBatch,
+                groupNormEligible(headDim)
+                        ? Qwen35BatchKernels::fusedQKRmsNormBatchGroup
+                        : Qwen35BatchKernels::fusedQKRmsNormBatch,
                 context,
                 state.workspace.wrapAttnQBatch,
                 state.workspace.wrapKBatch,
@@ -1116,7 +1149,9 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
 
         layer.task(
                 "ssm_l2norm_q",
-                Qwen35BatchKernels::l2NormPerHeadBatch,
+                groupNormEligible(headK)
+                        ? Qwen35BatchKernels::l2NormPerHeadBatchGroup
+                        : Qwen35BatchKernels::l2NormPerHeadBatch,
                 context,
                 state.workspace.wrapSsmQBatch,
                 config.numberOfKeyHeads(),
@@ -1125,7 +1160,9 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 state.workspace.batchStartPosHolder);
         layer.task(
                 "ssm_l2norm_k",
-                Qwen35BatchKernels::l2NormPerHeadBatch,
+                groupNormEligible(headK)
+                        ? Qwen35BatchKernels::l2NormPerHeadBatchGroup
+                        : Qwen35BatchKernels::l2NormPerHeadBatch,
                 context,
                 state.workspace.wrapSsmKBatch,
                 config.numberOfKeyHeads(),
@@ -1169,7 +1206,9 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
 
         layer.task(
                 "ssm_gated_norm",
-                Qwen35BatchKernels::gatedNormPerHeadBatch,
+                groupNormEligible(headV)
+                        ? Qwen35BatchKernels::gatedNormPerHeadBatchGroup
+                        : Qwen35BatchKernels::gatedNormPerHeadBatch,
                 context,
                 state.workspace.wrapSsmOutBatch,
                 state.workspace.wrapSsmZBatch,
@@ -1445,7 +1484,13 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
     public void updateGridScheduler(GridScheduler scheduler) {
         final int headDim = config.numberOfHeadsKey();
 
-        WorkerGrid rmsReduce = WorkerGridFactory.genericWorker(batchSize, 1);
+        // A workgroup per row where the group kernel is dispatched, else a lane per row.
+        WorkerGrid rmsReduce =
+                groupRmsEligible(config.dim())
+                        ? WorkerGridFactory.genericWorker(
+                                batchSize * Qwen35BatchKernels.RMS_GROUP_LOCAL,
+                                Qwen35BatchKernels.RMS_GROUP_LOCAL)
+                        : WorkerGridFactory.genericWorker(batchSize, 1);
         WorkerGrid rmsApply =
                 WorkerGridFactory.genericWorker(batchSize * config.dim(), ELEMENTWISE_LOCAL);
         // One lane per element of the padded chunk.
@@ -1480,9 +1525,14 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
         WorkerGrid queryGate =
                 WorkerGridFactory.genericWorker(
                         batchSize * config.attentionOutputInputDim(), ELEMENTWISE_LOCAL);
+        // A workgroup per (row, head) of a lane per element where the group kernel is
+        // dispatched, else a lane per (row, head).
+        int qkHeads = batchSize * (config.numberOfHeads() + config.numberOfKeyValueHeads());
         WorkerGrid qkNorm =
-                WorkerGridFactory.genericWorker(
-                        batchSize * (config.numberOfHeads() + config.numberOfKeyValueHeads()), 1);
+                groupNormEligible(config.headSize())
+                        ? WorkerGridFactory.genericWorker(
+                                qkHeads * config.headSize(), config.headSize())
+                        : WorkerGridFactory.genericWorker(qkHeads, 1);
         WorkerGrid rope =
                 WorkerGridFactory.genericWorker(
                         batchSize * config.numberOfHeads() * (config.ropeDimensionCount() / 2), 32);
@@ -1527,9 +1577,22 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 WorkerGridFactory.genericWorker(
                         batchSize * config.deltaNetKeyDim(), ELEMENTWISE_LOCAL);
         WorkerGrid keyHeads =
-                WorkerGridFactory.genericWorker(batchSize * config.numberOfKeyHeads(), 1);
+                groupNormEligible(config.headKeyDim())
+                        ? WorkerGridFactory.genericWorker(
+                                batchSize * config.numberOfKeyHeads() * config.headKeyDim(),
+                                config.headKeyDim())
+                        : WorkerGridFactory.genericWorker(batchSize * config.numberOfKeyHeads(), 1);
         WorkerGrid valueHeads =
-                WorkerGridFactory.genericWorker(batchSize * config.numberOfValueHeads(), 1);
+                groupNormEligible(config.headValueDim())
+                        ? WorkerGridFactory.genericWorker(
+                                batchSize * config.numberOfValueHeads() * config.headValueDim(),
+                                config.headValueDim())
+                        : WorkerGridFactory.genericWorker(
+                                batchSize * config.numberOfValueHeads(), 1);
+        // Elementwise over (row, value head); the kernel guards its lane, so any local size.
+        WorkerGrid decayBeta =
+                WorkerGridFactory.genericWorker(
+                        batchSize * config.numberOfValueHeads(), ELEMENTWISE_LOCAL);
 
         for (int layer = 0; layer < config.numberOfLayers(); layer++) {
             String prefix = "batchLayer_" + layer + ".";
@@ -1574,7 +1637,7 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 scheduler.addWorkerGrid(
                         prefix + "ssm_alpha_proj",
                         matVecWorker(prefix + "ssm_alpha_proj", config.numberOfValueHeads()));
-                scheduler.addWorkerGrid(prefix + "ssm_decay_beta", valueHeads);
+                scheduler.addWorkerGrid(prefix + "ssm_decay_beta", decayBeta);
                 scheduler.addWorkerGrid(prefix + "ssm_conv", convChannels);
                 scheduler.addWorkerGrid(prefix + "ssm_conv_silu", convDim);
                 scheduler.addWorkerGrid(prefix + "ssm_split_qkv", convDim);
