@@ -32,6 +32,17 @@ public final class Gemma4BatchPrefillKernels {
 
     private Gemma4BatchPrefillKernels() {}
 
+    // @formatter:off
+    /**
+     * Dimensions per staged key tile.
+     *
+     * <p>Thirty-two: one warp's worth of contiguous floats is 128 bytes, which is one sector, and
+     * both of this family's head widths — 256 on the sliding-window layers, 512 on the full ones —
+     * are whole multiples of it, so a tile never straddles the end of a head.
+     */
+    // @formatter:on
+    private static final int DIM_TILE = 32;
+
     // ── Norms ────────────────────────────────────────────────────────────────
 
     // @formatter:off
@@ -405,6 +416,170 @@ public final class Gemma4BatchPrefillKernels {
 
         for (int t = windowStart + tid; t <= pos; t += localSize) {
             scores.set(scoreBase + (t - windowStart), scores.get(scoreBase + (t - windowStart)) * normFactor);
+        }
+        context.localBarrier();
+
+        for (int i = tid; i < headDim; i += localSize) {
+            float weightedSum = 0.0f;
+            for (int t = windowStart; t <= pos; t++) {
+                int valueOffset = cacheBaseOffset + t * kvDim + kvHeadIdx * headDim;
+                weightedSum += scores.get(scoreBase + (t - windowStart)) * valueCache.get(valueOffset + i);
+            }
+            out.set(outBase + i, new HalfFloat(weightedSum));
+        }
+    }
+
+    // @formatter:off
+    /**
+     * The same attention with the key tile staged through shared memory, coalesced.
+     *
+     * <p>Only the score phase differs from {@link #batchedSlidingWindowAttention}. There, one lane
+     * owns one position and walks {@code headDim} straight out of global memory, so at a fixed
+     * dimension consecutive lanes are {@code kvDim} floats apart and every load is its own sector.
+     * Here the phase walks {@code headDim} in tiles of {@value #DIM_TILE}: a tile is loaded with
+     * consecutive lanes reading consecutive <i>dimensions</i> of one position, which is contiguous,
+     * and stored transposed at {@code keyTile[d * (lanes + 1) + p]} so that the read back — every
+     * lane taking its own position at a fixed dimension — strides by one and hits no bank twice.
+     *
+     * <p><b>Bit-identical to the kernel it replaces.</b> A lane still owns the same position and
+     * still accumulates that position's dot product over dimensions in increasing order — the tiles
+     * are in order and the dimensions within a tile are in order — so it is the same sum of the same
+     * products in the same sequence. The maximum, the sum of exponentials, the normalisation and the
+     * whole value pass are untouched. This is a change to where the operands are read from, and to
+     * nothing else.
+     *
+     * <p>The tile barriers sit outside the {@code t <= pos} guard on purpose: the lanes whose
+     * position is past the end of the window still have to reach them, and a barrier inside a
+     * divergent branch is the classic way to hang a workgroup rather than to skip work in it.
+     *
+     * <p>Worker: {@code B*nHeads} workgroups of {@code localMemSize} lanes, as before.
+     */
+    // @formatter:on
+    public static void batchedSlidingWindowAttentionStaged(
+            KernelContext context,
+            IntArray startPosHolder,
+            FloatArray qkv,
+            FloatArray keyCache,
+            FloatArray valueCache,
+            HalfFloatArray out,
+            FloatArray scores,
+            int nHeads,
+            int headDim,
+            int kvDim,
+            int kvMul,
+            int qkvStride,
+            int cacheBaseOffset,
+            int windowSize,
+            int scoreStride,
+            int localMemSize) {
+        int tid = context.localIdx;
+        int group = context.groupIdx;
+        int localSize = context.localGroupSizeX;
+
+        int b = group / nHeads;
+        int h = group - b * nHeads;
+        int outBase = b * (nHeads * headDim) + h * headDim;
+
+        if (b >= startPosHolder.get(1)) {
+            for (int i = tid; i < headDim; i += localSize) {
+                out.set(outBase + i, new HalfFloat(0.0f));
+            }
+            return;
+        }
+
+        int pos = startPosHolder.get(0) + b;
+        int windowStart = Math.max(0, pos - windowSize + 1);
+        int scoreBase = group * scoreStride;
+        int kvHeadIdx = h / kvMul;
+        int qOffset = b * qkvStride + h * headDim;
+
+        float[] qShared = context.allocateFloatLocalArray(headDim);
+        float[] reduce = context.allocateFloatLocalArray(localMemSize);
+        float[] keyTile = context.allocateFloatLocalArray(DIM_TILE * (localMemSize + 1));
+
+        for (int i = tid; i < headDim; i += localSize) {
+            qShared[i] = qkv.get(qOffset + i);
+        }
+        context.localBarrier();
+
+        int tileStride = localSize + 1;
+        int tileElements = DIM_TILE * localSize;
+        for (int tBase = windowStart; tBase <= pos; tBase += localSize) {
+            int t = tBase + tid;
+            float score = 0.0f;
+            for (int d0 = 0; d0 < headDim; d0 += DIM_TILE) {
+                context.localBarrier();
+                for (int idx = tid; idx < tileElements; idx += localSize) {
+                    int d = idx % DIM_TILE;
+                    int p = idx / DIM_TILE;
+                    int tt = tBase + p;
+                    float v =
+                            (tt <= pos)
+                                    ? keyCache.get(
+                                            cacheBaseOffset
+                                                    + tt * kvDim
+                                                    + kvHeadIdx * headDim
+                                                    + d0
+                                                    + d)
+                                    : 0.0f;
+                    keyTile[d * tileStride + p] = v;
+                }
+                context.localBarrier();
+                if (t <= pos) {
+                    for (int d = 0; d < DIM_TILE; d++) {
+                        score += qShared[d0 + d] * keyTile[d * tileStride + tid];
+                    }
+                }
+            }
+            if (t <= pos) {
+                scores.set(scoreBase + (t - windowStart), score);
+            }
+        }
+        context.localBarrier();
+
+        float localMax = Float.NEGATIVE_INFINITY;
+        for (int t = windowStart + tid; t <= pos; t += localSize) {
+            float v = scores.get(scoreBase + (t - windowStart));
+            if (v > localMax) {
+                localMax = v;
+            }
+        }
+        reduce[tid] = localMax;
+        context.localBarrier();
+        for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+            if (tid < stride) {
+                float other = reduce[tid + stride];
+                if (other > reduce[tid]) {
+                    reduce[tid] = other;
+                }
+            }
+            context.localBarrier();
+        }
+        float maxScore = reduce[0];
+        context.localBarrier();
+
+        float localSum = 0.0f;
+        for (int t = windowStart + tid; t <= pos; t += localSize) {
+            float e = TornadoMath.exp(scores.get(scoreBase + (t - windowStart)) - maxScore);
+            scores.set(scoreBase + (t - windowStart), e);
+            localSum += e;
+        }
+        reduce[tid] = localSum;
+        context.localBarrier();
+        for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+            if (tid < stride) {
+                reduce[tid] += reduce[tid + stride];
+            }
+            context.localBarrier();
+        }
+        float sum = reduce[0];
+        float normFactor = (sum > 0.0f) ? (1.0f / sum) : (1.0f / (pos - windowStart + 1));
+        context.localBarrier();
+
+        for (int t = windowStart + tid; t <= pos; t += localSize) {
+            scores.set(
+                    scoreBase + (t - windowStart),
+                    scores.get(scoreBase + (t - windowStart)) * normFactor);
         }
         context.localBarrier();
 

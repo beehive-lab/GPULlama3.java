@@ -65,6 +65,17 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
     /** Lanes per (row, head) in the per-head norms and in attention. */
     private static final int HEAD_LOCAL_SIZE = 128;
 
+    // @formatter:off
+    /**
+     * Which of the two attention kernels this plan dispatches.
+     *
+     * <p>An exact-comparison switch, not a tuning knob: the two are bit-identical by construction
+     * and the property exists so one build can measure both. The retained kernel is the staged one.
+     */
+    // @formatter:on
+    private static final boolean STAGED_ATTENTION =
+            !Boolean.getBoolean("jllm.gemma4.unstagedAttention");
+
     private final Gemma4State state;
     private final Gemma4TornadoWeights weights;
     private final Gemma4Configuration config;
@@ -420,7 +431,9 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
 
         layer.task(
                 "batch_attention",
-                Gemma4BatchPrefillKernels::batchedSlidingWindowAttention,
+                STAGED_ATTENTION
+                        ? Gemma4BatchPrefillKernels::batchedSlidingWindowAttentionStaged
+                        : Gemma4BatchPrefillKernels::batchedSlidingWindowAttention,
                 context,
                 state.workspace.batchStartPosHolder,
                 state.workspace.qkvResultBatch,
