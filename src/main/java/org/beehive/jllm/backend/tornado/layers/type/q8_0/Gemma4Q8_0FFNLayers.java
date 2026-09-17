@@ -146,9 +146,81 @@ public class Gemma4Q8_0FFNLayers
         return config.attentionSplits();
     }
 
+    /**
+     * Adjacent layers to a decode graph.
+     *
+     * <p>Every task graph is one submission, and CUDA graphs do not change that -- they are applied
+     * per graph, so thirty-five layer graphs stay thirty-five launches. Grouping divides the
+     * submissions without building one graph for the whole trunk.
+     *
+     * <p>Not a tuning knob and not user-settable: the grouping is a property of this family's plan,
+     * and changing it is an experiment with its own measurement.
+     */
+    private static final int LAYERS_PER_GRAPH = 4;
+
+    /** The graph holding {@code layerIndex}, named for the first layer in it. */
+    private String layerGraphName(int layerIndex) {
+        return "layer_" + (layerIndex - layerIndex % LAYERS_PER_GRAPH);
+    }
+
+    /**
+     * What keeps a graph's layers' tasks apart inside it.
+     *
+     * <p>Grid keys are {@code graphName.taskName}, so without this every layer in a graph would
+     * claim {@code layer_0.attn_norm_reduce}. The first layer of a graph keeps the bare names the
+     * ungrouped family used, so only the later slots' keys are new.
+     */
+    private String layerTaskPrefix(int layerIndex) {
+        int slot = layerIndex % LAYERS_PER_GRAPH;
+        return slot == 0 ? "" : "l" + slot + "_";
+    }
+
+    /** A task's name inside its graph. */
+    private String tn(int layerIndex, String task) {
+        return layerTaskPrefix(layerIndex) + task;
+    }
+
+    private boolean firstLayerOfGraph(int layerIndex) {
+        return layerIndex % LAYERS_PER_GRAPH == 0;
+    }
+
+    private boolean lastLayerOfGraph(int layerIndex) {
+        return layerIndex % LAYERS_PER_GRAPH == LAYERS_PER_GRAPH - 1
+                || layerIndex == config.numberOfLayers() - 1;
+    }
+
+    /**
+     * One graph per group of layers, in order, with a smaller graph for any remainder.
+     *
+     * <p>Overrides the one-graph-per-layer construction rather than generalising it: the grouping
+     * is this family's, and every other family keeps the loop it had.
+     */
+    @Override
+    protected void setupFFNLayers() {
+        int layers = config.numberOfLayers();
+        java.util.List<uk.ac.manchester.tornado.api.ImmutableTaskGraph> graphs =
+                new java.util.ArrayList<>();
+        for (int first = 0; first < layers; first += LAYERS_PER_GRAPH) {
+            TaskGraph graph = new TaskGraph(layerGraphName(first));
+            int last = Math.min(first + LAYERS_PER_GRAPH, layers) - 1;
+            for (int layer = first; layer <= last; layer++) {
+                appendLayer(graph, layer);
+            }
+            lastFFNLayerTaskGraphID = graph.getTaskGraphName();
+            graphs.add(graph.snapshot());
+        }
+        ffnLayerITGs = java.util.List.copyOf(graphs);
+    }
+
+    /** Kept for the base class's contract; the grouped construction above is what runs. */
     @Override
     protected TaskGraph createFFNLayerTaskGraph(int layerIndex) {
-        var taskGraphName = "layer_" + layerIndex;
+        TaskGraph graph = new TaskGraph(layerGraphName(layerIndex));
+        appendLayer(graph, layerIndex);
+        return graph;
+    }
+
+    protected void appendLayer(TaskGraph unifiedLayer, int layerIndex) {
         final int headDim = config.headDim(layerIndex);
         final boolean isSwa = config.isSwa(layerIndex);
         final boolean hasOwnKv = config.hasOwnKv(layerIndex);
@@ -163,8 +235,9 @@ public class Gemma4Q8_0FFNLayers
                 (isSwa ? weights.freqCisImagSwa : weights.freqCisImagFull).asFloatArray();
         final int peOffset = layerIndex * nEmbdPerLayer;
 
-        var unifiedLayer = new TaskGraph(taskGraphName);
-        unifiedLayer.consumeFromDevice(gemma4State.workspace.wrapX);
+        if (firstLayerOfGraph(layerIndex)) {
+            unifiedLayer.consumeFromDevice(gemma4State.workspace.wrapX);
+        }
         unifiedLayer.transferToDevice(
                 DataTransferMode.FIRST_EXECUTION,
                 weights.rms_att_weightLayered[layerIndex].asFloatArray(),
@@ -196,7 +269,7 @@ public class Gemma4Q8_0FFNLayers
 
         // ═══════════════════════════════════ ATTENTION ═══════════════════════════════════
         unifiedLayer.task(
-                "attn_norm_reduce",
+                tn(layerIndex, "attn_norm_reduce"),
                 rmsReduceKernel(),
                 context,
                 gemma4State.workspace.temp,
@@ -206,7 +279,7 @@ public class Gemma4Q8_0FFNLayers
                 gemma4State.localSize);
         if (shouldUseFinalNormalization()) {
             unifiedLayer.task(
-                    "attn_norm_finalize",
+                    tn(layerIndex, "attn_norm_finalize"),
                     TransformerComputeKernelsLayered::reductionFinalNormalization,
                     context,
                     gemma4State.workspace.temp,
@@ -214,7 +287,7 @@ public class Gemma4Q8_0FFNLayers
                     config.rmsNormEps());
         }
         unifiedLayer.task(
-                "attn_norm_apply",
+                tn(layerIndex, "attn_norm_apply"),
                 Gemma4Kernels::applyRmsNorm,
                 context,
                 gemma4State.workspace.wrapXb,
@@ -226,7 +299,7 @@ public class Gemma4Q8_0FFNLayers
         boolean packed = packedFor(layerIndex);
         if (packed) {
             unifiedLayer.task(
-                    "attn_quantize",
+                    tn(layerIndex, "attn_quantize"),
                     org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0::quantizeActivationQ8Blocks,
                     context,
                     gemma4State.workspace.wrapXb,
@@ -236,7 +309,7 @@ public class Gemma4Q8_0FFNLayers
         }
         addProjection(
                 unifiedLayer,
-                "q_proj",
+                tn(layerIndex, "q_proj"),
                 gemma4State.workspace.wrapXb,
                 gemma4State.workspace.wrapQ,
                 weights.wqLayered[layerIndex],
@@ -244,7 +317,7 @@ public class Gemma4Q8_0FFNLayers
                 qDim,
                 packed);
         unifiedLayer.task(
-                "q_norm",
+                tn(layerIndex, "q_norm"),
                 Gemma4Kernels::rmsNormPerHead,
                 context,
                 gemma4State.workspace.wrapQ,
@@ -257,7 +330,7 @@ public class Gemma4Q8_0FFNLayers
         if (hasOwnKv) {
             addProjection(
                     unifiedLayer,
-                    "k_proj",
+                    tn(layerIndex, "k_proj"),
                     gemma4State.workspace.wrapXb,
                     gemma4State.workspace.wrapK,
                     weights.wkLayered[layerIndex],
@@ -265,7 +338,7 @@ public class Gemma4Q8_0FFNLayers
                     kvDim,
                     packed);
             unifiedLayer.task(
-                    "k_norm",
+                    tn(layerIndex, "k_norm"),
                     Gemma4Kernels::rmsNormPerHead,
                     context,
                     gemma4State.workspace.wrapK,
@@ -276,7 +349,7 @@ public class Gemma4Q8_0FFNLayers
                     config.rmsNormEps());
             addProjection(
                     unifiedLayer,
-                    "v_proj",
+                    tn(layerIndex, "v_proj"),
                     gemma4State.workspace.wrapXb,
                     gemma4State.workspace.wrapV,
                     weights.wvLayered[layerIndex],
@@ -284,7 +357,7 @@ public class Gemma4Q8_0FFNLayers
                     kvDim,
                     packed);
             unifiedLayer.task(
-                    "v_norm",
+                    tn(layerIndex, "v_norm"),
                     Gemma4Kernels::rmsNormPerHeadNoWeight,
                     context,
                     gemma4State.workspace.wrapV,
@@ -293,7 +366,7 @@ public class Gemma4Q8_0FFNLayers
                     HEAD_NORM_LOCAL_SIZE,
                     config.rmsNormEps());
             unifiedLayer.task(
-                    "rope_and_cache",
+                    tn(layerIndex, "rope_and_cache"),
                     Gemma4Kernels::ropeNeoxRotateAndCacheCopy,
                     context,
                     gemma4State.workspace.positionHolder,
@@ -310,7 +383,7 @@ public class Gemma4Q8_0FFNLayers
                     cacheBaseOffset);
         } else {
             unifiedLayer.task(
-                    "rope_q_only",
+                    tn(layerIndex, "rope_q_only"),
                     Gemma4Kernels::ropeNeoxRotateQOnly,
                     context,
                     gemma4State.workspace.positionHolder,
@@ -323,7 +396,7 @@ public class Gemma4Q8_0FFNLayers
         int splits = attentionSplits();
         if (splits > 1) {
             unifiedLayer.task(
-                    "attention_split",
+                    tn(layerIndex, "attention_split"),
                     Gemma4Kernels::attentionWithSlidingWindowSplit,
                     context,
                     gemma4State.workspace.wrapQ,
@@ -342,7 +415,7 @@ public class Gemma4Q8_0FFNLayers
                     splits,
                     ATTENTION_LOCAL_SIZE);
             unifiedLayer.task(
-                    "attention_combine",
+                    tn(layerIndex, "attention_combine"),
                     TransformerComputeKernelsLayered::combineSplitKVAttention,
                     context,
                     gemma4State.workspace.wrapAttSplit,
@@ -352,7 +425,7 @@ public class Gemma4Q8_0FFNLayers
                     splits);
         } else {
             unifiedLayer.task(
-                    "attention",
+                    tn(layerIndex, "attention"),
                     Gemma4Kernels::attentionWithSlidingWindowParallel,
                     context,
                     gemma4State.workspace.wrapQ,
@@ -375,7 +448,7 @@ public class Gemma4Q8_0FFNLayers
             // The attention output, not the normalized activation the projections above read: the
             // triple holds one activation at a time and attention has overwritten wrapXb since.
             unifiedLayer.task(
-                    "attn_out_quantize",
+                    tn(layerIndex, "attn_out_quantize"),
                     org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0::quantizeActivationQ8Blocks,
                     context,
                     gemma4State.workspace.wrapXb,
@@ -385,7 +458,7 @@ public class Gemma4Q8_0FFNLayers
         }
         addProjection(
                 unifiedLayer,
-                "wo_proj",
+                tn(layerIndex, "wo_proj"),
                 gemma4State.workspace.wrapXb,
                 gemma4State.workspace.wrapXb2,
                 weights.woLayered[layerIndex],
@@ -394,7 +467,7 @@ public class Gemma4Q8_0FFNLayers
                 packed);
 
         unifiedLayer.task(
-                "post_attn_reduce",
+                tn(layerIndex, "post_attn_reduce"),
                 rmsReduceKernel(),
                 context,
                 gemma4State.workspace.tempPostAttn,
@@ -404,7 +477,7 @@ public class Gemma4Q8_0FFNLayers
                 gemma4State.localSize);
         if (shouldUseFinalNormalization()) {
             unifiedLayer.task(
-                    "post_attn_finalize",
+                    tn(layerIndex, "post_attn_finalize"),
                     TransformerComputeKernelsLayered::reductionFinalNormalization,
                     context,
                     gemma4State.workspace.tempPostAttn,
@@ -412,7 +485,7 @@ public class Gemma4Q8_0FFNLayers
                     config.rmsNormEps());
         }
         unifiedLayer.task(
-                "post_attn_apply",
+                tn(layerIndex, "post_attn_apply"),
                 Gemma4Kernels::rmsNormApplyWithResidual,
                 context,
                 gemma4State.workspace.wrapX,
@@ -423,7 +496,7 @@ public class Gemma4Q8_0FFNLayers
 
         // ═══════════════════════════════════════ FFN ═════════════════════════════════════
         unifiedLayer.task(
-                "ffn_norm_reduce",
+                tn(layerIndex, "ffn_norm_reduce"),
                 rmsReduceKernel(),
                 context,
                 gemma4State.workspace.tempFFN,
@@ -433,7 +506,7 @@ public class Gemma4Q8_0FFNLayers
                 gemma4State.localSize);
         if (shouldUseFinalNormalization()) {
             unifiedLayer.task(
-                    "ffn_norm_finalize",
+                    tn(layerIndex, "ffn_norm_finalize"),
                     TransformerComputeKernelsLayered::reductionFinalNormalization,
                     context,
                     gemma4State.workspace.tempFFN,
@@ -441,7 +514,7 @@ public class Gemma4Q8_0FFNLayers
                     config.rmsNormEps());
         }
         unifiedLayer.task(
-                "ffn_norm_apply",
+                tn(layerIndex, "ffn_norm_apply"),
                 Gemma4Kernels::applyRmsNorm,
                 context,
                 gemma4State.workspace.wrapXb,
@@ -454,7 +527,7 @@ public class Gemma4Q8_0FFNLayers
         // needs its own quantization: the triple holds one activation at a time.
         if (packed) {
             unifiedLayer.task(
-                    "ffn_quantize",
+                    tn(layerIndex, "ffn_quantize"),
                     org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0::quantizeActivationQ8Blocks,
                     context,
                     gemma4State.workspace.wrapXb,
@@ -467,7 +540,7 @@ public class Gemma4Q8_0FFNLayers
         // in every file this family loads -- projectionType() refuses a trunk that disagrees.
         if (packed) {
             unifiedLayer.task(
-                    "ffn_gate_up",
+                    tn(layerIndex, "ffn_gate_up"),
                     org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0::fusedFFNGateUpGeGLUQ4_0DP4A,
                     context,
                     gemma4State.workspace.wrapXbQuants,
@@ -481,7 +554,7 @@ public class Gemma4Q8_0FFNLayers
                     LOCAL_WORK_GROUP_SIZE_ALLOC);
         } else if (weights.w1Layered[layerIndex].dataType() == DataType.Q4_0) {
             unifiedLayer.task(
-                    "ffn_gate_up",
+                    tn(layerIndex, "ffn_gate_up"),
                     org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0
                             ::fusedFFNGateUpGeGLUQ4_0,
                     context,
@@ -494,7 +567,7 @@ public class Gemma4Q8_0FFNLayers
                     LOCAL_WORK_GROUP_SIZE_ALLOC);
         } else {
             unifiedLayer.task(
-                    "ffn_gate_up",
+                    tn(layerIndex, "ffn_gate_up"),
                     Gemma4Kernels::fusedGateUpGeGLUQ8,
                     context,
                     gemma4State.workspace.wrapXb,
@@ -509,7 +582,7 @@ public class Gemma4Q8_0FFNLayers
             // The feed-forward's hidden vector, which is wider than anything quantized above --
             // up to 12288 here against the embedding's 1536.
             unifiedLayer.task(
-                    "ffn_hidden_quantize",
+                    tn(layerIndex, "ffn_hidden_quantize"),
                     org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0::quantizeActivationQ8Blocks,
                     context,
                     gemma4State.workspace.wrapHb,
@@ -519,7 +592,7 @@ public class Gemma4Q8_0FFNLayers
         }
         addProjection(
                 unifiedLayer,
-                "ffn_down_proj",
+                tn(layerIndex, "ffn_down_proj"),
                 gemma4State.workspace.wrapHb,
                 gemma4State.workspace.wrapXb2,
                 weights.w2Layered[layerIndex],
@@ -528,7 +601,7 @@ public class Gemma4Q8_0FFNLayers
                 packed);
 
         unifiedLayer.task(
-                "post_ffn_reduce",
+                tn(layerIndex, "post_ffn_reduce"),
                 rmsReduceKernel(),
                 context,
                 gemma4State.workspace.tempPostFfn,
@@ -538,7 +611,7 @@ public class Gemma4Q8_0FFNLayers
                 gemma4State.localSize);
         if (shouldUseFinalNormalization()) {
             unifiedLayer.task(
-                    "post_ffn_finalize",
+                    tn(layerIndex, "post_ffn_finalize"),
                     TransformerComputeKernelsLayered::reductionFinalNormalization,
                     context,
                     gemma4State.workspace.tempPostFfn,
@@ -546,7 +619,7 @@ public class Gemma4Q8_0FFNLayers
                     config.rmsNormEps());
         }
         unifiedLayer.task(
-                "post_ffn_apply",
+                tn(layerIndex, "post_ffn_apply"),
                 Gemma4Kernels::rmsNormApplyWithResidual,
                 context,
                 gemma4State.workspace.wrapX,
@@ -558,14 +631,14 @@ public class Gemma4Q8_0FFNLayers
         // ═══════════════════════════ PER-LAYER EMBEDDING (PLE) ═══════════════════════════
         addProjection(
                 unifiedLayer,
-                "ple_gate_proj",
+                tn(layerIndex, "ple_gate_proj"),
                 gemma4State.workspace.wrapX,
                 gemma4State.workspace.wrapPerLayerGate,
                 weights.perLayerInpGate[layerIndex],
                 dim,
                 nEmbdPerLayer);
         unifiedLayer.task(
-                "ple_gate_gelu_mul",
+                tn(layerIndex, "ple_gate_gelu_mul"),
                 Gemma4Kernels::pleGateGeluMul,
                 context,
                 gemma4State.workspace.wrapPerLayerGate,
@@ -574,7 +647,7 @@ public class Gemma4Q8_0FFNLayers
                 nEmbdPerLayer);
         addProjection(
                 unifiedLayer,
-                "ple_proj",
+                tn(layerIndex, "ple_proj"),
                 gemma4State.workspace.wrapPerLayerGate,
                 gemma4State.workspace.wrapPerLayerOut,
                 weights.perLayerProj[layerIndex],
@@ -582,7 +655,7 @@ public class Gemma4Q8_0FFNLayers
                 dim);
 
         unifiedLayer.task(
-                "ple_post_reduce",
+                tn(layerIndex, "ple_post_reduce"),
                 rmsReduceKernel(),
                 context,
                 gemma4State.workspace.tempPostPle,
@@ -592,7 +665,7 @@ public class Gemma4Q8_0FFNLayers
                 gemma4State.localSize);
         if (shouldUseFinalNormalization()) {
             unifiedLayer.task(
-                    "ple_post_finalize",
+                    tn(layerIndex, "ple_post_finalize"),
                     TransformerComputeKernelsLayered::reductionFinalNormalization,
                     context,
                     gemma4State.workspace.tempPostPle,
@@ -600,7 +673,7 @@ public class Gemma4Q8_0FFNLayers
                     config.rmsNormEps());
         }
         unifiedLayer.task(
-                "ple_post_apply",
+                tn(layerIndex, "ple_post_apply"),
                 Gemma4Kernels::rmsNormApplyWithResidual,
                 context,
                 gemma4State.workspace.wrapX,
@@ -611,7 +684,7 @@ public class Gemma4Q8_0FFNLayers
 
         if (weights.layerOutputScale[layerIndex] != null) {
             unifiedLayer.task(
-                    "layer_output_scale",
+                    tn(layerIndex, "layer_output_scale"),
                     Gemma4Kernels::scaleInPlaceFromTensor,
                     context,
                     gemma4State.workspace.wrapX,
@@ -619,8 +692,9 @@ public class Gemma4Q8_0FFNLayers
                     dim);
         }
 
-        unifiedLayer.persistOnDevice(gemma4State.workspace.wrapX);
-        return unifiedLayer;
+        if (lastLayerOfGraph(layerIndex)) {
+            unifiedLayer.persistOnDevice(gemma4State.workspace.wrapX);
+        }
     }
 
     /**
@@ -671,6 +745,13 @@ public class Gemma4Q8_0FFNLayers
 
     /** Configure data transfers for first and subsequent layers. */
     protected TaskGraph configureLayerDataTransfers(TaskGraph unifiedLayer, int layerIndex) {
+        // Per graph, not per layer. A graph that both transfers a buffer in and consumes it from
+        // the previous graph is declaring two contradictory things about the same edge, which is
+        // what grouping made possible: layers 1..3 of a group used to be separate graphs whose
+        // consume was the real edge, and inside one graph they are simply the layers above them.
+        if (!firstLayerOfGraph(layerIndex)) {
+            return unifiedLayer;
+        }
         if (layerIndex == 0) {
             unifiedLayer.transferToDevice(
                     DataTransferMode.EVERY_EXECUTION,
@@ -898,7 +979,7 @@ public class Gemma4Q8_0FFNLayers
                 WorkerGridFactory.genericWorker(perLayerTotal, LOCAL_WORK_GROUP_SIZE_ALLOC));
 
         for (int i = 0; i < config.numberOfLayers(); i++) {
-            String prefix = "layer_" + i + ".";
+            String prefix = layerGraphName(i) + "." + layerTaskPrefix(i);
             int headDim = config.headDim(i);
             boolean hasOwnKv = config.hasOwnKv(i);
             int qDim = nHead * headDim;
