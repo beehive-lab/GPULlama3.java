@@ -48,7 +48,18 @@ public final class GoldenCapture {
 
         /** The model dimension of the capture, so a caller can compute an expected grid. */
         public int dim;
+
+        /**
+         * For a batched plan, the kernel method names its batched layer graphs compile for the
+         * tasks of {@link #RECORDED_BATCHED_TASKS}, by task name — read off the plan while it was
+         * alive, since the grid cannot tell two kernels of one geometry apart. Empty otherwise.
+         */
+        public final java.util.Map<String, java.util.Set<String>> batchedTaskKernels =
+                new java.util.TreeMap<>();
     }
+
+    /** The batched tasks whose compiled kernel a capture records. */
+    static final String[] RECORDED_BATCHED_TASKS = {"attention", "ssm_delta_rule"};
 
     private GoldenCapture() {}
 
@@ -193,6 +204,16 @@ public final class GoldenCapture {
                 result.gridScheduler =
                         org.beehive.jllm.backend.tornado.PlanDispatchEvidence
                                 .gridSchedulerIfAvailable(plan);
+                if (plan
+                        instanceof
+                        org.beehive.jllm.backend.tornado.TornadoVMMasterPlanBatchPrefillDecode) {
+                    for (String task : RECORDED_BATCHED_TASKS) {
+                        result.batchedTaskKernels.put(
+                                task,
+                                org.beehive.jllm.backend.tornado.PlanDispatchEvidence
+                                        .batchedTaskKernels(plan, task));
+                    }
+                }
                 model.generateTokensGPU(
                         state, 0, promptTokens, stopTokens, budget, capturing, false, null, plan);
             } else {

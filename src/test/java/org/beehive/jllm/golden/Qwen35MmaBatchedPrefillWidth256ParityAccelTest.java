@@ -23,6 +23,12 @@ public class Qwen35MmaBatchedPrefillWidth256ParityAccelTest extends CpuGpuParity
     public void qwen3_8_27b_q4_0_batchedPrefillParityAt256OnTensorCores() throws Exception {
         GoldenCapture.Result gpu =
                 assertParityBatched(Fixture.QWEN3_8_27B_Q4_0, Q8_0_PACKED_DECODE, 256);
+        // The FP32 cache: attention is the FP32-cache kernel here, not the scored family the
+        // benchmarked FP16 cache selects (Qwen35MmaBatchedPrefillWidth256Fp16KvParityAccelTest).
+        org.junit.Assert.assertEquals(
+                "the batched attention kernel this plan compiled",
+                java.util.Set.of("attentionBatchPaged"),
+                gpu.batchedTaskKernels.get("attention"));
         PlanDispatchEvidence.assertQwen35AttentionOutputOnDequantGemm(
                 gpu.gridScheduler, 256, gpu.dim, 6144);
         PlanDispatchEvidence.assertQwen35SsmOutOnDequantGemm(gpu.gridScheduler, 256, gpu.dim, 6144);
