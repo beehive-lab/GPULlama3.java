@@ -290,6 +290,153 @@ public class Gemma4Kernels {
      * <p>The grid must launch exactly {@code nHeads} workgroups: {@code h} is the workgroup index,
      * and the early return is what the head-count guard becomes once the loop is gone.
      */
+    /**
+     * Sliding-window attention, phase 1 of two: one workgroup per (head, split of the window).
+     *
+     * <p>The workgroup-per-head kernel parallelises across {@code headDim} and across positions
+     * <i>within</i> a workgroup, but every lane still walks the whole window in the weighted sum,
+     * so its cost grows with context depth. Measured on this family: 0.0164 ms per call at an
+     * average depth of about 12, and 0.2031 ms at about 551, while the depth-independent
+     * projections stayed flat. This phase cuts the window into {@code nSplits} slices and gives
+     * each its own workgroup, so the work per workgroup stops growing once the slices do.
+     *
+     * <p>Each split emits an unnormalised online-softmax state — the numerators, its own maximum
+     * and its own sum of exponentials — in the COMPACT layout {@link
+     * TransformerComputeKernelsLayered#combineSplitKVAttention} already reads: per head,
+     * {@code nSplits} numerators of {@code headDim}, then {@code nSplits} maxima, then
+     * {@code nSplits} sums. An empty slice writes {@code -inf} and zero, which that combine
+     * already treats as contributing nothing.
+     *
+     * <p>Scores still go through {@code wrapAtt} at their absolute position, so the slices write
+     * disjoint ranges of it and no extra scratch is needed for them.
+     */
+    public static void attentionWithSlidingWindowSplit(
+            KernelContext context,
+            FloatArray q,
+            FloatArray keyCache,
+            FloatArray valueCache,
+            FloatArray wrapAtt,
+            FloatArray attSplit,
+            int nHeads,
+            int headDim,
+            int kvDim,
+            int kvMul,
+            IntArray positionHolder,
+            int cacheBaseOffset,
+            int windowSize,
+            int contextLength,
+            int nSplits,
+            int localMemSize) {
+
+        int tid = context.localIdx;
+        int group = context.groupIdx;
+        int localSize = context.localGroupSizeX;
+
+        int h = group / nSplits;
+        int split = group - h * nSplits;
+        if (h >= nHeads) {
+            return;
+        }
+
+        int pos = positionHolder.get(0);
+        int windowStart = Math.max(0, pos - windowSize + 1);
+        int hOff = h * contextLength;
+        int kvHeadIdx = h / kvMul;
+        int qOffset = h * headDim;
+
+        int total = pos - windowStart + 1;
+        int chunk = (total + nSplits - 1) / nSplits;
+        int from = windowStart + split * chunk;
+        int to = Math.min(pos, from + chunk - 1);
+
+        int headBase = h * nSplits * (headDim + 2);
+        int mBase = headBase + nSplits * headDim;
+        int lBase = mBase + nSplits;
+
+        float[] qShared = context.allocateFloatLocalArray(headDim);
+        float[] reduce = context.allocateFloatLocalArray(localMemSize);
+
+        // An empty slice still has to write its state, or the combine reads whatever was there.
+        if (from > to) {
+            for (int d = tid; d < headDim; d += localSize) {
+                attSplit.set(headBase + split * headDim + d, 0.0f);
+            }
+            if (tid == 0) {
+                attSplit.set(mBase + split, Float.NEGATIVE_INFINITY);
+                attSplit.set(lBase + split, 0.0f);
+            }
+            return;
+        }
+
+        for (int i = tid; i < headDim; i += localSize) {
+            qShared[i] = q.get(qOffset + i);
+        }
+        context.localBarrier();
+
+        for (int t = from + tid; t <= to; t += localSize) {
+            int keyOffset = cacheBaseOffset + t * kvDim + kvHeadIdx * headDim;
+            float score = 0.0f;
+            for (int i = 0; i < headDim; i++) {
+                score += qShared[i] * keyCache.get(keyOffset + i);
+            }
+            // Gemma4 attention scaling = 1.0 (no 1/sqrt(headDim))
+            wrapAtt.set(hOff + t, score);
+        }
+        context.localBarrier();
+
+        float localMax = Float.NEGATIVE_INFINITY;
+        for (int t = from + tid; t <= to; t += localSize) {
+            float v = wrapAtt.get(hOff + t);
+            if (v > localMax) {
+                localMax = v;
+            }
+        }
+        reduce[tid] = localMax;
+        context.localBarrier();
+        for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+            if (tid < stride) {
+                float other = reduce[tid + stride];
+                if (other > reduce[tid]) {
+                    reduce[tid] = other;
+                }
+            }
+            context.localBarrier();
+        }
+        float sliceMax = reduce[0];
+        context.localBarrier();
+
+        float localSum = 0.0f;
+        for (int t = from + tid; t <= to; t += localSize) {
+            float e = TornadoMath.exp(wrapAtt.get(hOff + t) - sliceMax);
+            wrapAtt.set(hOff + t, e);
+            localSum += e;
+        }
+        reduce[tid] = localSum;
+        context.localBarrier();
+        for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+            if (tid < stride) {
+                reduce[tid] += reduce[tid + stride];
+            }
+            context.localBarrier();
+        }
+        float sliceSum = reduce[0];
+        context.localBarrier();
+
+        // Unnormalised numerators: the combine divides by the merged denominator.
+        for (int d = tid; d < headDim; d += localSize) {
+            float acc = 0.0f;
+            for (int t = from; t <= to; t++) {
+                int valueOffset = cacheBaseOffset + t * kvDim + kvHeadIdx * headDim;
+                acc += wrapAtt.get(hOff + t) * valueCache.get(valueOffset + d);
+            }
+            attSplit.set(headBase + split * headDim + d, acc);
+        }
+        if (tid == 0) {
+            attSplit.set(mBase + split, sliceMax);
+            attSplit.set(lBase + split, sliceSum);
+        }
+    }
+
     public static void attentionWithSlidingWindowParallel(
             KernelContext context,
             FloatArray q,

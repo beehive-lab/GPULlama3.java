@@ -58,6 +58,17 @@ public class Gemma4Q8_0FFNLayers
      */
     private static final int ATTENTION_LOCAL_SIZE = 64;
 
+    /**
+     * Below this context length the window is too short for splitting it to pay: every slice costs
+     * a workgroup and a combine pass, and at shallow depth there is not enough window to divide.
+     * A property of the configured shape, decided once at graph build, not a user knob.
+     *
+     * <p>It is 512 rather than something larger for a reason that is about testing, not tuning:
+     * {@code GoldenCapture.CONTEXT_LENGTH} is 512, so a higher threshold would leave the CPU/GPU
+     * parity gate scoring the single-pass kernel while every benchmark at depth ran this one.
+     */
+    private static final int SPLIT_KV_MIN_CONTEXT = 512;
+
     private final Gemma4State gemma4State;
     private final int nHead;
     private final int nHeadKv;
@@ -94,6 +105,13 @@ public class Gemma4Q8_0FFNLayers
     // ═══════════════════════════════════════════════════════════════════════════════════
     //                                  TASK GRAPH
     // ═══════════════════════════════════════════════════════════════════════════════════
+
+    /** How many slices the window is cut into, or 1 to run the single-pass kernel. */
+    private int attentionSplits() {
+        return config.contextLength() >= SPLIT_KV_MIN_CONTEXT
+                ? org.beehive.jllm.inference.state.State.SPLIT_KV
+                : 1;
+    }
 
     @Override
     protected TaskGraph createFFNLayerTaskGraph(int layerIndex) {
@@ -261,24 +279,56 @@ public class Gemma4Q8_0FFNLayers
                     headDim);
         }
 
-        unifiedLayer.task(
-                "attention",
-                Gemma4Kernels::attentionWithSlidingWindowParallel,
-                context,
-                gemma4State.workspace.wrapQ,
-                gemma4State.workspace.wrapKeyCache,
-                gemma4State.workspace.wrapValueCache,
-                gemma4State.workspace.wrapXb,
-                gemma4State.workspace.wrapAtt,
-                nHead,
-                headDim,
-                kvDim,
-                kvMul,
-                gemma4State.workspace.positionHolder,
-                cacheBaseOffset,
-                windowSize,
-                config.contextLength(),
-                ATTENTION_LOCAL_SIZE);
+        int splits = attentionSplits();
+        if (splits > 1) {
+            unifiedLayer.task(
+                    "attention_split",
+                    Gemma4Kernels::attentionWithSlidingWindowSplit,
+                    context,
+                    gemma4State.workspace.wrapQ,
+                    gemma4State.workspace.wrapKeyCache,
+                    gemma4State.workspace.wrapValueCache,
+                    gemma4State.workspace.wrapAtt,
+                    gemma4State.workspace.wrapAttSplit,
+                    nHead,
+                    headDim,
+                    kvDim,
+                    kvMul,
+                    gemma4State.workspace.positionHolder,
+                    cacheBaseOffset,
+                    windowSize,
+                    config.contextLength(),
+                    splits,
+                    ATTENTION_LOCAL_SIZE);
+            unifiedLayer.task(
+                    "attention_combine",
+                    TransformerComputeKernelsLayered::combineSplitKVAttention,
+                    context,
+                    gemma4State.workspace.wrapAttSplit,
+                    gemma4State.workspace.wrapXb,
+                    nHead,
+                    headDim,
+                    splits);
+        } else {
+            unifiedLayer.task(
+                    "attention",
+                    Gemma4Kernels::attentionWithSlidingWindowParallel,
+                    context,
+                    gemma4State.workspace.wrapQ,
+                    gemma4State.workspace.wrapKeyCache,
+                    gemma4State.workspace.wrapValueCache,
+                    gemma4State.workspace.wrapXb,
+                    gemma4State.workspace.wrapAtt,
+                    nHead,
+                    headDim,
+                    kvDim,
+                    kvMul,
+                    gemma4State.workspace.positionHolder,
+                    cacheBaseOffset,
+                    windowSize,
+                    config.contextLength(),
+                    ATTENTION_LOCAL_SIZE);
+        }
 
         unifiedLayer.task(
                 "wo_proj",
@@ -718,7 +768,16 @@ public class Gemma4Q8_0FFNLayers
             } else {
                 gridScheduler.addWorkerGrid(prefix + "rope_q_only", ropeWorker);
             }
-            gridScheduler.addWorkerGrid(prefix + "attention", attentionWorker);
+            if (attentionSplits() > 1) {
+                gridScheduler.addWorkerGrid(
+                        prefix + "attention_split",
+                        WorkerGridFactory.genericWorker(
+                                nHead * attentionSplits() * ATTENTION_LOCAL_SIZE,
+                                ATTENTION_LOCAL_SIZE));
+                gridScheduler.addWorkerGrid(prefix + "attention_combine", attentionWorker);
+            } else {
+                gridScheduler.addWorkerGrid(prefix + "attention", attentionWorker);
+            }
             gridScheduler.addWorkerGrid(prefix + "wo_proj", woProjWorker);
             gridScheduler.addWorkerGrid(prefix + "post_attn_reduce", rmsReduceWorker);
             gridScheduler.addWorkerGrid(prefix + "post_attn_apply", dimElementWiseWorker);

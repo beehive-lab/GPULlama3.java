@@ -194,6 +194,12 @@ public final class Gemma4State extends State {
         workspace.wrapValueCache = TornadoWorkspaces.floats(totalCacheElements);
         TornadoWorkspaces.zeroKeyValue(workspace);
         workspace.wrapAtt = TornadoWorkspaces.floats(nHead * config.contextLength());
+        // Split-KV partials: per head, SPLIT_KV numerators of headDim, then SPLIT_KV maxima and
+        // SPLIT_KV sums. Sized at the widest head because this family's head width differs by
+        // layer -- 256 on the sliding-window layers, 512 on the full ones -- while the buffer is
+        // one allocation shared by every layer's graph.
+        workspace.wrapAttSplit =
+                TornadoWorkspaces.floats(nHead * SPLIT_KV * (config.maxHeadDim() + 2));
         workspace.positionHolder = TornadoWorkspaces.ints(1);
 
         workspace.temp = TornadoWorkspaces.floats(1 + ((dim + localSize - 1) / localSize));
