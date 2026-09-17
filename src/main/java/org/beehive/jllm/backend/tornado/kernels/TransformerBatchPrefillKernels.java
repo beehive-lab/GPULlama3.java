@@ -2550,4 +2550,70 @@ public final class TransformerBatchPrefillKernels {
             outputBatch.set(batchIdx * d + rowIdx, localSum[0]);
         }
     }
+
+    // @formatter:off
+    /**
+     * {@link #batchedMatVecF32} with one warp per output instead of a 128-lane workgroup: four
+     * warps a block, each computing one (batch row, output row), no shared reduction.
+     *
+     * <p>Lane {@code l} of the warp plays the control's lanes {@code l, l + 32, l + 64, l + 96}:
+     * four partial sums, each over the input indices that lane walked ({@code l + 128 i}, {@code l
+     * + 32 + 128 i}, ...), each from zero with the same multiply-add expression, so each partial
+     * carries the bits the control's lane produced. The control then folds its 128 partials as a
+     * shared tree: stride 64 forms {@code p[i] + p[i + 64]}, stride 32 forms {@code (p[i] + p[i +
+     * 64]) + (p[i + 32] + p[i + 96])} for {@code i < 32}, and strides 16, 8, 4, 2, 1 add entry
+     * {@code i + stride} into entry {@code i}. Here {@code combined = (partial0 + partial2) +
+     * (partial1 + partial3)} reproduces the first two steps in the same operand order, and five
+     * shuffle-down additions (offsets 16, 8, 4, 2, 1, lane {@code i} adding lane {@code i +
+     * offset}) reproduce the rest; lane zero holds the control's {@code localSum[0]} and writes it.
+     * Every operand FP32; the output is raw-bit equal to the control's on the CUDA backend, where
+     * the shuffle is verified.
+     *
+     * <p>Worker: {@code activeRowsPadded * d * 32} lanes, local 128 (four outputs per block).
+     */
+    // @formatter:on
+    public static void batchedMatVecF32Warp(
+            KernelContext context,
+            FloatArray inputBatch,
+            FloatArray outputBatch,
+            FloatArray w,
+            int n,
+            int d,
+            int activeRows) {
+        int lane = context.localIdx & 31;
+        int output = (context.groupIdx << 2) + (context.localIdx >> 5);
+        int batchIdx = output / d;
+        int rowIdx = output - batchIdx * d;
+        if (batchIdx >= activeRows) {
+            return;
+        }
+        int inputOff = batchIdx * n;
+        int rowOff = rowIdx * n;
+
+        float partial0 = 0.0f;
+        float partial1 = 0.0f;
+        float partial2 = 0.0f;
+        float partial3 = 0.0f;
+        for (int j = lane; j < n; j += 128) {
+            partial0 += w.get(rowOff + j) * inputBatch.get(inputOff + j);
+        }
+        for (int j = lane + 32; j < n; j += 128) {
+            partial1 += w.get(rowOff + j) * inputBatch.get(inputOff + j);
+        }
+        for (int j = lane + 64; j < n; j += 128) {
+            partial2 += w.get(rowOff + j) * inputBatch.get(inputOff + j);
+        }
+        for (int j = lane + 96; j < n; j += 128) {
+            partial3 += w.get(rowOff + j) * inputBatch.get(inputOff + j);
+        }
+        float combined = (partial0 + partial2) + (partial1 + partial3);
+        combined += context.simdShuffleDown(combined, 16);
+        combined += context.simdShuffleDown(combined, 8);
+        combined += context.simdShuffleDown(combined, 4);
+        combined += context.simdShuffleDown(combined, 2);
+        combined += context.simdShuffleDown(combined, 1);
+        if (lane == 0) {
+            outputBatch.set(batchIdx * d + rowIdx, combined);
+        }
+    }
 }

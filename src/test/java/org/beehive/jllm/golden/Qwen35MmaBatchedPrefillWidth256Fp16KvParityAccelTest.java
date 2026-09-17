@@ -47,5 +47,9 @@ public class Qwen35MmaBatchedPrefillWidth256Fp16KvParityAccelTest extends CpuGpu
         PlanDispatchEvidence.assertQwen35BatchDeltaRuleWarp(gpu.gridScheduler, 48, 128);
         PlanDispatchEvidence.assertQwen35FfnDownOnDequantGemm(
                 gpu.gridScheduler, 256, gpu.dim, 17408);
+        assertEquals(
+                "the batched alpha/beta projections this plan compiled",
+                Set.of("batchedMatVecF32Warp"),
+                gpu.batchedTaskKernels.get("ssm_alpha_proj"));
     }
 }

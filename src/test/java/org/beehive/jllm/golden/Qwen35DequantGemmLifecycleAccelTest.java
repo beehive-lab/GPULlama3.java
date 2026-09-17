@@ -151,10 +151,15 @@ public class Qwen35DequantGemmLifecycleAccelTest {
             Run pairA;
             Run pairB;
             java.util.Set<String> pairKernels;
+            java.util.Set<String> alphaBetaKernels;
             java.util.Set<String> scanKernels;
             java.util.Map<String, Integer> dequantPairs;
             try {
                 pairKernels = PlanDispatchEvidence.batchedTaskKernels(pairPlan, "attention");
+                alphaBetaKernels =
+                        PlanDispatchEvidence.batchedTaskKernels(pairPlan, "ssm_alpha_proj");
+                alphaBetaKernels.addAll(
+                        PlanDispatchEvidence.batchedTaskKernels(pairPlan, "ssm_beta_proj"));
                 scanKernels = PlanDispatchEvidence.batchedTaskKernels(pairPlan, "ssm_delta_rule");
                 // Every pair's producer and consumer agree on the scratch's layout, the Q4_0
                 // tiled pairs interleaved in graph order with the row-major Q4_1 and Q5_K ones.
@@ -178,6 +183,10 @@ public class Qwen35DequantGemmLifecycleAccelTest {
                     pairA.scheduler(), qwen.numberOfValueHeads(), qwen.headValueDim());
             PlanDispatchEvidence.assertQwen35FfnDownOnDequantGemm(
                     pairA.scheduler(), WIDTH, qwen.dim(), qwen.hiddenDim());
+            assertEquals(
+                    "the batched alpha/beta projections this plan compiled",
+                    java.util.Set.of("batchedMatVecF32Warp"),
+                    alphaBetaKernels);
             assertEquals(
                     "the batched attention kernel this plan compiled",
                     java.util.Set.of("attentionBatchFP16PagedTensorCore"),

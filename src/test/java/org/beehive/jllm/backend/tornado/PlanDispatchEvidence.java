@@ -322,6 +322,35 @@ public final class PlanDispatchEvidence {
     }
 
     /**
+     * Asserts that the batched F32 alpha and beta projections of every recurrent layer run as the
+     * warp-per-output kernel: {@code batchedMatVecF32Warp} by name off the task graphs, and a grid
+     * of {@code batchSize * valueHeads * 32} lanes in 128-lane blocks.
+     */
+    public static void assertQwen35AlphaBetaOnWarpMatVec(
+            TornadoVMMasterPlan plan, GridScheduler scheduler, int batchSize, int valueHeads) {
+        assertNotNull("no grid scheduler for the plan this run built", scheduler);
+        for (String task : new String[] {"ssm_alpha_proj", "ssm_beta_proj"}) {
+            assertEquals(
+                    task + " kernel",
+                    java.util.Set.of("batchedMatVecF32Warp"),
+                    batchedTaskKernels(plan, task));
+            int found = 0;
+            for (String key : new TreeSet<>(scheduler.keySet())) {
+                if (key.matches("batchLayer_\\d+\\." + task)) {
+                    WorkerGrid grid = scheduler.get(key);
+                    assertEquals(
+                            key + " global",
+                            (long) batchSize * valueHeads * 32,
+                            grid.getGlobalWork()[0]);
+                    assertEquals(key + " local", 128L, grid.getLocalWork()[0]);
+                    found++;
+                }
+            }
+            assertTrue("no batched " + task + " in this plan", found > 0);
+        }
+    }
+
+    /**
      * Asserts that every batched delta-rule scan in {@code scheduler} is the shared-state form:
      * 32-lane groups, one per (head, 32 columns), rather than the per-lane scan's 128-lane groups.
      */

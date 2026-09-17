@@ -110,6 +110,9 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
 
     private final java.util.Map<String, Integer> dequantTasks = new java.util.LinkedHashMap<>();
 
+    /** The F32 projections placed on the warp-per-output kernel, with their output counts. */
+    private final java.util.Map<String, Integer> warpMatVecTasks = new java.util.LinkedHashMap<>();
+
     /**
      * The smallest output width measured to gain from dequantize-then-GEMM. At 1,024 outputs the
      * GEMM launches too few tiles and the pair lost at both eligible widths; at 5,120 and above it
@@ -292,17 +295,34 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 if (residual) {
                     throw unsupported(layer, task, role, w.dataType(), "an accumulating");
                 }
-                graph.task(
-                        task,
-                        TransformerBatchPrefillKernels::batchedMatVecF32,
-                        context,
-                        xBatch,
-                        outBatch,
-                        w.asFloatArray(),
-                        n,
-                        d,
-                        batchSize,
-                        MATVEC_LOCAL);
+                // One warp per output where the warp shuffle is verified (CUDA, the tensor-core
+                // guard): the same partial sums and the same reduction tree as the 128-lane
+                // workgroup kernel, so the outputs are bit-identical; elsewhere the workgroup one.
+                if (TensorCoreSupport.isTensorCoreCapableBackend()) {
+                    warpMatVecTasks.put("batchLayer_" + layer + "." + task, d);
+                    graph.task(
+                            task,
+                            TransformerBatchPrefillKernels::batchedMatVecF32Warp,
+                            context,
+                            xBatch,
+                            outBatch,
+                            w.asFloatArray(),
+                            n,
+                            d,
+                            batchSize);
+                } else {
+                    graph.task(
+                            task,
+                            TransformerBatchPrefillKernels::batchedMatVecF32,
+                            context,
+                            xBatch,
+                            outBatch,
+                            w.asFloatArray(),
+                            n,
+                            d,
+                            batchSize,
+                            MATVEC_LOCAL);
+                }
             }
             case Q4_0 -> {
                 // The normed chunk is also staged as FP16 right after the norm, so a projection
@@ -1582,6 +1602,11 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
 
     /** One workgroup per (row, output row), or per (row tile, output row) where tiled. */
     private WorkerGrid matVecWorker(String qualifiedTask, int rows) {
+        Integer warpOutputs = warpMatVecTasks.get(qualifiedTask);
+        if (warpOutputs != null) {
+            // One warp per (row, output), four to a 128-lane block.
+            return WorkerGridFactory.genericWorker(batchSize * warpOutputs * 32, MATVEC_LOCAL);
+        }
         Integer gemmCols = gemmTasks.get(qualifiedTask);
         if (gemmCols != null) {
             // gemmMMA's documented worker: (M/128) * 256 by N/128, 256 threads per block.

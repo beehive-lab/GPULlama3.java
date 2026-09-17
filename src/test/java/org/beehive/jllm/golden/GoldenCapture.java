@@ -59,7 +59,9 @@ public final class GoldenCapture {
     }
 
     /** The batched tasks whose compiled kernel a capture records. */
-    static final String[] RECORDED_BATCHED_TASKS = {"attention", "ssm_delta_rule"};
+    static final String[] RECORDED_BATCHED_TASKS = {
+        "attention", "ssm_delta_rule", "ssm_alpha_proj", "ssm_beta_proj"
+    };
 
     private GoldenCapture() {}
 
