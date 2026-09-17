@@ -46,7 +46,7 @@ public class Gemma4FP16FFNLayers
      * Lanes per head in the attention kernel. Must equal what {@code createAttentionWorker} picks
      * for both head widths, because the kernel allocates its reduction scratch at this size.
      */
-    private static final int ATTENTION_LOCAL_SIZE = 64;
+    private static final int ATTENTION_LOCAL_SIZE = 256;
 
     /**
      * Below this context length the window is too short for splitting it to pay: every slice costs
