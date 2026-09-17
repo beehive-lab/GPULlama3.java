@@ -24,7 +24,8 @@ public class Gemma4CpuGpuParityAccelTest extends CpuGpuParity {
         assertParity(Fixture.GEMMA_4_E2B_BF16, FP16);
     }
 
-    // No Q4_0 case: Gemma4PlanProvider declares F16 and Q8_0 only, and the file does not load at
-    // all yet -- its per_layer_token_embd is Q5_K, which LongIndexedTensor does not read. Testing a
-    // representation the provider does not claim would be asserting a capability nobody offers.
+    // The Q4_0 fixture is a separate class, not a third case here: this model is 9.3 GB in BF16
+    // and 5.0 GB in Q8_0, and device memory a closed session frees returns to TornadoVM's buffer
+    // provider rather than to the driver, so a third load in one JVM exhausts a 24 GB card. See
+    // Gemma4Q4_0MaterializedParityAccelTest.
 }

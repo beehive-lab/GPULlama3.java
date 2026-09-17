@@ -176,6 +176,34 @@ abstract class CpuGpuParity {
     // @formatter:on
     static final Bounds Q8_0_FULLY_PACKED = new Bounds(1.7e-4, 1e-2, 0.70, 0.075, 0.9975, 0.5, 0.5);
 
+    // @formatter:off
+    /**
+     * For a <b>Q4_0 file the device runs materialized as Q8_0</b>, scored against a host reference
+     * that decodes the same file natively.
+     *
+     * <p>A fourth envelope for the same reason the packed ones are separate: this is a different
+     * amount of quantization, not a looser view of {@link #Q8_0}. The conversion is not free —
+     * Q4_0's sixteen levels are {@code d * (q - 8)}, and re-expressing them on a Q8_0 block's own
+     * scale rounds, because {@code (q - 8) * 127 / 8} is not an integer for most {@code q}. The
+     * host reads the file's own blocks, so the difference between the two is that rounding.
+     *
+     * <p><b>Measured on gemma-4-E2B-it-Q4_0.gguf, CUDA, teacher-forced over 63 rows</b>, against
+     * the allowance chosen for each: elementwise 3.538% against 8%, largest absolute difference
+     * 0.0411 of the reference RMS against 0.09, relative L2 0.0116 against 0.025, cosine deficit
+     * 1.13e-5 against 3e-5. Roughly a factor of two on each, which is an engineering allowance
+     * rather than a measured bound on variability.
+     *
+     * <p>What did not move is the part that decides tokens: <b>0 of 63 argmax disagreements</b>,
+     * top-5 4.889/5 and top-10 9.873/10, and {@code decisionGap} is unchanged, because an argmax
+     * reversal where the reference was not close would still be a defect.
+     *
+     * <p>This envelope describes a <i>stopgap</i>. A retained Q4_0 path reads the file's own blocks
+     * on the device too, and should be scored against {@link #Q8_0}'s bounds, not these.
+     */
+    // @formatter:on
+    static final Bounds Q4_0_MATERIALIZED =
+            new Bounds(1.7e-4, 1e-2, 0.09, 0.025, 0.99997, 0.08, 0.5);
+
     /** The CPU reference against the accelerator running its default single-token path. */
     void assertParity(Fixture fixture, Bounds bounds) throws Exception {
         assertParity(fixture, bounds, 1);
