@@ -82,6 +82,72 @@ public final class Gemma4State extends State {
         this.workspace.tempPostAttn = TornadoWorkspaces.floats(tempSize);
         this.workspace.tempPostFfn = TornadoWorkspaces.floats(tempSize);
         this.workspace.tempPostPle = TornadoWorkspaces.floats(tempSize);
+
+        allocateBatchPrefillWorkspace(gemma4config, perLayerTotal);
+    }
+
+    // @formatter:off
+    /**
+     * The chunk-wide buffers the batched prefill graphs use, allocated only when this state was
+     * built for a batched plan.
+     *
+     * <p>Sized like the generic ones the base class allocates, at the padded row count the
+     * tensor-core GEMMs launch, with three additions this family needs and no other does: the
+     * per-layer-embedding block a chunk wide, one FP16 carrier for the residual (the per-layer gate
+     * projection reads it as a GEMM operand and the residual itself stays FP32), and the attention
+     * score scratch.
+     *
+     * <p>The score scratch is the one allocation here that is not obviously small. A window may be
+     * the whole context, so a (row, head) slice is sized at {@code contextLength}; at the widths
+     * this plan is built for that is tens of megabytes, which is the price of computing each
+     * query-key dot product once instead of twice.
+     */
+    // @formatter:on
+    private void allocateBatchPrefillWorkspace(Gemma4Configuration config, int perLayerTotal) {
+        int batch = prefillBatchWidth;
+        if (batch <= 1) {
+            return;
+        }
+        int padded = (batch + 127) & ~127;
+        int segment = config.embeddingLengthPerLayer();
+
+        this.workspace.wrapPerLayerInputsBatch = TornadoWorkspaces.floats(padded * perLayerTotal);
+        this.workspace.wrapPerLayerProjScratchBatch =
+                TornadoWorkspaces.floats(padded * perLayerTotal);
+        this.workspace.wrapPerLayerGateBatch = TornadoWorkspaces.floats(padded * segment);
+        this.workspace.wrapPerLayerGateFP16Batch = TornadoWorkspaces.halfFloats(padded * segment);
+        this.workspace.wrapPerLayerOutBatch = TornadoWorkspaces.floats(padded * config.dim());
+        this.workspace.wrapPerLayerTokenEmbedRowBatch =
+                TornadoWorkspaces.floats(padded * perLayerTotal);
+        this.workspace.wrapXFP16Batch = TornadoWorkspaces.halfFloats(padded * config.dim());
+        this.workspace.branchScaleBatch = TornadoWorkspaces.floats(padded);
+        this.workspace.attnScoresBatch =
+                TornadoWorkspaces.floats(padded * config.numberOfHeads() * config.contextLength());
+    }
+
+    /** This family's widest head is what one shared query buffer has to hold. */
+    @Override
+    protected int batchQDim(Configuration configuration) {
+        Gemma4Configuration config = (Gemma4Configuration) configuration;
+        return config.numberOfHeads() * config.maxHeadDim();
+    }
+
+    @Override
+    protected int batchKvDim(Configuration configuration) {
+        Gemma4Configuration config = (Gemma4Configuration) configuration;
+        return config.numberOfKeyValueHeads() * config.maxHeadDim();
+    }
+
+    // @formatter:off
+    /**
+     * The widest feed-forward across the layers, because {@code hiddenDim()} on this configuration
+     * refuses to answer: blocks 0-14 are 6144 wide and blocks 15-34 are 12288, and one buffer
+     * shared by every layer's graph has to hold the larger.
+     */
+    // @formatter:on
+    @Override
+    protected int batchHiddenDim(Configuration configuration) {
+        return ((Gemma4Configuration) configuration).maxFeedForwardLength();
     }
 
     /**

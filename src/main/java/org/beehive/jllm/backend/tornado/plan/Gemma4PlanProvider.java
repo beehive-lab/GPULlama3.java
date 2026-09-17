@@ -51,9 +51,20 @@ public final class Gemma4PlanProvider implements TornadoPlanProvider {
                 DataType.Q8_0);
     }
 
+    // @formatter:off
+    /**
+     * Single-token everywhere, and the batched prefill/decode plan as well.
+     *
+     * <p>The batched plan is declared for the family, not for a representation — {@code
+     * supportedModes()} has no dtype to answer for. What decides per representation is whether that
+     * representation's components implement the batched interface; the registry refuses the rest by
+     * name. Today Q8_0's do and Q4_0's do not, because the batched projections are tensor-core
+     * GEMMs over 34-byte blocks.
+     */
+    // @formatter:on
     @Override
     public Set<ExecutionMode> supportedModes() {
-        return TornadoSupportSets.STANDARD_ONLY;
+        return Set.of(ExecutionMode.STANDARD, ExecutionMode.BATCH_PREFILL_DECODE);
     }
 
     @Override

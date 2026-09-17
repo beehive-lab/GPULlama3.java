@@ -93,6 +93,16 @@ public interface Model {
      */
     default void stagePerTokenDeviceInputs(State state, int token) {}
 
+    /**
+     * The chunk-wide twin of {@link #stagePerTokenDeviceInputs}: whatever a family has to put in a
+     * device buffer per prompt token before a batched prefill graph runs, for every token of the
+     * chunk.
+     *
+     * <p>A default no-op for the same reason the single-token hook is one, and separate from it
+     * because the destination is a row of a chunk-wide buffer rather than a buffer of its own.
+     */
+    default void stageBatchDeviceInputs(State state, int[] tokens, int chunkSize) {}
+
     default boolean shouldAddBeginOfText() {
         return true;
     }

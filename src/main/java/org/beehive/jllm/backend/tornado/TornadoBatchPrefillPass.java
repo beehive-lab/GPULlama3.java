@@ -19,6 +19,8 @@ public final class TornadoBatchPrefillPass {
 
     private TornadoBatchPrefillPass() {}
 
+
+
     /**
      * Stages {@code chunkSize} token embeddings into the session's device batch carrier, then runs
      * the batch activation and layer graphs. The logits graph is skipped: no token in a prefill
@@ -115,7 +117,13 @@ public final class TornadoBatchPrefillPass {
                                     + weights.getTokenEmbeddingTable().dataType());
         }
 
+        // Whatever this family stages per prompt token that is not the token embedding — Gemma 4's
+        // per-layer embedding rows are the only case today — for the whole chunk, before the graphs
+        // that read it run.
+        model.stageBatchDeviceInputs(state, tokens, chunkSize);
+
         plan.tornadoVMForwardBatchPrefill();
+
     }
 
     /**
@@ -141,6 +149,10 @@ public final class TornadoBatchPrefillPass {
             TornadoVMMasterPlanBatchPrefillDecode plan) {
         final Configuration config = model.configuration();
         final TornadoWeights weights = (TornadoWeights) model.weights();
+
+        // The same per-token staging the single-token pass does first: a family with a device input
+        // besides the token embedding needs it on every decode step, batched plan or not.
+        model.stagePerTokenDeviceInputs(state, token);
 
         switch (weights.getTokenEmbeddingTable().dataType()) {
             case F16 -> {

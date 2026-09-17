@@ -82,13 +82,35 @@ public class Gemma4Q8_0FFNLayers
     private final float perLayerProjScale;
     private final float perLayerInputScale;
 
+    // @formatter:off
+    /**
+     * Whether these are the decode layers of the batched plan.
+     *
+     * <p>A flag rather than a subclass: the two differences are which graph layer 0 names as the
+     * producer of its activation and of the key/value caches, and a class per plan for a difference
+     * that small is what the dispatch ledger exists to stop.
+     */
+    // @formatter:on
+    private final boolean batchedPlan;
+
     public Gemma4Q8_0FFNLayers(
             String taskGraphName,
             Gemma4State state,
             Gemma4TornadoWeights weights,
             Gemma4Configuration config,
             SchedulerType schedulerType) {
+        this(taskGraphName, state, weights, config, schedulerType, false);
+    }
+
+    public Gemma4Q8_0FFNLayers(
+            String taskGraphName,
+            Gemma4State state,
+            Gemma4TornadoWeights weights,
+            Gemma4Configuration config,
+            SchedulerType schedulerType,
+            boolean batchedPlan) {
         super(taskGraphName, state, weights, config, schedulerType);
+        this.batchedPlan = batchedPlan;
         this.gemma4State = state;
         this.nHead = config.numberOfHeads();
         this.nHeadKv = config.numberOfKeyValueHeads();
@@ -236,7 +258,12 @@ public class Gemma4Q8_0FFNLayers
         final int peOffset = layerIndex * nEmbdPerLayer;
 
         if (firstLayerOfGraph(layerIndex)) {
-            unifiedLayer.consumeFromDevice(gemma4State.workspace.wrapX);
+            String producer = layerIndex == 0 ? activationGraphName() : null;
+            if (producer == null) {
+                unifiedLayer.consumeFromDevice(gemma4State.workspace.wrapX);
+            } else {
+                unifiedLayer.consumeFromDevice(producer, gemma4State.workspace.wrapX);
+            }
         }
         unifiedLayer.transferToDevice(
                 DataTransferMode.FIRST_EXECUTION,
@@ -778,14 +805,13 @@ public class Gemma4Q8_0FFNLayers
                     gemma4State.workspace.wrapQ,
                     gemma4State.workspace.wrapK,
                     gemma4State.workspace.wrapV,
-                    gemma4State.workspace.wrapKeyCache,
-                    gemma4State.workspace.wrapValueCache,
                     gemma4State.workspace.wrapAtt,
                     gemma4State.workspace.wrapHb,
                     gemma4State.workspace.wrapPerLayerInputs,
                     gemma4State.workspace.wrapPerLayerProjScratch,
                     gemma4State.workspace.wrapPerLayerGate,
                     gemma4State.workspace.wrapPerLayerOut);
+            bindKeyValueCache(unifiedLayer);
         } else {
             unifiedLayer.consumeFromDevice(
                     context,
@@ -804,6 +830,46 @@ public class Gemma4Q8_0FFNLayers
                     gemma4State.workspace.positionHolder);
         }
         return unifiedLayer;
+    }
+
+    // @formatter:off
+    /**
+     * The graph layer 0 takes its activation from, or {@code null} for the unnamed form.
+     *
+     * <p>The unnamed form is right in the single-token plan, where the activation graph is the one
+     * that ran immediately before. It is not right in the batched plan: there the graph list holds
+     * the batch-prefill layers between the two, and layer 0 that does not name its producer imports
+     * a buffer nobody wrote — measured as an activation of exactly zero out of every decode layer,
+     * with the model still emitting fluent tokens off the resulting logits.
+     */
+    // @formatter:on
+    private String activationGraphName() {
+        return batchedPlan ? "decodeActivation" : null;
+    }
+
+    // @formatter:off
+    /**
+     * Where layer 0 gets the key and value caches from.
+     *
+     * <p>Allocating them here is right for every plan that prefills one token at a time, because
+     * nothing ran before this graph. It is wrong for the batched plan: there the batch-prefill
+     * graphs already filled a cache, and a decode that allocated its own would attend an empty one
+     * and answer as though the prompt had never been read — fluent output, silently wrong, and not
+     * something a throughput number would show.
+     */
+    // @formatter:on
+    private void bindKeyValueCache(TaskGraph unifiedLayer) {
+        if (batchedPlan) {
+            unifiedLayer.consumeFromDevice(
+                    "decodeActivation",
+                    gemma4State.workspace.wrapKeyCache,
+                    gemma4State.workspace.wrapValueCache);
+            return;
+        }
+        unifiedLayer.transferToDevice(
+                DataTransferMode.FIRST_EXECUTION,
+                gemma4State.workspace.wrapKeyCache,
+                gemma4State.workspace.wrapValueCache);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════════
