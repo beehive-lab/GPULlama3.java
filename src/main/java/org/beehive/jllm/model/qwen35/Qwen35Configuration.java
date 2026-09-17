@@ -282,6 +282,8 @@ public record Qwen35Configuration(
         // to hold for the widest state this width can allocate.
         perRow += (long) numberOfHeads() * contextLength();
         long bytes = perRow * batchSize * Float.BYTES;
+        // The tensor-core attention's FP16 staging, per (16-query tile, head).
+        bytes += 2L * attentionStageHalves(batchSize, numberOfHeads());
         // The dequantize-then-GEMM scratch: one FP16 copy of the largest projection matrix that
         // takes the pair (gate/up and the Q4_1 ffn_down; the Q5_K ssm_out shares it), at the widths
         // that take that path.
@@ -289,6 +291,23 @@ public record Qwen35Configuration(
             bytes += 2L * hiddenDim() * dim();
         }
         return bytes;
+    }
+
+    /** Queries one tile of the tensor-core batched attention covers. */
+    public static final int ATTENTION_TILE_ROWS = 16;
+
+    /** Halves of FP16 staging one (16-query tile, head) workgroup of that attention owns. */
+    public static final int ATTENTION_STAGE_HALVES_PER_TILE = 16 * 256 + 16 * 32;
+
+    /**
+     * Halves of the tensor-core attention's staging scratch for a width, or zero where the width is
+     * not whole 16-query tiles (and the attention falls back to the warp kernel).
+     */
+    public static long attentionStageHalves(int batchSize, int heads) {
+        if (batchSize <= 1 || batchSize % ATTENTION_TILE_ROWS != 0) {
+            return 0L;
+        }
+        return (long) (batchSize / ATTENTION_TILE_ROWS) * heads * ATTENTION_STAGE_HALVES_PER_TILE;
     }
 
     /** Rows one tile of the batched FP16 GEMM covers; a width has to be a whole number of them. */

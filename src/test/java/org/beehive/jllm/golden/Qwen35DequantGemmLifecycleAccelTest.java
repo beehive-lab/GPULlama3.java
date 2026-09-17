@@ -122,6 +122,12 @@ public class Qwen35DequantGemmLifecycleAccelTest {
         System.setProperty("jllm.withPrefillDecode", "true");
         System.setProperty("jllm.prefillBatchSize", String.valueOf(WIDTH));
         try {
+            // Direct path first, in a child JVM (see the class comment), and before this process
+            // loads anything: the weights are copied into anonymous host memory (about 16 GiB per
+            // process, plus its caches and scratch), so the two captures must not be resident at
+            // once. Sequencing them reduces the peak to one process's; it does not shrink it.
+            Run directA = captureDirectInChildJvm(modelPath);
+
             Model model = ModelLoader.loadModel(modelPath, CONTEXT, true, true);
             List<Integer> promptA = encode(model, PROMPT_A);
             List<Integer> promptB = encode(model, PROMPT_B);
@@ -129,10 +135,6 @@ public class Qwen35DequantGemmLifecycleAccelTest {
                     "prompt A has " + promptA.size() + " tokens; needs > 2 chunks of " + WIDTH,
                     promptA.size() > 2 * WIDTH && promptA.size() % WIDTH != 0);
             assertTrue("prompt B must also span a partial chunk", promptB.size() > WIDTH);
-
-            // Direct path first, in a child JVM (see the class comment), so its device memory is
-            // released before this process allocates its own plan.
-            Run directA = captureDirectInChildJvm(modelPath);
 
             // Pair path, one state and one plan, three sequences: prompt B on the fresh plan,
             // reset, prompt A (the multi-chunk one, compared with the direct path), reset, prompt
@@ -178,7 +180,7 @@ public class Qwen35DequantGemmLifecycleAccelTest {
                     pairA.scheduler(), WIDTH, qwen.dim(), qwen.hiddenDim());
             assertEquals(
                     "the batched attention kernel this plan compiled",
-                    java.util.Set.of("attentionBatchFP16PagedScoredWarp"),
+                    java.util.Set.of("attentionBatchFP16PagedTensorCore"),
                     pairKernels);
             assertEquals(
                     "the batched delta-rule scan this plan compiled",

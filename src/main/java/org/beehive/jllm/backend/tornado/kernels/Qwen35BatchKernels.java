@@ -1,6 +1,7 @@
 package org.beehive.jllm.backend.tornado.kernels;
 
 import uk.ac.manchester.tornado.api.KernelContext;
+import uk.ac.manchester.tornado.api.enums.MMAShape;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
 import uk.ac.manchester.tornado.api.types.HalfFloat;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
@@ -1880,6 +1881,370 @@ public final class Qwen35BatchKernels {
      */
     public static boolean attentionWarpEligible(int headSize, int localSize) {
         return headSize == ATTENTION_WARP_HEAD && localSize == ATTENTION_WARPS * 32;
+    }
+
+    // ---- tensor-core attention (experiment) --------------------------------------------------
+
+    /** Queries one workgroup of the tensor-core attention owns: one MMA row tile. */
+    private static final int TC_QUERIES = 16;
+
+    /**
+     * Keys one staged tile holds: 32, so that the K, V, Q and P tiles fit the 48 KiB static limit.
+     */
+    private static final int TC_KEYS = 32;
+
+    /** Head width the kernel is written for. */
+    private static final int TC_HEAD = 256;
+
+    /** Lanes: four warps, each 16 keys of the score tile and 64 dimensions of the output. */
+    private static final int TC_LANES = 128;
+
+    private static final int TC_WARPS = 4;
+
+    /** Halves of the FP16 staging scratch one workgroup owns: its Q tile and its P tile. */
+    public static final int TC_STAGE_HALVES = TC_QUERIES * TC_HEAD + TC_QUERIES * TC_KEYS;
+
+    // @formatter:off
+    /**
+     * Batched FP16-KV attention on the tensor cores: {@code S = Q K^T} and {@code O = P V} as
+     * {@code m16n8k16} FP16 MMAs with FP32 accumulators, one workgroup per (16-query tile, head),
+     * three passes over the causal range as the scored kernels make. Experiment; {@link
+     * #attentionBatchFP16PagedScoredWarp} is the control and the fallback.
+     *
+     * <p><b>Why three passes and not an online softmax.</b> The kernel language reaches an MMA
+     * accumulator's values only through {@code mmaStore} to global memory; a fragment cannot be
+     * read or rescaled in registers. So the scores go to the existing per-(row, head) score scratch
+     * as the first pass computes them (the same unscaled FP32 scores the control stores), the
+     * maximum and the denominator are taken from the scratch, and the third pass accumulates {@code
+     * P V} against the settled maximum -- no running maximum, no output rescaling -- and divides
+     * after the store. The equations are the control's: {@code m = max_k s_k / sqrt(d)}, {@code l =
+     * sum_k exp(s_k / sqrt(d) - m)}, {@code O = (sum_k p_k v_k) / l}, all FP32 except where stated
+     * below.
+     *
+     * <p><b>Tiles and ownership.</b> Workgroup {@code g}: query tile {@code g / heads} (rows {@code
+     * 16 (g / heads) .. + 15} of the chunk), head {@code g % heads}, 128 lanes. Keys are taken 64
+     * at a time. Pass 1: warp {@code w} computes the score tile for keys {@code 16 w .. 16 w + 15}
+     * of the key tile (two 16x8 accumulators) over the 16 head-dimension steps and stores it to the
+     * scratch. Pass 3: warp {@code w} accumulates output dimensions {@code 64 w .. 64 w + 63}
+     * (eight 16x8 accumulators) over the two 16-key steps of each tile.
+     *
+     * <p><b>Shared buffers.</b> {@code qTile} (int[2048]): Q as the A operand, 16 blocks of [16
+     * queries][16 dims], copied once per workgroup from the FP16 staging scratch (the queries are
+     * converted into the workgroup's region of {@code stage} by {@code HalfFloatArray.set} -- there
+     * is no float-to-half conversion into registers -- then {@code cp.async}ed). {@code kTile}
+     * (HalfFloat[16384]): K^T as the swizzled B operand, sub-tile {@code 8 t + g} = dims {@code 16
+     * t ..} by keys {@code 8 g ..}, restaged per key tile by element-wise swizzled stores (one lane
+     * per element, coalesced reads), read until the barrier that ends the tile. {@code vTile}
+     * (int[8192]): V as the B operand, sub-tile {@code 32 t + j} = keys {@code 16 t ..} by dims
+     * {@code 8 j ..}, copied per key tile by {@code cp.async} (four-byte words of a V row). {@code
+     * pTile} (int[512]): P as the A operand, 4 blocks of [16 queries][16 keys], per key tile
+     * written as halves into the staging scratch and copied back by {@code cp.async}. {@code
+     * rowStat} (float[16 + 16 + 8 * 16]): the row maxima, the row sums and the eight-lane partials
+     * of the second pass.
+     *
+     * <p><b>Rounding.</b> Queries are rounded to FP16 <i>unscaled</i>; the {@code 1/sqrt(256)}
+     * scale is applied in FP32 to the accumulated score. Keys and values are the stored FP16.
+     * Scores, maxima, sums, the exponentials and the output accumulators are FP32. Each probability
+     * is rounded to FP16 for the P V MMA; the denominator accumulates the FP32 probabilities, so
+     * numerator and denominator differ by that rounding.
+     *
+     * <p><b>Masking and partial tiles.</b> Key {@code k} is valid for query row {@code q} iff
+     * {@code k <= position(q) = startPos + 16 (g / heads) + q}; an invalid probability is zero (its
+     * score is never read for the maximum or the sum, and its {@code P} entry is written as zero).
+     * Every row has key 0, so its maximum is finite. The key-tile loops run to the tile's largest
+     * position, a workgroup-uniform bound, so every lane reaches every barrier; rows at or past the
+     * chunk's active count compute at their nominal position and their outputs land in the chunk's
+     * padding rows, which nothing consumes (the control writes nothing there). Keys past the tile's
+     * last valid key (the smaller of its largest position and the context capacity minus one) are
+     * staged from that last valid key's row, a valid address, and are always masked.
+     *
+     * <p><b>Addressing.</b> Head {@code h} reads key/value head {@code h / kvMul}; each key row is
+     * located by {@code KvBlockAddress.offset} on its own, so pages need not be contiguous.
+     * Requires the chunk width a multiple of 16, a 256-wide head, 128-lane workgroups, and a
+     * staging scratch of {@code (rows / 16) * heads * TC_STAGE_HALVES} halves. Worker: {@code (rows
+     * / 16) * heads * 128} lanes, local 128.
+     */
+    // @formatter:on
+    public static void attentionBatchFP16PagedTensorCore(
+            KernelContext context,
+            IntArray batchInfo,
+            FloatArray queryBatch,
+            HalfFloatArray keyCache,
+            HalfFloatArray valueCache,
+            FloatArray outBatch,
+            int heads,
+            int headSize,
+            int kvDim,
+            int kvMul,
+            int layer,
+            IntArray blockTable,
+            int blockCfg,
+            int blockStride,
+            int localWorkGroupSize,
+            FloatArray scores,
+            int scoreStride,
+            HalfFloatArray stage) {
+        int tid = context.localIdx;
+        int warp = tid >> 5;
+        int lane = tid & 31;
+        int group = context.groupIdx;
+        int queryTile = group / heads;
+        int head = group - queryTile * heads;
+        int rowBase = queryTile * TC_QUERIES;
+        if (rowBase >= batchInfo.get(1)) {
+            return;
+        }
+        int startPos = batchInfo.get(0);
+        int slot = batchInfo.get(2);
+        int capacity = scoreStride;
+        int layerOff = KvBlockAddress.layerOffset(layer, kvDim, blockCfg);
+        int kvHead = head / kvMul;
+        float invSqrt = 1.0f / TornadoMath.sqrt(headSize);
+
+        int[] qTile = context.allocateIntLocalArray(TC_QUERIES * TC_HEAD / 2);
+        HalfFloat[] kTile = context.allocateHalfFloatLocalArray(TC_KEYS * TC_HEAD);
+        int[] vTile = context.allocateIntLocalArray(TC_KEYS * TC_HEAD / 2);
+        int[] pTile = context.allocateIntLocalArray(TC_QUERIES * TC_KEYS / 2);
+        float[] rowStat = context.allocateFloatLocalArray(TC_QUERIES * 2 + TC_LANES);
+
+        int stageBase = group * TC_STAGE_HALVES;
+        int qBase = (rowBase * heads + head) * headSize;
+        for (int i = tid; i < TC_QUERIES * TC_HEAD; i += TC_LANES) {
+            int row = i >> 8;
+            int d = i & 255;
+            stage.set(
+                    stageBase + i,
+                    new HalfFloat(queryBatch.get(qBase + row * heads * headSize + d)));
+        }
+        context.localBarrier();
+        for (int i = tid; i < TC_QUERIES * TC_HEAD / 2; i += TC_LANES) {
+            int t = i >> 7;
+            int within = i & 127;
+            int row = within >> 3;
+            int d = (t << 4) + ((within & 7) << 1);
+            context.asyncCopyToLocal(qTile, i, stage, stageBase + (row << 8) + d);
+        }
+        context.asyncCopyCommit();
+        context.asyncCopyWaitGroup(0);
+        context.localBarrier();
+
+        int maxPos = startPos + rowBase + TC_QUERIES - 1;
+        int lastKey = capacity - 1;
+        if (maxPos < lastKey) {
+            lastKey = maxPos;
+        }
+        // The score scratch as a matrix with row stride heads * scoreStride: row r of this tile
+        // is (rowBase + r) * heads + head spans, i.e. column offset head * scoreStride.
+        int scoreLd = heads * scoreStride;
+        int scoreCol = head * scoreStride;
+
+        // Pass 1: S = Q K^T, 32 keys a tile, stored unscaled to the scratch.
+        for (int tileStart = 0; tileStart <= lastKey; tileStart += TC_KEYS) {
+            for (int i = 0; i < TC_KEYS * TC_HEAD / TC_LANES; i++) {
+                int e = i * TC_LANES + tid;
+                int key = e >> 8;
+                int d = e & 255;
+                int p = tileStart + key;
+                if (p > lastKey) {
+                    p = lastKey;
+                }
+                int base =
+                        KvBlockAddress.offset(
+                                        blockTable, slot, p, layerOff, kvDim, blockCfg, blockStride)
+                                + kvHead * headSize;
+                context.mmaStoreBSwizzled(
+                        kTile,
+                        d & 15,
+                        key & 7,
+                        8,
+                        // Widened and re-narrowed (exact): the route the store's lowering takes
+                        // a half by value, rather than a half read from the array.
+                        new HalfFloat(keyCache.get(base + d).getFloat32()),
+                        (((d >> 4) << 2) + (key >> 3)) * 256);
+            }
+            context.localBarrier();
+            float[] s0 = context.mmaFragment(0.0f);
+            for (int t = 0; t < TC_HEAD / 16; t++) {
+                HalfFloat[] a = context.mmaLoadA(qTile, 16, t * 512);
+                HalfFloat[] b0 = context.mmaLoadBSwizzled(kTile, 16, ((t << 2) + warp) * 256);
+                s0 = context.mma(a, b0, s0, MMAShape.M16N8K16);
+            }
+            // This warp's eight keys of the tile; skipped whole where they lie past the capacity
+            // (a warp-uniform choice, so no lane misses a barrier): those keys are never read.
+            if (tileStart + (warp << 3) + 7 < capacity) {
+                context.mmaStore(s0, scores, rowBase, scoreCol + tileStart + (warp << 3), scoreLd);
+            }
+            context.localBarrier();
+        }
+
+        // Pass 2: per row, the maximum and the denominator of the scaled scores, eight lanes a
+        // row (row = tid / 8, keys tid % 8, + 8, ...), folded by shuffles within the eight.
+        int statRow = tid >> 3;
+        int statLane = tid & 7;
+        int statPos = startPos + rowBase + statRow;
+        if (statPos > lastKey) {
+            statPos = lastKey;
+        }
+        int statBase = ((rowBase + statRow) * heads + head) * scoreStride;
+        float rowMax = Float.NEGATIVE_INFINITY;
+        for (int p = statLane; p <= statPos; p += 8) {
+            rowMax = TornadoMath.max(rowMax, scores.get(statBase + p) * invSqrt);
+        }
+        rowMax = TornadoMath.max(rowMax, context.simdShuffleDown(rowMax, 4));
+        rowMax = TornadoMath.max(rowMax, context.simdShuffleDown(rowMax, 2));
+        rowMax = TornadoMath.max(rowMax, context.simdShuffleDown(rowMax, 1));
+        if (statLane == 0) {
+            rowStat[statRow] = rowMax;
+        }
+        context.localBarrier();
+        float m = rowStat[statRow];
+        float rowSum = 0.0f;
+        for (int p = statLane; p <= statPos; p += 8) {
+            rowSum += TornadoMath.exp(scores.get(statBase + p) * invSqrt - m);
+        }
+        rowSum += context.simdShuffleDown(rowSum, 4);
+        rowSum += context.simdShuffleDown(rowSum, 2);
+        rowSum += context.simdShuffleDown(rowSum, 1);
+        if (statLane == 0) {
+            rowStat[TC_QUERIES + statRow] = rowSum;
+        }
+        context.localBarrier();
+
+        // Pass 3: O = P V, 32 keys a tile, against the settled maximum.
+        float[] o0 = context.mmaFragment(0.0f);
+        float[] o1 = context.mmaFragment(0.0f);
+        float[] o2 = context.mmaFragment(0.0f);
+        float[] o3 = context.mmaFragment(0.0f);
+        float[] o4 = context.mmaFragment(0.0f);
+        float[] o5 = context.mmaFragment(0.0f);
+        float[] o6 = context.mmaFragment(0.0f);
+        float[] o7 = context.mmaFragment(0.0f);
+        int pBase = stageBase + TC_QUERIES * TC_HEAD;
+        for (int tileStart = 0; tileStart <= lastKey; tileStart += TC_KEYS) {
+            for (int i = 0; i < TC_KEYS * TC_HEAD / 2 / TC_LANES; i++) {
+                int e = i * TC_LANES + tid;
+                int key = e >> 7;
+                int d = (e & 127) << 1;
+                int p = tileStart + key;
+                if (p > lastKey) {
+                    p = lastKey;
+                }
+                int base =
+                        KvBlockAddress.offset(
+                                        blockTable, slot, p, layerOff, kvDim, blockCfg, blockStride)
+                                + kvHead * headSize;
+                int dst = (((key >> 4) << 5) + (d >> 3)) * 64 + ((key & 15) << 2) + ((d & 7) >> 1);
+                context.asyncCopyToLocal(vTile, dst, valueCache, base + d);
+            }
+            context.asyncCopyCommit();
+            // P for this tile: lane covers (row = i / 64, key = i % 64), 8 per lane, as halves.
+            for (int i = tid; i < TC_QUERIES * TC_KEYS; i += TC_LANES) {
+                int row = i >> 5;
+                int key = tileStart + (i & 31);
+                float prob = 0.0f;
+                if (key <= startPos + rowBase + row) {
+                    prob =
+                            TornadoMath.exp(
+                                    scores.get(((rowBase + row) * heads + head) * scoreStride + key)
+                                                    * invSqrt
+                                            - rowStat[row]);
+                }
+                stage.set(pBase + i, new HalfFloat(prob));
+            }
+            context.localBarrier();
+            for (int i = tid; i < TC_QUERIES * TC_KEYS / 2; i += TC_LANES) {
+                int t = i >> 7;
+                int q = (i >> 3) & 15;
+                int kk = (t << 4) + ((i & 7) << 1);
+                context.asyncCopyToLocal(pTile, i, stage, pBase + (q << 5) + kk);
+            }
+            context.asyncCopyCommit();
+            context.asyncCopyWaitGroup(0);
+            context.localBarrier();
+            for (int t = 0; t < TC_KEYS / 16; t++) {
+                HalfFloat[] a = context.mmaLoadA(pTile, 16, t * 512);
+                int vBase = (t << 5) + (warp << 3);
+                o0 =
+                        context.mma(
+                                a,
+                                context.mmaLoadB(vTile, 16, (vBase + 0) * 256),
+                                o0,
+                                MMAShape.M16N8K16);
+                o1 =
+                        context.mma(
+                                a,
+                                context.mmaLoadB(vTile, 16, (vBase + 1) * 256),
+                                o1,
+                                MMAShape.M16N8K16);
+                o2 =
+                        context.mma(
+                                a,
+                                context.mmaLoadB(vTile, 16, (vBase + 2) * 256),
+                                o2,
+                                MMAShape.M16N8K16);
+                o3 =
+                        context.mma(
+                                a,
+                                context.mmaLoadB(vTile, 16, (vBase + 3) * 256),
+                                o3,
+                                MMAShape.M16N8K16);
+                o4 =
+                        context.mma(
+                                a,
+                                context.mmaLoadB(vTile, 16, (vBase + 4) * 256),
+                                o4,
+                                MMAShape.M16N8K16);
+                o5 =
+                        context.mma(
+                                a,
+                                context.mmaLoadB(vTile, 16, (vBase + 5) * 256),
+                                o5,
+                                MMAShape.M16N8K16);
+                o6 =
+                        context.mma(
+                                a,
+                                context.mmaLoadB(vTile, 16, (vBase + 6) * 256),
+                                o6,
+                                MMAShape.M16N8K16);
+                o7 =
+                        context.mma(
+                                a,
+                                context.mmaLoadB(vTile, 16, (vBase + 7) * 256),
+                                o7,
+                                MMAShape.M16N8K16);
+            }
+            context.localBarrier();
+        }
+
+        int ld = heads * headSize;
+        int colBase = head * headSize + (warp << 6);
+        context.mmaStore(o0, outBatch, rowBase, colBase, ld);
+        context.mmaStore(o1, outBatch, rowBase, colBase + 8, ld);
+        context.mmaStore(o2, outBatch, rowBase, colBase + 16, ld);
+        context.mmaStore(o3, outBatch, rowBase, colBase + 24, ld);
+        context.mmaStore(o4, outBatch, rowBase, colBase + 32, ld);
+        context.mmaStore(o5, outBatch, rowBase, colBase + 40, ld);
+        context.mmaStore(o6, outBatch, rowBase, colBase + 48, ld);
+        context.mmaStore(o7, outBatch, rowBase, colBase + 56, ld);
+        context.localBarrier();
+        // Divide by the denominator: lane covers (row = i / 256, dim = i % 256).
+        for (int i = tid; i < TC_QUERIES * TC_HEAD; i += TC_LANES) {
+            int row = i >> 8;
+            int idx = (rowBase + row) * ld + head * headSize + (i & 255);
+            outBatch.set(idx, outBatch.get(idx) / rowStat[TC_QUERIES + row]);
+        }
+    }
+
+    /**
+     * Whether the tensor-core attention fits the geometry: 256-wide head, 128 lanes, a chunk of
+     * whole 16-query tiles, a context capacity of whole 8-key score sub-tiles.
+     */
+    public static boolean attentionTensorCoreEligible(
+            int headSize, int localSize, int rows, int capacity) {
+        return headSize == TC_HEAD
+                && localSize == TC_LANES
+                && rows % TC_QUERIES == 0
+                && capacity % 8 == 0;
     }
 
     /** The attention result gated by the logistic of its gate, over a chunk. */

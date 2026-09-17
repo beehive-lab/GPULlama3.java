@@ -59,11 +59,14 @@ public class Qwen35LongPrefixNllAccelTest {
     private static final String OUTPUT_PROPERTY = "jllm.nllScreen.out";
     private static final String BATCH_PROPERTY = "jllm.nllScreen.batch";
 
+    /**
+     * Context the plan is sized for: 2048, or twice the width where the prefix would not fit (width
+     * 2048 needs 3136 + 128 positions).
+     */
+    private static final int CONTEXT = Math.max(2048, 2 * Integer.getInteger(BATCH_PROPERTY, 256));
+
     /** Decoded positions scored after the prefix. */
     private static final int SCORED = 128;
-
-    /** Context the plan is sized for; the longest prefix this test builds fits inside it. */
-    private static final int CONTEXT = 2048;
 
     /** One passage, long enough for the widest prefix: the repository's README from byte zero. */
     private static final String PASSAGE_PATH = "README.md";

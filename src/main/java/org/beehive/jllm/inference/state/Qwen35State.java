@@ -465,6 +465,14 @@ public final class Qwen35State extends State {
                                     (long) batch
                                             * config.numberOfHeads()
                                             * config.contextLength()));
+            // The tensor-core attention's staging, at the widths its query tiles divide; the
+            // kernel is dispatched from the same answer (Qwen35Configuration.attentionStageHalves).
+            long stageHalves =
+                    Qwen35Configuration.attentionStageHalves(batch, config.numberOfHeads());
+            if (stageHalves > 0) {
+                workspace.wrapAttnStageFP16 =
+                        TornadoWorkspaces.halfFloats(Math.toIntExact(stageHalves));
+            }
         }
     }
 }

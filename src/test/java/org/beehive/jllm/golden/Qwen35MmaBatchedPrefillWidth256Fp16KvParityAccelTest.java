@@ -11,7 +11,7 @@ import org.junit.Test;
 /**
  * {@link Qwen35MmaBatchedPrefillWidth256ParityAccelTest} with the FP16 key/value cache — the cache
  * the benchmarked plan runs, under which the batched attention is the scored kernel family
- * (currently {@code attentionBatchFP16PagedScoredWarp}) rather than the FP32-cache kernel the
+ * (currently {@code attentionBatchFP16PagedTensorCore}) rather than the FP32-cache kernel the
  * width-128/256 parity tests exercise. Same fixture, same bounds, same CPU reference; the attention
  * and delta-rule kernels the plan compiled are asserted by name off this run's own plan.
  *
@@ -35,7 +35,7 @@ public class Qwen35MmaBatchedPrefillWidth256Fp16KvParityAccelTest extends CpuGpu
                 assertParityBatched(Fixture.QWEN3_8_27B_Q4_0, Q8_0_PACKED_DECODE, 256);
         assertEquals(
                 "the batched attention kernel this plan compiled",
-                Set.of("attentionBatchFP16PagedScoredWarp"),
+                Set.of("attentionBatchFP16PagedTensorCore"),
                 gpu.batchedTaskKernels.get("attention"));
         assertEquals(
                 "the batched delta-rule scan this plan compiled",

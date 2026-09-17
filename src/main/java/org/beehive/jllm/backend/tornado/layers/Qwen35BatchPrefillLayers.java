@@ -820,30 +820,57 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
             // reassociates the FP32 sum); the staged form reads keys through a transposed shared
             // tile whose lane mapping is written for a 128-lane workgroup; any other width keeps
             // the per-lane form.
-            layer.task(
-                    "attention",
-                    warpAttention(headDim)
-                            ? Qwen35BatchKernels::attentionBatchFP16PagedScoredWarp
-                            : ATTENTION_LOCAL == Qwen35BatchKernels.ATTENTION_STAGE_LANES
-                                    ? Qwen35BatchKernels::attentionBatchFP16PagedScoredStagedWide
-                                    : Qwen35BatchKernels::attentionBatchFP16PagedScored,
-                    context,
-                    state.workspace.batchStartPosHolder,
-                    state.workspace.wrapAttnQBatch,
-                    state.workspace.wrapKeyCacheFP16,
-                    state.workspace.wrapValueCacheFP16,
-                    state.workspace.wrapXbBatch,
-                    config.numberOfHeads(),
-                    headDim,
-                    kvDim,
-                    config.kvMul(),
-                    kvLayer,
-                    state.workspace.wrapBlockTable,
-                    state.kvBlockCfg,
-                    state.kvBlockStride,
-                    ATTENTION_LOCAL,
-                    state.workspace.wrapAttnScoresBatch,
-                    config.contextLength());
+            if (tensorCoreAttention(headDim)) {
+                // Q K^T and P V on the tensor cores, three passes through the score scratch,
+                // one workgroup per (16-query tile, head); the FP16 staging is the state's.
+                layer.task(
+                        "attention",
+                        Qwen35BatchKernels::attentionBatchFP16PagedTensorCore,
+                        context,
+                        state.workspace.batchStartPosHolder,
+                        state.workspace.wrapAttnQBatch,
+                        state.workspace.wrapKeyCacheFP16,
+                        state.workspace.wrapValueCacheFP16,
+                        state.workspace.wrapXbBatch,
+                        config.numberOfHeads(),
+                        headDim,
+                        kvDim,
+                        config.kvMul(),
+                        kvLayer,
+                        state.workspace.wrapBlockTable,
+                        state.kvBlockCfg,
+                        state.kvBlockStride,
+                        ATTENTION_LOCAL,
+                        state.workspace.wrapAttnScoresBatch,
+                        config.contextLength(),
+                        state.workspace.wrapAttnStageFP16);
+            } else {
+                layer.task(
+                        "attention",
+                        warpAttention(headDim)
+                                ? Qwen35BatchKernels::attentionBatchFP16PagedScoredWarp
+                                : ATTENTION_LOCAL == Qwen35BatchKernels.ATTENTION_STAGE_LANES
+                                        ? Qwen35BatchKernels
+                                                ::attentionBatchFP16PagedScoredStagedWide
+                                        : Qwen35BatchKernels::attentionBatchFP16PagedScored,
+                        context,
+                        state.workspace.batchStartPosHolder,
+                        state.workspace.wrapAttnQBatch,
+                        state.workspace.wrapKeyCacheFP16,
+                        state.workspace.wrapValueCacheFP16,
+                        state.workspace.wrapXbBatch,
+                        config.numberOfHeads(),
+                        headDim,
+                        kvDim,
+                        config.kvMul(),
+                        kvLayer,
+                        state.workspace.wrapBlockTable,
+                        state.kvBlockCfg,
+                        state.kvBlockStride,
+                        ATTENTION_LOCAL,
+                        state.workspace.wrapAttnScoresBatch,
+                        config.contextLength());
+            }
         } else if (fp16Kv()) {
             layer.task(
                     "attention",
@@ -1268,6 +1295,10 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 layer.transferToDevice(
                         DataTransferMode.FIRST_EXECUTION, state.workspace.wrapAttnScoresBatch);
             }
+            if (state.workspace.wrapAttnStageFP16 != null) {
+                layer.transferToDevice(
+                        DataTransferMode.FIRST_EXECUTION, state.workspace.wrapAttnStageFP16);
+            }
             if (state.workspace.wrapDequantScratchFP16 != null) {
                 layer.transferToDevice(
                         DataTransferMode.FIRST_EXECUTION, state.workspace.wrapDequantScratchFP16);
@@ -1312,10 +1343,26 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
             if (scoredAttention()) {
                 layer.consumeFromDevice(predecessor, state.workspace.wrapAttnScoresBatch);
             }
+            if (state.workspace.wrapAttnStageFP16 != null) {
+                layer.consumeFromDevice(predecessor, state.workspace.wrapAttnStageFP16);
+            }
             if (state.workspace.wrapDequantScratchFP16 != null) {
                 layer.consumeFromDevice(predecessor, state.workspace.wrapDequantScratchFP16);
             }
         }
+    }
+
+    /**
+     * Whether the batched attention is the tensor-core kernel: the scored path with its staging
+     * allocated (whole 16-query tiles), a 256-wide head, 128 lanes, a context of whole 32-key
+     * tiles, on CUDA (the tensor-core guard).
+     */
+    private boolean tensorCoreAttention(int headDim) {
+        return scoredAttention()
+                && state.workspace.wrapAttnStageFP16 != null
+                && Qwen35BatchKernels.attentionTensorCoreEligible(
+                        headDim, ATTENTION_LOCAL, batchSize, config.contextLength())
+                && TensorCoreSupport.isTensorCoreCapableBackend();
     }
 
     /**
@@ -1394,10 +1441,15 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                         batchSize * config.numberOfHeads() * (config.ropeDimensionCount() / 2), 32);
         WorkerGrid kvAppend =
                 WorkerGridFactory.genericWorker(batchSize * config.kvDim(), ELEMENTWISE_LOCAL);
-        // One workgroup per (row, head); the workgroup's lanes split the causal range.
+        // One workgroup per (row, head); the workgroup's lanes split the causal range. The
+        // tensor-core kernel: one per (16-query tile, head).
+        int attentionGroups =
+                tensorCoreAttention(config.headSize())
+                        ? (batchSize / Qwen35Configuration.ATTENTION_TILE_ROWS)
+                                * config.numberOfHeads()
+                        : batchSize * config.numberOfHeads();
         WorkerGrid attention =
-                WorkerGridFactory.genericWorker(
-                        batchSize * config.numberOfHeads() * ATTENTION_LOCAL, ATTENTION_LOCAL);
+                WorkerGridFactory.genericWorker(attentionGroups * ATTENTION_LOCAL, ATTENTION_LOCAL);
         WorkerGrid outputGate =
                 WorkerGridFactory.genericWorker(
                         batchSize * config.attentionOutputInputDim(), ELEMENTWISE_LOCAL);

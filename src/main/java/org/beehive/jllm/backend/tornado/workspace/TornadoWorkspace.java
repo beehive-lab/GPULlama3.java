@@ -186,6 +186,14 @@ public final class TornadoWorkspace {
     public FloatArray wrapAttnScoresBatch;
 
     /**
+     * FP16 staging for the tensor-core batched attention: per (16-query tile, head) workgroup, its
+     * queries and its probability tile, converted through global memory because the kernel language
+     * has no in-register float-to-half conversion. Allocated alongside the score scratch when the
+     * chunk is whole 16-row tiles.
+     */
+    public HalfFloatArray wrapAttnStageFP16;
+
+    /**
      * One FP16 matrix of scratch for the batched prefill's dequantize-then-GEMM projections — the
      * wide Q4_0 ones, the Q4_1 ffn_down and the Q5_K ssm_out — sized to the largest such matrix and
      * reused by every projection of every layer graph in turn: each projection's dequantization
