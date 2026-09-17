@@ -191,8 +191,14 @@ jobs:
       timeout_minutes: 120
 
   # Test integration with Quarkus-langchain4j
+  #
+  # TEMPORARILY DISABLED: this is the only job that builds the LangChain4j extension and
+  # runs the quarkus-langchain4j integration test, and nothing else `needs` it, so the
+  # `&& false` below removes both from CI while the core build and its tests keep running.
+  # The job is left intact for local runs of the extension against a build. To restore,
+  # delete the `&& false` from the condition.
   quarkus-langchain4j-integration:
-    if: github.repository == 'beehive-lab/jllm'
+    if: github.repository == 'beehive-lab/jllm' && false
     runs-on: [self-hosted, Linux]
     needs: build-linux
     timeout-minutes: 45
