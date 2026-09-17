@@ -98,9 +98,7 @@ public class Gemma4FP16FFNLayers
 
     /** How many slices the window is cut into, or 1 to run the single-pass kernel. */
     private int attentionSplits() {
-        return config.contextLength() >= SPLIT_KV_MIN_CONTEXT
-                ? org.beehive.jllm.inference.state.State.SPLIT_KV
-                : 1;
+        return config.attentionSplits();
     }
 
     @Override

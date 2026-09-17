@@ -208,7 +208,8 @@ public final class Gemma4State extends State {
         // layer -- 256 on the sliding-window layers, 512 on the full ones -- while the buffer is
         // one allocation shared by every layer's graph.
         workspace.wrapAttSplit =
-                TornadoWorkspaces.floats(nHead * SPLIT_KV * (config.maxHeadDim() + 2));
+                TornadoWorkspaces.floats(
+                        nHead * config.attentionSplits() * (config.maxHeadDim() + 2));
         workspace.positionHolder = TornadoWorkspaces.ints(1);
 
         workspace.temp = TornadoWorkspaces.floats(1 + ((dim + localSize - 1) / localSize));
