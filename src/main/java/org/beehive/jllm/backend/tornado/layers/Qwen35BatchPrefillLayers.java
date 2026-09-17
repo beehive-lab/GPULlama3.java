@@ -171,10 +171,10 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
      * dequantize-then-GEMM pair where {@link #dequantGemmEligible} says so, otherwise the direct
      * quantized kernel; either way the task named {@code task} is the one that writes {@code out}.
      *
-     * <p>The Q4_0 pair is the tiled one: the decoder writes the scratch in the GEMM's B-tile order,
+     * <p>Every pair is the tiled one: the decoder writes the scratch in the GEMM's B-tile order,
      * both nibbles of a packed byte from one lane, and the GEMM copies each tile global-to-shared
-     * as contiguous words. The Q4_1 and Q5_K pairs write and read the same scratch row-major with
-     * the general GEMM; the scratch carries no layout of its own, each pair's two tasks agree
+     * as contiguous words. The Q4_1 ffn_down and the Q5_K ssm_out take the same GEMM with their own
+     * paired-nibble decoders; the scratch carries no layout of its own, each pair's two tasks agree
      * between themselves, and no task reads what another family's decoder wrote.
      */
     private void q40Projection(
@@ -630,14 +630,15 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     state.workspace.wrapHbFP16BatchMMA);
             if (down.dataType() == DataType.Q4_1) {
                 if (dequantGemmEligible(config.dim(), config.hiddenDim())) {
-                    // The same pair as the Q4_0 and Q5_K projections, through the same scratch,
-                    // with the Q4_1 decoder; this matrix is the scratch's full size.
+                    // The same tiled pair as the Q4_0 projections, through the same scratch,
+                    // with the Q4_1 paired-nibble decoder; this matrix is the scratch's full
+                    // size. One lane per packed byte.
                     String qualified = "batchLayer_" + layerIndex + ".ffn_down_proj";
-                    dequantTasks.put(qualified + "_dequant", config.dim() * config.hiddenDim());
+                    dequantTasks.put(qualified + "_dequant", config.dim() * config.hiddenDim() / 2);
                     gemmTasks.put(qualified, config.dim());
                     layer.task(
                             "ffn_down_proj_dequant",
-                            Qwen35MMAKernels::dequantizeQ4_1ToFP16,
+                            Qwen35MMAKernels::dequantizeQ4_1ToFP16TiledPairs,
                             context,
                             down.asByteArray(),
                             state.workspace.wrapDequantScratchFP16,
@@ -645,7 +646,7 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                             config.hiddenDim());
                     layer.task(
                             "ffn_down_proj",
-                            TransformerBatchPrefillKernels::gemmMMA,
+                            Qwen35MMAKernels::gemmMMATiledB,
                             context,
                             state.workspace.wrapHbFP16BatchMMA,
                             state.workspace.wrapDequantScratchFP16,
@@ -1188,16 +1189,18 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     context,
                     state.workspace.wrapSsmOutBatch,
                     state.workspace.wrapSsmOutFP16Batch);
-            if (dequantGemmEligible(config.dim(), valueDim)) {
-                // The same pair the wide Q4_0 projections take, through the same scratch: its
-                // dequantization runs after the previous projection's GEMM has read the scratch
-                // and before this GEMM, in this graph's task order.
+            if (dequantGemmEligible(config.dim(), valueDim) && valueDim % 64 == 0) {
+                // The same tiled pair the wide Q4_0 projections take, through the same scratch,
+                // with the Q5_K paired-nibble decoder (a lane per qs byte, which asks for whole
+                // fours of k-tiles per row block): its dequantization runs after the previous
+                // projection's GEMM has read the scratch and before this GEMM, in this graph's
+                // task order.
                 String qualified = "batchLayer_" + layerIndex + ".ssm_out_proj";
-                dequantTasks.put(qualified + "_dequant", config.dim() * valueDim);
+                dequantTasks.put(qualified + "_dequant", config.dim() * valueDim / 2);
                 gemmTasks.put(qualified, config.dim());
                 layer.task(
                         "ssm_out_proj_dequant",
-                        Qwen35MMAKernels::dequantizeQ5_KToFP16,
+                        Qwen35MMAKernels::dequantizeQ5_KToFP16TiledPairs,
                         context,
                         ssmOut.asByteArray(),
                         state.workspace.wrapDequantScratchFP16,
@@ -1205,7 +1208,7 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                         valueDim);
                 layer.task(
                         "ssm_out_proj",
-                        TransformerBatchPrefillKernels::gemmMMA,
+                        Qwen35MMAKernels::gemmMMATiledB,
                         context,
                         state.workspace.wrapSsmOutFP16Batch,
                         state.workspace.wrapDequantScratchFP16,

@@ -1308,6 +1308,116 @@ public final class Qwen35MMAKernels {
         out.set(lowHalf + 2 * GEMM_B_TILE_INTS, new HalfFloat(scale * (high - 8)));
     }
 
+    // @formatter:off
+    /**
+     * {@link #dequantizeQ4_0ToFP16TiledPairs} for a {@code Q4_1} matrix: the same lane order, the
+     * same tiled layout, the same two halves a byte apart in k, with the block's scale and minimum
+     * read from its four-byte header and each element decoded as {@code fp16(scale * q + minimum)}
+     * — the expression of {@link #dequantizeQ4_1ToFP16}, so the halves carry the bits it writes.
+     * The high nibble is {@code (packed & 0xF0) >>> 4}, as the Q4_0 pairs decoder records.
+     *
+     * <p>Worker: {@code n * k / 2} lanes.
+     */
+    // @formatter:on
+    public static void dequantizeQ4_1ToFP16TiledPairs(
+            KernelContext ctx, ByteArray w, HalfFloatArray out, int n, int k) {
+        int lane = ctx.globalIdx;
+        int kSteps = k / GEMM_BK;
+        int parity = lane & 1;
+        int pairInSub = ((lane >>> 1) & 1) | (((lane >>> 5) & 1) << 1);
+        int kk = ((lane >>> 2) & 7) | (((lane >>> 6) & 1) << 3);
+        int sub = (lane >>> 7) & 15;
+        int tilePair = lane >>> 11;
+        int tile = tilePair << 1;
+        int idx = (sub << 6) + (kk << 2) + pairInSub;
+        int rowBlock = tile / kSteps;
+        int kStep = tile - rowBlock * kSteps;
+        int row = rowBlock * GEMM_BN + (sub << 3) + (pairInSub << 1) + parity;
+        int element = kStep * GEMM_BK + kk;
+        int blocksPerRow = k / QK;
+        int block = element >> 5;
+        int within = element & 15;
+        int base = (row * blocksPerRow + block) * BLOCK_BYTES_Q4_1;
+        float scale = w.getHalfFloat(base).getFloat32();
+        float minimum = w.getHalfFloat(base + 2).getFloat32();
+        int packed = w.get(base + 4 + within) & 0xFF;
+        int low = packed & 0xF;
+        int high = (packed & 0xF0) >>> 4;
+        int lowHalf = (tile << 11) + (idx << 1) + parity;
+        out.set(lowHalf, new HalfFloat(scale * low + minimum));
+        out.set(lowHalf + 2 * GEMM_B_TILE_INTS, new HalfFloat(scale * high + minimum));
+    }
+
+    // @formatter:off
+    /**
+     * {@link #dequantizeQ5_KToFP16} written into the tiled layout of {@link
+     * #dequantizeQ4_0ToFP16Tiled}, both nibbles of a {@code qs} byte decoded by one lane.
+     *
+     * <p><b>Address mapping.</b> Byte {@code t} (0..31) of nibble pair {@code p} (0..3) of a
+     * super-block holds element {@code 64p + t} of the super-block in its low nibble (sub-block
+     * {@code 2p}) and element {@code 64p + 32 + t} in its high nibble (sub-block {@code 2p + 1}):
+     * the same row, 32 apart in k, so in the tiled layout two k-tiles apart at the same in-tile
+     * index — the high half's position is the low half's plus {@code 2 * 2048}. A lane enumerates
+     * the low halves: every half position whose k-tile is 0 or 1 modulo 4, in the retained lane
+     * order with the tile's bit one removed. Lane bits, low to high: row parity, the low pair bit,
+     * three low k bits, the high pair bit, the high k bit, the sub-tile (four bits), the tile's bit
+     * zero, then the tile's bits from two up. Requires {@code k % 64 == 0} (a row block's tiles
+     * come in whole fours); {@code n * k / 2} lanes cover every low half once and every high half
+     * once.
+     *
+     * <p><b>Arithmetic.</b> Each element is {@code fp16(scale * (q5 + high * 16) - minimum)} with
+     * its own sub-block's scale and minimum through {@link #scaleAndMin}, the high bit from the
+     * {@code qh} plane — the expression of the row-major decoder, evaluated independently for the
+     * two elements; the high nibble is {@code (packed & 0xF0) >>> 4}, as the Q4_0 pairs decoder
+     * records.
+     *
+     * <p>Worker: {@code n * k / 2} lanes.
+     */
+    // @formatter:on
+    public static void dequantizeQ5_KToFP16TiledPairs(
+            KernelContext ctx, ByteArray w, HalfFloatArray out, int n, int k) {
+        int lane = ctx.globalIdx;
+        int kSteps = k / GEMM_BK;
+        int parity = lane & 1;
+        int pairInSub = ((lane >>> 1) & 1) | (((lane >>> 5) & 1) << 1);
+        int kk = ((lane >>> 2) & 7) | (((lane >>> 6) & 1) << 3);
+        int sub = (lane >>> 7) & 15;
+        int tileLow = (lane >>> 11) & 1;
+        int tileHigh = lane >>> 12;
+        int tile = (tileHigh << 2) + tileLow;
+        int idx = (sub << 6) + (kk << 2) + pairInSub;
+        int rowBlock = tile / kSteps;
+        int kStep = tile - rowBlock * kSteps;
+        int row = rowBlock * GEMM_BN + (sub << 3) + (pairInSub << 1) + parity;
+        int element = kStep * GEMM_BK + kk;
+        int superBlocksPerRow = k / QK_K;
+        int superBlock = element >> 8;
+        int inSuper = element & 255;
+        int subBlock = inSuper >> 5;
+        int posInSub = inSuper & 31;
+        int base = (row * superBlocksPerRow + superBlock) * K_BLOCK_BYTES;
+        float d = w.getHalfFloat(base).getFloat32();
+        float dmin = w.getHalfFloat(base + 2).getFloat32();
+        int packedScaleLow = scaleAndMin(w, base + K_SCALES_OFFSET, subBlock);
+        int packedScaleHigh = scaleAndMin(w, base + K_SCALES_OFFSET, subBlock + 1);
+        float scaleLow = d * (packedScaleLow >> 8);
+        float minimumLow = dmin * (packedScaleLow & 0xFF);
+        float scaleHigh = d * (packedScaleHigh >> 8);
+        float minimumHigh = dmin * (packedScaleHigh & 0xFF);
+        int pairIndex = subBlock >> 1;
+        int qsByte = w.get(base + K_QS_OFFSET + pairIndex * 32 + posInSub) & 0xFF;
+        int low = qsByte & 0xF;
+        int high = (qsByte & 0xF0) >>> 4;
+        int qhByte = w.get(base + K_QH_OFFSET + posInSub) & 0xFF;
+        int highBitLow = (qhByte >> (pairIndex * 2)) & 1;
+        int highBitHigh = (qhByte >> (pairIndex * 2 + 1)) & 1;
+        int lowHalf = (tile << 11) + (idx << 1) + parity;
+        out.set(lowHalf, new HalfFloat(scaleLow * (low + highBitLow * 16) - minimumLow));
+        out.set(
+                lowHalf + 4 * GEMM_B_TILE_INTS,
+                new HalfFloat(scaleHigh * (high + highBitHigh * 16) - minimumHigh));
+    }
+
     /** {@code lo | hi << 16} of two halves: the packing of the GEMM's shared tiles. */
     private static int packHalvesGemm(HalfFloatArray src, int idxLo, int idxHi) {
         int lo = src.get(idxLo).getHalfFloatValue() & 0xFFFF;
