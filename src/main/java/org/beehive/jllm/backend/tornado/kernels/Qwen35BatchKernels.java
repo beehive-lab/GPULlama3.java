@@ -155,6 +155,96 @@ public final class Qwen35BatchKernels {
                 channel);
     }
 
+    // @formatter:off
+    /**
+     * The causal convolution of {@link #causalConv1dScan} with a lane per (row, channel) instead of
+     * a lane per channel walking the chunk.
+     *
+     * <p>The scan's output for row {@code r} of channel {@code c} is {@code w[0] * x[r-3] + w[1] *
+     * x[r-2] + w[2] * x[r-1] + w[3] * x[r]} (kernel 4), where {@code x[i]} for {@code i < 0} is the
+     * window the chunk started with; every row's output depends only on the input and that initial
+     * window, not on other rows' outputs, so the rows are independent. This kernel reads the taps
+     * in the same order and sums them in the same order as the scan, so the outputs are bit-equal
+     * to it (asserted by the test). It does not touch the window: the scan shifts the window as it
+     * goes and a lane per row cannot, since the rows below three read the initial window while
+     * later rows would overwrite it. {@link #causalConv1dWindowUpdate} writes the chunk's final
+     * window afterwards, as a task of its own.
+     *
+     * <p>Worker: {@code rows * channels} lanes; lanes past {@code activeRows * channels} return.
+     */
+    // @formatter:on
+    public static void causalConv1dBatch(
+            KernelContext context,
+            FloatArray inputBatch,
+            FloatArray weight,
+            FloatArray window,
+            FloatArray outBatch,
+            int channels,
+            int kernel,
+            int windowOffset,
+            IntArray batchInfo) {
+        int lane = context.globalIdx;
+        if (lane >= channels * batchInfo.get(1)) {
+            return;
+        }
+        int row = lane / channels;
+        int channel = lane - row * channels;
+        int history = kernel - 1;
+        int wBase = channel * kernel;
+        int hBase = windowOffset + channel * history;
+
+        float sum = 0.0f;
+        for (int t = 0; t < history; t++) {
+            int source = row - history + t;
+            float h;
+            if (source < 0) {
+                h = window.get(hBase + source + history);
+            } else {
+                h = inputBatch.get(source * channels + channel);
+            }
+            sum += weight.get(wBase + t) * h;
+        }
+        sum += weight.get(wBase + history) * inputBatch.get(lane);
+        outBatch.set(lane, sum);
+    }
+
+    /**
+     * The window {@link #causalConv1dScan} leaves after a chunk: the chunk's last {@code kernel -
+     * 1} inputs of each channel, taken from the initial window where the chunk is shorter than
+     * that. One lane per channel reads its old window before writing any of it. Runs after {@link
+     * #causalConv1dBatch}, which reads the initial window. Worker: {@code channels} lanes.
+     */
+    public static void causalConv1dWindowUpdate(
+            KernelContext context,
+            FloatArray inputBatch,
+            FloatArray window,
+            int channels,
+            int kernel,
+            int windowOffset,
+            IntArray batchInfo) {
+        int channel = context.globalIdx;
+        if (channel >= channels) {
+            return;
+        }
+        int activeRows = batchInfo.get(1);
+        int history = kernel - 1;
+        int hBase = windowOffset + channel * history;
+        float h0 = window.get(hBase);
+        float h1 = window.get(hBase + 1);
+        float h2 = window.get(hBase + 2);
+        for (int t = 0; t < history; t++) {
+            int source = activeRows - history + t;
+            float value;
+            if (source < 0) {
+                int old = source + history;
+                value = old == 0 ? h0 : old == 1 ? h1 : h2;
+            } else {
+                value = inputBatch.get(source * channels + channel);
+            }
+            window.set(hBase + t, value);
+        }
+    }
+
     /**
      * One value column of one head, walked across the chunk in token order.
      *

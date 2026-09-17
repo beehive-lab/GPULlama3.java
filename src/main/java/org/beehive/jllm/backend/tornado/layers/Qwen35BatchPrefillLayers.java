@@ -728,6 +728,15 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
         return dim % Qwen35BatchKernels.RMS_GROUP_LOCAL == 0 && dim <= 12288;
     }
 
+    /**
+     * Whether the causal convolution runs as a lane per (row, channel) plus a window update ({@code
+     * causalConv1dBatch} + {@code causalConv1dWindowUpdate}) rather than the per-channel scan: the
+     * window update is written for the four-tap kernel this family has.
+     */
+    private boolean parallelConv() {
+        return config.ssmConvKernel() == 4;
+    }
+
     /** {@code normed[b] = weight ⊙ rms(x[b])} — a scale per row, then the apply. */
     private void normalize(
             TaskGraph layer,
@@ -1113,19 +1122,47 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 valueHeads,
                 state.workspace.batchStartPosHolder);
 
-        // The scan: one lane per channel, walking the chunk in token order.
-        layer.task(
-                "ssm_conv",
-                Qwen35BatchKernels::causalConv1dScan,
-                context,
-                state.workspace.wrapSsmQkvBatch,
-                require(weights.ssmConv1d, layerIndex, "ssm_conv1d").asFloatArray(),
-                state.workspace.wrapConvState,
-                state.workspace.wrapSsmConvOutBatch,
-                convDim,
-                config.ssmConvKernel(),
-                recurrent * config.convStateSize(),
-                state.workspace.batchStartPosHolder);
+        if (parallelConv()) {
+            // A lane per (row, channel), the rows being independent given the initial window;
+            // then the chunk's final window as a task of its own, after every row has read the
+            // initial one. Bit-equal to the scan.
+            layer.task(
+                    "ssm_conv",
+                    Qwen35BatchKernels::causalConv1dBatch,
+                    context,
+                    state.workspace.wrapSsmQkvBatch,
+                    require(weights.ssmConv1d, layerIndex, "ssm_conv1d").asFloatArray(),
+                    state.workspace.wrapConvState,
+                    state.workspace.wrapSsmConvOutBatch,
+                    convDim,
+                    config.ssmConvKernel(),
+                    recurrent * config.convStateSize(),
+                    state.workspace.batchStartPosHolder);
+            layer.task(
+                    "ssm_conv_window",
+                    Qwen35BatchKernels::causalConv1dWindowUpdate,
+                    context,
+                    state.workspace.wrapSsmQkvBatch,
+                    state.workspace.wrapConvState,
+                    convDim,
+                    config.ssmConvKernel(),
+                    recurrent * config.convStateSize(),
+                    state.workspace.batchStartPosHolder);
+        } else {
+            // The scan: one lane per channel, walking the chunk in token order.
+            layer.task(
+                    "ssm_conv",
+                    Qwen35BatchKernels::causalConv1dScan,
+                    context,
+                    state.workspace.wrapSsmQkvBatch,
+                    require(weights.ssmConv1d, layerIndex, "ssm_conv1d").asFloatArray(),
+                    state.workspace.wrapConvState,
+                    state.workspace.wrapSsmConvOutBatch,
+                    convDim,
+                    config.ssmConvKernel(),
+                    recurrent * config.convStateSize(),
+                    state.workspace.batchStartPosHolder);
+        }
         layer.task(
                 "ssm_conv_silu",
                 Qwen35BatchKernels::siluInPlaceBatch,
@@ -1638,7 +1675,12 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                         prefix + "ssm_alpha_proj",
                         matVecWorker(prefix + "ssm_alpha_proj", config.numberOfValueHeads()));
                 scheduler.addWorkerGrid(prefix + "ssm_decay_beta", decayBeta);
-                scheduler.addWorkerGrid(prefix + "ssm_conv", convChannels);
+                if (parallelConv()) {
+                    scheduler.addWorkerGrid(prefix + "ssm_conv", convDim);
+                    scheduler.addWorkerGrid(prefix + "ssm_conv_window", convChannels);
+                } else {
+                    scheduler.addWorkerGrid(prefix + "ssm_conv", convChannels);
+                }
                 scheduler.addWorkerGrid(prefix + "ssm_conv_silu", convDim);
                 scheduler.addWorkerGrid(prefix + "ssm_split_qkv", convDim);
                 scheduler.addWorkerGrid(prefix + "ssm_l2norm_q", keyHeads);
