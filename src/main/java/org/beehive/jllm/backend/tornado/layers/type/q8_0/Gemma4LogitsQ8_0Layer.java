@@ -59,7 +59,7 @@ public class Gemma4LogitsQ8_0Layer extends LogitsQ8_0Layer {
         // === Final RMS Normalization ===
         logits.task(
                 "rms_reduce",
-                TransformerComputeKernels::reductionOneBlockWithLayer,
+                rmsReduceKernel(),
                 context,
                 state.workspace.tempLogits,
                 state.workspace.wrapX,

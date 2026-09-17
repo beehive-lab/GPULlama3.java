@@ -130,7 +130,7 @@ public class Gemma4FP16FFNLayers
         // ═══════════════════════════════════ ATTENTION ═══════════════════════════════════
         unifiedLayer.task(
                 "attn_norm_reduce",
-                TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                rmsReduceKernel(),
                 context,
                 gemma4State.workspace.temp,
                 gemma4State.workspace.wrapX,
@@ -275,7 +275,7 @@ public class Gemma4FP16FFNLayers
 
         unifiedLayer.task(
                 "post_attn_reduce",
-                TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                rmsReduceKernel(),
                 context,
                 gemma4State.workspace.tempPostAttn,
                 gemma4State.workspace.wrapXb2,
@@ -304,7 +304,7 @@ public class Gemma4FP16FFNLayers
         // ═══════════════════════════════════════ FFN ═════════════════════════════════════
         unifiedLayer.task(
                 "ffn_norm_reduce",
-                TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                rmsReduceKernel(),
                 context,
                 gemma4State.workspace.tempFFN,
                 gemma4State.workspace.wrapX,
@@ -354,7 +354,7 @@ public class Gemma4FP16FFNLayers
 
         unifiedLayer.task(
                 "post_ffn_reduce",
-                TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                rmsReduceKernel(),
                 context,
                 gemma4State.workspace.tempPostFfn,
                 gemma4State.workspace.wrapXb2,
@@ -412,7 +412,7 @@ public class Gemma4FP16FFNLayers
 
         unifiedLayer.task(
                 "ple_post_reduce",
-                TransformerComputeKernelsLayered::reductionOneBlockWithLayer,
+                rmsReduceKernel(),
                 context,
                 gemma4State.workspace.tempPostPle,
                 gemma4State.workspace.wrapPerLayerOut,
@@ -564,6 +564,8 @@ public class Gemma4FP16FFNLayers
     public GridScheduler updateGridScheduler(GridScheduler gridScheduler) {
         WorkerGrid rmsNormWorker =
                 WorkerGridFactory.createRmsNormWorker(dim, gemma4State.localSize);
+        // Race-free single-workgroup reduction on the NVIDIA path; see rmsReduceKernel().
+        WorkerGrid rmsReduceWorker = rmsReduceWorker(rmsNormWorker);
         WorkerGrid dimElementWiseWorker =
                 WorkerGridFactory.genericWorker(dim, LOCAL_WORK_GROUP_SIZE_ALLOC);
         WorkerGrid woProjWorker =
@@ -615,7 +617,7 @@ public class Gemma4FP16FFNLayers
                     WorkerGridFactory.genericWorker(
                             ffnLen * LOCAL_WORK_GROUP_SIZE_ALLOC, LOCAL_WORK_GROUP_SIZE_ALLOC);
 
-            gridScheduler.addWorkerGrid(prefix + "attn_norm_reduce", rmsNormWorker);
+            gridScheduler.addWorkerGrid(prefix + "attn_norm_reduce", rmsReduceWorker);
             gridScheduler.addWorkerGrid(prefix + "attn_norm_apply", dimElementWiseWorker);
             gridScheduler.addWorkerGrid(prefix + "q_proj", qProjWorker);
             gridScheduler.addWorkerGrid(prefix + "q_norm", headNormWorker);
@@ -630,20 +632,20 @@ public class Gemma4FP16FFNLayers
             }
             gridScheduler.addWorkerGrid(prefix + "attention", attentionWorker);
             gridScheduler.addWorkerGrid(prefix + "wo_proj", woProjWorker);
-            gridScheduler.addWorkerGrid(prefix + "post_attn_reduce", rmsNormWorker);
+            gridScheduler.addWorkerGrid(prefix + "post_attn_reduce", rmsReduceWorker);
             gridScheduler.addWorkerGrid(prefix + "post_attn_apply", dimElementWiseWorker);
 
-            gridScheduler.addWorkerGrid(prefix + "ffn_norm_reduce", rmsNormWorker);
+            gridScheduler.addWorkerGrid(prefix + "ffn_norm_reduce", rmsReduceWorker);
             gridScheduler.addWorkerGrid(prefix + "ffn_norm_apply", dimElementWiseWorker);
             gridScheduler.addWorkerGrid(prefix + "ffn_gate_up", ffnGateUpWorker);
             gridScheduler.addWorkerGrid(prefix + "ffn_down_proj", woProjWorker);
-            gridScheduler.addWorkerGrid(prefix + "post_ffn_reduce", rmsNormWorker);
+            gridScheduler.addWorkerGrid(prefix + "post_ffn_reduce", rmsReduceWorker);
             gridScheduler.addWorkerGrid(prefix + "post_ffn_apply", dimElementWiseWorker);
 
             gridScheduler.addWorkerGrid(prefix + "ple_gate_proj", pleGateProjWorker);
             gridScheduler.addWorkerGrid(prefix + "ple_gate_gelu_mul", pleGateGeluWorker);
             gridScheduler.addWorkerGrid(prefix + "ple_proj", woProjWorker);
-            gridScheduler.addWorkerGrid(prefix + "ple_post_reduce", rmsNormWorker);
+            gridScheduler.addWorkerGrid(prefix + "ple_post_reduce", rmsReduceWorker);
             gridScheduler.addWorkerGrid(prefix + "ple_post_apply", dimElementWiseWorker);
 
             if (shouldUseFinalNormalization()) {
