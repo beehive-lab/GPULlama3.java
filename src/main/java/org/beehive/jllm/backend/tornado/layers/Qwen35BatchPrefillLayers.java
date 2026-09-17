@@ -512,8 +512,17 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
         }
     }
 
+    /**
+     * @param hbFP16 whether the down projection reads the SwiGLU output as FP16 (it is on the
+     *     tensor cores): then SwiGLU writes the FP16 buffer directly and no conversion follows
+     */
     private void fusedGateUpBatch(
-            TaskGraph graph, int layer, TornadoTensor gate, TornadoTensor up, FloatArray xBatch) {
+            TaskGraph graph,
+            int layer,
+            TornadoTensor gate,
+            TornadoTensor up,
+            FloatArray xBatch,
+            boolean hbFP16) {
         FusedOperandSupport.requireUniform(
                 "qwen35 batch-prefill layer " + layer + " fused gate/up feed-forward",
                 List.of("ffn_gate", "ffn_up"),
@@ -546,13 +555,23 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     state.workspace.wrapUpBatch,
                     config.hiddenDim(),
                     config.dim());
-            graph.task(
-                    "ffn_swiglu",
-                    Qwen35MMAKernels::swiGLUBatch,
-                    context,
-                    state.workspace.wrapGateBatch,
-                    state.workspace.wrapUpBatch,
-                    state.workspace.wrapHbBatch);
+            if (hbFP16) {
+                graph.task(
+                        "ffn_swiglu",
+                        Qwen35MMAKernels::swiGLUBatchFP16,
+                        context,
+                        state.workspace.wrapGateBatch,
+                        state.workspace.wrapUpBatch,
+                        state.workspace.wrapHbFP16BatchMMA);
+            } else {
+                graph.task(
+                        "ffn_swiglu",
+                        Qwen35MMAKernels::swiGLUBatch,
+                        context,
+                        state.workspace.wrapGateBatch,
+                        state.workspace.wrapUpBatch,
+                        state.workspace.wrapHbBatch);
+            }
             return;
         }
         rowTiles.put(
@@ -604,12 +623,6 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 state.workspace.ffnScaleBatch,
                 require(weights.rms_ffn_weightLayered, layerIndex, "post_attention_norm"));
 
-        fusedGateUpBatch(
-                layer,
-                layerIndex,
-                require(weights.w1Layered, layerIndex, "ffn_gate"),
-                require(weights.w3Layered, layerIndex, "ffn_up"),
-                state.workspace.wrapNormedBatch);
         TornadoTensor down = require(weights.w2Layered, layerIndex, "ffn_down");
         // Both representations this family's ffn_down comes in. The Q4_1 kernel below was written
         // and tested with the Q4_0 one, and then never reached: this condition asked for Q4_0 and
@@ -619,15 +632,29 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
         boolean downOnTensorCores =
                 (down.dataType() == DataType.Q4_0 || down.dataType() == DataType.Q4_1)
                         && mmaEligible(config.hiddenDim(), config.dim());
+        // With the gate/up projections on the tensor cores and the down projection reading FP16,
+        // SwiGLU writes the FP16 buffer itself and the conversion task below is not built.
+        boolean swigluWritesFP16 =
+                downOnTensorCores && mmaEligible(config.dim(), config.hiddenDim());
+        fusedGateUpBatch(
+                layer,
+                layerIndex,
+                require(weights.w1Layered, layerIndex, "ffn_gate"),
+                require(weights.w3Layered, layerIndex, "ffn_up"),
+                state.workspace.wrapNormedBatch,
+                swigluWritesFP16);
         if (downOnTensorCores) {
             // The tensor-core store overwrites, so the residual is a pass of its own. Its input is
-            // SwiGLU's output rather than a normed chunk, so that is converted here too.
-            layer.task(
-                    "ffn_down_fp16",
-                    Qwen35MMAKernels::convertToFP16,
-                    context,
-                    state.workspace.wrapHbBatch,
-                    state.workspace.wrapHbFP16BatchMMA);
+            // SwiGLU's output rather than a normed chunk, so that is converted here too, unless
+            // SwiGLU wrote it as FP16 already.
+            if (!swigluWritesFP16) {
+                layer.task(
+                        "ffn_down_fp16",
+                        Qwen35MMAKernels::convertToFP16,
+                        context,
+                        state.workspace.wrapHbBatch,
+                        state.workspace.wrapHbFP16BatchMMA);
+            }
             if (down.dataType() == DataType.Q4_1) {
                 if (dequantGemmEligible(config.dim(), config.hiddenDim())) {
                     // The same tiled pair as the Q4_0 projections, through the same scratch,
@@ -1657,7 +1684,11 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
             scheduler.addWorkerGrid(
                     prefix + "ffn_down_proj", matVecWorker(prefix + "ffn_down_proj", config.dim()));
             if (onTensorCores(prefix + "ffn_down_proj")) {
-                scheduler.addWorkerGrid(prefix + "ffn_down_fp16", hbFP16Convert);
+                // Built only when SwiGLU did not write the FP16 buffer itself, i.e. when the
+                // gate/up projections are not on the tensor cores.
+                if (!onTensorCores(prefix + "ffn_gate_proj")) {
+                    scheduler.addWorkerGrid(prefix + "ffn_down_fp16", hbFP16Convert);
+                }
                 scheduler.addWorkerGrid(prefix + "ffn_down_residual", residualAdd);
             }
 

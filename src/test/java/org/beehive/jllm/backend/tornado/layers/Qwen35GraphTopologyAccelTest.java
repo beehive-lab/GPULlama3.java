@@ -809,9 +809,11 @@ public class Qwen35GraphTopologyAccelTest {
      * kernel test could not see it: the kernel was correct, and nothing dispatched to it. This
      * asserts the production dispatch instead, on the same mixed model the rest of this class uses.
      *
-     * <p>{@code ffn_down_fp16} is the marker. The scalar path reads the SwiGLU output directly;
-     * only the tensor-core branch converts it first, so the task exists exactly when the projection
-     * is on the tensor cores.
+     * <p>{@code ffn_down_residual} is the marker. The scalar path folds the residual into its
+     * kernel; only the tensor-core branch, whose store overwrites, adds it as a pass of its own, so
+     * the task exists exactly when the projection is on the tensor cores. (The FP16 conversion
+     * {@code ffn_down_fp16} was the marker before SwiGLU learned to write the FP16 buffer itself
+     * when the gate/up projections are on the tensor cores too.)
      */
     // @formatter:on
     @Test
@@ -833,10 +835,10 @@ public class Qwen35GraphTopologyAccelTest {
                             + representation
                             + " and did not take the tensor-core path; its tasks are "
                             + tasks,
-                    tasks.contains("ffn_down_fp16"));
-            assertTrue(
-                    "layer " + layer + " has a tensor-core ffn_down without its residual pass",
                     tasks.contains("ffn_down_residual"));
+            assertFalse(
+                    "layer " + layer + " converts hb although SwiGLU wrote it as FP16",
+                    tasks.contains("ffn_down_fp16"));
         }
     }
 
@@ -931,7 +933,6 @@ public class Qwen35GraphTopologyAccelTest {
                             "ffn_gate_proj",
                             "ffn_up_proj",
                             "ffn_swiglu",
-                            "ffn_down_fp16",
                             "ffn_down_proj",
                             "ffn_down_residual"
                         }) {
@@ -1005,6 +1006,7 @@ public class Qwen35GraphTopologyAccelTest {
                     "width 8 layer " + layer + " reached the tensor cores",
                     tasks.contains("ffn_gate_proj")
                             || tasks.contains("ffn_down_fp16")
+                            || tasks.contains("ffn_down_residual")
                             || tasks.contains("attn_output_fp16"));
         }
     }

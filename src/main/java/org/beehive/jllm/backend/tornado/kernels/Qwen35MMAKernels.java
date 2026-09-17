@@ -751,6 +751,18 @@ public final class Qwen35MMAKernels {
         hb.set(index, (g / (1.0f + TornadoMath.exp(-g))) * up.get(index));
     }
 
+    /**
+     * {@link #swiGLUBatch} with the product written as FP16: the same FP32 expression, converted as
+     * {@link #convertToFP16} converts, so the halves are bit-equal to SwiGLU followed by the
+     * conversion, without the FP32 round trip through {@code hb}. One lane per element.
+     */
+    public static void swiGLUBatchFP16(
+            KernelContext ctx, FloatArray gate, FloatArray up, HalfFloatArray hb) {
+        int index = ctx.globalIdx;
+        float g = gate.get(index);
+        hb.set(index, new HalfFloat((g / (1.0f + TornadoMath.exp(-g))) * up.get(index)));
+    }
+
     /** {@code fp16[i] = fp32[i]} over a chunk that already fills whole MMA row tiles. */
     public static void convertToFP16(KernelContext ctx, FloatArray in, HalfFloatArray out) {
         int index = ctx.globalIdx;
