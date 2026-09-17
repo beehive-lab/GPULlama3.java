@@ -66,6 +66,11 @@ public class Gemma4 extends AbstractModel {
      * (mirroring step 2 of {@code InferenceCore.forwardJavaGemma4}), ready for transfer to the GPU
      * as part of layer 0's per-layer-embedding setup.
      */
+    @Override
+    public void stagePerTokenDeviceInputs(org.beehive.jllm.inference.state.State state, int token) {
+        gatherPerLayerTokenEmbeddingRow((Gemma4State) state, token);
+    }
+
     private void gatherPerLayerTokenEmbeddingRow(Gemma4State state, int token) {
         Gemma4TornadoWeights gemma4Weights = (Gemma4TornadoWeights) weights;
         int nEmbdPerLayer = configuration.embeddingLengthPerLayer();

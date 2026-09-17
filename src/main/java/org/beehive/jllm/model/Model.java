@@ -82,6 +82,17 @@ public interface Model {
         return config.dim() * config.numberOfKeyValueHeads() / config.numberOfHeads();
     }
 
+    /**
+     * Host-side staging this family needs before its device graphs run for {@code token}.
+     *
+     * <p>Default: nothing. A family overrides it when a per-token input is too large to keep
+     * resident and has to be gathered on the host each step — Gemma 4's {@code
+     * per_layer_token_embd} is 2.35 billion elements, so only the current token's row is staged.
+     * The alternative is a family test inside the shared forward pass, which is the central switch
+     * Rule 15 forbids.
+     */
+    default void stagePerTokenDeviceInputs(State state, int token) {}
+
     default boolean shouldAddBeginOfText() {
         return true;
     }
