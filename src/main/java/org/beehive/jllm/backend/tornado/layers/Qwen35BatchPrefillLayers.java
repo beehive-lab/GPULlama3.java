@@ -813,14 +813,19 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
 
         if (scoredAttention()) {
             // Each dot product once, kept in the state's score scratch for the two later passes.
-            // The span stride is the context capacity the scratch was sized to. The staged form
-            // reads keys through a transposed shared tile whose lane mapping is written for a
-            // 128-lane workgroup; any other width keeps the per-lane form.
+            // The span stride is the context capacity the scratch was sized to. The warp form
+            // computes each dot product with one warp (a 256-wide head over 128 lanes, on the
+            // backend whose warp shuffle is verified — CUDA, the tensor-core guard; it
+            // reassociates the FP32 sum); the staged form reads keys through a transposed shared
+            // tile whose lane mapping is written for a 128-lane workgroup; any other width keeps
+            // the per-lane form.
             layer.task(
                     "attention",
-                    ATTENTION_LOCAL == Qwen35BatchKernels.ATTENTION_STAGE_LANES
-                            ? Qwen35BatchKernels::attentionBatchFP16PagedScoredStagedWide
-                            : Qwen35BatchKernels::attentionBatchFP16PagedScored,
+                    warpAttention(headDim)
+                            ? Qwen35BatchKernels::attentionBatchFP16PagedScoredWarp
+                            : ATTENTION_LOCAL == Qwen35BatchKernels.ATTENTION_STAGE_LANES
+                                    ? Qwen35BatchKernels::attentionBatchFP16PagedScoredStagedWide
+                                    : Qwen35BatchKernels::attentionBatchFP16PagedScored,
                     context,
                     state.workspace.batchStartPosHolder,
                     state.workspace.wrapAttnQBatch,
@@ -1310,6 +1315,16 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 layer.consumeFromDevice(predecessor, state.workspace.wrapDequantScratchFP16);
             }
         }
+    }
+
+    /**
+     * Whether the batched attention's first pass is the warp-per-dot-product form: a 256-wide head
+     * over the 128-lane workgroup, on the backend whose warp shuffle is verified correct — CUDA,
+     * the tensor-core guard.
+     */
+    private static boolean warpAttention(int headDim) {
+        return Qwen35BatchKernels.attentionWarpEligible(headDim, ATTENTION_LOCAL)
+                && TensorCoreSupport.isTensorCoreCapableBackend();
     }
 
     /**

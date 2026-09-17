@@ -74,6 +74,12 @@ public final class Qwen35BatchKernels {
      */
     private static final int ATTENTION_STAGE_LD = 129;
 
+    /** Warps of the warp first pass: one per lane-quad of the 128-lane workgroup. */
+    private static final int ATTENTION_WARPS = 4;
+
+    /** Head width the warp first pass is written for: eight dimensions a lane over 32 lanes. */
+    private static final int ATTENTION_WARP_HEAD = 256;
+
     private Qwen35BatchKernels() {}
 
     // ---- the recurrent scans -------------------------------------------------
@@ -1684,6 +1690,196 @@ public final class Qwen35BatchKernels {
             outBatch.set(outBase + d, accumulated[slotIndex] / denominator);
             slotIndex++;
         }
+    }
+
+    // @formatter:off
+    /**
+     * {@link #attentionBatchFP16PagedScoredStagedWide} with the first pass computed by warps: each
+     * causal query-key dot product by one 32-lane warp, no shared key tile, no staging barriers.
+     *
+     * <p><b>Mapping.</b> One workgroup of 128 lanes per (row, head), as before. Warp {@code w}
+     * (lanes {@code 32w..32w+31}) takes the causal positions {@code w, w + 4, w + 8, ...} up to the
+     * row's position — a loop bound every lane of the warp shares, so no lane leaves it early. Lane
+     * {@code l} owns head dimensions {@code l, l + 32, ..., l + 224}: its eight query elements are
+     * read once from the FP32 query and kept in registers; per position it reads the eight FP16
+     * keys at those dimensions (a warp reads 64 contiguous bytes per step) and widens each exactly.
+     *
+     * <p><b>Arithmetic.</b> A lane accumulates its eight products in dimension order in FP32; the
+     * warp then folds the 32 partials with five shuffle-down steps (lane {@code l} adds lane {@code
+     * l + 16}, then {@code l + 8}, ... ) and lane zero stores the unscaled sum to {@code scores}
+     * and folds {@code sum * invSqrt} into its running maximum. This is the reference's sum of the
+     * same 256 products in a different order — 32 partials of 8 in place of one running sum — so
+     * the score is an FP32 reassociation of the reference's, not bit-equal to it. The other 31
+     * lanes of a warp contribute nothing to the maximum (they enter the workgroup reduction at
+     * negative infinity); the workgroup maximum, the denominator, the exponential expression, the
+     * 128-position value pass, the causal range, the paged addressing, the head mapping, the scores
+     * scratch and the output are the wide kernel's, unchanged.
+     *
+     * <p>Requires a 256-wide head and 128-lane workgroups, and the backend whose warp shuffle is
+     * verified (CUDA); the dispatch keeps the wide kernel for everything else.
+     */
+    // @formatter:on
+    public static void attentionBatchFP16PagedScoredWarp(
+            KernelContext context,
+            IntArray batchInfo,
+            FloatArray queryBatch,
+            HalfFloatArray keyCache,
+            HalfFloatArray valueCache,
+            FloatArray outBatch,
+            int heads,
+            int headSize,
+            int kvDim,
+            int kvMul,
+            int layer,
+            IntArray blockTable,
+            int blockCfg,
+            int blockStride,
+            int localWorkGroupSize,
+            FloatArray scores,
+            int scoreStride) {
+        int tid = context.localIdx;
+        int localSize = localWorkGroupSize;
+        int group = context.groupIdx;
+        int row = group / heads;
+        int head = group - row * heads;
+        if (row >= batchInfo.get(1)) {
+            return;
+        }
+
+        int position = batchInfo.get(0) + row;
+        int slot = batchInfo.get(2);
+        int layerOff = KvBlockAddress.layerOffset(layer, kvDim, blockCfg);
+        int kvHead = head / kvMul;
+        float invSqrt = 1.0f / TornadoMath.sqrt(headSize);
+
+        float[] partialMax = context.allocateFloatLocalArray(localWorkGroupSize);
+        float[] partialSum = context.allocateFloatLocalArray(localWorkGroupSize);
+        float[] reduced = context.allocateFloatLocalArray(2);
+
+        int scoreBase = (row * heads + head) * scoreStride;
+
+        // Pass 1 by warps: this lane's eight query elements, then this warp's positions.
+        int warp = tid >> 5;
+        int lane = tid & 31;
+        int queryBase = row * heads * headSize + head * headSize;
+        float q0 = queryBatch.get(queryBase + lane);
+        float q1 = queryBatch.get(queryBase + lane + 32);
+        float q2 = queryBatch.get(queryBase + lane + 64);
+        float q3 = queryBatch.get(queryBase + lane + 96);
+        float q4 = queryBatch.get(queryBase + lane + 128);
+        float q5 = queryBatch.get(queryBase + lane + 160);
+        float q6 = queryBatch.get(queryBase + lane + 192);
+        float q7 = queryBatch.get(queryBase + lane + 224);
+        float maxScore = Float.NEGATIVE_INFINITY;
+        for (int p = warp; p <= position; p += ATTENTION_WARPS) {
+            int base =
+                    KvBlockAddress.offset(
+                                    blockTable, slot, p, layerOff, kvDim, blockCfg, blockStride)
+                            + kvHead * headSize
+                            + lane;
+            float partial = q0 * keyCache.get(base).getFloat32();
+            partial += q1 * keyCache.get(base + 32).getFloat32();
+            partial += q2 * keyCache.get(base + 64).getFloat32();
+            partial += q3 * keyCache.get(base + 96).getFloat32();
+            partial += q4 * keyCache.get(base + 128).getFloat32();
+            partial += q5 * keyCache.get(base + 160).getFloat32();
+            partial += q6 * keyCache.get(base + 192).getFloat32();
+            partial += q7 * keyCache.get(base + 224).getFloat32();
+            float score = warpSumBroadcast(context, partial);
+            if (lane == 0) {
+                scores.set(scoreBase + p, score);
+                maxScore = TornadoMath.max(maxScore, score * invSqrt);
+            }
+        }
+        partialMax[tid] = maxScore;
+        context.localBarrier();
+        for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+            if (tid < stride) {
+                partialMax[tid] = TornadoMath.max(partialMax[tid], partialMax[tid + stride]);
+            }
+            context.localBarrier();
+        }
+        if (tid == 0) {
+            reduced[0] = partialMax[0];
+        }
+        context.localBarrier();
+        float globalMax = reduced[0];
+
+        // Pass 2: the denominator, against the settled maximum, from the stored dot products.
+        float sum = 0.0f;
+        for (int p = tid; p <= position; p += localSize) {
+            float score = scores.get(scoreBase + p);
+            sum += TornadoMath.exp(score * invSqrt - globalMax);
+        }
+        partialSum[tid] = sum;
+        context.localBarrier();
+        for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+            if (tid < stride) {
+                partialSum[tid] += partialSum[tid + stride];
+            }
+            context.localBarrier();
+        }
+        if (tid == 0) {
+            reduced[1] = partialSum[0];
+        }
+        context.localBarrier();
+        float denominator = reduced[1];
+
+        // Pass 3: the weighted value sum, 128 positions at a time, as in the wide kernel.
+        int outBase = row * heads * headSize + head * headSize;
+        float[] weights = context.allocateFloatLocalArray(ATTENTION_VALUE_TILE_WIDE);
+        float[] accumulated = new float[ATTENTION_SLOTS];
+        for (int t = 0; t < ATTENTION_SLOTS; t++) {
+            accumulated[t] = 0.0f;
+        }
+
+        for (int tileStart = 0; tileStart <= position; tileStart += ATTENTION_VALUE_TILE_WIDE) {
+            int tileEnd = tileStart + ATTENTION_VALUE_TILE_WIDE - 1;
+            if (tileEnd > position) {
+                tileEnd = position;
+            }
+
+            for (int p = tileStart + tid; p <= tileEnd; p += localSize) {
+                float score = scores.get(scoreBase + p);
+                weights[p - tileStart] = TornadoMath.exp(score * invSqrt - globalMax);
+            }
+            context.localBarrier();
+
+            int slotIndex = 0;
+            for (int d = tid; d < headSize; d += localSize) {
+                float partial = accumulated[slotIndex];
+                for (int p = tileStart; p <= tileEnd; p++) {
+                    int base =
+                            KvBlockAddress.offset(
+                                            blockTable,
+                                            slot,
+                                            p,
+                                            layerOff,
+                                            kvDim,
+                                            blockCfg,
+                                            blockStride)
+                                    + kvHead * headSize;
+                    partial += weights[p - tileStart] * valueCache.get(base + d).getFloat32();
+                }
+                accumulated[slotIndex] = partial;
+                slotIndex++;
+            }
+            context.localBarrier();
+        }
+
+        int slotIndex = 0;
+        for (int d = tid; d < headSize; d += localSize) {
+            outBatch.set(outBase + d, accumulated[slotIndex] / denominator);
+            slotIndex++;
+        }
+    }
+
+    /**
+     * Whether the warp first pass fits the geometry: a 256-wide head (eight dimensions a lane over
+     * 32 lanes) and 128-lane workgroups (four warps).
+     */
+    public static boolean attentionWarpEligible(int headSize, int localSize) {
+        return headSize == ATTENTION_WARP_HEAD && localSize == ATTENTION_WARPS * 32;
     }
 
     /** The attention result gated by the logistic of its gate, over a chunk. */
