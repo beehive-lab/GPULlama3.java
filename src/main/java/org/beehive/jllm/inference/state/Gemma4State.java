@@ -193,6 +193,15 @@ public final class Gemma4State extends State {
         workspace.wrapKeyCache = TornadoWorkspaces.floats(totalCacheElements);
         workspace.wrapValueCache = TornadoWorkspaces.floats(totalCacheElements);
         TornadoWorkspaces.zeroKeyValue(workspace);
+        // An activation in Q8 blocks, for the packed-integer projections: four quants per int, one
+        // scale and one sum of quants per block of 32. Sized for the widest activation any of them
+        // reads and used as a prefix by the narrower ones. This family's feed-forward width differs
+        // by layer, so the widest is the maximum over layers rather than a single hiddenDim.
+        int widest = Math.max(config.dim(), config.maxFeedForwardLength());
+        workspace.wrapXbQuants = TornadoWorkspaces.ints(widest / 4);
+        workspace.wrapXbScales = TornadoWorkspaces.floats(widest / 32);
+        workspace.wrapXbSums = TornadoWorkspaces.ints(widest / 32);
+
         workspace.wrapAtt = TornadoWorkspaces.floats(nHead * config.contextLength());
         // Split-KV partials: per head, SPLIT_KV numerators of headDim, then SPLIT_KV maxima and
         // SPLIT_KV sums. Sized at the widest head because this family's head width differs by

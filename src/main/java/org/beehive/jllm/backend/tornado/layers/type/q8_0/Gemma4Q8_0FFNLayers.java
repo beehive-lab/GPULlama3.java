@@ -10,6 +10,7 @@ import org.beehive.jllm.backend.tornado.tensor.TornadoTensor;
 import org.beehive.jllm.inference.state.Gemma4State;
 import org.beehive.jllm.inference.weights.tornado.Gemma4TornadoWeights;
 import org.beehive.jllm.model.gemma4.Gemma4Configuration;
+import org.beehive.jllm.runtime.tensor.DataType;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
@@ -126,6 +127,20 @@ public class Gemma4Q8_0FFNLayers
         return rows >= 1024 ? 128 : 256;
     }
 
+    /**
+     * Whether the packed-integer projections may run here: the device must lower {@code dp4a} AND
+     * evaluate {@code simdShuffleDown} correctly ({@code PACKED_INTEGER_DOT} bundles the two
+     * deliberately), and the weights must be the representation those kernels decode.
+     */
+    private boolean packedFor(int layerIndex) {
+        return weights.wqLayered[layerIndex].dataType() == DataType.Q4_0
+                && org.beehive.jllm.backend.tornado.device.TornadoDevices.current()
+                        .capabilities()
+                        .supports(
+                                org.beehive.jllm.runtime.backend.DeviceCapability
+                                        .PACKED_INTEGER_DOT);
+    }
+
     /** How many slices the window is cut into, or 1 to run the single-pass kernel. */
     private int attentionSplits() {
         return config.contextLength() >= SPLIT_KV_MIN_CONTEXT
@@ -155,17 +170,17 @@ public class Gemma4Q8_0FFNLayers
         unifiedLayer.transferToDevice(
                 DataTransferMode.FIRST_EXECUTION,
                 weights.rms_att_weightLayered[layerIndex].asFloatArray(),
-                weights.wqLayered[layerIndex].asByteArray(),
-                weights.wkLayered[layerIndex].asByteArray(),
-                weights.wvLayered[layerIndex].asByteArray(),
-                weights.woLayered[layerIndex].asByteArray(),
+                weightArray(weights.wqLayered[layerIndex]),
+                weightArray(weights.wkLayered[layerIndex]),
+                weightArray(weights.wvLayered[layerIndex]),
+                weightArray(weights.woLayered[layerIndex]),
                 weights.attnQNorm[layerIndex].asFloatArray(),
                 weights.attnKNorm[layerIndex].asFloatArray(),
                 weights.attnPostNorm[layerIndex].asFloatArray(),
                 weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),
-                weights.w1Layered[layerIndex].asByteArray(),
-                weights.w3Layered[layerIndex].asByteArray(),
-                weights.w2Layered[layerIndex].asByteArray(),
+                weightArray(weights.w1Layered[layerIndex]),
+                weightArray(weights.w3Layered[layerIndex]),
+                weightArray(weights.w2Layered[layerIndex]),
                 weights.ffnPostNorm[layerIndex].asFloatArray(),
                 weightArray(weights.perLayerInpGate[layerIndex]),
                 weightArray(weights.perLayerProj[layerIndex]),
@@ -210,16 +225,26 @@ public class Gemma4Q8_0FFNLayers
                 gemma4State.workspace.temp,
                 dim);
 
-        unifiedLayer.task(
+        boolean packed = packedFor(layerIndex);
+        if (packed) {
+            unifiedLayer.task(
+                    "attn_quantize",
+                    org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0::quantizeActivationQ8Blocks,
+                    context,
+                    gemma4State.workspace.wrapXb,
+                    gemma4State.workspace.wrapXbQuants,
+                    gemma4State.workspace.wrapXbScales,
+                    gemma4State.workspace.wrapXbSums);
+        }
+        addProjection(
+                unifiedLayer,
                 "q_proj",
-                TransformerComputeKernelsLayered::matrixVectorGenericQ8Byte,
-                context,
                 gemma4State.workspace.wrapXb,
                 gemma4State.workspace.wrapQ,
-                weights.wqLayered[layerIndex].asByteArray(),
+                weights.wqLayered[layerIndex],
                 dim,
                 qDim,
-                projectionLocalSize(qDim));
+                packed);
         unifiedLayer.task(
                 "q_norm",
                 Gemma4Kernels::rmsNormPerHead,
@@ -232,16 +257,15 @@ public class Gemma4Q8_0FFNLayers
                 config.rmsNormEps());
 
         if (hasOwnKv) {
-            unifiedLayer.task(
+            addProjection(
+                    unifiedLayer,
                     "k_proj",
-                    TransformerComputeKernelsLayered::matrixVectorGenericQ8Byte,
-                    context,
                     gemma4State.workspace.wrapXb,
                     gemma4State.workspace.wrapK,
-                    weights.wkLayered[layerIndex].asByteArray(),
+                    weights.wkLayered[layerIndex],
                     dim,
                     kvDim,
-                    projectionLocalSize(kvDim));
+                    packed);
             unifiedLayer.task(
                     "k_norm",
                     Gemma4Kernels::rmsNormPerHead,
@@ -252,16 +276,15 @@ public class Gemma4Q8_0FFNLayers
                     headDim,
                     HEAD_NORM_LOCAL_SIZE,
                     config.rmsNormEps());
-            unifiedLayer.task(
+            addProjection(
+                    unifiedLayer,
                     "v_proj",
-                    TransformerComputeKernelsLayered::matrixVectorGenericQ8Byte,
-                    context,
                     gemma4State.workspace.wrapXb,
                     gemma4State.workspace.wrapV,
-                    weights.wvLayered[layerIndex].asByteArray(),
+                    weights.wvLayered[layerIndex],
                     dim,
                     kvDim,
-                    projectionLocalSize(kvDim));
+                    packed);
             unifiedLayer.task(
                     "v_norm",
                     Gemma4Kernels::rmsNormPerHeadNoWeight,
@@ -350,16 +373,14 @@ public class Gemma4Q8_0FFNLayers
                     ATTENTION_LOCAL_SIZE);
         }
 
-        unifiedLayer.task(
+        addProjection(
+                unifiedLayer,
                 "wo_proj",
-                TransformerComputeKernelsLayered::matrixVectorGenericQ8Byte,
-                context,
                 gemma4State.workspace.wrapXb,
                 gemma4State.workspace.wrapXb2,
-                weights.woLayered[layerIndex].asByteArray(),
+                weights.woLayered[layerIndex],
                 qDim,
-                dim,
-                projectionLocalSize(dim));
+                dim);
 
         unifiedLayer.task(
                 "post_attn_reduce",
@@ -418,27 +439,69 @@ public class Gemma4Q8_0FFNLayers
                 gemma4State.workspace.tempFFN,
                 dim);
 
-        unifiedLayer.task(
-                "ffn_gate_up",
-                Gemma4Kernels::fusedGateUpGeGLUQ8,
-                context,
-                gemma4State.workspace.wrapXb,
-                gemma4State.workspace.wrapHb,
-                weights.w1Layered[layerIndex].asByteArray(),
-                weights.w3Layered[layerIndex].asByteArray(),
-                dim,
-                ffnLen,
-                LOCAL_WORK_GROUP_SIZE_ALLOC);
-        unifiedLayer.task(
+        // The feed-forward's activation is a different vector from the attention branch's, so it
+        // needs its own quantization: the triple holds one activation at a time.
+        if (packed) {
+            unifiedLayer.task(
+                    "ffn_quantize",
+                    org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0::quantizeActivationQ8Blocks,
+                    context,
+                    gemma4State.workspace.wrapXb,
+                    gemma4State.workspace.wrapXbQuants,
+                    gemma4State.workspace.wrapXbScales,
+                    gemma4State.workspace.wrapXbSums);
+        }
+        // Gate and up share one pass over one local array and one tree reduction, so the pair has
+        // to be dispatched together rather than tensor by tensor. They are the same representation
+        // in every file this family loads -- projectionType() refuses a trunk that disagrees.
+        if (packed) {
+            unifiedLayer.task(
+                    "ffn_gate_up",
+                    org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0::fusedFFNGateUpGeGLUQ4_0DP4A,
+                    context,
+                    gemma4State.workspace.wrapXbQuants,
+                    gemma4State.workspace.wrapXbScales,
+                    gemma4State.workspace.wrapXbSums,
+                    gemma4State.workspace.wrapHb,
+                    weights.w1Layered[layerIndex].asByteArray(),
+                    weights.w3Layered[layerIndex].asByteArray(),
+                    dim,
+                    ffnLen,
+                    LOCAL_WORK_GROUP_SIZE_ALLOC);
+        } else if (weights.w1Layered[layerIndex].dataType() == DataType.Q4_0) {
+            unifiedLayer.task(
+                    "ffn_gate_up",
+                    org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0
+                            ::fusedFFNGateUpGeGLUQ4_0,
+                    context,
+                    gemma4State.workspace.wrapXb,
+                    gemma4State.workspace.wrapHb,
+                    weights.w1Layered[layerIndex].asByteArray(),
+                    weights.w3Layered[layerIndex].asByteArray(),
+                    dim,
+                    ffnLen,
+                    LOCAL_WORK_GROUP_SIZE_ALLOC);
+        } else {
+            unifiedLayer.task(
+                    "ffn_gate_up",
+                    Gemma4Kernels::fusedGateUpGeGLUQ8,
+                    context,
+                    gemma4State.workspace.wrapXb,
+                    gemma4State.workspace.wrapHb,
+                    weights.w1Layered[layerIndex].asByteArray(),
+                    weights.w3Layered[layerIndex].asByteArray(),
+                    dim,
+                    ffnLen,
+                    LOCAL_WORK_GROUP_SIZE_ALLOC);
+        }
+        addProjection(
+                unifiedLayer,
                 "ffn_down_proj",
-                TransformerComputeKernelsLayered::matrixVectorGenericQ8Byte,
-                context,
                 gemma4State.workspace.wrapHb,
                 gemma4State.workspace.wrapXb2,
-                weights.w2Layered[layerIndex].asByteArray(),
+                weights.w2Layered[layerIndex],
                 ffnLen,
-                dim,
-                projectionLocalSize(dim));
+                dim);
 
         unifiedLayer.task(
                 "post_ffn_reduce",
@@ -659,6 +722,39 @@ public class Gemma4Q8_0FFNLayers
             TornadoTensor w,
             int n,
             int d) {
+        addProjection(tg, taskName, in, out, w, n, d, false);
+    }
+
+    /**
+     * @param packedActivation whether {@code in} has already been quantized into the
+     *     {@code wrapXbQuants/Scales/Sums} triple by a task in this graph. It is carried explicitly
+     *     rather than inferred from the buffer, because one buffer holds several different
+     *     activations over a layer and its identity says nothing about which one is in it.
+     */
+    private void addProjection(
+            TaskGraph tg,
+            String taskName,
+            FloatArray in,
+            FloatArray out,
+            TornadoTensor w,
+            int n,
+            int d,
+            boolean packedActivation) {
+        if (packedActivation && w.dataType() == DataType.Q4_0) {
+            tg.task(
+                    taskName,
+                    org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0::matrixVectorGenericQ4_0DP4A,
+                    context,
+                    gemma4State.workspace.wrapXbQuants,
+                    gemma4State.workspace.wrapXbScales,
+                    gemma4State.workspace.wrapXbSums,
+                    out,
+                    w.asByteArray(),
+                    n,
+                    d,
+                    projectionLocalSize(d));
+            return;
+        }
         switch (w.dataType()) {
             case Q8_0 ->
                     tg.task(
@@ -679,6 +775,32 @@ public class Gemma4Q8_0FFNLayers
                             in,
                             out,
                             w.asHalfFloatArray(),
+                            n,
+                            d,
+                            projectionLocalSize(d));
+            case Q4_0 ->
+                    tg.task(
+                            taskName,
+                            org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0
+                                    ::matrixVectorGenericQ4_0,
+                            context,
+                            in,
+                            out,
+                            w.asByteArray(),
+                            n,
+                            d,
+                            projectionLocalSize(d));
+                // ffn_down is Q4_1 on this file's first blocks and Q4_0 on the rest, so the kernel
+                // comes from the tensor rather than from the model's representation.
+            case Q4_1 ->
+                    tg.task(
+                            taskName,
+                            org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_1
+                                    ::matrixVectorGenericQ4_1,
+                            context,
+                            in,
+                            out,
+                            w.asByteArray(),
                             n,
                             d,
                             projectionLocalSize(d));
@@ -705,7 +827,7 @@ public class Gemma4Q8_0FFNLayers
      */
     private static Object weightArray(TornadoTensor w) {
         return switch (w.dataType()) {
-            case Q8_0 -> w.asByteArray();
+            case Q8_0, Q4_0, Q4_1 -> w.asByteArray();
             case F16 -> w.asHalfFloatArray();
             case F32 -> w.asFloatArray();
             default ->
@@ -779,6 +901,11 @@ public class Gemma4Q8_0FFNLayers
 
             gridScheduler.addWorkerGrid(prefix + "attn_norm_reduce", rmsReduceWorker);
             gridScheduler.addWorkerGrid(prefix + "attn_norm_apply", dimElementWiseWorker);
+            if (packedFor(i)) {
+                WorkerGrid quantizeWorker = WorkerGridFactory.genericWorker(dim, 32);
+                gridScheduler.addWorkerGrid(prefix + "attn_quantize", quantizeWorker);
+                gridScheduler.addWorkerGrid(prefix + "ffn_quantize", quantizeWorker);
+            }
             gridScheduler.addWorkerGrid(prefix + "q_proj", qProjWorker);
             gridScheduler.addWorkerGrid(prefix + "q_norm", headNormWorker);
             if (hasOwnKv) {

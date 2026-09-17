@@ -201,6 +201,34 @@ abstract class CpuGpuParity {
      * on the device too, and should be scored against {@link #Q8_0}'s bounds, not these.
      */
     // @formatter:on
+    // @formatter:off
+    /**
+     * For a <b>Q4_0 file read natively whose projections take a block-quantized eight-bit
+     * activation</b> — device residency and the packed-integer path together.
+     *
+     * <p>A fifth envelope, and the reason is the same as every other one here: this is a different
+     * amount of quantization, not a looser view of {@link #Q8_0}. The device is no longer computing
+     * what the host computes to within rounding — it quantizes the normalized activation to eight
+     * bits per block of 32 and does the dot product in packed integers, which is what makes
+     * {@code dp4a} available at all.
+     *
+     * <p><b>Measured on gemma-4-E2B-it-Q4_0.gguf, CUDA, teacher-forced over 63 rows</b>, against
+     * the allowance chosen for each: elementwise 1.416% against 3%, largest absolute difference
+     * 0.0289 of the reference RMS against 0.06, relative L2 0.00767 against 0.015, cosine deficit
+     * 2.08e-5 against 5e-5. Roughly a factor of two on each — an engineering allowance, not a
+     * measured bound on variability.
+     *
+     * <p>What did not move is the part that decides tokens: <b>0 of 63 argmax disagreements</b>,
+     * top-5 4.873/5, and greedy generation token-identical to the host reference on three prompts.
+     * {@code decisionGap} does not move, because an argmax reversal where the reference was not
+     * close would still be a defect.
+     *
+     * <p>These limits are not to be loosened again for the next optimization.
+     */
+    // @formatter:on
+    static final Bounds Q4_0_PACKED_ACTIVATION =
+            new Bounds(1.7e-4, 1e-2, 0.06, 0.015, 0.99995, 0.03, 0.5);
+
     static final Bounds Q4_0_MATERIALIZED =
             new Bounds(1.7e-4, 1e-2, 0.09, 0.025, 0.99997, 0.08, 0.5);
 

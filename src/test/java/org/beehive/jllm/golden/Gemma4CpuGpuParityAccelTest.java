@@ -27,5 +27,5 @@ public class Gemma4CpuGpuParityAccelTest extends CpuGpuParity {
     // The Q4_0 fixture is a separate class, not a third case here: this model is 9.3 GB in BF16
     // and 5.0 GB in Q8_0, and device memory a closed session frees returns to TornadoVM's buffer
     // provider rather than to the driver, so a third load in one JVM exhausts a 24 GB card. See
-    // Gemma4Q4_0MaterializedParityAccelTest.
+    // Gemma4Q4_0ParityAccelTest.
 }

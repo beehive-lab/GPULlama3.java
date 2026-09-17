@@ -26,7 +26,29 @@ public final class Gemma4PlanProvider implements TornadoPlanProvider {
 
     @Override
     public Set<DataType> supportedDataTypes() {
-        return TornadoSupportSets.BOTH_REPRESENTATIONS;
+        return Set.of(DataType.F16, DataType.Q8_0, DataType.Q4_0);
+    }
+
+    /**
+     * Every representation this family's tasks decode per tensor, which is a different question
+     * from the one {@link #supportedDataTypes()} answers.
+     *
+     * <p>That one is admission: the single representation a model reports and a plan is selected
+     * on. This one is what the memory preflight must predict against, and a Q4_0 file is mixed —
+     * Q4_0 projections, Q4_1 {@code ffn_down} on its first blocks, a Q4_K {@code token_embd} that
+     * is also the output projection, and F32 norms. Answering admission here would predict every
+     * tensor at the model's representation and mispredict all of those.
+     */
+    @Override
+    public Set<DataType> nativeTensorTypes() {
+        return Set.of(
+                DataType.F32,
+                DataType.F16,
+                DataType.BF16,
+                DataType.Q4_0,
+                DataType.Q4_1,
+                DataType.Q4_K,
+                DataType.Q8_0);
     }
 
     @Override
@@ -37,8 +59,15 @@ public final class Gemma4PlanProvider implements TornadoPlanProvider {
     @Override
     public SingleTokenForwardPlanComponents components(DataType weights, State state, Model model) {
         Gemma4State typed = PlanStates.expect(Gemma4State.class, state, ID);
-        return weights == DataType.F16
-                ? new Gemma4FP16PlanComponents(typed, model)
-                : new Gemma4Q8_0PlanComponents(typed, model);
+        // Named branches, not a fallthrough: the quantized components read a tensor by its own
+        // representation, and letting an unexpected dtype land on them would read one block layout
+        // as another rather than fail.
+        return switch (weights) {
+            case F16 -> new Gemma4FP16PlanComponents(typed, model);
+            case Q8_0, Q4_0 -> new Gemma4Q8_0PlanComponents(typed, model);
+            default ->
+                    throw new UnsupportedOperationException(
+                            "gemma4 has no plan components for " + weights);
+        };
     }
 }
