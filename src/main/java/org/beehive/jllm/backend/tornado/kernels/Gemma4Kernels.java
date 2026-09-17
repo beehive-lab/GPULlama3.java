@@ -272,6 +272,136 @@ public class Gemma4Kernels {
      * <p>{@code cacheBaseOffset} addresses the (possibly shared) KV-cache slot for this layer, see
      * {@link #ropeNeoxRotateAndCacheCopy}.
      */
+    /**
+     * Sliding-window attention, one workgroup per head, lanes parallel within it.
+     *
+     * <p>Replaces a {@code @Parallel} loop over heads. That loop was launched on
+     * {@code createAttentionWorker(nHeads, headDim)} — 8 workgroups of 64 lanes — and the emitted
+     * CUDA walked it as {@code for (i = blockIdx*blockDim + threadIdx; i < nHeads; ...)}, so eight
+     * of the five hundred and twelve threads did every position and every head dimension and the
+     * rest fell through. It was 52.1% of decode kernel time.
+     *
+     * <p><b>Two of the three phases keep their original summation order</b>, which is why this is a
+     * smaller numerical change than a tree reduction everywhere: each lane still accumulates a
+     * whole score across {@code headDim} serially, and still accumulates a whole output element
+     * across the window serially. Only the softmax maximum and the sum of exponentials become tree
+     * reductions, because those are the two quantities the whole workgroup shares.
+     *
+     * <p>The grid must launch exactly {@code nHeads} workgroups: {@code h} is the workgroup index,
+     * and the early return is what the head-count guard becomes once the loop is gone.
+     */
+    public static void attentionWithSlidingWindowParallel(
+            KernelContext context,
+            FloatArray q,
+            FloatArray keyCache,
+            FloatArray valueCache,
+            FloatArray xb,
+            FloatArray wrapAtt,
+            int nHeads,
+            int headDim,
+            int kvDim,
+            int kvMul,
+            IntArray positionHolder,
+            int cacheBaseOffset,
+            int windowSize,
+            int contextLength,
+            int localMemSize) {
+
+        int tid = context.localIdx;
+        int h = context.groupIdx;
+        int localSize = context.localGroupSizeX;
+        if (h >= nHeads) {
+            return;
+        }
+
+        int pos = positionHolder.get(0);
+        int windowStart = Math.max(0, pos - windowSize + 1);
+        int hOff = h * contextLength;
+        int kvHeadIdx = h / kvMul;
+        int qOffset = h * headDim;
+
+        float[] qShared = context.allocateFloatLocalArray(headDim);
+        float[] reduce = context.allocateFloatLocalArray(localMemSize);
+
+        for (int i = tid; i < headDim; i += localSize) {
+            qShared[i] = q.get(qOffset + i);
+        }
+        context.localBarrier();
+
+        // STEP 1: scores, one lane per position. The dot product stays serial over headDim, so
+        // each score is the same sum in the same order the per-head loop produced.
+        for (int t = windowStart + tid; t <= pos; t += localSize) {
+            int keyOffset = cacheBaseOffset + t * kvDim + kvHeadIdx * headDim;
+            float score = 0.0f;
+            for (int i = 0; i < headDim; i++) {
+                score += qShared[i] * keyCache.get(keyOffset + i);
+            }
+            // Gemma4 attention scaling = 1.0 (no 1/sqrt(headDim))
+            wrapAtt.set(hOff + t, score);
+        }
+        context.localBarrier();
+
+        // STEP 2a: maximum over the window, as a tree.
+        float localMax = Float.NEGATIVE_INFINITY;
+        for (int t = windowStart + tid; t <= pos; t += localSize) {
+            float v = wrapAtt.get(hOff + t);
+            if (v > localMax) {
+                localMax = v;
+            }
+        }
+        reduce[tid] = localMax;
+        context.localBarrier();
+        for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+            if (tid < stride) {
+                float other = reduce[tid + stride];
+                if (other > reduce[tid]) {
+                    reduce[tid] = other;
+                }
+            }
+            context.localBarrier();
+        }
+        float maxScore = reduce[0];
+        context.localBarrier();
+
+        // STEP 2b: exponentials and their sum, as a tree.
+        float localSum = 0.0f;
+        for (int t = windowStart + tid; t <= pos; t += localSize) {
+            float e = TornadoMath.exp(wrapAtt.get(hOff + t) - maxScore);
+            wrapAtt.set(hOff + t, e);
+            localSum += e;
+        }
+        reduce[tid] = localSum;
+        context.localBarrier();
+        for (int stride = localSize / 2; stride > 0; stride >>= 1) {
+            if (tid < stride) {
+                reduce[tid] += reduce[tid + stride];
+            }
+            context.localBarrier();
+        }
+        float sum = reduce[0];
+        float normFactor = (sum > 0.0f) ? (1.0f / sum) : (1.0f / (pos - windowStart + 1));
+        context.localBarrier();
+
+        // Normalize in place, as the per-head loop did: the weighted sum below then reads exactly
+        // the values it read before, rounded exactly once, and wrapAtt is left holding the same
+        // thing either kernel leaves in it.
+        for (int t = windowStart + tid; t <= pos; t += localSize) {
+            wrapAtt.set(hOff + t, wrapAtt.get(hOff + t) * normFactor);
+        }
+        context.localBarrier();
+
+        // STEP 3: weighted sum of values, one lane per output element. The accumulation over the
+        // window stays serial and in order, so this element is the same sum it was before.
+        for (int i = tid; i < headDim; i += localSize) {
+            float weightedSum = 0.0f;
+            for (int t = windowStart; t <= pos; t++) {
+                int valueOffset = cacheBaseOffset + t * kvDim + kvHeadIdx * headDim;
+                weightedSum += wrapAtt.get(hOff + t) * valueCache.get(valueOffset + i);
+            }
+            xb.set(qOffset + i, weightedSum);
+        }
+    }
+
     public static void attentionWithSlidingWindow(
             FloatArray q,
             FloatArray keyCache,

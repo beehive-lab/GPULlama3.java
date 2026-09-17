@@ -52,6 +52,12 @@ public class Gemma4Q8_0FFNLayers
      */
     private static final int HEAD_NORM_LOCAL_SIZE = 64;
 
+    /**
+     * Lanes per head in the attention kernel. Must equal what {@code createAttentionWorker} picks
+     * for both head widths, because the kernel allocates its reduction scratch at this size.
+     */
+    private static final int ATTENTION_LOCAL_SIZE = 64;
+
     private final Gemma4State gemma4State;
     private final int nHead;
     private final int nHeadKv;
@@ -257,7 +263,8 @@ public class Gemma4Q8_0FFNLayers
 
         unifiedLayer.task(
                 "attention",
-                Gemma4Kernels::attentionWithSlidingWindow,
+                Gemma4Kernels::attentionWithSlidingWindowParallel,
+                context,
                 gemma4State.workspace.wrapQ,
                 gemma4State.workspace.wrapKeyCache,
                 gemma4State.workspace.wrapValueCache,
@@ -270,7 +277,8 @@ public class Gemma4Q8_0FFNLayers
                 gemma4State.workspace.positionHolder,
                 cacheBaseOffset,
                 windowSize,
-                config.contextLength());
+                config.contextLength(),
+                ATTENTION_LOCAL_SIZE);
 
         unifiedLayer.task(
                 "wo_proj",
