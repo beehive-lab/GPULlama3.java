@@ -122,9 +122,10 @@ public final class PlanDispatchEvidence {
             String prefix = "batchLayer_" + layer + ".";
             WorkerGrid dequant = scheduler.get(prefix + "attn_output_proj_dequant");
             assertNotNull("layer " + layer + " has no attn_output_proj_dequant task", dequant);
+            // The Q4_0 decoder takes one lane per packed byte: half the elements.
             assertEquals(
                     "layer " + layer + " dequantization lanes",
-                    (long) dim * attnDim,
+                    (long) dim * attnDim / 2,
                     dequant.getGlobalWork()[0]);
             WorkerGrid gemm = scheduler.get(prefix + "attn_output_proj");
             assertEquals(
@@ -184,10 +185,13 @@ public final class PlanDispatchEvidence {
             if (task.matches("batchLayer_\\d+\\.ffn_down_proj")) {
                 WorkerGrid dequant = scheduler.get(task + "_dequant");
                 assertNotNull(task + " has no dequantization task", dequant);
-                assertEquals(
-                        task + " dequantization lanes",
-                        (long) dim * hiddenDim,
-                        dequant.getGlobalWork()[0]);
+                // The Q4_1 decoder takes one lane per element, the Q4_0 one a lane per packed
+                // byte; the grid alone cannot say which, and assertQwen35DequantGemmPairs pins
+                // the kernel names.
+                long lanes = dequant.getGlobalWork()[0];
+                assertTrue(
+                        task + " dequantization lanes " + lanes,
+                        lanes == (long) dim * hiddenDim || lanes == (long) dim * hiddenDim / 2);
                 WorkerGrid gemm = scheduler.get(task);
                 assertEquals(
                         task + " GEMM rows of work",
@@ -271,18 +275,18 @@ public final class PlanDispatchEvidence {
 
     /**
      * Asserts the producer and consumer of every dequantize-then-GEMM pair in a batched plan agree
-     * on the scratch's layout, layer by layer: a Q4_0 pair is the tiled decoder with the tiled-B
-     * GEMM, a Q4_1 or Q5_K pair its row-major decoder with the general GEMM, and no other
-     * combination exists. Every {@code *_dequant} task in the plan's own scheduler is examined, so
-     * a pair this test does not know of fails rather than passing unexamined. Returns the count of
-     * each combination seen, keyed {@code decoder+gemm}.
+     * on the scratch's layout, layer by layer: a Q4_0 pair is the paired-nibble tiled decoder with
+     * the tiled-B GEMM, a Q4_1 or Q5_K pair its row-major decoder with the general GEMM, and no
+     * other combination exists. Every {@code *_dequant} task in the plan's own scheduler is
+     * examined, so a pair this test does not know of fails rather than passing unexamined. Returns
+     * the count of each combination seen, keyed {@code decoder+gemm}.
      */
     public static java.util.Map<String, Integer> assertQwen35DequantGemmPairs(
             TornadoVMMasterPlan plan, GridScheduler scheduler) {
         assertNotNull("no grid scheduler for the plan this run built", scheduler);
         java.util.Set<String> allowed =
                 java.util.Set.of(
-                        "dequantizeQ4_0ToFP16Tiled+gemmMMATiledB",
+                        "dequantizeQ4_0ToFP16TiledPairs+gemmMMATiledB",
                         "dequantizeQ4_1ToFP16+gemmMMA",
                         "dequantizeQ5_KToFP16+gemmMMA");
         java.util.Map<String, Integer> seen = new java.util.TreeMap<>();

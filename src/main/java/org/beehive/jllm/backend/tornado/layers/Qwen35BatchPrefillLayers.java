@@ -144,11 +144,11 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
      * dequantize-then-GEMM pair where {@link #dequantGemmEligible} says so, otherwise the direct
      * quantized kernel; either way the task named {@code task} is the one that writes {@code out}.
      *
-     * <p>The Q4_0 pair is the tiled one: the decoder writes the scratch in the GEMM's B-tile order
-     * and the GEMM copies each tile global-to-shared as contiguous words. The Q4_1 and Q5_K pairs
-     * write and read the same scratch row-major with the general GEMM; the scratch carries no
-     * layout of its own, each pair's two tasks agree between themselves, and no task reads what
-     * another family's decoder wrote.
+     * <p>The Q4_0 pair is the tiled one: the decoder writes the scratch in the GEMM's B-tile order,
+     * both nibbles of a packed byte from one lane, and the GEMM copies each tile global-to-shared
+     * as contiguous words. The Q4_1 and Q5_K pairs write and read the same scratch row-major with
+     * the general GEMM; the scratch carries no layout of its own, each pair's two tasks agree
+     * between themselves, and no task reads what another family's decoder wrote.
      */
     private void q40Projection(
             TaskGraph graph,
@@ -160,11 +160,12 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
             int n,
             int k) {
         if (dequantGemmEligible(n, k)) {
-            dequantTasks.put(qualified + "_dequant", n * k);
+            // One lane per packed byte: both nibbles decoded, two halves written.
+            dequantTasks.put(qualified + "_dequant", n * k / 2);
             gemmTasks.put(qualified, n);
             graph.task(
                     task + "_dequant",
-                    Qwen35MMAKernels::dequantizeQ4_0ToFP16Tiled,
+                    Qwen35MMAKernels::dequantizeQ4_0ToFP16TiledPairs,
                     context,
                     w,
                     state.workspace.wrapDequantScratchFP16,

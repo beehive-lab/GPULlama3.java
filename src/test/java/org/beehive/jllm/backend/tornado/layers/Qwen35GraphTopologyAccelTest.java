@@ -1054,7 +1054,7 @@ public class Qwen35GraphTopologyAccelTest {
                         gemm.getGlobalWork()[1]);
                 assertEquals(
                         "width 128 " + task + " dequantization lanes",
-                        5120L * wide.dim(),
+                        5120L * wide.dim() / 2,
                         paired.get("batchLayer_" + layer + "." + task + "_dequant")
                                 .getGlobalWork()[0]);
             }

@@ -1254,6 +1254,60 @@ public final class Qwen35MMAKernels {
         out.set((pair << 1) + parity, new HalfFloat(scale * (q - 8)));
     }
 
+    // @formatter:off
+    /**
+     * {@link #dequantizeQ4_0ToFP16Tiled} with both nibbles of a packed byte decoded by one lane:
+     * one scale and one byte read, two halves written, in the same tiled layout.
+     *
+     * <p><b>Address mapping.</b> Byte {@code t} (0..15) of block {@code b} of row {@code r} holds
+     * elements {@code 32b + t} (low nibble) and {@code 32b + t + 16} (high nibble): the same row,
+     * the same position {@code t} within a 16-wide k-tile, in k-tiles {@code 2b} and {@code 2b +
+     * 1}. In the tiled layout those are tiles {@code T} and {@code T + 1} of the same row block
+     * ({@code K % 32 == 0}, so a row block's tiles come in whole pairs) at the same in-tile index,
+     * so the high half's position is the low half's plus 2048. A lane therefore enumerates the low
+     * halves — every half position whose k-tile is even, in the retained decoder's lane order with
+     * the tile-parity bit removed — and writes the high half at {@code + 2048}. Lane bits, low to
+     * high: row parity, the low pair bit, three low k bits, the high pair bit, the high k bit, the
+     * sub-tile (four bits), then the tile pair. {@code n * k / 2} lanes cover every low half once,
+     * every high half once, and the largest address written is {@code n * k - 1}.
+     *
+     * <p><b>Arithmetic.</b> Both elements are {@code fp16(scale * (q - 8))} with the same scale,
+     * each nibble recentred as an int and converted independently; no packed arithmetic. The high
+     * nibble is taken as {@code (packed & 0xF0) >>> 4} rather than {@code (packed >>> 4) & 0xF}:
+     * the latter is stamped unsigned by the CUDA lowering and its recentring decodes to infinity
+     * (see everyNibbleDecodesWithTheSignItsScaleGivesIt); the test checks every nibble's bits.
+     *
+     * <p>Worker: {@code n * k / 2} lanes.
+     */
+    // @formatter:on
+    public static void dequantizeQ4_0ToFP16TiledPairs(
+            KernelContext ctx, ByteArray w, HalfFloatArray out, int n, int k) {
+        int lane = ctx.globalIdx;
+        int kSteps = k / GEMM_BK;
+        int parity = lane & 1;
+        int pairInSub = ((lane >>> 1) & 1) | (((lane >>> 5) & 1) << 1);
+        int kk = ((lane >>> 2) & 7) | (((lane >>> 6) & 1) << 3);
+        int sub = (lane >>> 7) & 15;
+        int tilePair = lane >>> 11;
+        int tile = tilePair << 1;
+        int idx = (sub << 6) + (kk << 2) + pairInSub;
+        int rowBlock = tile / kSteps;
+        int kStep = tile - rowBlock * kSteps;
+        int row = rowBlock * GEMM_BN + (sub << 3) + (pairInSub << 1) + parity;
+        int element = kStep * GEMM_BK + kk;
+        int blocksPerRow = k / QK;
+        int block = element >> 5;
+        int within = element & 15;
+        int base = (row * blocksPerRow + block) * BLOCK_BYTES;
+        float scale = w.getHalfFloat(base).getFloat32();
+        int packed = w.get(base + 2 + within) & 0xFF;
+        int low = packed & 0xF;
+        int high = (packed & 0xF0) >>> 4;
+        int lowHalf = (tile << 11) + (idx << 1) + parity;
+        out.set(lowHalf, new HalfFloat(scale * (low - 8)));
+        out.set(lowHalf + 2 * GEMM_B_TILE_INTS, new HalfFloat(scale * (high - 8)));
+    }
+
     /** {@code lo | hi << 16} of two halves: the packing of the GEMM's shared tiles. */
     private static int packHalvesGemm(HalfFloatArray src, int idxLo, int idxHi) {
         int lo = src.get(idxLo).getHalfFloatValue() & 0xFFFF;
