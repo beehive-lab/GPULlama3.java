@@ -123,7 +123,7 @@ public class LogitsQ8_0Layer extends AbstractLogitsTaskGraph {
      * which is why it needs no provenance flag: there is no second consumer to confuse it with.
      */
     // @formatter:on
-    private boolean packedVocabulary(TornadoWeights weights) {
+    protected boolean packedVocabulary(TornadoWeights weights) {
         return !"false".equalsIgnoreCase(System.getProperty("jllm.qwen35.packedIntegerDot", "true"))
                 && weights.wclsByteArray.dataType() == org.beehive.jllm.runtime.tensor.DataType.Q6_K
                 && state.workspace.wrapXbQuants != null
@@ -135,7 +135,15 @@ public class LogitsQ8_0Layer extends AbstractLogitsTaskGraph {
     }
 
     /** The vocabulary projection task, chosen by what the output projection actually holds. */
-    private void addVocabularyProjection(
+    /**
+     * The vocabulary projection, by the output tensor's own representation.
+     *
+     * <p>Visible to subclasses because a family that overrides {@link #setupLogitsTaskGraph} still
+     * has to dispatch this the same way. Hardcoding a kernel here reads one block layout as another
+     * -- 34-byte Q8_0 blocks over a 144-byte Q4_K super-block tensor walks off the end of the
+     * buffer, which surfaces as an illegal address rather than as wrong numbers.
+     */
+    protected void addVocabularyProjection(
             TaskGraph logits, TornadoWeights weights, Configuration config) {
         int localSize = LOCAL_WORK_GROUP_SIZE_ALLOC * THREAD_SCALE_FOR_LOGITS;
         var w = weights.wclsByteArray;
