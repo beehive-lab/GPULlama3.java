@@ -123,6 +123,15 @@ public final class Gemma4State extends State {
         this.workspace.branchScaleBatch = TornadoWorkspaces.floats(padded);
         this.workspace.attnScoresBatch =
                 TornadoWorkspaces.floats(padded * config.numberOfHeads() * config.contextLength());
+        // The depth slices of the two narrow projections, before they are summed. One buffer for
+        // both: they are sequential in a layer's graph, so the second overwrites what the first has
+        // already been reduced out of.
+        this.workspace.splitKPartialBatch =
+                TornadoWorkspaces.floats(
+                        org.beehive.jllm.backend.tornado.layers.Gemma4BatchPrefillLayers
+                                        .SPLIT_K_SLICES
+                                * padded
+                                * config.dim());
     }
 
     /** This family's widest head is what one shared query buffer has to hold. */

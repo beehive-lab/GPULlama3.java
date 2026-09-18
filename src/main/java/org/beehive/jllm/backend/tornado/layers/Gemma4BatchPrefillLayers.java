@@ -17,6 +17,7 @@ import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.WorkerGrid;
 import uk.ac.manchester.tornado.api.WorkerGrid1D;
 import uk.ac.manchester.tornado.api.WorkerGrid2D;
+import uk.ac.manchester.tornado.api.WorkerGrid3D;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 import uk.ac.manchester.tornado.api.types.HalfFloat;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
@@ -75,6 +76,22 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
     // @formatter:on
     private static final boolean STAGED_ATTENTION =
             !Boolean.getBoolean("jllm.gemma4.unstagedAttention");
+
+    // @formatter:off
+    /**
+     * Depth slices for the two projections whose output is too narrow to fill the device.
+     *
+     * <p>Four: it takes {@code w2Proj} and {@code woProj} from forty-eight thread blocks to a
+     * hundred and ninety-two on a hundred-and-twenty-eight-SM device, and four divides every depth
+     * they are given — 6144 and 12288 for the feed-forward, 2048 and 4096 for the attention output —
+     * into whole 32-weight blocks. A property selects one slice, which is the unsplit kernel, for
+     * exact comparison; not a tuning knob.
+     */
+    // @formatter:on
+    public static final int SPLIT_K_SLICES = 4;
+
+    private static final boolean SPLIT_K =
+            !Boolean.getBoolean("jllm.gemma4.noSplitK");
 
     private final Gemma4State state;
     private final Gemma4TornadoWeights weights;
@@ -242,6 +259,7 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     state.workspace.qkvResultBatch,
                     state.workspace.attnOutFP16,
                     state.workspace.attnScoresBatch,
+                    state.workspace.splitKPartialBatch,
                     state.workspace.woOut,
                     state.workspace.normedXFFNFP16,
                     state.workspace.gateUpResultBatch,
@@ -280,6 +298,7 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     state.workspace.qkvResultBatch,
                     state.workspace.attnOutFP16,
                     state.workspace.attnScoresBatch,
+                    state.workspace.splitKPartialBatch,
                     state.workspace.woOut,
                     state.workspace.normedXFFNFP16,
                     state.workspace.gateUpResultBatch,
@@ -451,16 +470,38 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 config.contextLength(),
                 HEAD_LOCAL_SIZE);
 
-        layer.task(
-                "woProj",
-                TransformerBatchPrefillKernels::gemmMMAQ8,
-                context,
-                state.workspace.attnOutFP16,
-                weights.woLayered[layerIndex].asByteArray(),
-                state.workspace.woOut,
-                paddedBatch,
-                dim,
-                qDim);
+        if (SPLIT_K) {
+            layer.task(
+                    "woProj",
+                    Gemma4BatchPrefillKernels::gemmMMAQ8SplitK,
+                    context,
+                    state.workspace.attnOutFP16,
+                    weights.woLayered[layerIndex].asByteArray(),
+                    state.workspace.splitKPartialBatch,
+                    paddedBatch,
+                    dim,
+                    qDim,
+                    SPLIT_K_SLICES);
+            layer.task(
+                    "woReduce",
+                    Gemma4BatchPrefillKernels::splitKReduce,
+                    context,
+                    state.workspace.splitKPartialBatch,
+                    state.workspace.woOut,
+                    paddedBatch * dim,
+                    SPLIT_K_SLICES);
+        } else {
+            layer.task(
+                    "woProj",
+                    TransformerBatchPrefillKernels::gemmMMAQ8,
+                    context,
+                    state.workspace.attnOutFP16,
+                    weights.woLayered[layerIndex].asByteArray(),
+                    state.workspace.woOut,
+                    paddedBatch,
+                    dim,
+                    qDim);
+        }
         layer.task(
                 "batch_post_attn_rms",
                 TransformerBatchPrefillKernels::batchedRmsReduceParallel,
@@ -517,16 +558,38 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 state.workspace.wrapHbFP16Batch,
                 state.workspace.gateUpResultBatch,
                 ffnLen);
-        layer.task(
-                "w2Proj",
-                TransformerBatchPrefillKernels::gemmMMAQ8,
-                context,
-                state.workspace.wrapHbFP16Batch,
-                weights.w2Layered[layerIndex].asByteArray(),
-                state.workspace.w2Out,
-                paddedBatch,
-                dim,
-                ffnLen);
+        if (SPLIT_K) {
+            layer.task(
+                    "w2Proj",
+                    Gemma4BatchPrefillKernels::gemmMMAQ8SplitK,
+                    context,
+                    state.workspace.wrapHbFP16Batch,
+                    weights.w2Layered[layerIndex].asByteArray(),
+                    state.workspace.splitKPartialBatch,
+                    paddedBatch,
+                    dim,
+                    ffnLen,
+                    SPLIT_K_SLICES);
+            layer.task(
+                    "w2Reduce",
+                    Gemma4BatchPrefillKernels::splitKReduce,
+                    context,
+                    state.workspace.splitKPartialBatch,
+                    state.workspace.w2Out,
+                    paddedBatch * dim,
+                    SPLIT_K_SLICES);
+        } else {
+            layer.task(
+                    "w2Proj",
+                    TransformerBatchPrefillKernels::gemmMMAQ8,
+                    context,
+                    state.workspace.wrapHbFP16Batch,
+                    weights.w2Layered[layerIndex].asByteArray(),
+                    state.workspace.w2Out,
+                    paddedBatch,
+                    dim,
+                    ffnLen);
+        }
         layer.task(
                 "batch_post_ffn_rms",
                 TransformerBatchPrefillKernels::batchedRmsReduceParallel,
@@ -675,6 +738,13 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
         return g;
     }
 
+    /** The split-K family: the {@code gemmMMA} grid with a third dimension, one slice per plane. */
+    private static WorkerGrid mmaSplitKGrid(int paddedM, int n) {
+        WorkerGrid3D g = new WorkerGrid3D((paddedM / 128) * 256, n / 128, SPLIT_K_SLICES);
+        g.setLocalWork(256, 1, 1);
+        return g;
+    }
+
     private static WorkerGrid elementwise(int n, int local) {
         int l = Math.min(local, n);
         while (l > 1 && n % l != 0) {
@@ -701,6 +771,7 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
         WorkerGrid mmaDimWorker = mmaGrid(paddedBatch, dim);
         WorkerGrid pleGateWorker = mmaGrid(paddedBatch, nEmbdPerLayer);
         WorkerGrid pleGateGeluWorker = elementwise(batchSize * nEmbdPerLayer, 256);
+        WorkerGrid reduceWorker = elementwise(paddedBatch * dim, 256);
 
         for (int l = 0; l < config.numberOfLayers(); l++) {
             String p = "batchPrefillLayer_" + l + ".";
@@ -726,7 +797,12 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     p + "batch_attention",
                     WorkerGridFactory.genericWorker(
                             batchSize * nHead * HEAD_LOCAL_SIZE, HEAD_LOCAL_SIZE));
-            scheduler.addWorkerGrid(p + "woProj", mmaDimWorker);
+            if (SPLIT_K) {
+                scheduler.addWorkerGrid(p + "woProj", mmaSplitKGrid(paddedBatch, dim));
+                scheduler.addWorkerGrid(p + "woReduce", reduceWorker);
+            } else {
+                scheduler.addWorkerGrid(p + "woProj", mmaDimWorker);
+            }
             scheduler.addWorkerGrid(p + "batch_post_attn_rms", rmsWorker);
             scheduler.addWorkerGrid(p + "batch_post_attn_apply", dimApplyWorker);
 
@@ -734,7 +810,12 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
             scheduler.addWorkerGrid(p + "batch_ffn_rms_apply", dimApplyWorker);
             scheduler.addWorkerGrid(p + "gateUpProj", mmaGrid(paddedBatch, 2 * ffnLen));
             scheduler.addWorkerGrid(p + "batch_geglu", elementwise(batchSize * ffnLen, 256));
-            scheduler.addWorkerGrid(p + "w2Proj", mmaDimWorker);
+            if (SPLIT_K) {
+                scheduler.addWorkerGrid(p + "w2Proj", mmaSplitKGrid(paddedBatch, dim));
+                scheduler.addWorkerGrid(p + "w2Reduce", reduceWorker);
+            } else {
+                scheduler.addWorkerGrid(p + "w2Proj", mmaDimWorker);
+            }
             scheduler.addWorkerGrid(p + "batch_post_ffn_rms", rmsWorker);
             scheduler.addWorkerGrid(p + "batch_post_ffn_apply", dimApplyWorker);
 
