@@ -38,12 +38,17 @@ public final class Gemma4BatchPrefillKernels {
     /**
      * Dimensions per staged key tile.
      *
-     * <p>Thirty-two: one warp's worth of contiguous floats is 128 bytes, which is one sector, and
-     * both of this family's head widths — 256 on the sliding-window layers, 512 on the full ones —
-     * are whole multiples of it, so a tile never straddles the end of a head.
+     * <p>Sixteen, and the reason is occupancy rather than coalescing. Thirty-two is the width that
+     * makes a warp's load one 128-byte sector, and that is what this tile was first built with — but
+     * the tile is then 32 × 129 floats, 16.5 KB, 87% of the block's shared memory, and Nsight put
+     * the kernel's theoretical occupancy at 41.7% <i>limited by the required amount of shared
+     * memory</i>. It also put DRAM throughput at 0.70% with a 99.55% L2 hit rate: the keys are in
+     * cache, so what a wider tile buys in transaction shape it more than loses in warps resident.
+     * Sixteen halves the tile and roughly doubles the occupancy; eight halves it again and measured
+     * slightly worse, so this is a measured optimum and not a rounding.
      */
     // @formatter:on
-    private static final int DIM_TILE = 32;
+    private static final int DIM_TILE = Integer.getInteger("jllm.gemma4.dimTile", 16);
 
     // ── Norms ────────────────────────────────────────────────────────────────
 
