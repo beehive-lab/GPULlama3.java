@@ -108,6 +108,10 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
     private static final boolean DEQUANT_PROJECTIONS =
             !Boolean.getBoolean("jllm.gemma4.noDequantProjections");
 
+    /** The split-K pair separately, so its own A/B does not also revert the query/key/value one. */
+    private static final boolean DEQUANT_SPLIT_K =
+            DEQUANT_PROJECTIONS && !Boolean.getBoolean("jllm.gemma4.noDequantSplitK");
+
     private final Gemma4State state;
     private final Gemma4TornadoWeights weights;
     private final Gemma4Configuration config;
@@ -544,7 +548,34 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 config.contextLength(),
                 HEAD_LOCAL_SIZE);
 
-        if (SPLIT_K) {
+        if (SPLIT_K && DEQUANT_SPLIT_K) {
+            layer.task(
+                    "woDequant",
+                    Gemma4BatchPrefillKernels::dequantizeQ8ToFP16,
+                    context,
+                    weights.woLayered[layerIndex].asByteArray(),
+                    state.workspace.weightsF16Scratch,
+                    0);
+            layer.task(
+                    "woProj",
+                    Gemma4BatchPrefillKernels::gemmMMASplitK,
+                    context,
+                    state.workspace.attnOutFP16,
+                    state.workspace.weightsF16Scratch,
+                    state.workspace.splitKPartialBatch,
+                    paddedBatch,
+                    dim,
+                    qDim,
+                    SPLIT_K_SLICES);
+            layer.task(
+                    "woReduce",
+                    Gemma4BatchPrefillKernels::splitKReduce,
+                    context,
+                    state.workspace.splitKPartialBatch,
+                    state.workspace.woOut,
+                    paddedBatch * dim,
+                    SPLIT_K_SLICES);
+        } else if (SPLIT_K) {
             layer.task(
                     "woProj",
                     Gemma4BatchPrefillKernels::gemmMMAQ8SplitK,
@@ -662,7 +693,34 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 state.workspace.wrapHbFP16Batch,
                 state.workspace.gateUpResultBatch,
                 ffnLen);
-        if (SPLIT_K) {
+        if (SPLIT_K && DEQUANT_SPLIT_K) {
+            layer.task(
+                    "w2Dequant",
+                    Gemma4BatchPrefillKernels::dequantizeQ8ToFP16,
+                    context,
+                    weights.w2Layered[layerIndex].asByteArray(),
+                    state.workspace.weightsF16Scratch,
+                    0);
+            layer.task(
+                    "w2Proj",
+                    Gemma4BatchPrefillKernels::gemmMMASplitK,
+                    context,
+                    state.workspace.wrapHbFP16Batch,
+                    state.workspace.weightsF16Scratch,
+                    state.workspace.splitKPartialBatch,
+                    paddedBatch,
+                    dim,
+                    ffnLen,
+                    SPLIT_K_SLICES);
+            layer.task(
+                    "w2Reduce",
+                    Gemma4BatchPrefillKernels::splitKReduce,
+                    context,
+                    state.workspace.splitKPartialBatch,
+                    state.workspace.w2Out,
+                    paddedBatch * dim,
+                    SPLIT_K_SLICES);
+        } else if (SPLIT_K) {
             layer.task(
                     "w2Proj",
                     Gemma4BatchPrefillKernels::gemmMMAQ8SplitK,
@@ -911,6 +969,9 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
             if (SPLIT_K) {
                 scheduler.addWorkerGrid(p + "woProj", mmaSplitKGrid(paddedBatch, dim));
                 scheduler.addWorkerGrid(p + "woReduce", reduceWorker);
+                if (DEQUANT_SPLIT_K) {
+                    scheduler.addWorkerGrid(p + "woDequant", elementwise(dim * qDim, 256));
+                }
             } else {
                 scheduler.addWorkerGrid(p + "woProj", mmaDimWorker);
             }
@@ -929,6 +990,9 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
             if (SPLIT_K) {
                 scheduler.addWorkerGrid(p + "w2Proj", mmaSplitKGrid(paddedBatch, dim));
                 scheduler.addWorkerGrid(p + "w2Reduce", reduceWorker);
+                if (DEQUANT_SPLIT_K) {
+                    scheduler.addWorkerGrid(p + "w2Dequant", elementwise(dim * ffnLen, 256));
+                }
             } else {
                 scheduler.addWorkerGrid(p + "w2Proj", mmaDimWorker);
             }

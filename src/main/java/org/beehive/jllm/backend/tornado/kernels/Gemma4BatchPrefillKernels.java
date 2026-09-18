@@ -851,6 +851,186 @@ public final class Gemma4BatchPrefillKernels {
 
     // @formatter:off
     /**
+     * {@link #gemmMMAQ8SplitK} with an FP16 B operand: the depth split for the two narrow
+     * projections, over weights decoded once instead of decoded per K-step.
+     *
+     * <p>The two fixes compose and neither subsumes the other. Splitting the depth answers the
+     * grid — a projection into {@code dim} gives forty-eight thread blocks on a
+     * hundred-and-twenty-eight-SM device. Decoding the weights first answers the pipeline, since a
+     * Q8_0 staging converts float to half in software for want of a register-level conversion.
+     * This is both.
+     *
+     * <p>Requires {@code M % 128 == 0}, {@code N % 128 == 0}, {@code (K / slices) % 16 == 0}.
+     * Worker: {@code WorkerGrid3D((M/128)*256, N/128, slices)}, local (256,1,1).
+     */
+    // @formatter:on
+    public static void gemmMMASplitK(
+            KernelContext ctx,
+            HalfFloatArray A,
+            HalfFloatArray B,
+            FloatArray partial,
+            int M,
+            int N,
+            int K,
+            int slices) {
+        int tid = ctx.localIdx;
+        int warpId = tid / WARP_SIZE;
+        int warpM = warpId / WARPS_N;
+        int warpN = warpId % WARPS_N;
+        int blockRow = BM * ctx.groupIdx;
+        int blockCol = BN * ctx.groupIdy;
+        int slice = ctx.groupIdz;
+        int kSlice = K / slices;
+        int kBase = slice * kSlice;
+
+        int[] aTile = ctx.allocateIntLocalArray(BM * BK / 2);
+        int[] bTile = ctx.allocateIntLocalArray(BK * BN / 2);
+
+        float[] c00 = ctx.mmaFragment(0.0f);
+        float[] c01 = ctx.mmaFragment(0.0f);
+        float[] c02 = ctx.mmaFragment(0.0f);
+        float[] c03 = ctx.mmaFragment(0.0f);
+        float[] c04 = ctx.mmaFragment(0.0f);
+        float[] c05 = ctx.mmaFragment(0.0f);
+        float[] c06 = ctx.mmaFragment(0.0f);
+        float[] c07 = ctx.mmaFragment(0.0f);
+        float[] c10 = ctx.mmaFragment(0.0f);
+        float[] c11 = ctx.mmaFragment(0.0f);
+        float[] c12 = ctx.mmaFragment(0.0f);
+        float[] c13 = ctx.mmaFragment(0.0f);
+        float[] c14 = ctx.mmaFragment(0.0f);
+        float[] c15 = ctx.mmaFragment(0.0f);
+        float[] c16 = ctx.mmaFragment(0.0f);
+        float[] c17 = ctx.mmaFragment(0.0f);
+
+        int aIdx0 = tid;
+        int gA0 = (blockRow + (aIdx0 >>> 3)) * K + kBase + ((aIdx0 & 7) << 1);
+        int aIdx1 = tid + 256;
+        int gA1 = (blockRow + (aIdx1 >>> 3)) * K + kBase + ((aIdx1 & 7) << 1);
+        int aIdx2 = tid + 512;
+        int gA2 = (blockRow + (aIdx2 >>> 3)) * K + kBase + ((aIdx2 & 7) << 1);
+        int aIdx3 = tid + 768;
+        int gA3 = (blockRow + (aIdx3 >>> 3)) * K + kBase + ((aIdx3 & 7) << 1);
+        int bIdx0 = tid;
+        int gB0 =
+                (blockCol + ((bIdx0 >>> 6) << 3) + ((bIdx0 & 3) << 1)) * K
+                        + kBase
+                        + ((bIdx0 & 63) >>> 2);
+        int bIdx1 = tid + 256;
+        int gB1 =
+                (blockCol + ((bIdx1 >>> 6) << 3) + ((bIdx1 & 3) << 1)) * K
+                        + kBase
+                        + ((bIdx1 & 63) >>> 2);
+        int bIdx2 = tid + 512;
+        int gB2 =
+                (blockCol + ((bIdx2 >>> 6) << 3) + ((bIdx2 & 3) << 1)) * K
+                        + kBase
+                        + ((bIdx2 & 63) >>> 2);
+        int bIdx3 = tid + 768;
+        int gB3 =
+                (blockCol + ((bIdx3 >>> 6) << 3) + ((bIdx3 & 3) << 1)) * K
+                        + kBase
+                        + ((bIdx3 & 63) >>> 2);
+
+        int aReg0 = packHalves(A, gA0, gA0 + 1);
+        int aReg1 = packHalves(A, gA1, gA1 + 1);
+        int aReg2 = packHalves(A, gA2, gA2 + 1);
+        int aReg3 = packHalves(A, gA3, gA3 + 1);
+        int bReg0 = packHalves(B, gB0, gB0 + K);
+        int bReg1 = packHalves(B, gB1, gB1 + K);
+        int bReg2 = packHalves(B, gB2, gB2 + K);
+        int bReg3 = packHalves(B, gB3, gB3 + K);
+        aTile[aIdx0] = aReg0;
+        aTile[aIdx1] = aReg1;
+        aTile[aIdx2] = aReg2;
+        aTile[aIdx3] = aReg3;
+        bTile[bIdx0] = bReg0;
+        bTile[bIdx1] = bReg1;
+        bTile[bIdx2] = bReg2;
+        bTile[bIdx3] = bReg3;
+        ctx.localBarrier();
+
+        int numKSteps = kSlice / BK;
+        for (int kStep = 0; kStep < numKSteps; kStep++) {
+            if (kStep + 1 < numKSteps) {
+                int kOff = (kStep + 1) * BK;
+                aReg0 = packHalves(A, gA0 + kOff, gA0 + kOff + 1);
+                aReg1 = packHalves(A, gA1 + kOff, gA1 + kOff + 1);
+                aReg2 = packHalves(A, gA2 + kOff, gA2 + kOff + 1);
+                aReg3 = packHalves(A, gA3 + kOff, gA3 + kOff + 1);
+                bReg0 = packHalves(B, gB0 + kOff, gB0 + kOff + K);
+                bReg1 = packHalves(B, gB1 + kOff, gB1 + kOff + K);
+                bReg2 = packHalves(B, gB2 + kOff, gB2 + kOff + K);
+                bReg3 = packHalves(B, gB3 + kOff, gB3 + kOff + K);
+            }
+
+            int aOff0 = warpM * 1024;
+            int aOff1 = warpM * 1024 + 512;
+            HalfFloat[] a0 = ctx.mmaLoadA(aTile, BK, aOff0);
+            HalfFloat[] a1 = ctx.mmaLoadA(aTile, BK, aOff1);
+            int bBase = warpN * 8;
+            HalfFloat[] b0 = ctx.mmaLoadB(bTile, BK, (bBase + 0) * B_SUBTILE_BYTES);
+            HalfFloat[] b1 = ctx.mmaLoadB(bTile, BK, (bBase + 1) * B_SUBTILE_BYTES);
+            HalfFloat[] b2 = ctx.mmaLoadB(bTile, BK, (bBase + 2) * B_SUBTILE_BYTES);
+            HalfFloat[] b3 = ctx.mmaLoadB(bTile, BK, (bBase + 3) * B_SUBTILE_BYTES);
+            HalfFloat[] b4 = ctx.mmaLoadB(bTile, BK, (bBase + 4) * B_SUBTILE_BYTES);
+            HalfFloat[] b5 = ctx.mmaLoadB(bTile, BK, (bBase + 5) * B_SUBTILE_BYTES);
+            HalfFloat[] b6 = ctx.mmaLoadB(bTile, BK, (bBase + 6) * B_SUBTILE_BYTES);
+            HalfFloat[] b7 = ctx.mmaLoadB(bTile, BK, (bBase + 7) * B_SUBTILE_BYTES);
+            ctx.localBarrier();
+
+            if (kStep + 1 < numKSteps) {
+                aTile[aIdx0] = aReg0;
+                aTile[aIdx1] = aReg1;
+                aTile[aIdx2] = aReg2;
+                aTile[aIdx3] = aReg3;
+                bTile[bIdx0] = bReg0;
+                bTile[bIdx1] = bReg1;
+                bTile[bIdx2] = bReg2;
+                bTile[bIdx3] = bReg3;
+            }
+
+            c00 = ctx.mma(a0, b0, c00, MMAShape.M16N8K16);
+            c01 = ctx.mma(a0, b1, c01, MMAShape.M16N8K16);
+            c02 = ctx.mma(a0, b2, c02, MMAShape.M16N8K16);
+            c03 = ctx.mma(a0, b3, c03, MMAShape.M16N8K16);
+            c04 = ctx.mma(a0, b4, c04, MMAShape.M16N8K16);
+            c05 = ctx.mma(a0, b5, c05, MMAShape.M16N8K16);
+            c06 = ctx.mma(a0, b6, c06, MMAShape.M16N8K16);
+            c07 = ctx.mma(a0, b7, c07, MMAShape.M16N8K16);
+            c10 = ctx.mma(a1, b0, c10, MMAShape.M16N8K16);
+            c11 = ctx.mma(a1, b1, c11, MMAShape.M16N8K16);
+            c12 = ctx.mma(a1, b2, c12, MMAShape.M16N8K16);
+            c13 = ctx.mma(a1, b3, c13, MMAShape.M16N8K16);
+            c14 = ctx.mma(a1, b4, c14, MMAShape.M16N8K16);
+            c15 = ctx.mma(a1, b5, c15, MMAShape.M16N8K16);
+            c16 = ctx.mma(a1, b6, c16, MMAShape.M16N8K16);
+            c17 = ctx.mma(a1, b7, c17, MMAShape.M16N8K16);
+            ctx.localBarrier();
+        }
+
+        int rBase = slice * M + blockRow + warpM * WM;
+        int cBase = blockCol + warpN * WN;
+        ctx.mmaStore(c00, partial, rBase + 0, cBase + 0, N);
+        ctx.mmaStore(c01, partial, rBase + 0, cBase + 8, N);
+        ctx.mmaStore(c02, partial, rBase + 0, cBase + 16, N);
+        ctx.mmaStore(c03, partial, rBase + 0, cBase + 24, N);
+        ctx.mmaStore(c04, partial, rBase + 0, cBase + 32, N);
+        ctx.mmaStore(c05, partial, rBase + 0, cBase + 40, N);
+        ctx.mmaStore(c06, partial, rBase + 0, cBase + 48, N);
+        ctx.mmaStore(c07, partial, rBase + 0, cBase + 56, N);
+        ctx.mmaStore(c10, partial, rBase + 16, cBase + 0, N);
+        ctx.mmaStore(c11, partial, rBase + 16, cBase + 8, N);
+        ctx.mmaStore(c12, partial, rBase + 16, cBase + 16, N);
+        ctx.mmaStore(c13, partial, rBase + 16, cBase + 24, N);
+        ctx.mmaStore(c14, partial, rBase + 16, cBase + 32, N);
+        ctx.mmaStore(c15, partial, rBase + 16, cBase + 40, N);
+        ctx.mmaStore(c16, partial, rBase + 16, cBase + 48, N);
+        ctx.mmaStore(c17, partial, rBase + 16, cBase + 56, N);
+    }
+
+    // @formatter:off
+    /**
      * Sums the depth slices {@link #gemmMMAQ8SplitK} left behind into the projection's output.
      *
      * <p>One thread per output element, slices added in increasing order. The traffic is
