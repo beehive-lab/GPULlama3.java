@@ -126,10 +126,11 @@ public final class Gemma4State extends State {
         // The depth slices of the two narrow projections, before they are summed. One buffer for
         // both: they are sequential in a layer's graph, so the second overwrites what the first has
         // already been reduced out of.
-        // The widest gate/up pair decoded into FP16, so the projection's GEMM stages operands it
-        // does not have to convert. One buffer for every layer: the widest is what it has to hold,
-        // and a layer narrower than that uses a prefix of it.
-        this.workspace.gateUpWeightsF16 =
+        // A projection's weights decoded into FP16, so its GEMM stages operands it does not have to
+        // convert. One buffer for every projection of every layer: the widest is what it has to
+        // hold -- the gate/up pair -- and everything else uses a prefix. They are sequential within
+        // a layer's graph and across layers, so nothing needs its own.
+        this.workspace.weightsF16Scratch =
                 TornadoWorkspaces.halfFloats(2 * config.maxFeedForwardLength() * config.dim());
         this.workspace.splitKPartialBatch =
                 TornadoWorkspaces.floats(

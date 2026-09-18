@@ -160,7 +160,7 @@ public final class TornadoWorkspace {
     public FloatArray branchScaleBatch;
     public FloatArray attnScoresBatch;
     public FloatArray splitKPartialBatch;
-    public HalfFloatArray gateUpWeightsF16;
+    public HalfFloatArray weightsF16Scratch;
 
     /** The query half of an attention layer's fused query/gate projection, de-interleaved. */
     public FloatArray wrapAttnQ;
