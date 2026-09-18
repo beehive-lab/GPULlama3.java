@@ -208,6 +208,64 @@ public final class Qwen35BatchKernels {
         outBatch.set(lane, sum);
     }
 
+    // @formatter:off
+    /**
+     * {@link #causalConv1dBatch} with the SiLU and the three-way split folded into its store: the
+     * lane's convolution output {@code y} is written as {@code y / (1 + exp(-y))} — the expression
+     * of {@link #siluInPlaceBatch} on the value it would have read back — into the query, key or
+     * value row its channel belongs to, as {@link #splitThreeWayBatch} would have copied it. The
+     * fused conv output buffer is neither written nor read. Bit-equal to the three tasks.
+     *
+     * <p>Worker: {@code rows * channels} lanes; {@code channels = dimA + dimB + dimC}.
+     */
+    // @formatter:on
+    public static void causalConv1dSiluSplitBatch(
+            KernelContext context,
+            FloatArray inputBatch,
+            FloatArray weight,
+            FloatArray window,
+            FloatArray a,
+            FloatArray b,
+            FloatArray c,
+            int dimA,
+            int dimB,
+            int dimC,
+            int kernel,
+            int windowOffset,
+            IntArray batchInfo) {
+        int lane = context.globalIdx;
+        int channels = dimA + dimB + dimC;
+        if (lane >= channels * batchInfo.get(1)) {
+            return;
+        }
+        int row = lane / channels;
+        int channel = lane - row * channels;
+        int history = kernel - 1;
+        int wBase = channel * kernel;
+        int hBase = windowOffset + channel * history;
+
+        float sum = 0.0f;
+        for (int t = 0; t < history; t++) {
+            int source = row - history + t;
+            float h;
+            if (source < 0) {
+                h = window.get(hBase + source + history);
+            } else {
+                h = inputBatch.get(source * channels + channel);
+            }
+            sum += weight.get(wBase + t) * h;
+        }
+        sum += weight.get(wBase + history) * inputBatch.get(lane);
+        float value = sum / (1.0f + TornadoMath.exp(-sum));
+        if (channel < dimA) {
+            a.set(row * dimA + channel, value);
+        } else if (channel < dimA + dimB) {
+            b.set(row * dimB + (channel - dimA), value);
+        } else {
+            c.set(row * dimC + (channel - dimA - dimB), value);
+        }
+    }
+
     /**
      * The window {@link #causalConv1dScan} leaves after a chunk: the chunk's last {@code kernel -
      * 1} inputs of each channel, taken from the initial window where the chunk is shorter than

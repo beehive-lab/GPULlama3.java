@@ -1165,15 +1165,20 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
             // A lane per (row, channel), the rows being independent given the initial window;
             // then the chunk's final window as a task of its own, after every row has read the
             // initial one. Bit-equal to the scan.
+            // The SiLU and the q/k/v split folded into the convolution's store.
             layer.task(
                     "ssm_conv",
-                    Qwen35BatchKernels::causalConv1dBatch,
+                    Qwen35BatchKernels::causalConv1dSiluSplitBatch,
                     context,
                     state.workspace.wrapSsmQkvBatch,
                     require(weights.ssmConv1d, layerIndex, "ssm_conv1d").asFloatArray(),
                     state.workspace.wrapConvState,
-                    state.workspace.wrapSsmConvOutBatch,
-                    convDim,
+                    state.workspace.wrapSsmQBatch,
+                    state.workspace.wrapSsmKBatch,
+                    state.workspace.wrapSsmVBatch,
+                    keyDim,
+                    keyDim,
+                    valueDim,
                     config.ssmConvKernel(),
                     recurrent * config.convStateSize(),
                     state.workspace.batchStartPosHolder);
@@ -1202,26 +1207,28 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     recurrent * config.convStateSize(),
                     state.workspace.batchStartPosHolder);
         }
-        layer.task(
-                "ssm_conv_silu",
-                Qwen35BatchKernels::siluInPlaceBatch,
-                context,
-                state.workspace.wrapSsmConvOutBatch,
-                convDim,
-                state.workspace.batchStartPosHolder);
+        if (!parallelConv()) {
+            layer.task(
+                    "ssm_conv_silu",
+                    Qwen35BatchKernels::siluInPlaceBatch,
+                    context,
+                    state.workspace.wrapSsmConvOutBatch,
+                    convDim,
+                    state.workspace.batchStartPosHolder);
 
-        layer.task(
-                "ssm_split_qkv",
-                Qwen35BatchKernels::splitThreeWayBatch,
-                context,
-                state.workspace.wrapSsmConvOutBatch,
-                state.workspace.wrapSsmQBatch,
-                state.workspace.wrapSsmKBatch,
-                state.workspace.wrapSsmVBatch,
-                keyDim,
-                keyDim,
-                valueDim,
-                state.workspace.batchStartPosHolder);
+            layer.task(
+                    "ssm_split_qkv",
+                    Qwen35BatchKernels::splitThreeWayBatch,
+                    context,
+                    state.workspace.wrapSsmConvOutBatch,
+                    state.workspace.wrapSsmQBatch,
+                    state.workspace.wrapSsmKBatch,
+                    state.workspace.wrapSsmVBatch,
+                    keyDim,
+                    keyDim,
+                    valueDim,
+                    state.workspace.batchStartPosHolder);
+        }
 
         layer.task(
                 "ssm_l2norm_q",
@@ -1737,8 +1744,10 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 } else {
                     scheduler.addWorkerGrid(prefix + "ssm_conv", convChannels);
                 }
-                scheduler.addWorkerGrid(prefix + "ssm_conv_silu", convDim);
-                scheduler.addWorkerGrid(prefix + "ssm_split_qkv", convDim);
+                if (!parallelConv()) {
+                    scheduler.addWorkerGrid(prefix + "ssm_conv_silu", convDim);
+                    scheduler.addWorkerGrid(prefix + "ssm_split_qkv", convDim);
+                }
                 scheduler.addWorkerGrid(prefix + "ssm_l2norm_q", keyHeads);
                 scheduler.addWorkerGrid(prefix + "ssm_l2norm_k", keyHeads);
                 scheduler.addWorkerGrid(prefix + "ssm_scale_q", keyDim);

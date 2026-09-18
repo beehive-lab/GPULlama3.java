@@ -170,6 +170,128 @@ public class Qwen35ParallelConvBatchAccelTest {
         }
     }
 
+    /**
+     * The fused convolution + SiLU + split against the three tasks: q, k and v raw-bit equal at 300
+     * and 2048 active rows (dims 4096 / 4096 / 2048 of the 10240 channels), NaN-poisoned.
+     */
+    @Test
+    public void theFusedSiluSplitIsRawBitEqualToTheThreeTasks() throws Exception {
+        int dimA = 4096;
+        int dimB = 4096;
+        int dimC = CHANNELS - dimA - dimB;
+        for (int active : new int[] {300, 2048}) {
+            int offset = 3 * CHANNELS * (KERNEL - 1);
+            int windowSize = offset + CHANNELS * (KERNEL - 1) + 7;
+            FloatArray in = input(active, 21L + active);
+            FloatArray taps = random(CHANNELS * KERNEL, 5L);
+            FloatArray window1 = random(windowSize, 6L);
+            FloatArray window2 = random(windowSize, 6L);
+            FloatArray conv = new FloatArray(ROWS * CHANNELS);
+            FloatArray[] ctl = {
+                new FloatArray(ROWS * dimA),
+                new FloatArray(ROWS * dimB),
+                new FloatArray(ROWS * dimC)
+            };
+            FloatArray[] cand = {
+                new FloatArray(ROWS * dimA),
+                new FloatArray(ROWS * dimB),
+                new FloatArray(ROWS * dimC)
+            };
+            for (FloatArray f : ctl) {
+                f.init(Float.NaN);
+            }
+            for (FloatArray f : cand) {
+                f.init(Float.NaN);
+            }
+            IntArray info = new IntArray(4);
+            info.set(1, active);
+            TaskGraph g =
+                    new TaskGraph("fs")
+                            .transferToDevice(
+                                    DataTransferMode.EVERY_EXECUTION,
+                                    in,
+                                    taps,
+                                    window1,
+                                    window2,
+                                    conv,
+                                    ctl[0],
+                                    ctl[1],
+                                    ctl[2],
+                                    cand[0],
+                                    cand[1],
+                                    cand[2],
+                                    info)
+                            .task(
+                                    "conv",
+                                    Qwen35BatchKernels::causalConv1dBatch,
+                                    new KernelContext(),
+                                    in,
+                                    taps,
+                                    window1,
+                                    conv,
+                                    CHANNELS,
+                                    KERNEL,
+                                    offset,
+                                    info)
+                            .task(
+                                    "silu",
+                                    Qwen35BatchKernels::siluInPlaceBatch,
+                                    new KernelContext(),
+                                    conv,
+                                    CHANNELS,
+                                    info)
+                            .task(
+                                    "split",
+                                    Qwen35BatchKernels::splitThreeWayBatch,
+                                    new KernelContext(),
+                                    conv,
+                                    ctl[0],
+                                    ctl[1],
+                                    ctl[2],
+                                    dimA,
+                                    dimB,
+                                    dimC,
+                                    info)
+                            .task(
+                                    "fused",
+                                    Qwen35BatchKernels::causalConv1dSiluSplitBatch,
+                                    new KernelContext(),
+                                    in,
+                                    taps,
+                                    window2,
+                                    cand[0],
+                                    cand[1],
+                                    cand[2],
+                                    dimA,
+                                    dimB,
+                                    dimC,
+                                    KERNEL,
+                                    offset,
+                                    info)
+                            .transferToHost(
+                                    DataTransferMode.EVERY_EXECUTION,
+                                    ctl[0],
+                                    ctl[1],
+                                    ctl[2],
+                                    cand[0],
+                                    cand[1],
+                                    cand[2]);
+            GridScheduler s = new GridScheduler();
+            for (String t : new String[] {"fs.conv", "fs.silu", "fs.split", "fs.fused"}) {
+                s.addWorkerGrid(t, lanes(ROWS * CHANNELS, 128));
+            }
+            try (TornadoExecutionPlan p = new TornadoExecutionPlan(g.snapshot())) {
+                p.withGridScheduler(s).execute();
+            }
+            String[] names = {"q", "k", "v"};
+            for (int i = 0; i < 3; i++) {
+                assertTrue(names[i] + " control not finite", !Float.isNaN(ctl[i].get(0)));
+                assertEquals(
+                        names[i] + " active=" + active, 0, mismatches(names[i], ctl[i], cand[i]));
+            }
+        }
+    }
+
     @Test
     public void theWindowUpdateBeforeTheConvolutionDiffers() throws Exception {
         int[] d = compare(300, true);
