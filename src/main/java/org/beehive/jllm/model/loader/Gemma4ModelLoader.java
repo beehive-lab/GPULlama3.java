@@ -194,7 +194,8 @@ public class Gemma4ModelLoader extends AbstractModelLoader<Gemma4, Gemma4Configu
                 loadProjections(retain, nl, i -> tensorEntries.get("blk." + i + ".attn_q.weight")),
                 loadProjections(retain, nl, i -> tensorEntries.get("blk." + i + ".attn_k.weight")),
                 loadProjections(retain, nl, i -> tensorEntries.get("blk." + i + ".attn_v.weight")),
-                loadProjections(retain, nl, i -> tensorEntries.get("blk." + i + ".attn_output.weight")),
+                loadProjections(
+                        retain, nl, i -> tensorEntries.get("blk." + i + ".attn_output.weight")),
                 loadArrayOfTornadoTensors(
                         nl, i -> tensorEntries.get("blk." + i + ".attn_q_norm.weight")),
                 loadArrayOfTornadoTensors(
@@ -203,9 +204,11 @@ public class Gemma4ModelLoader extends AbstractModelLoader<Gemma4, Gemma4Configu
                         nl, i -> tensorEntries.get("blk." + i + ".post_attention_norm.weight")),
                 loadArrayOfTornadoTensors(
                         nl, i -> tensorEntries.get("blk." + i + ".ffn_norm.weight")),
-                loadProjections(retain, nl, i -> tensorEntries.get("blk." + i + ".ffn_gate.weight")),
+                loadProjections(
+                        retain, nl, i -> tensorEntries.get("blk." + i + ".ffn_gate.weight")),
                 loadProjections(retain, nl, i -> tensorEntries.get("blk." + i + ".ffn_up.weight")),
-                loadProjections(retain, nl, i -> tensorEntries.get("blk." + i + ".ffn_down.weight")),
+                loadProjections(
+                        retain, nl, i -> tensorEntries.get("blk." + i + ".ffn_down.weight")),
                 loadArrayOfTornadoTensors(
                         nl, i -> tensorEntries.get("blk." + i + ".post_ffw_norm.weight")),
                 loadArrayOfTornadoTensors(
@@ -265,7 +268,6 @@ public class Gemma4ModelLoader extends AbstractModelLoader<Gemma4, Gemma4Configu
         }
         return array;
     }
-
 
     /**
      * Loads a per-layer projection either as the file holds it or materialized, by one decision

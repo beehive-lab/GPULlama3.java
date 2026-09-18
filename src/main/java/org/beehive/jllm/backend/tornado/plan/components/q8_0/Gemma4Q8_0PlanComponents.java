@@ -3,12 +3,11 @@ package org.beehive.jllm.backend.tornado.plan.components.q8_0;
 import org.beehive.jllm.backend.tornado.layers.AbstractLogitsTaskGraph;
 import org.beehive.jllm.backend.tornado.layers.Activation;
 import org.beehive.jllm.backend.tornado.layers.ActivationTaskGraph;
-import org.beehive.jllm.backend.tornado.layers.TransformerLayerTaskGraphs;
-import org.beehive.jllm.backend.tornado.layers.type.q8_0.Gemma4LogitsQ8_0Layer;
-import org.beehive.jllm.backend.tornado.layers.type.q8_0.Gemma4Q8_0FFNLayers;
 import org.beehive.jllm.backend.tornado.layers.BatchPrefillTransformerLayerTaskGraphs;
 import org.beehive.jllm.backend.tornado.layers.Gemma4BatchPrefillLayers;
 import org.beehive.jllm.backend.tornado.layers.TransformerLayerTaskGraphs;
+import org.beehive.jllm.backend.tornado.layers.type.q8_0.Gemma4LogitsQ8_0Layer;
+import org.beehive.jllm.backend.tornado.layers.type.q8_0.Gemma4Q8_0FFNLayers;
 import org.beehive.jllm.backend.tornado.plan.components.BatchPrefillDecodeForwardPlanComponents;
 import org.beehive.jllm.backend.tornado.plan.components.activation.BatchPrefillActivation;
 import org.beehive.jllm.backend.tornado.plan.components.activation.Gemma4BatchDecodeActivation;
@@ -79,8 +78,8 @@ public class Gemma4Q8_0PlanComponents implements BatchPrefillDecodeForwardPlanCo
      * it is in the batched one.
      *
      * <p>A flag rather than a subclass. The two differ only in which graph layer 0 names as the
-     * producer of its activation and of the key/value caches, and the dispatch ledger exists to stop
-     * a class per plan for a difference that small.
+     * producer of its activation and of the key/value caches, and the dispatch ledger exists to
+     * stop a class per plan for a difference that small.
      */
     // @formatter:on
     @Override

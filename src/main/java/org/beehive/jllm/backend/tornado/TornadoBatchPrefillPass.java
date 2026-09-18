@@ -36,8 +36,6 @@ public final class TornadoBatchPrefillPass {
 
     private TornadoBatchPrefillPass() {}
 
-
-
     /**
      * Stages {@code chunkSize} token embeddings into the session's device batch carrier, then runs
      * the batch activation and layer graphs. The logits graph is skipped: no token in a prefill
@@ -156,7 +154,6 @@ public final class TornadoBatchPrefillPass {
         }
 
         plan.tornadoVMForwardBatchPrefill();
-
     }
 
     /**

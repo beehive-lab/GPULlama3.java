@@ -43,21 +43,17 @@ public class Gemma4FP16FFNLayers
     private static final int HEAD_NORM_LOCAL_SIZE = 64;
 
     /**
-     * Lanes per head in the attention kernel. Must equal what {@code createAttentionWorker} picks
-     * for both head widths, because the kernel allocates its reduction scratch at this size.
+     * Lanes' worth of reduction scratch the attention kernel allocates.
+     *
+     * <p>The invariant is {@code ATTENTION_LOCAL_SIZE >= } the launched workgroup size, not
+     * equality with it. It is passed as the kernel's {@code localMemSize} and the kernel derives
+     * every bound from {@code context.localGroupSizeX}, so a value above the launch over-allocates
+     * shared memory and a value below it corrupts the reduction. {@code createAttentionWorker}
+     * picks {@code min(headDim, 64)} for the single-pass kernel, so 256 is slack, not a match — an
+     * earlier comment here claimed they had to be equal, which would have invited someone to lower
+     * this to 64 and under-size the scratch for the split kernel, which does launch at 256.
      */
     private static final int ATTENTION_LOCAL_SIZE = 256;
-
-    /**
-     * Below this context length the window is too short for splitting it to pay: every slice costs
-     * a workgroup and a combine pass, and at shallow depth there is not enough window to divide.
-     * A property of the configured shape, decided once at graph build, not a user knob.
-     *
-     * <p>It is 512 rather than something larger for a reason that is about testing, not tuning:
-     * {@code GoldenCapture.CONTEXT_LENGTH} is 512, so a higher threshold would leave the CPU/GPU
-     * parity gate scoring the single-pass kernel while every benchmark at depth ran this one.
-     */
-    private static final int SPLIT_KV_MIN_CONTEXT = 512;
 
     private final Gemma4State gemma4State;
     private final int nHead;

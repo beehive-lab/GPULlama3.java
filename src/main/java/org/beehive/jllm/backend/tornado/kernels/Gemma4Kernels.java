@@ -1,7 +1,6 @@
 package org.beehive.jllm.backend.tornado.kernels;
 
 import uk.ac.manchester.tornado.api.KernelContext;
-import uk.ac.manchester.tornado.api.annotations.Parallel;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
 import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
@@ -262,55 +261,6 @@ public class Gemma4Kernels {
     }
 
     /**
-     * Causal self-attention restricted to a (possibly sliding) window: scores/softmax/weighted-sum
-     * over {@code t} in {@code [windowStart, pos]}, where {@code windowStart = max(0, pos -
-     * windowSize + 1)}. Full-attention layers pass {@code windowSize >= contextLength} so that
-     * {@code windowStart} is always {@code 0} (plain causal attention) -- see {@link
-     * org.beehive.jllm.backend.cpu.InferenceCore#forwardJavaGemma4}. Gemma4 uses an attention scale
-     * of {@code 1.0} (no {@code 1/sqrt(headDim)}).
-     *
-     * <p>{@code cacheBaseOffset} addresses the (possibly shared) KV-cache slot for this layer, see
-     * {@link #ropeNeoxRotateAndCacheCopy}.
-     */
-    /**
-     * Sliding-window attention, one workgroup per head, lanes parallel within it.
-     *
-     * <p>Replaces a {@code @Parallel} loop over heads. That loop was launched on
-     * {@code createAttentionWorker(nHeads, headDim)} — 8 workgroups of 64 lanes — and the emitted
-     * CUDA walked it as {@code for (i = blockIdx*blockDim + threadIdx; i < nHeads; ...)}, so eight
-     * of the five hundred and twelve threads did every position and every head dimension and the
-     * rest fell through. It was 52.1% of decode kernel time.
-     *
-     * <p><b>Two of the three phases keep their original summation order</b>, which is why this is a
-     * smaller numerical change than a tree reduction everywhere: each lane still accumulates a
-     * whole score across {@code headDim} serially, and still accumulates a whole output element
-     * across the window serially. Only the softmax maximum and the sum of exponentials become tree
-     * reductions, because those are the two quantities the whole workgroup shares.
-     *
-     * <p>The grid must launch exactly {@code nHeads} workgroups: {@code h} is the workgroup index,
-     * and the early return is what the head-count guard becomes once the loop is gone.
-     */
-    /**
-     * Sliding-window attention, phase 1 of two: one workgroup per (head, split of the window).
-     *
-     * <p>The workgroup-per-head kernel parallelises across {@code headDim} and across positions
-     * <i>within</i> a workgroup, but every lane still walks the whole window in the weighted sum,
-     * so its cost grows with context depth. Measured on this family: 0.0164 ms per call at an
-     * average depth of about 12, and 0.2031 ms at about 551, while the depth-independent
-     * projections stayed flat. This phase cuts the window into {@code nSplits} slices and gives
-     * each its own workgroup, so the work per workgroup stops growing once the slices do.
-     *
-     * <p>Each split emits an unnormalised online-softmax state — the numerators, its own maximum
-     * and its own sum of exponentials — in the COMPACT layout {@link
-     * TransformerComputeKernelsLayered#combineSplitKVAttention} already reads: per head,
-     * {@code nSplits} numerators of {@code headDim}, then {@code nSplits} maxima, then
-     * {@code nSplits} sums. An empty slice writes {@code -inf} and zero, which that combine
-     * already treats as contributing nothing.
-     *
-     * <p>Scores still go through {@code wrapAtt} at their absolute position, so the slices write
-     * disjoint ranges of it and no extra scratch is needed for them.
-     */
-    /**
      * Split-KV attention, phase 2: combine, one thread per output element.
      *
      * <p>A Gemma 4 kernel rather than a change to {@link
@@ -373,6 +323,26 @@ public class Gemma4Kernels {
         xb.set(h * headDim + d, acc * inv);
     }
 
+    /**
+     * Sliding-window attention, phase 1 of two: one workgroup per (head, split of the window).
+     *
+     * <p>The workgroup-per-head kernel parallelises across {@code headDim} and across positions
+     * <i>within</i> a workgroup, but every lane still walks the whole window in the weighted sum,
+     * so its cost grows with context depth. Measured on this family: 0.0164 ms per call at an
+     * average depth of about 12, and 0.2031 ms at about 551, while the depth-independent
+     * projections stayed flat. This phase cuts the window into {@code nSplits} slices and gives
+     * each its own workgroup, so the work per workgroup stops growing once the slices do.
+     *
+     * <p>Each split emits an unnormalised online-softmax state — the numerators, its own maximum
+     * and its own sum of exponentials — in the COMPACT layout {@link
+     * TransformerComputeKernelsLayered#combineSplitKVAttention} already reads: per head, {@code
+     * nSplits} numerators of {@code headDim}, then {@code nSplits} maxima, then {@code nSplits}
+     * sums. An empty slice writes {@code -inf} and zero, which that combine already treats as
+     * contributing nothing.
+     *
+     * <p>Scores still go through {@code wrapAtt} at their absolute position, so the slices write
+     * disjoint ranges of it and no extra scratch is needed for them.
+     */
     public static void attentionWithSlidingWindowSplit(
             KernelContext context,
             FloatArray q,
@@ -500,6 +470,24 @@ public class Gemma4Kernels {
         }
     }
 
+    /**
+     * Sliding-window attention, one workgroup per head, lanes parallel within it.
+     *
+     * <p>Replaces a {@code @Parallel} loop over heads. That loop was launched on {@code
+     * createAttentionWorker(nHeads, headDim)} — 8 workgroups of 64 lanes — and the emitted CUDA
+     * walked it as {@code for (i = blockIdx*blockDim + threadIdx; i < nHeads; ...)}, so eight of
+     * the five hundred and twelve threads did every position and every head dimension and the rest
+     * fell through. It was 52.1% of decode kernel time.
+     *
+     * <p><b>Two of the three phases keep their original summation order</b>, which is why this is a
+     * smaller numerical change than a tree reduction everywhere: each lane still accumulates a
+     * whole score across {@code headDim} serially, and still accumulates a whole output element
+     * across the window serially. Only the softmax maximum and the sum of exponentials become tree
+     * reductions, because those are the two quantities the whole workgroup shares.
+     *
+     * <p>The grid must launch exactly {@code nHeads} workgroups: {@code h} is the workgroup index,
+     * and the early return is what the head-count guard becomes once the loop is gone.
+     */
     public static void attentionWithSlidingWindowParallel(
             KernelContext context,
             FloatArray q,
@@ -609,42 +597,6 @@ public class Gemma4Kernels {
                 weightedSum += wrapAtt.get(hOff + t) * valueCache.get(valueOffset + i);
             }
             xb.set(qOffset + i, weightedSum);
-        }
-    }
-
-    public static void attentionWithSlidingWindow(
-            FloatArray q,
-            FloatArray keyCache,
-            FloatArray valueCache,
-            FloatArray xb,
-            FloatArray wrapAtt,
-            int nHeads,
-            int headDim,
-            int kvDim,
-            int kvMul,
-            IntArray positionHolder,
-            int cacheBaseOffset,
-            int windowSize,
-            int contextLength) {
-
-        int pos = positionHolder.get(0);
-        int windowStart = Math.max(0, pos - windowSize + 1);
-
-        for (@Parallel int h = 0; h < nHeads; h++) {
-            gemma4ProcessHead(
-                    q,
-                    keyCache,
-                    valueCache,
-                    xb,
-                    wrapAtt,
-                    h,
-                    headDim,
-                    kvDim,
-                    kvMul,
-                    cacheBaseOffset,
-                    pos,
-                    windowStart,
-                    contextLength);
         }
     }
 

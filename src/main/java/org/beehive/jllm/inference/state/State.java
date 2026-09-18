@@ -352,17 +352,14 @@ public abstract class State {
             this.workspace.wrapKBatch = TornadoWorkspaces.floats(gpuBatchSize * kvDim);
             this.workspace.wrapVBatch = TornadoWorkspaces.floats(gpuBatchSize * kvDim);
             this.workspace.wrapXbBatch = TornadoWorkspaces.floats(gpuBatchSize * qDim);
-            this.workspace.wrapHbBatch =
-                    TornadoWorkspaces.floats(gpuBatchSize * hiddenDimBatch);
+            this.workspace.wrapHbBatch = TornadoWorkspaces.floats(gpuBatchSize * hiddenDimBatch);
             this.workspace.attnScaleBatch = TornadoWorkspaces.floats(gpuBatchSize);
             this.workspace.ffnScaleBatch = TornadoWorkspaces.floats(gpuBatchSize);
             this.workspace.batchStartPosHolder = TornadoWorkspaces.ints(3);
             this.workspace.normedXFFNFP16 =
                     TornadoWorkspaces.halfFloats(paddedGpuBatch * config.dim());
-            this.workspace.ffnGateResult =
-                    TornadoWorkspaces.floats(gpuBatchSize * hiddenDimBatch);
-            this.workspace.ffnUpResult =
-                    TornadoWorkspaces.floats(gpuBatchSize * hiddenDimBatch);
+            this.workspace.ffnGateResult = TornadoWorkspaces.floats(gpuBatchSize * hiddenDimBatch);
+            this.workspace.ffnUpResult = TornadoWorkspaces.floats(gpuBatchSize * hiddenDimBatch);
 
             this.workspace.xbFP16Batch = TornadoWorkspaces.halfFloats(gpuBatchSize * config.dim());
             this.workspace.attnOutFP16 =

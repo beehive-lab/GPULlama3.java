@@ -4,15 +4,15 @@ import org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernels;
 import org.beehive.jllm.backend.tornado.layers.ActivationTaskGraph;
 import org.beehive.jllm.backend.tornado.scheduling.WorkerGridFactory;
 import org.beehive.jllm.inference.state.State;
+import org.beehive.jllm.inference.weights.Weights;
+import org.beehive.jllm.inference.weights.tornado.TornadoWeights;
 import org.beehive.jllm.model.Configuration;
+import org.beehive.jllm.runtime.tensor.DataType;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
-import org.beehive.jllm.inference.weights.Weights;
-import org.beehive.jllm.inference.weights.tornado.TornadoWeights;
-import org.beehive.jllm.runtime.tensor.DataType;
 import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 
@@ -25,8 +25,8 @@ import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
  * contiguous buffer through a per-layer base offset, and twenty of its thirty-five layers address
  * an earlier layer's slot rather than one of their own.
  *
- * <p><b>The pass-through is host-side state aliasing, not device work.</b> This graph's only task is
- * the embedding conversion; the caches are arguments to no task in it. What the consume/persist
+ * <p><b>The pass-through is host-side state aliasing, not device work.</b> This graph's only task
+ * is the embedding conversion; the caches are arguments to no task in it. What the consume/persist
  * pairs do is make TornadoVM point this graph's buffer state for them at the producing graph's, so
  * <em>last batch-prefill layer → decodeActivation → decode layer 0</em> resolves to one live
  * buffer. They look inert in a bytecode trace and are not.

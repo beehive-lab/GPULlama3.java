@@ -156,8 +156,8 @@ public final class LogitDump {
             }
         }
         return String.format(
-                "rms=%.5f min=%.5f max=%.5f |x|>=29.9: %d/%d", Math.sqrt(sum / v.length), min, max,
-                atCap, v.length);
+                "rms=%.5f min=%.5f max=%.5f |x|>=29.9: %d/%d",
+                Math.sqrt(sum / v.length), min, max, atCap, v.length);
     }
 
     private LogitDump() {}

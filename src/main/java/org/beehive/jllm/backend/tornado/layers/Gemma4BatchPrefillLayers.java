@@ -5,11 +5,11 @@ import java.util.List;
 import org.beehive.jllm.backend.tornado.kernels.Gemma4BatchPrefillKernels;
 import org.beehive.jllm.backend.tornado.kernels.TransformerBatchPrefillKernels;
 import org.beehive.jllm.backend.tornado.scheduling.WorkerGridFactory;
+import org.beehive.jllm.backend.tornado.tensor.TornadoTensor;
 import org.beehive.jllm.inference.state.Gemma4State;
 import org.beehive.jllm.inference.weights.tornado.Gemma4TornadoWeights;
 import org.beehive.jllm.model.gemma4.Gemma4Configuration;
 import org.beehive.jllm.runtime.tensor.DataType;
-import org.beehive.jllm.backend.tornado.tensor.TornadoTensor;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.KernelContext;
@@ -83,22 +83,21 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
      *
      * <p>Four: it takes {@code w2Proj} and {@code woProj} from forty-eight thread blocks to a
      * hundred and ninety-two on a hundred-and-twenty-eight-SM device, and four divides every depth
-     * they are given — 6144 and 12288 for the feed-forward, 2048 and 4096 for the attention output —
-     * into whole 32-weight blocks. A property selects one slice, which is the unsplit kernel, for
+     * they are given — 6144 and 12288 for the feed-forward, 2048 and 4096 for the attention output
+     * — into whole 32-weight blocks. A property selects one slice, which is the unsplit kernel, for
      * exact comparison; not a tuning knob.
      */
     // @formatter:on
     public static final int SPLIT_K_SLICES = 4;
 
-    private static final boolean SPLIT_K =
-            !Boolean.getBoolean("jllm.gemma4.noSplitK");
+    private static final boolean SPLIT_K = !Boolean.getBoolean("jllm.gemma4.noSplitK");
 
     // @formatter:off
     /**
      * Whether a projection's weights are decoded to FP16 before its GEMM.
      *
-     * <p>Exact-comparison switches, not tuning knobs. The Q8_0 GEMMs convert every staged operand in
-     * software because TornadoVM reaches the hardware conversion only through a store to a half
+     * <p>Exact-comparison switches, not tuning knobs. The Q8_0 GEMMs convert every staged operand
+     * in software because TornadoVM reaches the hardware conversion only through a store to a half
      * array (TornadoVM #1096, #1097), and that conversion is most of what those kernels do.
      */
     // @formatter:on
@@ -141,6 +140,14 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
 
     private final HalfFloatArray[] pleProjF16;
 
+    /**
+     * The per-layer model projection in FP16, narrowed the same way as the two above. The file
+     * holds it as BF16, which materializes to F16 — but a file that held it as anything else would
+     * have met an unchecked cast here instead of the refusal by name this class promises everywhere
+     * else.
+     */
+    private final HalfFloatArray pleModelProjF16;
+
     private final List<ImmutableTaskGraph> layerITGs;
     private String lastLayerTaskGraphID;
 
@@ -173,6 +180,8 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     narrowToF16(weights.perLayerInpGate[l], pleElements, "blk." + l + ".inp_gate");
             pleProjF16[l] = narrowToF16(weights.perLayerProj[l], pleElements, "blk." + l + ".proj");
         }
+        this.pleModelProjF16 =
+                narrowToF16(weights.perLayerModelProj, perLayerTotal * dim, "per_layer_model_proj");
 
         List<ImmutableTaskGraph> graphs = new ArrayList<>(layers);
         for (int l = 0; l < layers; l++) {
@@ -221,9 +230,9 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
      * Refuses a projection this plan has no decoder for, by name.
      *
      * <p>Three block layouts reach the trunk: 34 bytes to thirty-two weights for Q8_0, 18 for Q4_0,
-     * and 20 for Q4_1 — which this family needs for exactly four tensors, {@code ffn_down} on blocks
-     * 0-3 of the Q4_0 file. Reading one as another is a plausible-looking activation and wrong
-     * output, so an unknown representation is a missing case and not something to guess at.
+     * and 20 for Q4_1 — which this family needs for exactly four tensors, {@code ffn_down} on
+     * blocks 0-3 of the Q4_0 file. Reading one as another is a plausible-looking activation and
+     * wrong output, so an unknown representation is a missing case and not something to guess at.
      */
     // @formatter:on
     private static void requireDecodable(TornadoTensor t, String name) {
@@ -357,7 +366,7 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     state.workspace.wrapPerLayerOutBatch);
             layer.transferToDevice(
                     DataTransferMode.FIRST_EXECUTION,
-                    weights.perLayerModelProj.asHalfFloatArray(),
+                    pleModelProjF16,
                     weights.perLayerProjNorm.asFloatArray(),
                     weights.freqCisRealSwa.asFloatArray(),
                     weights.freqCisImagSwa.asFloatArray(),
@@ -464,8 +473,7 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 // rotation already read.
                 addDequant(layer, "qDequant", weights.wqLayered[layerIndex], 0);
                 addDequant(layer, "kDequant", weights.wkLayered[layerIndex], qDim * dim);
-                addDequant(
-                        layer, "vDequant", weights.wvLayered[layerIndex], (qDim + kvDim) * dim);
+                addDequant(layer, "vDequant", weights.wvLayered[layerIndex], (qDim + kvDim) * dim);
                 layer.task(
                         "qkvProj",
                         TransformerBatchPrefillKernels::gemmMMA,
@@ -886,7 +894,7 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 TransformerBatchPrefillKernels::gemmMMA,
                 context,
                 state.workspace.wrapXFP16Batch,
-                weights.perLayerModelProj.asHalfFloatArray(),
+                pleModelProjF16,
                 state.workspace.wrapPerLayerProjScratchBatch,
                 paddedBatch,
                 perLayerTotal,
@@ -990,10 +998,15 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                             batchSize * normSlots * HEAD_LOCAL_SIZE, HEAD_LOCAL_SIZE));
             scheduler.addWorkerGrid(
                     p + "batch_rope_kv", elementwise(batchSize * nHead * (headDim / 2), 256));
+            // Over the PADDED rows, not the real ones. The output projection is a GEMM at
+            // M = paddedBatch and reads every row of attnOutFP16; launching attention at batchSize
+            // would leave the rows between the two untouched, and the kernel's own guard — which
+            // writes zeros and returns — would never run for them. It matters only when the chunk
+            // width is not a multiple of 128, which nothing rounds it to.
             scheduler.addWorkerGrid(
                     p + "batch_attention",
                     WorkerGridFactory.genericWorker(
-                            batchSize * nHead * HEAD_LOCAL_SIZE, HEAD_LOCAL_SIZE));
+                            paddedBatch * nHead * HEAD_LOCAL_SIZE, HEAD_LOCAL_SIZE));
             if (SPLIT_K) {
                 scheduler.addWorkerGrid(p + "woProj", mmaSplitKGrid(paddedBatch, dim));
                 scheduler.addWorkerGrid(p + "woReduce", reduceWorker);

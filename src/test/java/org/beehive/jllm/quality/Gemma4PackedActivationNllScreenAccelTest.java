@@ -28,11 +28,11 @@ import org.junit.Test;
  * A bounded teacher-forced quality screen for Gemma 4's packed-integer projections.
  *
  * <p>Those projections quantize the normalized activation to eight bits per block of 32 and do the
- * dot product in packed integers. The parity gate shows the logits move — that is what
- * {@code Q4_0_PACKED_ACTIVATION} is for — and shows that the decisions do not: zero argmax
- * disagreements over 63 rows, and greedy output token-identical to the host. <b>Neither is proof of
- * quality equivalence.</b> Retaining a token choice says the top of the distribution survived; it
- * says nothing about the rest of it, which is what sampling reads.
+ * dot product in packed integers. The parity gate shows the logits move — that is what {@code
+ * Q4_0_PACKED_ACTIVATION} is for — and shows that the decisions do not: zero argmax disagreements
+ * over 63 rows, and greedy output token-identical to the host. <b>Neither is proof of quality
+ * equivalence.</b> Retaining a token choice says the top of the distribution survived; it says
+ * nothing about the rest of it, which is what sampling reads.
  *
  * <p>So this scores the whole distribution. Negative log-likelihood of held-out text under both
  * paths on the same file, teacher-forced through identical token ids, reported per passage and
@@ -83,7 +83,9 @@ public class Gemma4PackedActivationNllScreenAccelTest {
     public void thePackedPathDoesNotMakeHeldOutTextLessLikely() throws Exception {
         Path modelPath = GoldenFixture.locate(Fixture.GEMMA_4_E2B_Q4_0);
         if (modelPath == null) {
-            System.out.println("[SKIP] environment absent — " + GoldenFixture.absentMessage(Fixture.GEMMA_4_E2B_Q4_0));
+            System.out.println(
+                    "[SKIP] environment absent — "
+                            + GoldenFixture.absentMessage(Fixture.GEMMA_4_E2B_Q4_0));
             assumeTrue("environment absent: fixture", false);
         }
         if (!TupleInfo.acceleratorPresent()) {
@@ -94,11 +96,13 @@ public class Gemma4PackedActivationNllScreenAccelTest {
                 TornadoDevices.current()
                         .capabilities()
                         .supports(DeviceCapability.PACKED_INTEGER_DOT);
-        System.out.printf("[NLL] model=%s packedIntegerDot=%s device=%s%n",
+        System.out.printf(
+                "[NLL] model=%s packedIntegerDot=%s device=%s%n",
                 modelPath.getFileName(), packed, TupleInfo.deviceName());
         if (!packed) {
-            System.out.println("[SKIP] this device does not grant PACKED_INTEGER_DOT, so the path "
-                    + "this screen exists to score is not the one that would run");
+            System.out.println(
+                    "[SKIP] this device does not grant PACKED_INTEGER_DOT, so the path "
+                            + "this screen exists to score is not the one that would run");
             assumeTrue("environment absent: no packed-integer path", false);
         }
 
@@ -139,7 +143,10 @@ public class Gemma4PackedActivationNllScreenAccelTest {
                     counted += n;
                     System.out.printf(
                             "[NLL] %-20s tokens=%3d  host=%.5f  packed=%.5f  delta=%+.5f nats/token%n",
-                            passage.name(), n, hostSum / n, deviceSum / n,
+                            passage.name(),
+                            n,
+                            hostSum / n,
+                            deviceSum / n,
                             (deviceSum - hostSum) / n);
                 }
             } finally {
@@ -174,8 +181,7 @@ public class Gemma4PackedActivationNllScreenAccelTest {
                 passage.path() + " is shorter than the recorded range",
                 raw.length >= passage.byteOffset() + passage.byteLength());
         String text =
-                new String(
-                        raw, passage.byteOffset(), passage.byteLength(), StandardCharsets.UTF_8);
+                new String(raw, passage.byteOffset(), passage.byteLength(), StandardCharsets.UTF_8);
         List<Integer> encoded = model.tokenizer().encodeAsList(text);
         assertTrue(
                 passage.name() + " tokenizes to " + encoded.size() + ", fewer than " + TOKENS,

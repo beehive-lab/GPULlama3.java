@@ -2,12 +2,12 @@ package org.beehive.jllm.backend.tornado.kernels;
 
 import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.enums.MMAShape;
-import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
+import uk.ac.manchester.tornado.api.types.HalfFloat;
+import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
-import uk.ac.manchester.tornado.api.types.HalfFloat;
 
 // @formatter:off
 /**
@@ -39,9 +39,9 @@ public final class Gemma4BatchPrefillKernels {
      * Dimensions per staged key tile.
      *
      * <p>Sixteen, and the reason is occupancy rather than coalescing. Thirty-two is the width that
-     * makes a warp's load one 128-byte sector, and that is what this tile was first built with — but
-     * the tile is then 32 × 129 floats, 16.5 KB, 87% of the block's shared memory, and Nsight put
-     * the kernel's theoretical occupancy at 41.7% <i>limited by the required amount of shared
+     * makes a warp's load one 128-byte sector, and that is what this tile was first built with —
+     * but the tile is then 32 × 129 floats, 16.5 KB, 87% of the block's shared memory, and Nsight
+     * put the kernel's theoretical occupancy at 41.7% <i>limited by the required amount of shared
      * memory</i>. It also put DRAM throughput at 0.70% with a 99.55% L2 hit rate: the keys are in
      * cache, so what a wider tile buys in transaction shape it more than loses in warps resident.
      * Sixteen halves the tile and roughly doubles the occupancy; eight halves it again and measured
@@ -54,7 +54,8 @@ public final class Gemma4BatchPrefillKernels {
 
     // @formatter:off
     /**
-     * Sandwich norm with residual, chunk-wide: {@code x[b,i] += weight[i] * (scale[b] * delta[b,i])}.
+     * Sandwich norm with residual, chunk-wide: {@code x[b,i] += weight[i] * (scale[b] *
+     * delta[b,i])}.
      *
      * <p>The row-wise form of {@link Gemma4Kernels#rmsNormApplyWithResidual}, and the reason this
      * family cannot use {@code batchedRmsReduceFusedResidual}: the scale is the RMS of the branch
@@ -80,8 +81,8 @@ public final class Gemma4BatchPrefillKernels {
 
     // @formatter:off
     /**
-     * The query, key and value per-head norms over the packed {@code [q|k|v]} projection output,
-     * in one launch.
+     * The query, key and value per-head norms over the packed {@code [q|k|v]} projection output, in
+     * one launch.
      *
      * <p>One workgroup per (row, head slot), where the slots run {@code q} heads, then {@code k}
      * heads, then {@code v} heads — which is exactly the packed row's own order, so a slot's base
@@ -200,9 +201,9 @@ public final class Gemma4BatchPrefillKernels {
      *
      * <p>The chunk-wide form of {@link Gemma4Kernels#ropeNeoxRotateAndCacheCopy}, reading its angle
      * from the same precomputed tables at {@code startPos + b} rather than at a single position.
-     * The cache is this family's flat one addressed by {@code cacheBaseOffset}, not a paged one: the
-     * decode graphs that run after prefill read it that way, and a prefill that wrote pages would
-     * leave them reading a cache nobody filled.
+     * The cache is this family's flat one addressed by {@code cacheBaseOffset}, not a paged one:
+     * the decode graphs that run after prefill read it that way, and a prefill that wrote pages
+     * would leave them reading a cache nobody filled.
      *
      * <p>Padding rows return before writing anything. A padded row's position is past the chunk and
      * would be a valid index into the next layer's KV slice, so the guard is what keeps a padded
@@ -422,7 +423,9 @@ public final class Gemma4BatchPrefillKernels {
         context.localBarrier();
 
         for (int t = windowStart + tid; t <= pos; t += localSize) {
-            scores.set(scoreBase + (t - windowStart), scores.get(scoreBase + (t - windowStart)) * normFactor);
+            scores.set(
+                    scoreBase + (t - windowStart),
+                    scores.get(scoreBase + (t - windowStart)) * normFactor);
         }
         context.localBarrier();
 
@@ -430,7 +433,8 @@ public final class Gemma4BatchPrefillKernels {
             float weightedSum = 0.0f;
             for (int t = windowStart; t <= pos; t++) {
                 int valueOffset = cacheBaseOffset + t * kvDim + kvHeadIdx * headDim;
-                weightedSum += scores.get(scoreBase + (t - windowStart)) * valueCache.get(valueOffset + i);
+                weightedSum +=
+                        scores.get(scoreBase + (t - windowStart)) * valueCache.get(valueOffset + i);
             }
             out.set(outBase + i, new HalfFloat(weightedSum));
         }
@@ -450,10 +454,10 @@ public final class Gemma4BatchPrefillKernels {
      *
      * <p><b>Bit-identical to the kernel it replaces.</b> A lane still owns the same position and
      * still accumulates that position's dot product over dimensions in increasing order — the tiles
-     * are in order and the dimensions within a tile are in order — so it is the same sum of the same
-     * products in the same sequence. The maximum, the sum of exponentials, the normalisation and the
-     * whole value pass are untouched. This is a change to where the operands are read from, and to
-     * nothing else.
+     * are in order and the dimensions within a tile are in order — so it is the same sum of the
+     * same products in the same sequence. The maximum, the sum of exponentials, the normalisation
+     * and the whole value pass are untouched. This is a change to where the operands are read from,
+     * and to nothing else.
      *
      * <p>The tile barriers sit outside the {@code t <= pos} guard on purpose: the lanes whose
      * position is past the end of the window still have to reach them, and a barrier inside a
@@ -594,12 +598,12 @@ public final class Gemma4BatchPrefillKernels {
             float weightedSum = 0.0f;
             for (int t = windowStart; t <= pos; t++) {
                 int valueOffset = cacheBaseOffset + t * kvDim + kvHeadIdx * headDim;
-                weightedSum += scores.get(scoreBase + (t - windowStart)) * valueCache.get(valueOffset + i);
+                weightedSum +=
+                        scores.get(scoreBase + (t - windowStart)) * valueCache.get(valueOffset + i);
             }
             out.set(outBase + i, new HalfFloat(weightedSum));
         }
     }
-
 
     // ── The split-K projection ───────────────────────────────────────────────
 
@@ -633,25 +637,25 @@ public final class Gemma4BatchPrefillKernels {
      * A Q8_0 weight matrix decoded into FP16, one element per thread.
      *
      * <p><b>Why this exists.</b> The Q8_0 tensor-core GEMMs decode their weights inside the K-loop,
-     * and TornadoVM can only reach the hardware float-to-half conversion through a <i>store</i> to a
-     * half array — as a value in a register it does not lower at all ({@code address origin
+     * and TornadoVM can only reach the hardware float-to-half conversion through a <i>store</i> to
+     * a half array — as a value in a register it does not lower at all ({@code address origin
      * unimplemented: MulNode}). So those kernels convert in software, by binary search on the
      * exponent, eight times per lane per K-step. It shows in the emitted CUDA: {@code
-     * gemmMMAGateUpQ8} is 8,666 lines carrying sixteen {@code mma.sync}, against 1,179 lines for the
-     * FP16 {@code gemmMMA} that does the same arithmetic. The GEMM is not doing matrix
+     * gemmMMAGateUpQ8} is 8,666 lines carrying sixteen {@code mma.sync}, against 1,179 lines for
+     * the FP16 {@code gemmMMA} that does the same arithmetic. The GEMM is not doing matrix
      * multiplication; it is doing float-to-half conversion with a little matrix multiplication
      * attached.
      *
      * <p>Decoding into a scratch first is a store, so the conversion is the one hardware
      * instruction it should be, and the GEMM that follows stages FP16 operands with nothing but
-     * integer packing. The cost is the scratch traffic, paid once per chunk per layer against a GEMM
-     * that reads the same weights for every one of the chunk's rows.
+     * integer packing. The cost is the scratch traffic, paid once per chunk per layer against a
+     * GEMM that reads the same weights for every one of the chunk's rows.
      *
      * <p>Bit-identical to what the Q8_0 GEMM computes for the same element: the same product of the
      * same block scale and the same quant, rounded to half once, round-to-nearest-even both ways.
      *
-     * <p>{@code destOffset} places a matrix inside a larger scratch, which is what lets the gate and
-     * the up projection share one buffer and one GEMM.
+     * <p>{@code destOffset} places a matrix inside a larger scratch, which is what lets the gate
+     * and the up projection share one buffer and one GEMM.
      *
      * <p>Worker: one thread per element, local 256. Requires the row length to be a whole number of
      * 32-weight blocks, which every projection this family has is.
@@ -663,7 +667,9 @@ public final class Gemma4BatchPrefillKernels {
         int blk = gid >>> 5;
         int within = gid & 31;
         int off = blk * 34;
-        out.set(destOffset + gid, new HalfFloat(w.getHalfFloat(off).getFloat32() * w.get(off + 2 + within)));
+        out.set(
+                destOffset + gid,
+                new HalfFloat(w.getHalfFloat(off).getFloat32() * w.get(off + 2 + within)));
     }
 
     // @formatter:off
@@ -742,9 +748,9 @@ public final class Gemma4BatchPrefillKernels {
      *
      * <p><b>This reassociates the sum over K</b> — the slices are summed pairwise at the end rather
      * than accumulated in one running total — so it is not bit-identical, and is gated as an
-     * arithmetic-order change with the parity bounds unchanged. Everything else is
-     * {@code gemmMMAQ8}: tile geometry, the software pipeline, the staging, barriers, MMA order,
-     * scale conversion and FP32 accumulation.
+     * arithmetic-order change with the parity bounds unchanged. Everything else is {@code
+     * gemmMMAQ8}: tile geometry, the software pipeline, the staging, barriers, MMA order, scale
+     * conversion and FP32 accumulation.
      *
      * <p>Requires {@code M % 128 == 0}, {@code N % 128 == 0} and {@code (K / slices) % 32 == 0}.
      * Worker: {@code WorkerGrid3D((M/128)*256, N/128, slices)}, local (256,1,1).
@@ -913,11 +919,11 @@ public final class Gemma4BatchPrefillKernels {
      * {@link #gemmMMAQ8SplitK} with an FP16 B operand: the depth split for the two narrow
      * projections, over weights decoded once instead of decoded per K-step.
      *
-     * <p>The two fixes compose and neither subsumes the other. Splitting the depth answers the
-     * grid — a projection into {@code dim} gives forty-eight thread blocks on a
+     * <p>The two fixes compose and neither subsumes the other. Splitting the depth answers the grid
+     * — a projection into {@code dim} gives forty-eight thread blocks on a
      * hundred-and-twenty-eight-SM device. Decoding the weights first answers the pipeline, since a
-     * Q8_0 staging converts float to half in software for want of a register-level conversion.
-     * This is both.
+     * Q8_0 staging converts float to half in software for want of a register-level conversion. This
+     * is both.
      *
      * <p>Requires {@code M % 128 == 0}, {@code N % 128 == 0}, {@code (K / slices) % 16 == 0}.
      * Worker: {@code WorkerGrid3D((M/128)*256, N/128, slices)}, local (256,1,1).
@@ -1092,10 +1098,10 @@ public final class Gemma4BatchPrefillKernels {
     /**
      * Sums the depth slices {@link #gemmMMAQ8SplitK} left behind into the projection's output.
      *
-     * <p>One thread per output element, slices added in increasing order. The traffic is
-     * {@code slices} reads and one write per element — 12.6 MB per call at four slices and a chunk
-     * of 512, against the tens of milliseconds the GEMM itself takes, so the pass is not where the
-     * time goes.
+     * <p>One thread per output element, slices added in increasing order. The traffic is {@code
+     * slices} reads and one write per element — 12.6 MB per call at four slices and a chunk of 512,
+     * against the tens of milliseconds the GEMM itself takes, so the pass is not where the time
+     * goes.
      *
      * <p>Worker: {@code M*N} threads, local 256.
      */
@@ -1214,7 +1220,9 @@ public final class Gemma4BatchPrefillKernels {
 
     // ── Elementwise ──────────────────────────────────────────────────────────
 
-    /** {@code out[i] = (a[i] + b[i]) * scale} — the chunk-wide {@link Gemma4Kernels#addAndScale}. */
+    /**
+     * {@code out[i] = (a[i] + b[i]) * scale} — the chunk-wide {@link Gemma4Kernels#addAndScale}.
+     */
     public static void batchedAddAndScale(
             KernelContext context, FloatArray out, FloatArray a, FloatArray b, float scale) {
         int gid = context.globalIdx;

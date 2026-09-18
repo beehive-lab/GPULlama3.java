@@ -178,39 +178,14 @@ abstract class CpuGpuParity {
 
     // @formatter:off
     /**
-     * For a <b>Q4_0 file the device runs materialized as Q8_0</b>, scored against a host reference
-     * that decodes the same file natively.
-     *
-     * <p>A fourth envelope for the same reason the packed ones are separate: this is a different
-     * amount of quantization, not a looser view of {@link #Q8_0}. The conversion is not free —
-     * Q4_0's sixteen levels are {@code d * (q - 8)}, and re-expressing them on a Q8_0 block's own
-     * scale rounds, because {@code (q - 8) * 127 / 8} is not an integer for most {@code q}. The
-     * host reads the file's own blocks, so the difference between the two is that rounding.
-     *
-     * <p><b>Measured on gemma-4-E2B-it-Q4_0.gguf, CUDA, teacher-forced over 63 rows</b>, against
-     * the allowance chosen for each: elementwise 3.538% against 8%, largest absolute difference
-     * 0.0411 of the reference RMS against 0.09, relative L2 0.0116 against 0.025, cosine deficit
-     * 1.13e-5 against 3e-5. Roughly a factor of two on each, which is an engineering allowance
-     * rather than a measured bound on variability.
-     *
-     * <p>What did not move is the part that decides tokens: <b>0 of 63 argmax disagreements</b>,
-     * top-5 4.889/5 and top-10 9.873/10, and {@code decisionGap} is unchanged, because an argmax
-     * reversal where the reference was not close would still be a defect.
-     *
-     * <p>This envelope describes a <i>stopgap</i>. A retained Q4_0 path reads the file's own blocks
-     * on the device too, and should be scored against {@link #Q8_0}'s bounds, not these.
-     */
-    // @formatter:on
-    // @formatter:off
-    /**
      * For a <b>Q4_0 file read natively whose projections take a block-quantized eight-bit
      * activation</b> — device residency and the packed-integer path together.
      *
      * <p>A fifth envelope, and the reason is the same as every other one here: this is a different
      * amount of quantization, not a looser view of {@link #Q8_0}. The device is no longer computing
      * what the host computes to within rounding — it quantizes the normalized activation to eight
-     * bits per block of 32 and does the dot product in packed integers, which is what makes
-     * {@code dp4a} available at all.
+     * bits per block of 32 and does the dot product in packed integers, which is what makes {@code
+     * dp4a} available at all.
      *
      * <p><b>Measured on gemma-4-E2B-it-Q4_0.gguf, CUDA, teacher-forced over 63 rows</b>, against
      * the allowance chosen for each: elementwise 1.416% against 3%, largest absolute difference
@@ -227,24 +202,20 @@ abstract class CpuGpuParity {
      * because the previous revision of this comment said it should not be.</b> Splitting the
      * attention window sixteen ways instead of eight changed the online-softmax merge order and
      * took the elementwise count from 1.416% to 3.153%. Nothing that bounds a magnitude moved with
-     * it: the largest absolute difference went from 0.0289 of the reference RMS to 0.0347 against
-     * a 0.06 ceiling, relative L2 from 0.00767 to 0.00950 against 0.015, and cosine <i>improved</i>,
+     * it: the largest absolute difference went from 0.0289 of the reference RMS to 0.0347 against a
+     * 0.06 ceiling, relative L2 from 0.00767 to 0.00950 against 0.015, and cosine <i>improved</i>,
      * 0.99997925 to 0.99998472. Argmax stayed at 0 of 63.
      *
      * <p>That pattern is what the elementwise count measures here: {@code atol} is 0.00406 against
      * logits whose bulk sits near zero, so a small shared shift moves many of them across the line
      * without moving the worst excursion, the aggregate, or any decision. It is the weakest of the
-     * four gates on a packed path by construction — which is exactly why the other three are
-     * quoted above rather than this one. A future failure in {@code ceilingPerRms},
-     * {@code relL2}, {@code minCosine} or {@code decisionGap} is something to investigate, not to
-     * widen.
+     * four gates on a packed path by construction — which is exactly why the other three are quoted
+     * above rather than this one. A future failure in {@code ceilingPerRms}, {@code relL2}, {@code
+     * minCosine} or {@code decisionGap} is something to investigate, not to widen.
      */
     // @formatter:on
     static final Bounds Q4_0_PACKED_ACTIVATION =
             new Bounds(1.7e-4, 1e-2, 0.06, 0.015, 0.99995, 0.05, 0.5);
-
-    static final Bounds Q4_0_MATERIALIZED =
-            new Bounds(1.7e-4, 1e-2, 0.09, 0.025, 0.99997, 0.08, 0.5);
 
     /** The CPU reference against the accelerator running its default single-token path. */
     void assertParity(Fixture fixture, Bounds bounds) throws Exception {

@@ -75,10 +75,10 @@ public class Gemma4 extends AbstractModel {
     /**
      * The same gather for every token of a prefill chunk, into one row per token.
      *
-     * <p>This is the one part of a batched prefill that does not get cheaper per token: the table is
-     * 2.35 billion elements and stays on the host, so a chunk of B tokens costs B row gathers just
-     * as B single-token steps would. It is the host-side floor under this family's prefill rate, and
-     * naming it here is what makes it measurable rather than mysterious.
+     * <p>This is the one part of a batched prefill that does not get cheaper per token: the table
+     * is 2.35 billion elements and stays on the host, so a chunk of B tokens costs B row gathers
+     * just as B single-token steps would. It is the host-side floor under this family's prefill
+     * rate, and naming it here is what makes it measurable rather than mysterious.
      */
     // @formatter:on
     @Override

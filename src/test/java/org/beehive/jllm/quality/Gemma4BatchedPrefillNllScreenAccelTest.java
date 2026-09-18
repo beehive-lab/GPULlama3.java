@@ -144,7 +144,8 @@ public class Gemma4BatchedPrefillNllScreenAccelTest {
                                 TornadoBatchPrefillPass.decode(
                                         gpuModel, gpuState, tokens[p], p, batched);
                         batchedSum +=
-                                NllScoring.negativeLogLikelihood(toRow(deviceLogits), tokens[p + 1]);
+                                NllScoring.negativeLogLikelihood(
+                                        toRow(deviceLogits), tokens[p + 1]);
 
                         FloatTensor hostLogits =
                                 InferenceCore.forwardJavaGemma4(cpuModel, cpuState, tokens[p], p);
@@ -201,8 +202,7 @@ public class Gemma4BatchedPrefillNllScreenAccelTest {
                 passage.path() + " is shorter than the recorded range",
                 raw.length >= passage.byteOffset() + passage.byteLength());
         String text =
-                new String(
-                        raw, passage.byteOffset(), passage.byteLength(), StandardCharsets.UTF_8);
+                new String(raw, passage.byteOffset(), passage.byteLength(), StandardCharsets.UTF_8);
         List<Integer> encoded = model.tokenizer().encodeAsList(text);
         int needed = PREFIX + SCORED + 1;
         assertTrue(

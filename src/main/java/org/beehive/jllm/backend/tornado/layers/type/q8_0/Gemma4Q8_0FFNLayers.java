@@ -54,21 +54,17 @@ public class Gemma4Q8_0FFNLayers
     private static final int HEAD_NORM_LOCAL_SIZE = 64;
 
     /**
-     * Lanes per head in the attention kernel. Must equal what {@code createAttentionWorker} picks
-     * for both head widths, because the kernel allocates its reduction scratch at this size.
+     * Lanes' worth of reduction scratch the attention kernel allocates.
+     *
+     * <p>The invariant is {@code ATTENTION_LOCAL_SIZE >= } the launched workgroup size, not
+     * equality with it. It is passed as the kernel's {@code localMemSize} and the kernel derives
+     * every bound from {@code context.localGroupSizeX}, so a value above the launch over-allocates
+     * shared memory and a value below it corrupts the reduction. {@code createAttentionWorker}
+     * picks {@code min(headDim, 64)} for the single-pass kernel, so 256 is slack, not a match — an
+     * earlier comment here claimed they had to be equal, which would have invited someone to lower
+     * this to 64 and under-size the scratch for the split kernel, which does launch at 256.
      */
     private static final int ATTENTION_LOCAL_SIZE = 256;
-
-    /**
-     * Below this context length the window is too short for splitting it to pay: every slice costs
-     * a workgroup and a combine pass, and at shallow depth there is not enough window to divide.
-     * A property of the configured shape, decided once at graph build, not a user knob.
-     *
-     * <p>It is 512 rather than something larger for a reason that is about testing, not tuning:
-     * {@code GoldenCapture.CONTEXT_LENGTH} is 512, so a higher threshold would leave the CPU/GPU
-     * parity gate scoring the single-pass kernel while every benchmark at depth ran this one.
-     */
-    private static final int SPLIT_KV_MIN_CONTEXT = 512;
 
     private final Gemma4State gemma4State;
     private final int nHead;
@@ -333,7 +329,8 @@ public class Gemma4Q8_0FFNLayers
         if (packed) {
             unifiedLayer.task(
                     tn(layerIndex, "attn_quantize"),
-                    org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0::quantizeActivationQ8Blocks,
+                    org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0
+                            ::quantizeActivationQ8Blocks,
                     context,
                     gemma4State.workspace.wrapXb,
                     gemma4State.workspace.wrapXbQuants,
@@ -482,7 +479,8 @@ public class Gemma4Q8_0FFNLayers
             // triple holds one activation at a time and attention has overwritten wrapXb since.
             unifiedLayer.task(
                     tn(layerIndex, "attn_out_quantize"),
-                    org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0::quantizeActivationQ8Blocks,
+                    org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0
+                            ::quantizeActivationQ8Blocks,
                     context,
                     gemma4State.workspace.wrapXb,
                     gemma4State.workspace.wrapXbQuants,
@@ -561,7 +559,8 @@ public class Gemma4Q8_0FFNLayers
         if (packed) {
             unifiedLayer.task(
                     tn(layerIndex, "ffn_quantize"),
-                    org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0::quantizeActivationQ8Blocks,
+                    org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0
+                            ::quantizeActivationQ8Blocks,
                     context,
                     gemma4State.workspace.wrapXb,
                     gemma4State.workspace.wrapXbQuants,
@@ -574,7 +573,8 @@ public class Gemma4Q8_0FFNLayers
         if (packed) {
             unifiedLayer.task(
                     tn(layerIndex, "ffn_gate_up"),
-                    org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0::fusedFFNGateUpGeGLUQ4_0DP4A,
+                    org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0
+                            ::fusedFFNGateUpGeGLUQ4_0DP4A,
                     context,
                     gemma4State.workspace.wrapXbQuants,
                     gemma4State.workspace.wrapXbScales,
@@ -616,7 +616,8 @@ public class Gemma4Q8_0FFNLayers
             // up to 12288 here against the embedding's 1536.
             unifiedLayer.task(
                     tn(layerIndex, "ffn_hidden_quantize"),
-                    org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0::quantizeActivationQ8Blocks,
+                    org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0
+                            ::quantizeActivationQ8Blocks,
                     context,
                     gemma4State.workspace.wrapHb,
                     gemma4State.workspace.wrapXbQuants,
@@ -903,10 +904,10 @@ public class Gemma4Q8_0FFNLayers
     }
 
     /**
-     * @param packedActivation whether {@code in} has already been quantized into the
-     *     {@code wrapXbQuants/Scales/Sums} triple by a task in this graph. It is carried explicitly
-     *     rather than inferred from the buffer, because one buffer holds several different
-     *     activations over a layer and its identity says nothing about which one is in it.
+     * @param packedActivation whether {@code in} has already been quantized into the {@code
+     *     wrapXbQuants/Scales/Sums} triple by a task in this graph. It is carried explicitly rather
+     *     than inferred from the buffer, because one buffer holds several different activations
+     *     over a layer and its identity says nothing about which one is in it.
      */
     private void addProjection(
             TaskGraph tg,
@@ -920,7 +921,8 @@ public class Gemma4Q8_0FFNLayers
         if (packedActivation && w.dataType() == DataType.Q4_0) {
             tg.task(
                     taskName,
-                    org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0::matrixVectorGenericQ4_0DP4A,
+                    org.beehive.jllm.backend.tornado.kernels.TransformerComputeKernelsQ4_0
+                            ::matrixVectorGenericQ4_0DP4A,
                     context,
                     gemma4State.workspace.wrapXbQuants,
                     gemma4State.workspace.wrapXbScales,
@@ -1083,8 +1085,7 @@ public class Gemma4Q8_0FFNLayers
                 gridScheduler.addWorkerGrid(prefix + "attn_quantize", quantizeWorker);
                 gridScheduler.addWorkerGrid(prefix + "ffn_quantize", quantizeWorker);
                 gridScheduler.addWorkerGrid(
-                        prefix + "attn_out_quantize",
-                        WorkerGridFactory.genericWorker(qDim, 32));
+                        prefix + "attn_out_quantize", WorkerGridFactory.genericWorker(qDim, 32));
                 gridScheduler.addWorkerGrid(
                         prefix + "ffn_hidden_quantize",
                         WorkerGridFactory.genericWorker(ffnLen, 32));

@@ -8,8 +8,8 @@ import org.junit.Test;
  *
  * <p>Its own class, because surefire forks per class and this family's three fixtures cannot be
  * loaded in one JVM: 9.3 GB in BF16 and 5.0 GB in Q8_0, and device memory a closed session frees
- * returns to TornadoVM's buffer provider rather than to the driver, so the third load exhausts a
- * 24 GB card and the failure lands on whichever fixture ran last rather than on whichever is wrong.
+ * returns to TornadoVM's buffer provider rather than to the driver, so the third load exhausts a 24
+ * GB card and the failure lands on whichever fixture ran last rather than on whichever is wrong.
  *
  * <p>The device runs this file <b>materialized as Q8_0</b>: {@code Gemma4PlanProvider} admits F16
  * and Q8_0, so the loader decodes its Q4_0 and Q4_1 blocks at load time. The host reference decodes
