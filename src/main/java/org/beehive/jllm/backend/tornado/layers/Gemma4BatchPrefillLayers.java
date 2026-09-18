@@ -93,6 +93,10 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
     private static final boolean SPLIT_K =
             !Boolean.getBoolean("jllm.gemma4.noSplitK");
 
+    /** Whether the gate/up pair is decoded to FP16 before its GEMM. Exact-comparison switch. */
+    private static final boolean DEQUANT_GATE_UP =
+            !Boolean.getBoolean("jllm.gemma4.noDequantGateUp");
+
     private final Gemma4State state;
     private final Gemma4TornadoWeights weights;
     private final Gemma4Configuration config;
@@ -260,6 +264,7 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     state.workspace.attnOutFP16,
                     state.workspace.attnScoresBatch,
                     state.workspace.splitKPartialBatch,
+                    state.workspace.gateUpWeightsF16,
                     state.workspace.woOut,
                     state.workspace.normedXFFNFP16,
                     state.workspace.gateUpResultBatch,
@@ -299,6 +304,7 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     state.workspace.attnOutFP16,
                     state.workspace.attnScoresBatch,
                     state.workspace.splitKPartialBatch,
+                    state.workspace.gateUpWeightsF16,
                     state.workspace.woOut,
                     state.workspace.normedXFFNFP16,
                     state.workspace.gateUpResultBatch,
@@ -540,17 +546,47 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),
                 state.workspace.ffnScaleBatch,
                 dim);
-        layer.task(
-                "gateUpProj",
-                TransformerBatchPrefillKernels::gemmMMAGateUpQ8,
-                context,
-                state.workspace.normedXFFNFP16,
-                weights.w1Layered[layerIndex].asByteArray(),
-                weights.w3Layered[layerIndex].asByteArray(),
-                state.workspace.gateUpResultBatch,
-                paddedBatch,
-                ffnLen,
-                dim);
+        if (DEQUANT_GATE_UP) {
+            // Gate into the first half of the scratch and up into the second, so the pair is one
+            // contiguous [2*ffnLen, dim] matrix and one GEMM produces the packed [gate|up] rows the
+            // activation expects — no second kernel, and the same output layout as before.
+            layer.task(
+                    "gateDequant",
+                    Gemma4BatchPrefillKernels::dequantizeQ8ToFP16,
+                    context,
+                    weights.w1Layered[layerIndex].asByteArray(),
+                    state.workspace.gateUpWeightsF16,
+                    0);
+            layer.task(
+                    "upDequant",
+                    Gemma4BatchPrefillKernels::dequantizeQ8ToFP16,
+                    context,
+                    weights.w3Layered[layerIndex].asByteArray(),
+                    state.workspace.gateUpWeightsF16,
+                    ffnLen * dim);
+            layer.task(
+                    "gateUpProj",
+                    TransformerBatchPrefillKernels::gemmMMA,
+                    context,
+                    state.workspace.normedXFFNFP16,
+                    state.workspace.gateUpWeightsF16,
+                    state.workspace.gateUpResultBatch,
+                    paddedBatch,
+                    2 * ffnLen,
+                    dim);
+        } else {
+            layer.task(
+                    "gateUpProj",
+                    TransformerBatchPrefillKernels::gemmMMAGateUpQ8,
+                    context,
+                    state.workspace.normedXFFNFP16,
+                    weights.w1Layered[layerIndex].asByteArray(),
+                    weights.w3Layered[layerIndex].asByteArray(),
+                    state.workspace.gateUpResultBatch,
+                    paddedBatch,
+                    ffnLen,
+                    dim);
+        }
         layer.task(
                 "batch_geglu",
                 Gemma4BatchPrefillKernels::batchedGeGLUFP16Packed,
@@ -809,6 +845,11 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
             scheduler.addWorkerGrid(p + "batch_ffn_rms", rmsWorker);
             scheduler.addWorkerGrid(p + "batch_ffn_rms_apply", dimApplyWorker);
             scheduler.addWorkerGrid(p + "gateUpProj", mmaGrid(paddedBatch, 2 * ffnLen));
+            if (DEQUANT_GATE_UP) {
+                WorkerGrid dequantWorker = elementwise(ffnLen * dim, 256);
+                scheduler.addWorkerGrid(p + "gateDequant", dequantWorker);
+                scheduler.addWorkerGrid(p + "upDequant", dequantWorker);
+            }
             scheduler.addWorkerGrid(p + "batch_geglu", elementwise(batchSize * ffnLen, 256));
             if (SPLIT_K) {
                 scheduler.addWorkerGrid(p + "w2Proj", mmaSplitKGrid(paddedBatch, dim));

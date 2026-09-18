@@ -126,6 +126,11 @@ public final class Gemma4State extends State {
         // The depth slices of the two narrow projections, before they are summed. One buffer for
         // both: they are sequential in a layer's graph, so the second overwrites what the first has
         // already been reduced out of.
+        // The widest gate/up pair decoded into FP16, so the projection's GEMM stages operands it
+        // does not have to convert. One buffer for every layer: the widest is what it has to hold,
+        // and a layer narrower than that uses a prefix of it.
+        this.workspace.gateUpWeightsF16 =
+                TornadoWorkspaces.halfFloats(2 * config.maxFeedForwardLength() * config.dim());
         this.workspace.splitKPartialBatch =
                 TornadoWorkspaces.floats(
                         org.beehive.jllm.backend.tornado.layers.Gemma4BatchPrefillLayers

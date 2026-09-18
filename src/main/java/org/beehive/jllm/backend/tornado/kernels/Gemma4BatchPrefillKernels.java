@@ -625,6 +625,44 @@ public final class Gemma4BatchPrefillKernels {
 
     // @formatter:off
     /**
+     * A Q8_0 weight matrix decoded into FP16, one element per thread.
+     *
+     * <p><b>Why this exists.</b> The Q8_0 tensor-core GEMMs decode their weights inside the K-loop,
+     * and TornadoVM can only reach the hardware float-to-half conversion through a <i>store</i> to a
+     * half array — as a value in a register it does not lower at all ({@code address origin
+     * unimplemented: MulNode}). So those kernels convert in software, by binary search on the
+     * exponent, eight times per lane per K-step. It shows in the emitted CUDA: {@code
+     * gemmMMAGateUpQ8} is 8,666 lines carrying sixteen {@code mma.sync}, against 1,179 lines for the
+     * FP16 {@code gemmMMA} that does the same arithmetic. The GEMM is not doing matrix
+     * multiplication; it is doing float-to-half conversion with a little matrix multiplication
+     * attached.
+     *
+     * <p>Decoding into a scratch first is a store, so the conversion is the one hardware
+     * instruction it should be, and the GEMM that follows stages FP16 operands with nothing but
+     * integer packing. The cost is the scratch traffic, paid once per chunk per layer against a GEMM
+     * that reads the same weights for every one of the chunk's rows.
+     *
+     * <p>Bit-identical to what the Q8_0 GEMM computes for the same element: the same product of the
+     * same block scale and the same quant, rounded to half once, round-to-nearest-even both ways.
+     *
+     * <p>{@code destOffset} places a matrix inside a larger scratch, which is what lets the gate and
+     * the up projection share one buffer and one GEMM.
+     *
+     * <p>Worker: one thread per element, local 256. Requires the row length to be a whole number of
+     * 32-weight blocks, which every projection this family has is.
+     */
+    // @formatter:on
+    public static void dequantizeQ8ToFP16(
+            KernelContext context, ByteArray w, HalfFloatArray out, int destOffset) {
+        int gid = context.globalIdx;
+        int blk = gid >>> 5;
+        int within = gid & 31;
+        int off = blk * 34;
+        out.set(destOffset + gid, new HalfFloat(w.getHalfFloat(off).getFloat32() * w.get(off + 2 + within)));
+    }
+
+    // @formatter:off
+    /**
      * {@code gemmMMAQ8} with the depth split across blocks, for the two projections whose output is
      * too narrow to fill the device.
      *
