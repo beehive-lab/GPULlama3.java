@@ -943,11 +943,15 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
             // tile whose lane mapping is written for a 128-lane workgroup; any other width keeps
             // the per-lane form.
             if (tensorCoreAttention(headDim)) {
-                // Q K^T and P V on the tensor cores, three passes through the score scratch,
-                // one workgroup per (16-query tile, head); the FP16 staging is the state's.
+                // K Q^T and P V on the tensor cores, three passes through the score scratch (a
+                // transposed, key-padded region per workgroup), one workgroup per (32-query tile,
+                // head) with eight warps where the width divides into them, else per 16-query
+                // tile with four; the FP16 staging is the state's.
                 layer.task(
                         "attention",
-                        Qwen35BatchKernels::attentionBatchFP16PagedTensorCore,
+                        wideTensorCoreAttention()
+                                ? Qwen35BatchKernels::attentionBatchFP16PagedTensorCoreT32
+                                : Qwen35BatchKernels::attentionBatchFP16PagedTensorCoreT,
                         context,
                         state.workspace.batchStartPosHolder,
                         state.workspace.wrapAttnQBatch,
@@ -962,7 +966,7 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                         state.workspace.wrapBlockTable,
                         state.kvBlockCfg,
                         state.kvBlockStride,
-                        ATTENTION_LOCAL,
+                        wideTensorCoreAttention() ? TC32_LOCAL : ATTENTION_LOCAL,
                         state.workspace.wrapAttnScoresBatch,
                         config.contextLength(),
                         state.workspace.wrapAttnStageFP16);
@@ -1515,6 +1519,14 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
      * allocated (whole 16-query tiles), a 256-wide head, 128 lanes, a context of whole 32-key
      * tiles, on CUDA (the tensor-core guard).
      */
+    /** Lanes of the 32-query tensor-core attention's workgroup. */
+    private static final int TC32_LOCAL = Qwen35BatchKernels.TC32_LANES;
+
+    /** Whether the tensor-core attention takes 32 queries per workgroup: the width divides. */
+    private boolean wideTensorCoreAttention() {
+        return batchSize % Qwen35BatchKernels.TC32_QUERIES == 0;
+    }
+
     private boolean tensorCoreAttention(int headDim) {
         return scoredAttention()
                 && state.workspace.wrapAttnStageFP16 != null
@@ -1612,13 +1624,18 @@ public class Qwen35BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 WorkerGridFactory.genericWorker(batchSize * config.kvDim(), ELEMENTWISE_LOCAL);
         // One workgroup per (row, head); the workgroup's lanes split the causal range. The
         // tensor-core kernel: one per (16-query tile, head).
+        boolean tensorCore = tensorCoreAttention(config.headSize());
+        int attentionRows =
+                tensorCore && wideTensorCoreAttention()
+                        ? Qwen35BatchKernels.TC32_QUERIES
+                        : Qwen35Configuration.ATTENTION_TILE_ROWS;
+        int attentionLocal = tensorCore && wideTensorCoreAttention() ? TC32_LOCAL : ATTENTION_LOCAL;
         int attentionGroups =
-                tensorCoreAttention(config.headSize())
-                        ? (batchSize / Qwen35Configuration.ATTENTION_TILE_ROWS)
-                                * config.numberOfHeads()
+                tensorCore
+                        ? (batchSize / attentionRows) * config.numberOfHeads()
                         : batchSize * config.numberOfHeads();
         WorkerGrid attention =
-                WorkerGridFactory.genericWorker(attentionGroups * ATTENTION_LOCAL, ATTENTION_LOCAL);
+                WorkerGridFactory.genericWorker(attentionGroups * attentionLocal, attentionLocal);
         WorkerGrid outputGate =
                 WorkerGridFactory.genericWorker(
                         batchSize * config.attentionOutputInputDim(), ELEMENTWISE_LOCAL);

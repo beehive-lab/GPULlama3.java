@@ -459,12 +459,16 @@ public final class Qwen35State extends State {
                             Math.toIntExact((long) config.hiddenDim() * config.dim()));
         }
         if (storageOptions().usesFp16KeyValueCache()) {
+            // The capacity rounded up to whole 32-key tiles: the tensor-core kernels' transposed
+            // regions are padded to them; the other kernels use the first contextLength of each
+            // (row, head) span and never read past it.
             workspace.wrapAttnScoresBatch =
                     TornadoWorkspaces.floats(
                             Math.toIntExact(
                                     (long) batch
                                             * config.numberOfHeads()
-                                            * config.contextLength()));
+                                            * Qwen35Configuration.attentionScoreKeys(
+                                                    config.contextLength())));
             // The tensor-core attention's staging, at the widths its query tiles divide; the
             // kernel is dispatched from the same answer (Qwen35Configuration.attentionStageHalves).
             long stageHalves =

@@ -35,7 +35,7 @@ public class Qwen35MmaBatchedPrefillWidth256Fp16KvParityAccelTest extends CpuGpu
                 assertParityBatched(Fixture.QWEN3_8_27B_Q4_0, Q8_0_PACKED_DECODE, 256);
         assertEquals(
                 "the batched attention kernel this plan compiled",
-                Set.of("attentionBatchFP16PagedTensorCore"),
+                Set.of("attentionBatchFP16PagedTensorCoreT32"),
                 gpu.batchedTaskKernels.get("attention"));
         assertEquals(
                 "the batched delta-rule scan this plan compiled",

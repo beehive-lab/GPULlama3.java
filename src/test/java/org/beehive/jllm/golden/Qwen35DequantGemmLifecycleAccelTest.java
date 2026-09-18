@@ -189,7 +189,7 @@ public class Qwen35DequantGemmLifecycleAccelTest {
                     alphaBetaKernels);
             assertEquals(
                     "the batched attention kernel this plan compiled",
-                    java.util.Set.of("attentionBatchFP16PagedTensorCore"),
+                    java.util.Set.of("attentionBatchFP16PagedTensorCoreT32"),
                     pairKernels);
             assertEquals(
                     "the batched delta-rule scan this plan compiled",

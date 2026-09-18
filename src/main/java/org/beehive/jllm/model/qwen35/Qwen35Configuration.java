@@ -278,9 +278,9 @@ public record Qwen35Configuration(
                         + 2L * deltaNetKeyDim() // the split queries and keys
                         + deltaNetValueDim(); // the split values
         // The attention scores of the batched FP16 key/value path, a span per (row, head) over
-        // the context capacity. Counted whether or not that path is built: the prediction has
-        // to hold for the widest state this width can allocate.
-        perRow += (long) numberOfHeads() * contextLength();
+        // the context capacity rounded up to whole key tiles. Counted whether or not that path is
+        // built: the prediction has to hold for the widest state this width can allocate.
+        perRow += (long) numberOfHeads() * attentionScoreKeys(contextLength());
         long bytes = perRow * batchSize * Float.BYTES;
         // The tensor-core attention's FP16 staging, per (16-query tile, head).
         bytes += 2L * attentionStageHalves(batchSize, numberOfHeads());
@@ -308,6 +308,19 @@ public record Qwen35Configuration(
             return 0L;
         }
         return (long) (batchSize / ATTENTION_TILE_ROWS) * heads * ATTENTION_STAGE_HALVES_PER_TILE;
+    }
+
+    /** Keys one tile of the tensor-core batched attention stages. */
+    public static final int ATTENTION_TILE_KEYS = 32;
+
+    /**
+     * Keys the score scratch holds per (row, head): the context capacity rounded up to whole key
+     * tiles, the tensor-core kernels' transposed regions being padded to them.
+     */
+    public static int attentionScoreKeys(int contextLength) {
+        return (contextLength + ATTENTION_TILE_KEYS - 1)
+                / ATTENTION_TILE_KEYS
+                * ATTENTION_TILE_KEYS;
     }
 
     /** Rows one tile of the batched FP16 GEMM covers; a width has to be a whole number of them. */
