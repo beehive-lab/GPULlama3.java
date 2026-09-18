@@ -10,7 +10,11 @@ import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
+import org.beehive.jllm.inference.weights.Weights;
+import org.beehive.jllm.inference.weights.tornado.TornadoWeights;
+import org.beehive.jllm.runtime.tensor.DataType;
 import uk.ac.manchester.tornado.api.types.arrays.ByteArray;
+import uk.ac.manchester.tornado.api.types.arrays.HalfFloatArray;
 
 // @formatter:off
 /**
@@ -34,29 +38,62 @@ public class Gemma4BatchDecodeActivation implements ActivationTaskGraph {
     private final int dim;
 
     public Gemma4BatchDecodeActivation(
-            State state, Configuration config, String lastBatchLayerId) {
+            State state, Weights weights, Configuration config, String lastBatchLayerId) {
         this.dim = config.dim();
         KernelContext ctx = new KernelContext();
-        this.itg = buildGraph(ctx, state, lastBatchLayerId).snapshot();
+        this.itg = buildGraph(ctx, state, weights, lastBatchLayerId).snapshot();
     }
 
-    private TaskGraph buildGraph(KernelContext ctx, State state, String lastBatchLayerId) {
-        return new TaskGraph("decodeActivation")
-                .consumeFromDevice(
-                        lastBatchLayerId,
-                        state.workspace.wrapKeyCache,
-                        state.workspace.wrapValueCache)
-                .transferToDevice(DataTransferMode.EVERY_EXECUTION, state.workspace.embeddingX)
-                .task(
-                        "updateX",
-                        TransformerComputeKernels::convertQ8_0toFP32,
-                        ctx,
-                        (ByteArray) state.workspace.embeddingX,
-                        state.workspace.wrapX)
-                .persistOnDevice(
-                        state.workspace.wrapX,
-                        state.workspace.wrapKeyCache,
-                        state.workspace.wrapValueCache);
+    // @formatter:off
+    /**
+     * The conversion comes from the embedding tensor's own representation, as {@link
+     * org.beehive.jllm.backend.tornado.layers.Activation} takes it, and not from the model's. A
+     * mixed file holds them apart — staging 18-byte blocks to be read as 34-byte ones is a
+     * plausible activation and wrong output.
+     */
+    // @formatter:on
+    private TaskGraph buildGraph(
+            KernelContext ctx, State state, Weights weights, String lastBatchLayerId) {
+        DataType embedding =
+                weights instanceof TornadoWeights t ? t.getTokenEmbeddingTable().dataType() : null;
+        TaskGraph tg =
+                new TaskGraph("decodeActivation")
+                        .consumeFromDevice(
+                                lastBatchLayerId,
+                                state.workspace.wrapKeyCache,
+                                state.workspace.wrapValueCache)
+                        .transferToDevice(
+                                DataTransferMode.EVERY_EXECUTION, state.workspace.embeddingX);
+        switch (embedding) {
+            case Q4_0 ->
+                    tg.task(
+                            "updateX",
+                            TransformerComputeKernels::convertQ4_0toFP32,
+                            ctx,
+                            (ByteArray) state.workspace.embeddingX,
+                            state.workspace.wrapX);
+            case F16 ->
+                    tg.task(
+                            "updateX",
+                            TransformerComputeKernels::convertFP16toFP32,
+                            ctx,
+                            (HalfFloatArray) state.workspace.embeddingX,
+                            state.workspace.wrapX);
+            case Q8_0 ->
+                    tg.task(
+                            "updateX",
+                            TransformerComputeKernels::convertQ8_0toFP32,
+                            ctx,
+                            (ByteArray) state.workspace.embeddingX,
+                            state.workspace.wrapX);
+            default ->
+                    throw new UnsupportedOperationException(
+                            "gemma4 batched decode has no embedding conversion for " + embedding);
+        }
+        return tg.persistOnDevice(
+                state.workspace.wrapX,
+                state.workspace.wrapKeyCache,
+                state.workspace.wrapValueCache);
     }
 
     @Override

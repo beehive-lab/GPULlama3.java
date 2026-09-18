@@ -155,6 +155,12 @@ public class Gemma4Q8_0FFNLayers
      * deliberately), and the weights must be the representation those kernels decode.
      */
     private boolean packedFor(int layerIndex) {
+        // An escape hatch for exact comparison, matching the one qwen35 keeps: the packed path
+        // quantizes the activation to eight bits, so a build that needs to be compared against one
+        // that does not needs to be able to turn it off. Not a tuning knob.
+        if (!"true".equalsIgnoreCase(System.getProperty("jllm.gemma4.packedIntegerDot", "true"))) {
+            return false;
+        }
         return weights.wqLayered[layerIndex].dataType() == DataType.Q4_0
                 && org.beehive.jllm.backend.tornado.device.TornadoDevices.current()
                         .capabilities()

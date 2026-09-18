@@ -216,13 +216,73 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
         return out;
     }
 
-    private static void requireQ8(TornadoTensor t, String name) {
-        if (t.dataType() != DataType.Q8_0) {
+    // @formatter:off
+    /**
+     * Refuses a projection this plan has no decoder for, by name.
+     *
+     * <p>Three block layouts reach the trunk: 34 bytes to thirty-two weights for Q8_0, 18 for Q4_0,
+     * and 20 for Q4_1 — which this family needs for exactly four tensors, {@code ffn_down} on blocks
+     * 0-3 of the Q4_0 file. Reading one as another is a plausible-looking activation and wrong
+     * output, so an unknown representation is a missing case and not something to guess at.
+     */
+    // @formatter:on
+    private static void requireDecodable(TornadoTensor t, String name) {
+        DataType type = t.dataType();
+        if (type != DataType.Q8_0 && type != DataType.Q4_0 && type != DataType.Q4_1) {
             throw new UnsupportedOperationException(
-                    "gemma4 batched prefill is Q8_0-only for the trunk; "
+                    "gemma4 batched prefill has no decoder for "
+                            + type
+                            + " ("
                             + name
-                            + " is "
-                            + t.dataType());
+                            + "); the trunk must be Q8_0, Q4_0 or Q4_1");
+        }
+    }
+
+    /** Whether every one of these is Q8_0, which is what the direct Q8_0 GEMMs require. */
+    private static boolean allQ8(TornadoTensor... tensors) {
+        for (TornadoTensor t : tensors) {
+            if (t.dataType() != DataType.Q8_0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // @formatter:off
+    /**
+     * Decodes one projection into the shared FP16 scratch, choosing the decoder from the tensor's
+     * own representation rather than from the model's.
+     */
+    // @formatter:on
+    private void addDequant(TaskGraph layer, String taskName, TornadoTensor w, int destOffset) {
+        switch (w.dataType()) {
+            case Q8_0 ->
+                    layer.task(
+                            taskName,
+                            Gemma4BatchPrefillKernels::dequantizeQ8ToFP16,
+                            context,
+                            w.asByteArray(),
+                            state.workspace.weightsF16Scratch,
+                            destOffset);
+            case Q4_0 ->
+                    layer.task(
+                            taskName,
+                            Gemma4BatchPrefillKernels::dequantizeQ4_0ToFP16,
+                            context,
+                            w.asByteArray(),
+                            state.workspace.weightsF16Scratch,
+                            destOffset);
+            case Q4_1 ->
+                    layer.task(
+                            taskName,
+                            Gemma4BatchPrefillKernels::dequantizeQ4_1ToFP16,
+                            context,
+                            w.asByteArray(),
+                            state.workspace.weightsF16Scratch,
+                            destOffset);
+            default ->
+                    throw new UnsupportedOperationException(
+                            "gemma4 batched prefill has no decoder for " + w.dataType());
         }
     }
 
@@ -256,11 +316,11 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
         final int peOffset = layerIndex * nEmbdPerLayer;
         final int stride = qkvStride(layerIndex);
 
-        requireQ8(weights.wqLayered[layerIndex], "blk." + layerIndex + ".attn_q");
-        requireQ8(weights.woLayered[layerIndex], "blk." + layerIndex + ".attn_output");
-        requireQ8(weights.w1Layered[layerIndex], "blk." + layerIndex + ".ffn_gate");
-        requireQ8(weights.w3Layered[layerIndex], "blk." + layerIndex + ".ffn_up");
-        requireQ8(weights.w2Layered[layerIndex], "blk." + layerIndex + ".ffn_down");
+        requireDecodable(weights.wqLayered[layerIndex], "blk." + layerIndex + ".attn_q");
+        requireDecodable(weights.woLayered[layerIndex], "blk." + layerIndex + ".attn_output");
+        requireDecodable(weights.w1Layered[layerIndex], "blk." + layerIndex + ".ffn_gate");
+        requireDecodable(weights.w3Layered[layerIndex], "blk." + layerIndex + ".ffn_up");
+        requireDecodable(weights.w2Layered[layerIndex], "blk." + layerIndex + ".ffn_down");
 
         // ── Transfers ──────────────────────────────────────────────────────────
         if (layerIndex == 0) {
@@ -353,8 +413,8 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 pleProjF16[layerIndex],
                 weights.perLayerPostNorm[layerIndex].asFloatArray());
         if (hasOwnKv) {
-            requireQ8(weights.wkLayered[layerIndex], "blk." + layerIndex + ".attn_k");
-            requireQ8(weights.wvLayered[layerIndex], "blk." + layerIndex + ".attn_v");
+            requireDecodable(weights.wkLayered[layerIndex], "blk." + layerIndex + ".attn_k");
+            requireDecodable(weights.wvLayered[layerIndex], "blk." + layerIndex + ".attn_v");
             layer.transferToDevice(
                     DataTransferMode.FIRST_EXECUTION,
                     weights.wkLayered[layerIndex].asByteArray(),
@@ -392,31 +452,20 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 dim);
 
         if (hasOwnKv) {
-            if (DEQUANT_PROJECTIONS) {
+            boolean qkvDirect =
+                    !DEQUANT_PROJECTIONS
+                            && allQ8(
+                                    weights.wqLayered[layerIndex],
+                                    weights.wkLayered[layerIndex],
+                                    weights.wvLayered[layerIndex]);
+            if (!qkvDirect) {
                 // Query, key and value laid end to end make one [qDim + 2*kvDim, dim] matrix, so a
                 // single plain GEMM writes exactly the packed [q|k|v] row the head norms and the
                 // rotation already read.
-                layer.task(
-                        "qDequant",
-                        Gemma4BatchPrefillKernels::dequantizeQ8ToFP16,
-                        context,
-                        weights.wqLayered[layerIndex].asByteArray(),
-                        state.workspace.weightsF16Scratch,
-                        0);
-                layer.task(
-                        "kDequant",
-                        Gemma4BatchPrefillKernels::dequantizeQ8ToFP16,
-                        context,
-                        weights.wkLayered[layerIndex].asByteArray(),
-                        state.workspace.weightsF16Scratch,
-                        qDim * dim);
-                layer.task(
-                        "vDequant",
-                        Gemma4BatchPrefillKernels::dequantizeQ8ToFP16,
-                        context,
-                        weights.wvLayered[layerIndex].asByteArray(),
-                        state.workspace.weightsF16Scratch,
-                        (qDim + kvDim) * dim);
+                addDequant(layer, "qDequant", weights.wqLayered[layerIndex], 0);
+                addDequant(layer, "kDequant", weights.wkLayered[layerIndex], qDim * dim);
+                addDequant(
+                        layer, "vDequant", weights.wvLayered[layerIndex], (qDim + kvDim) * dim);
                 layer.task(
                         "qkvProj",
                         TransformerBatchPrefillKernels::gemmMMA,
@@ -472,31 +521,25 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                     stride,
                     cacheBaseOffset);
         } else {
-            if (DEQUANT_PROJECTIONS) {
-                layer.task(
-                        "qDequant",
-                        Gemma4BatchPrefillKernels::dequantizeQ8ToFP16,
-                        context,
-                        weights.wqLayered[layerIndex].asByteArray(),
-                        state.workspace.weightsF16Scratch,
-                        0);
-                layer.task(
-                        "qkvProj",
-                        TransformerBatchPrefillKernels::gemmMMA,
-                        context,
-                        state.workspace.wrapXbFP16Batch,
-                        state.workspace.weightsF16Scratch,
-                        state.workspace.qkvResultBatch,
-                        paddedBatch,
-                        qDim,
-                        dim);
-            } else {
+            if (!DEQUANT_PROJECTIONS && allQ8(weights.wqLayered[layerIndex])) {
                 layer.task(
                         "qkvProj",
                         TransformerBatchPrefillKernels::gemmMMAQ8,
                         context,
                         state.workspace.wrapXbFP16Batch,
                         weights.wqLayered[layerIndex].asByteArray(),
+                        state.workspace.qkvResultBatch,
+                        paddedBatch,
+                        qDim,
+                        dim);
+            } else {
+                addDequant(layer, "qDequant", weights.wqLayered[layerIndex], 0);
+                layer.task(
+                        "qkvProj",
+                        TransformerBatchPrefillKernels::gemmMMA,
+                        context,
+                        state.workspace.wrapXbFP16Batch,
+                        state.workspace.weightsF16Scratch,
                         state.workspace.qkvResultBatch,
                         paddedBatch,
                         qDim,
@@ -548,14 +591,8 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 config.contextLength(),
                 HEAD_LOCAL_SIZE);
 
-        if (SPLIT_K && DEQUANT_SPLIT_K) {
-            layer.task(
-                    "woDequant",
-                    Gemma4BatchPrefillKernels::dequantizeQ8ToFP16,
-                    context,
-                    weights.woLayered[layerIndex].asByteArray(),
-                    state.workspace.weightsF16Scratch,
-                    0);
+        if (SPLIT_K && (DEQUANT_SPLIT_K || !allQ8(weights.woLayered[layerIndex]))) {
+            addDequant(layer, "woDequant", weights.woLayered[layerIndex], 0);
             layer.task(
                     "woProj",
                     Gemma4BatchPrefillKernels::gemmMMASplitK,
@@ -645,24 +682,13 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 weights.rms_ffn_weightLayered[layerIndex].asFloatArray(),
                 state.workspace.ffnScaleBatch,
                 dim);
-        if (DEQUANT_GATE_UP) {
+        if (DEQUANT_GATE_UP
+                || !allQ8(weights.w1Layered[layerIndex], weights.w3Layered[layerIndex])) {
             // Gate into the first half of the scratch and up into the second, so the pair is one
             // contiguous [2*ffnLen, dim] matrix and one GEMM produces the packed [gate|up] rows the
             // activation expects — no second kernel, and the same output layout as before.
-            layer.task(
-                    "gateDequant",
-                    Gemma4BatchPrefillKernels::dequantizeQ8ToFP16,
-                    context,
-                    weights.w1Layered[layerIndex].asByteArray(),
-                    state.workspace.weightsF16Scratch,
-                    0);
-            layer.task(
-                    "upDequant",
-                    Gemma4BatchPrefillKernels::dequantizeQ8ToFP16,
-                    context,
-                    weights.w3Layered[layerIndex].asByteArray(),
-                    state.workspace.weightsF16Scratch,
-                    ffnLen * dim);
+            addDequant(layer, "gateDequant", weights.w1Layered[layerIndex], 0);
+            addDequant(layer, "upDequant", weights.w3Layered[layerIndex], ffnLen * dim);
             layer.task(
                     "gateUpProj",
                     TransformerBatchPrefillKernels::gemmMMA,
@@ -693,14 +719,8 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
                 state.workspace.wrapHbFP16Batch,
                 state.workspace.gateUpResultBatch,
                 ffnLen);
-        if (SPLIT_K && DEQUANT_SPLIT_K) {
-            layer.task(
-                    "w2Dequant",
-                    Gemma4BatchPrefillKernels::dequantizeQ8ToFP16,
-                    context,
-                    weights.w2Layered[layerIndex].asByteArray(),
-                    state.workspace.weightsF16Scratch,
-                    0);
+        if (SPLIT_K && (DEQUANT_SPLIT_K || !allQ8(weights.w2Layered[layerIndex]))) {
+            addDequant(layer, "w2Dequant", weights.w2Layered[layerIndex], 0);
             layer.task(
                     "w2Proj",
                     Gemma4BatchPrefillKernels::gemmMMASplitK,
@@ -947,7 +967,15 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
             scheduler.addWorkerGrid(p + "batch_attn_rms_apply", dimApplyWorker);
             scheduler.addWorkerGrid(
                     p + "qkvProj", mmaGrid(paddedBatch, hasOwnKv ? qDim + 2 * kvDim : qDim));
-            if (DEQUANT_PROJECTIONS) {
+            boolean qkvDirect =
+                    !DEQUANT_PROJECTIONS
+                            && (hasOwnKv
+                                    ? allQ8(
+                                            weights.wqLayered[l],
+                                            weights.wkLayered[l],
+                                            weights.wvLayered[l])
+                                    : allQ8(weights.wqLayered[l]));
+            if (!qkvDirect) {
                 scheduler.addWorkerGrid(p + "qDequant", elementwise(qDim * dim, 256));
                 if (hasOwnKv) {
                     scheduler.addWorkerGrid(p + "kDequant", elementwise(kvDim * dim, 256));
@@ -969,7 +997,7 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
             if (SPLIT_K) {
                 scheduler.addWorkerGrid(p + "woProj", mmaSplitKGrid(paddedBatch, dim));
                 scheduler.addWorkerGrid(p + "woReduce", reduceWorker);
-                if (DEQUANT_SPLIT_K) {
+                if (DEQUANT_SPLIT_K || !allQ8(weights.woLayered[l])) {
                     scheduler.addWorkerGrid(p + "woDequant", elementwise(dim * qDim, 256));
                 }
             } else {
@@ -981,7 +1009,7 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
             scheduler.addWorkerGrid(p + "batch_ffn_rms", rmsWorker);
             scheduler.addWorkerGrid(p + "batch_ffn_rms_apply", dimApplyWorker);
             scheduler.addWorkerGrid(p + "gateUpProj", mmaGrid(paddedBatch, 2 * ffnLen));
-            if (DEQUANT_GATE_UP) {
+            if (DEQUANT_GATE_UP || !allQ8(weights.w1Layered[l], weights.w3Layered[l])) {
                 WorkerGrid dequantWorker = elementwise(ffnLen * dim, 256);
                 scheduler.addWorkerGrid(p + "gateDequant", dequantWorker);
                 scheduler.addWorkerGrid(p + "upDequant", dequantWorker);
@@ -990,7 +1018,7 @@ public class Gemma4BatchPrefillLayers implements BatchPrefillTransformerLayerTas
             if (SPLIT_K) {
                 scheduler.addWorkerGrid(p + "w2Proj", mmaSplitKGrid(paddedBatch, dim));
                 scheduler.addWorkerGrid(p + "w2Reduce", reduceWorker);
-                if (DEQUANT_SPLIT_K) {
+                if (DEQUANT_SPLIT_K || !allQ8(weights.w2Layered[l])) {
                     scheduler.addWorkerGrid(p + "w2Dequant", elementwise(dim * ffnLen, 256));
                 }
             } else {

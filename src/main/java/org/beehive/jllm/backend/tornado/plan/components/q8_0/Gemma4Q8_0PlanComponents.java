@@ -70,7 +70,7 @@ public class Gemma4Q8_0PlanComponents implements BatchPrefillDecodeForwardPlanCo
 
     @Override
     public ActivationTaskGraph batchDecodeActivation(String lastBatchLayerId) {
-        return new Gemma4BatchDecodeActivation(state, config, lastBatchLayerId);
+        return new Gemma4BatchDecodeActivation(state, weights, config, lastBatchLayerId);
     }
 
     // @formatter:off

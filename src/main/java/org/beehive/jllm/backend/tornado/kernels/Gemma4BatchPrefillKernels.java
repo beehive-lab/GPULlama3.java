@@ -668,6 +668,60 @@ public final class Gemma4BatchPrefillKernels {
 
     // @formatter:off
     /**
+     * The Q4_0 twin of {@link #dequantizeQ8ToFP16}: 18 bytes to thirty-two weights, an FP16 block
+     * scale then sixteen bytes of packed nibbles, the unsigned nibble recentred by eight.
+     *
+     * <p>Elements 0-15 of a block are the low nibbles of the sixteen bytes and 16-31 the high ones,
+     * which is the convention {@link TransformerComputeKernelsQ4_0#decode} reads and the same one
+     * the host-side embedding decode uses. Decoding to the same value as that kernel is what makes
+     * this interchangeable with it.
+     *
+     * <p>Worker: one thread per element, local 256.
+     */
+    // @formatter:on
+    public static void dequantizeQ4_0ToFP16(
+            KernelContext context, ByteArray w, HalfFloatArray out, int destOffset) {
+        int gid = context.globalIdx;
+        int blk = gid >>> 5;
+        int within = gid & 31;
+        int off = blk * 18;
+        int half = within >>> 4;
+        int byteIndex = within - (half << 4);
+        int packed = w.get(off + 2 + byteIndex) & 0xFF;
+        int q = (half == 0) ? (packed & 0xF) : ((packed >> 4) & 0xF);
+        out.set(destOffset + gid, new HalfFloat(w.getHalfFloat(off).getFloat32() * (q - 8)));
+    }
+
+    // @formatter:off
+    /**
+     * The Q4_1 twin: 20 bytes to thirty-two weights, an FP16 scale and an FP16 minimum then the
+     * same sixteen packed bytes, and {@code scale * q + minimum} with no recentring.
+     *
+     * <p>This family needs it for four tensors and no more: {@code ffn_down} is Q4_1 on blocks 0-3
+     * of the Q4_0 file and Q4_0 on the other thirty-one. A projection's kernel comes from the
+     * tensor's own representation for exactly that reason — a model-wide answer would read a
+     * 20-byte block as an 18-byte one on four layers and produce a plausible, wrong activation.
+     *
+     * <p>Worker: one thread per element, local 256.
+     */
+    // @formatter:on
+    public static void dequantizeQ4_1ToFP16(
+            KernelContext context, ByteArray w, HalfFloatArray out, int destOffset) {
+        int gid = context.globalIdx;
+        int blk = gid >>> 5;
+        int within = gid & 31;
+        int off = blk * 20;
+        int half = within >>> 4;
+        int byteIndex = within - (half << 4);
+        int packed = w.get(off + 4 + byteIndex) & 0xFF;
+        int q = (half == 0) ? (packed & 0xF) : ((packed >> 4) & 0xF);
+        float d = w.getHalfFloat(off).getFloat32();
+        float m = w.getHalfFloat(off + 2).getFloat32();
+        out.set(destOffset + gid, new HalfFloat(d * q + m));
+    }
+
+    // @formatter:off
+    /**
      * {@code gemmMMAQ8} with the depth split across blocks, for the two projections whose output is
      * too narrow to fill the device.
      *
