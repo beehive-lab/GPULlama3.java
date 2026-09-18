@@ -244,6 +244,13 @@ abstract class CpuGpuParity {
         }
 
         assertEquals("compared row count", cpu.rows.size(), gpu.rows.size());
+        // Opt-in: the accelerator's rows as raw little-endian floats, one row after another, so
+        // two builds' accelerator outputs can be compared directly with each other rather than
+        // only each against the CPU reference (the metrics below measure the latter).
+        String dump = System.getProperty("jllm.parity.dumpRows");
+        if (dump != null) {
+            dumpRows(gpu.rows, Path.of(dump));
+        }
 
         // The two absolute-scale bounds are fractions of the reference's own RMS, not constants.
         // Families differ by two orders of magnitude here -- Granite-3.2-2B's logits have an RMS
@@ -398,6 +405,22 @@ abstract class CpuGpuParity {
 
     /** Number of shared entries between the two top-k sets. */
     /** RMS of the whole reference, which is the scale the absolute bounds are expressed in. */
+    private static void dumpRows(List<float[]> rows, Path path) throws java.io.IOException {
+        try (var out =
+                new java.io.DataOutputStream(
+                        new java.io.BufferedOutputStream(
+                                java.nio.file.Files.newOutputStream(path)))) {
+            out.writeInt(rows.size());
+            out.writeInt(rows.get(0).length);
+            for (float[] row : rows) {
+                for (float v : row) {
+                    out.writeFloat(v);
+                }
+            }
+        }
+        System.out.println("[PARITY] wrote accelerator rows to " + path);
+    }
+
     private static double rms(java.util.List<float[]> rows) {
         double sq = 0;
         long n = 0;

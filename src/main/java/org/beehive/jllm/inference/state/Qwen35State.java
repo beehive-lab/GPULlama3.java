@@ -446,5 +446,37 @@ public final class Qwen35State extends State {
         workspace.wrapSsmKBatch = TornadoWorkspaces.floats(batch * config.deltaNetKeyDim());
         workspace.wrapSsmVBatch = TornadoWorkspaces.floats(batch * config.deltaNetValueDim());
         workspace.wrapSsmOutBatch = TornadoWorkspaces.floats(batch * config.deltaNetValueDim());
+        // The attention scores, for the FP16 key/value kernel that computes each dot product once.
+        // Sized to the context capacity because a row's causal range can reach any position in
+        // it; a span per (row, head) so every workgroup of a launch writes and reads its own.
+        // Never uploaded, downloaded or reset: a launch reads only what it wrote.
+        // The dequantize-then-GEMM scratch, only at the widths whose GEMM tiles the chunk fills:
+        // one matrix, the largest projection that takes the pair (gate/up and the Q4_1 ffn_down:
+        // hiddenDim x dim; the Q5_K ssm_out, dim x valueDim, is smaller), reused in turn.
+        if (Qwen35Configuration.dequantGemmWidth(batch)) {
+            workspace.wrapDequantScratchFP16 =
+                    TornadoWorkspaces.halfFloats(
+                            Math.toIntExact((long) config.hiddenDim() * config.dim()));
+        }
+        if (storageOptions().usesFp16KeyValueCache()) {
+            // The capacity rounded up to whole 32-key tiles: the tensor-core kernels' transposed
+            // regions are padded to them; the other kernels use the first contextLength of each
+            // (row, head) span and never read past it.
+            workspace.wrapAttnScoresBatch =
+                    TornadoWorkspaces.floats(
+                            Math.toIntExact(
+                                    (long) batch
+                                            * config.numberOfHeads()
+                                            * Qwen35Configuration.attentionScoreKeys(
+                                                    config.contextLength())));
+            // The tensor-core attention's staging, at the widths its query tiles divide; the
+            // kernel is dispatched from the same answer (Qwen35Configuration.attentionStageHalves).
+            long stageHalves =
+                    Qwen35Configuration.attentionStageHalves(batch, config.numberOfHeads());
+            if (stageHalves > 0) {
+                workspace.wrapAttnStageFP16 =
+                        TornadoWorkspaces.halfFloats(Math.toIntExact(stageHalves));
+            }
+        }
     }
 }
