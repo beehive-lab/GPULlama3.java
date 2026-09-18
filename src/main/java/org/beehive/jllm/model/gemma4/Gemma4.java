@@ -89,16 +89,24 @@ public class Gemma4 extends AbstractModel {
         int perLayerTotal = configuration.numberOfLayers() * nEmbdPerLayer;
         float scale = (float) Math.sqrt(nEmbdPerLayer);
         Gemma4TornadoWeights gemma4Weights = (Gemma4TornadoWeights) weights;
-        for (int b = 0; b < chunkSize; b++) {
-            org.beehive.jllm.backend.tornado.tensor.TornadoTensorLoader
-                    .copyEmbeddingRowToFloatArray(
-                            gemma4Weights.perLayerTokenEmbd,
-                            tokens[b],
-                            perLayerTotal,
-                            gemma4State.workspace.wrapPerLayerTokenEmbedRowBatch,
-                            b * perLayerTotal,
-                            scale);
-        }
+        // Across tokens, because a chunk's rows are independent and this is the one part of a
+        // batched prefill that does not get cheaper per token: the table stays on the host, so B
+        // tokens cost B row decodes just as B single-token steps would. Measured on a 512-token
+        // chunk, sequentially: 9.10 ms when the table is Q8_0 and 31.77 ms when it is Q5_K, inside
+        // the timed window and counted by no kernel profiler. Each row writes its own disjoint
+        // slice of the destination and reads a tensor nothing mutates.
+        org.beehive.jllm.auxiliary.Parallel.parallelFor(
+                0,
+                chunkSize,
+                b ->
+                        org.beehive.jllm.backend.tornado.tensor.TornadoTensorLoader
+                                .copyEmbeddingRowToFloatArray(
+                                        gemma4Weights.perLayerTokenEmbd,
+                                        tokens[b],
+                                        perLayerTotal,
+                                        gemma4State.workspace.wrapPerLayerTokenEmbedRowBatch,
+                                        b * perLayerTotal,
+                                        scale));
     }
 
     private void gatherPerLayerTokenEmbeddingRow(Gemma4State state, int token) {
